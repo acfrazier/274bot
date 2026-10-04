@@ -10,17 +10,20 @@ use std::{sync::Arc, task::Poll, time::Instant};
 #[serde(transparent)]
 pub struct AccountKey(pub Arc<str>);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 pub enum Gang {
     Phoenix,
     BlackArm,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PartnerRole {
     pub id: FactKey,
     pub gang: Gang,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PartnerDeclaration {
     pub protocol: FactKey,

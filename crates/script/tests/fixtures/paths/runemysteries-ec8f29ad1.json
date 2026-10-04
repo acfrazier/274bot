@@ -1,5 +1,5 @@
 {
-  "$schema": "../path.schema.json",
+  "$schema": "../../../paths/path.schema.json",
   "schema": 3,
   "id": "runemysteries",
   "display_name": "Rune Mysteries",
@@ -58,20 +58,6 @@
       {
         "stage": "runemysteries:1", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
-          {
-            "id": "collect-notes", "kind": "talk", "version": 1, "advances": true,
-            "args": {
-              "npc": "aubury",
-              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
-              "leash": 8, "prefer": []
-            },
-            "skip_if": { "Any": [
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
-              { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "runemysteries", "flag": "runemysteries:package_delivered", "is": true } } } }
-            ] },
-            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
-          },
           {
             "id": "scan-bank", "kind": "bank", "version": 1,
             "args": { "op": "scan", "at": "quest_bank" },
@@ -138,7 +124,7 @@
             "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "runemysteries", "is": "complete" } } }
           },
           {
-            "id": "deliver-package", "kind": "talk", "version": 1, "advances": true,
+            "id": "deliver-package", "kind": "talk", "version": 1,
             "args": {
               "npc": "aubury",
               "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
@@ -148,7 +134,7 @@
             "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } }
           },
           {
-            "id": "deliver-talisman", "kind": "talk", "version": 1, "advances": true,
+            "id": "deliver-talisman", "kind": "talk", "version": 1,
             "args": {
               "npc": "head_wizard",
               "anchor": { "tile": [3108, 9572, 0], "source": "A defs/runemysteries.ts:7" },
@@ -159,7 +145,6 @@
           },
           {
             "id": "recover-duke", "kind": "talk", "version": 1,
-            "advances": false,
             "args": {
               "npc": "duke_of_lumbridge",
               "anchor": { "tile": [3212, 3220, 1], "source": "A defs/runemysteries.ts:17,39" },
@@ -176,6 +161,20 @@
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
             ] }
+          },
+          {
+            "id": "collect-notes", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "aubury",
+              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+              { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "runemysteries", "flag": "runemysteries:package_delivered", "is": true } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
           }
         ]
       },
