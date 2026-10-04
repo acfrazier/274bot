@@ -9,7 +9,7 @@ import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 const root = path.resolve(import.meta.dirname, '../..');
@@ -508,7 +508,7 @@ async function verifyRevision(revision: number) {
     for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
         if (trioGiversBlob.includes(banned)) throw new Error(`${revision}: trio_givers published ${banned}`);
     }
-    const rs2b0tRoot = process.env.RS2B0T ?? path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0');
+    const rs2b0tRoot = requireEnvPath('RS2B0T', 'the pinned rs2b0t checkout root');
     assertRs2b0tPinned(rs2b0tRoot);
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(pin.engineRoot, fs.readFileSync(bankSource, 'utf8'));

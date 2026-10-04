@@ -173,7 +173,19 @@ twins live in `crates/host-play`. Ordered multi-case native runs:
 ## Selected-data generation
 
 The one entry point is `tools/game-data/generate.ts`; its verifier can run a
-single revision without requiring the other source checkout to be clean:
+single revision without requiring the other source checkout to be clean.
+Every external source root is a required environment variable — an unset
+variable fails closed and names itself, with no machine default:
+
+```bash
+export GAME_DATA_274_ENGINE=/absolute/path/to/274-engine
+export GAME_DATA_274_CONTENT=/absolute/path/to/274-content
+export GAME_DATA_289_ENGINE=/absolute/path/to/289-engine
+export GAME_DATA_289_CONTENT=/absolute/path/to/289-content
+export RS2B0T=/absolute/path/to/rs2b0t
+export GAME_DATA_274_SNAPSHOTS=/absolute/path/to/274-snapshots
+export GAME_DATA_289_SNAPSHOTS=/absolute/path/to/289-snapshots
+```
 
 ```bash
 cargo build -p nav --bin cache-content-id
