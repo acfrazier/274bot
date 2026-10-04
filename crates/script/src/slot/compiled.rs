@@ -335,13 +335,18 @@ impl CompiledRun {
                     ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
                 )
                 && !ctx.compiled.hold;
+            let evidence = EvidenceStamp { run: self.run, tick: ctx.tick, sequence: ctx.tick };
+            let binding = self.script.pair_binding();
+            let inventory = binding.and_then(|_| {
+                api::snapshot::SnapshotView::new(ctx.snapshot, evidence).inventory()
+            });
             port.observe(crate::quester::pair::PairRegistration {
                 run: self.run,
                 pin: Arc::clone(&self.pin),
                 settings: self.script.pair_settings(),
                 ready,
-                evidence: EvidenceStamp { run: self.run, tick: ctx.tick, sequence: ctx.tick },
-            });
+                evidence,
+            }, crate::quester::pair::PairFrame { binding, inventory });
         }
         #[cfg(feature = "load")]
         let interacts = ctx.compiled.interacts.take();

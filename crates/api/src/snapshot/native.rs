@@ -233,7 +233,7 @@ impl<'a> SnapshotView<'a> {
     }
 
     /// Current trade roots, counterpart and posted offer/confirmation containers.
-    pub fn trade(&self) -> Option<Observed<&super::TradeView>> {
+    pub fn trade(&self) -> Option<Observed<&'a super::TradeView>> {
         let snapshot = self.ingame()?;
         Some(Observed {
             value: snapshot.trade(),
@@ -1078,5 +1078,15 @@ mod tests {
         assert!(SnapshotView::new(Some(&snapshot), stamp)
             .journal_widgets(10, 11)
             .is_none());
+    }
+
+    #[test]
+    fn posted_player_names_use_the_native_account_identity() {
+        let id = crate::snapshot::player_account_id;
+        assert_eq!(id("livetest_0"), id("Livetest 0"));
+        assert_eq!(id(" Alice_B "), id("Alice B"));
+        assert_ne!(id("livetest_0"), id("Livetest 1"));
+        assert_eq!(id(""), None);
+        assert_eq!(id("___"), None);
     }
 }

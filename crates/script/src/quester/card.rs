@@ -256,30 +256,26 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
             .map(|bytes| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
-                let progress = document.roles[0]
-                    .progress
-                    .as_ref()
-                    .expect("released Path progress");
-                let mut stages = [
-                    &progress.colour.not_started,
-                    &progress.colour.in_progress,
-                    &progress.colour.complete,
-                ]
-                .into_iter()
-                .chain(progress.rules.iter().map(|rule| &rule.stage))
-                .map(|stage| Arc::clone(&stage.0))
-                .collect::<Vec<_>>();
-                stages.sort_unstable_by_key(|stage| {
-                    stage
-                        .rsplit_once(':')
-                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                        .unwrap_or(u32::MAX)
+                let mut stages = document.roles.iter().flat_map(|role| {
+                    let progress = role.progress.as_ref().expect("released Path progress");
+                    [
+                        &progress.colour.not_started,
+                        &progress.colour.in_progress,
+                        &progress.colour.complete,
+                    ].into_iter().chain(progress.rules.iter().map(|rule| &rule.stage))
+                        .map(|stage| Arc::clone(&stage.0))
+                }).collect::<Vec<_>>();
+                let ordinal = |stage: &Arc<str>| stage.rsplit_once(':')
+                    .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok()).unwrap_or(u32::MAX);
+                stages.sort_unstable_by(|left, right| {
+                    ordinal(left).cmp(&ordinal(right)).then_with(|| left.cmp(right))
                 });
                 stages.dedup();
                 crate::api_progress::QuestPathRow {
                     id: Arc::clone(&document.id.0),
                     display: document.display_name.into(),
-                    journal: !progress.rules.is_empty(),
+                    journal: document.kind == super::path::PathKind::Quest
+                        && document.roles.iter().any(|role| role.progress.as_ref().is_some_and(|progress| !progress.rules.is_empty())),
                     stages: stages.into(),
                 }
             })

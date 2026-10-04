@@ -259,6 +259,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             s2::EquipmentOnlyArgs,
             s2::compile_equipment_only
         ),
+        super::compile::fact!(
+            "partner_item_count_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            partner::PartnerItemCountArgs,
+            partner::compile_partner_item_count
+        ),
     ];
     HANDLERS
 }
@@ -2584,6 +2591,7 @@ impl StepRun for UseOnRun {
             }
             let pred = PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -2832,6 +2840,7 @@ impl StepRun for AcquireRun {
             while self.index < self.steps.len() {
                 let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
+                    pairs: cx.tick.pairs,
                     quests: cx.quests,
                     progress: cx.progress,
                     required_after: cx.required_after,
@@ -2966,15 +2975,12 @@ impl StepRun for WaitRun {
         if cx.tick.cx.evidence().tick >= self.deadline_tick {
             return Poll::Ready(Err(ActionError::Failed(Arc::from("wait exhausted"))));
         }
-        let pred = PredicateContext {
-            cx: &cx.tick.cx,
-            quests: cx.quests,
-            progress: cx.progress,
-            required_after: cx.required_after,
-            chat_since: self.chat_since,
-            outcome: None,
-            bank: cx.bank,
-        };
+        let pred = PredicateContext { cx: &cx.tick.cx, pairs: cx.tick.pairs, quests: cx.quests,
+        progress: cx.progress,
+        required_after: cx.required_after,
+        chat_since: self.chat_since,
+        outcome: None,
+        bank: cx.bank, };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;
         }

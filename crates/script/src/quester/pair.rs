@@ -59,6 +59,32 @@ pub struct PairRegistration {
     pub ready: bool,
     pub evidence: EvidenceStamp,
 }
+
+/// Borrowed identity of the paired Path currently active in this native run.
+#[derive(Clone, Copy)]
+pub struct PairBinding<'a> {
+    pub path: &'a FactKey,
+    pub protocol: &'a FactKey,
+    pub digest: &'a [u8; 32],
+    pub role: &'a FactKey,
+}
+
+/// Native frame data. The broker copies only bounded item ID/count receipts.
+#[derive(Default)]
+pub struct PairFrame<'a> {
+    pub binding: Option<PairBinding<'a>>,
+    pub inventory: Option<api::snapshot::Observed<&'a [api::snapshot::ItemView]>>,
+}
+
+/// Compiler-owned, quest-item-only query for a reciprocal role's current holdings.
+pub struct PairItemRequest {
+    pub path: FactKey,
+    pub protocol: FactKey,
+    pub digest: [u8; 32],
+    pub own: PartnerRole,
+    pub peer: PartnerRole,
+    pub obj: i32,
+}
 pub struct PairRequest {
     pub caller: RunKey,
     pub partner: AccountKey,
@@ -140,7 +166,7 @@ pub enum PairStep {
 }
 pub trait QuestPairPort: Send + Sync {
     fn shared(&self) -> Arc<dyn QuestPairPort>;
-    fn observe(&self, registration: PairRegistration);
+    fn observe(&self, registration: PairRegistration, frame: PairFrame<'_>);
     fn invalidate(&self, run: RunKey);
     fn busy(&self) -> bool;
     fn world_changed(&self, host: &str, port: u16);
@@ -150,6 +176,9 @@ pub trait QuestPairPort: Send + Sync {
         -> Result<Knowledge<Option<Gang>>, PairError>;
     fn gang(&self, caller: RunKey)
         -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError>;
+    /// Read only the matching active reciprocal role's current native item receipt.
+    fn partner_item_count(&self, caller: EvidenceStamp, request: &PairItemRequest)
+        -> Result<i32, PairError>;
     fn waiting(&self, caller: RunKey) -> bool;
     fn token(&self, caller: RunKey, phase: &FactKey) -> Result<PairToken, PairError>;
     fn register_action(&self, token: &PairToken, actor: RunKey, action: crate::native::ActionRevoker)

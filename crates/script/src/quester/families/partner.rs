@@ -1,12 +1,12 @@
 //! Finite reciprocal barriers and exact quest-item transfers, never generic trading.
-use super::super::compile::{CompileContext, CompileError, CompiledPath, StepContext, StepOutcome, StepPlan, StepRun};
+use super::super::compile::{CompileContext, CompileError, CompiledPath, PredicateContext, PredicatePlan, StepContext, StepOutcome, StepPlan, StepRun};
 use super::super::pair::*;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::native::walk::Walk;
 use crate::shim::InteractReq;
 use crate::trade_screen::{ScreenDriver, ScreenKind, WaitEnd, TRADE_CONFIRM_WAIT_MS, TRADE_OFFER_WAIT_MS};
 use api::quest_progress::EvidenceStamp;
-use api::selected::FactKey;
+use api::selected::{FactKey, Truth};
 use api::snapshot::{ItemView, TradeView};
 use api::WorldTile;
 use serde::Deserialize;
@@ -14,6 +14,54 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct PartnerItemCountArgs {
+    /// Unnoted Arrav shield-half or certificate alias.
+    obj: String,
+    /// Minimum quantity in the current reciprocal role's backpack, from 1 to 28.
+    qty: i32,
+}
+
+pub(super) fn compile_partner_item_count(
+    args: PartnerItemCountArgs,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let pair = cx.pair.ok_or_else(|| CompileError::code("partner-declaration-required"))?;
+    let obj = args.obj.strip_prefix("obj:").unwrap_or(&args.obj);
+    if cx.path.0.as_ref() != "blackarmgang"
+        || !matches!(obj, "arravshield1" | "arravshield2" | "arravcertificate") {
+        return Err(CompileError::code("partner-item-not-a-recovery-item"));
+    }
+    if !(1..=28).contains(&args.qty) { return Err(CompileError::code("partner-invalid-quantity")); }
+    let own = pair.declaration.roles.iter().position(|role| &role.id == pair.role)
+        .ok_or_else(|| CompileError::code("partner-invalid-role"))?;
+    Ok(Arc::new(PartnerItemCount {
+        request: PairItemRequest {
+            path: cx.path.clone(), protocol: pair.declaration.protocol.clone(),
+            digest: pair.digest, own: pair.declaration.roles[own].clone(),
+            peer: pair.declaration.roles[1 - own].clone(), obj: super::resolve_obj(cx, obj)?,
+        },
+        minimum: args.qty,
+    }))
+}
+
+struct PartnerItemCount {
+    request: PairItemRequest,
+    minimum: i32,
+}
+impl PredicatePlan for PartnerItemCount {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let Some(port) = cx.pairs else { return Truth::Unknown; };
+        match port.partner_item_count(cx.cx.evidence(), &self.request) {
+            Ok(count) if count >= self.minimum => Truth::True,
+            Ok(_) => Truth::False,
+            Err(_) => Truth::Unknown,
+        }
+    }
+}
 
 /// One mirrored phase; both roles author the same rendezvous and opposite items.
 #[derive(Deserialize)]
@@ -293,6 +341,7 @@ enum TradePhase {
 }
 struct TradeMachine {
     args: TradeArgs,
+    partner_id: u64,
     phase: TradePhase,
     checks: [InventoryCheck; 8],
     check_len: usize,
@@ -316,7 +365,7 @@ fn subset(rows: &[ItemView], wanted: &[Item]) -> bool {
 fn failure(message: &'static str) -> ActionError { ActionError::Blocked(Arc::from(message)) }
 impl TradeMachine {
     fn counterpart(&self, trade: &TradeView) -> bool {
-        trade.partner.as_deref().is_some_and(|name| name.trim().eq_ignore_ascii_case(self.args.partner.0.as_ref()))
+        trade.partner.as_deref().is_some_and(|name| api::snapshot::player_account_id(name) == Some(self.partner_id))
     }
     fn emit(&mut self, request: InteractReq, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         self.request = Some((cx.emit(request)?, cx.evidence()));
@@ -327,6 +376,8 @@ impl NativeMachine for TradeMachine {
     type Args = TradeArgs;
     type Output = StepOutcome;
     fn begin(args: TradeArgs, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let partner_id = api::snapshot::player_account_id(&args.partner.0)
+            .ok_or_else(|| failure("partner account has no native player identity"))?;
         let inventory = cx.snapshot().inventory().ok_or(ActionError::Busy)?;
         let mut checks = [InventoryCheck::default(); 8];
         let mut check_len = 0;
@@ -340,7 +391,7 @@ impl NativeMachine for TradeMachine {
             }
         }
         let deadline = cx.active_now() + Duration::from_millis(u64::from(args.budget) * 600);
-        Ok(Self { args, checks, check_len, deadline, before: cx.evidence(),
+        Ok(Self { args, partner_id, checks, check_len, deadline, before: cx.evidence(),
             phase: TradePhase::Opening, request: None, requested: false, cancelled: false })
     }
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -367,13 +418,16 @@ impl NativeMachine for TradeMachine {
                 if !self.requested {
                     let Some(players) = cx.snapshot().players() else { return Poll::Pending; };
                     let Some(here) = cx.snapshot().here() else { return Poll::Pending; };
-                    let nearby = players.value.iter().any(|player| {
-                        player.actor.name.as_deref().is_some_and(|name| name.eq_ignore_ascii_case(self.args.partner.0.as_ref()))
+                    let name = players.value.iter().find_map(|player| {
+                        let name = player.actor.name.as_deref()?;
+                        (api::snapshot::player_account_id(name) == Some(self.partner_id)
                             && player.actor.tile.level == here.value.level
-                            && (player.actor.tile.x - here.value.x).abs().max((player.actor.tile.z - here.value.z).abs()) <= 2
+                            && (player.actor.tile.x - here.value.x).abs().max((player.actor.tile.z - here.value.z).abs()) <= 2)
+                            .then_some(name)
                     });
-                    if !nearby { return Poll::Pending; }
-                    self.emit(InteractReq::Player { name: self.args.partner.0.to_string(), action: "Trade with".into() }, cx)?;
+                    let Some(name) = name else { return Poll::Pending; };
+                    let request = InteractReq::Player { name: name.to_owned(), action: "Trade with".into() };
+                    self.emit(request, cx)?;
                     self.requested = true;
                 }
             }
@@ -438,3 +492,7 @@ impl NativeMachine for TradeMachine {
     }
     fn cancel(&mut self) { self.cancelled = true; }
 }
+
+#[cfg(test)]
+#[path = "partner_tests.rs"]
+mod tests;

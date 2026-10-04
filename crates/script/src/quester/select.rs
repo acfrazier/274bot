@@ -191,15 +191,12 @@ mod tests {
         let sequence = sequence_for_stage(path, stage).unwrap();
         let mut ledger = None;
         crate::quester::families::tests::with_tick(snapshot, &mut ledger, 1, |tick| {
-            let cx = PredicateContext {
-                cx: &tick.cx,
-                quests,
-                progress,
-                required_after: stamp(),
-                chat_since: 0,
-                outcome: None,
-                bank,
-            };
+            let cx = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests,
+            progress,
+            required_after: stamp(),
+            chat_since: 0,
+            outcome: None,
+            bank, };
             match select(path, sequence, &cx) {
                 SelectionDecision::Selected(selected) => {
                     Choice::Step(selected.step.id.0.to_string())
@@ -245,15 +242,12 @@ mod tests {
             eligible: true,
         };
         let bank = crate::quester::bank_memo::BankMemo::default();
-        let pred = PredicateContext {
-            cx: &cx,
-            quests: &quests,
-            progress: &[],
-            required_after: stamp(),
-            chat_since: 0,
-            outcome: None,
-            bank: &bank,
-        };
+        let pred = PredicateContext { cx: &cx, pairs: None, quests: &quests,
+        progress: &[],
+        required_after: stamp(),
+        chat_since: 0,
+        outcome: None,
+        bank: &bank, };
         let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
             panic!("never-skip start must select");
         };
@@ -294,15 +288,12 @@ mod tests {
                 |bank: &crate::quester::bank_memo::BankMemo,
                  ledger: &mut Option<Box<crate::native::ledger::Ledger>>| {
                     crate::quester::families::tests::with_tick(&snapshot, ledger, 1, |tick| {
-                        let pred = PredicateContext {
-                            cx: &tick.cx,
-                            quests: &quests,
-                            progress: &[],
-                            required_after: stamp(),
-                            chat_since: 0,
-                            outcome: None,
-                            bank,
-                        };
+                        let pred = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
+                        progress: &[],
+                        required_after: stamp(),
+                        chat_since: 0,
+                        outcome: None,
+                        bank, };
                         let SelectionDecision::Selected(picked) = select(&path, sequence, &pred)
                         else {
                             panic!("observed inventory and bank state must select a step");
@@ -546,5 +537,52 @@ mod tests {
             Choice::Step("hand-in".into()),
             "the full hand-in quantity remains usable before the first journal read"
         );
+    }
+
+    #[test]
+    fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
+        use crate::native::ActionError;
+        use crate::quester::compile::{PredicatePlan, StepContext, StepPlan, StepRun};
+        struct Skip(Truth);
+        impl PredicatePlan for Skip {
+            fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth { self.0 }
+        }
+        struct Anchor(api::WorldTile);
+        impl StepPlan for Anchor {
+            fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+                Err(ActionError::Unavailable(Arc::from("selector fixture does not dispatch")))
+            }
+            fn anchor(&self) -> Option<api::WorldTile> { Some(self.0) }
+        }
+        let step = |id: &str, x, z| CompiledStep {
+            id: FactKey::new(id), kind: Arc::from("fixture"), comment: None,
+            loadout: None, tactic: None, advances: false,
+            skip_if: Arc::new(Skip(Truth::False)), settle: Arc::new(Skip(Truth::True)),
+            plan: Arc::new(Anchor(api::WorldTile { x, z, level: 0 })),
+        };
+        let data = selected();
+        let quests = quests(&data);
+        let mut path = compile_uncached_for_test(&decode_cook().unwrap(), &data, &quests).unwrap();
+        let sequence = &mut Arc::get_mut(&mut path).unwrap().sequences[0];
+        sequence.order = crate::quester::path::SequenceOrder::Nearest;
+        sequence.steps = vec![step("far", 20, 0), step("near", 1, 0), step("tie", 0, 1)];
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_tile(api::WorldTile { x: 0, z: 0, level: 0 });
+        let bank = known_empty_bank();
+        assert_eq!(choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank), Choice::Step("near".into()));
+        Arc::get_mut(&mut path).unwrap().sequences[0].steps[1].skip_if = Arc::new(Skip(Truth::True));
+        assert_eq!(choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank), Choice::Step("tie".into()));
+        snapshot.seed_tile(api::WorldTile { x: 100, z: 0, level: 0 });
+        assert_eq!(choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank), Choice::Step("far".into()));
+        Arc::get_mut(&mut path).unwrap().sequences[0].steps[2].skip_if = Arc::new(Skip(Truth::Unknown));
+        assert_eq!(choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank), Choice::Unknown);
+        let missing_here = inventory_snapshot(&data, &[]);
+        assert_eq!(choice_for_stage(&path, "cook:0", &missing_here, &quests, &[], &bank), Choice::Unknown);
+        for step in &mut Arc::get_mut(&mut path).unwrap().sequences[0].steps {
+            step.skip_if = Arc::new(Skip(Truth::True));
+        }
+        assert_eq!(choice_for_stage(&path, "cook:0", &missing_here, &quests, &[], &bank), Choice::Exhausted);
+        Arc::get_mut(&mut path).unwrap().prelude = vec![step("authored-prelude", 1000, 0)];
+        assert_eq!(choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank), Choice::Step("authored-prelude".into()));
     }
 }

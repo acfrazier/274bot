@@ -15,7 +15,7 @@ use rand_core::{OsRng, RngCore};
 use vault::{Profile, Vault, VaultError};
 
 use super::{
-    catalog_core, paired_core, progress, scatter, FrameBuf, Play, ServerProfile, SlotInput,
+    catalog_core, paired_core, progress, quest_pair, scatter, FrameBuf, Play, ServerProfile, SlotInput,
 };
 
 /// Mint a login password accepted by the game protocol.
