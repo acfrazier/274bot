@@ -780,16 +780,8 @@ impl<'a> ZoneFilter<'a> {
         self.destination = goal;
     }
 
-    /// Whether an unexempted zone active under the exact route predicate
-    /// contains this tile. This context-free query applies named whole-walk
-    /// exemptions only; use [`Self::blocking_transition_at`] for endpoint
-    /// rules.
-    #[inline]
-    pub fn blocks(&self, wilderness: &WildernessRules, tile: WorldTile) -> bool {
-        self.blocking_at(wilderness, tile).next().is_some()
-    }
-
-    /// All matching zones active under the same predicate as [`Self::blocks`].
+    /// All matching zones active under the route predicate, applying named
+    /// whole-walk exemptions only. Endpoint rules belong to transitions.
     /// Named exemptions apply throughout the route; endpoint exemptions
     /// require transition context and are not applied here.
     #[inline]
@@ -856,17 +848,6 @@ impl<'a> ZoneFilter<'a> {
         self.destination.is_some_and(|goal| {
             self.table.zone_contains(index, goal) && self.active(index, wilderness, goal)
         })
-    }
-
-    /// Whether a zone is exempt for the search's whole walk or geometrically
-    /// contains its origin. Transition rules still restrict origin escape.
-    #[inline]
-    pub fn masked(&self, zone: u16) -> bool {
-        if self.whole_masked(zone) {
-            return true;
-        }
-        self.origin
-            .is_some_and(|origin| self.table.zone_contains(zone, origin))
     }
 
     /// Number of allocated 64-bit words in the named exemption mask.

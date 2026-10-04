@@ -26,7 +26,9 @@ pub(super) use script_walk::{
     take_manual_walk_ownership,
 };
 #[cfg(test)]
-pub(super) use script_walk::{apply_nav_follow_outcome, apply_watchdog_nav_action};
+pub(super) use script_walk::{
+    apply_nav_follow_outcome, apply_watchdog_nav_action, owe_combat_prayers_off,
+};
 use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
 mod script_snapshot;

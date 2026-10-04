@@ -2668,16 +2668,28 @@ export default class NativeStop extends LoopingBot {{
             obj_names: None,
             compiled: script::CompiledTick::default(),
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while slot.state() == script::RunState::Running
-            || slot.state() == script::RunState::Starting
+        // Isolate setup (V8 platform + compile) is the slow part under load:
+        // it shares nothing with the stop tick. Wait for the real Starting →
+        // Running transition on its own bounded deadline (steady-state setup
+        // is well under a second; the wait exits the moment the slot runs),
+        // then give the stop tick itself a fresh, tight deadline.
+        let setup_deadline = Instant::now() + Duration::from_secs(30);
+        while slot.state() == script::RunState::Starting && slot.lifecycle_receipt().is_none() {
+            slot.on_game_tick(&mut ctx);
+            slot.drain_logs();
+            if Instant::now() >= setup_deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let stop_deadline = Instant::now() + Duration::from_secs(10);
+        while (slot.state() == script::RunState::Running
+            || slot.state() == script::RunState::Starting)
+            && slot.lifecycle_receipt().is_none()
         {
             slot.on_game_tick(&mut ctx);
             slot.drain_logs();
-            if slot.lifecycle_receipt().is_some() {
-                break;
-            }
-            if Instant::now() >= deadline {
+            if Instant::now() >= stop_deadline {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));

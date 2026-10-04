@@ -529,6 +529,7 @@ fn with_step_context_at_walk_seq<R>(
             required_after,
             bank: &bank,
             banks: &banks,
+            choices: &crate::quester::choices::QuestChoices::default(),
         })
     })
 }
