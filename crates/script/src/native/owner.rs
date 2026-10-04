@@ -2,7 +2,7 @@
 //! of a frame context and happens before invoking any machine cleanup.
 use api::selected::RunKey;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 pub(crate) struct Owner {
@@ -13,6 +13,8 @@ pub(crate) struct Owner {
     walk: AtomicU64,
     interaction: AtomicU64,
     batch: [AtomicU64; 5],
+    batch_first: AtomicU64,
+    batch_accepted: AtomicU8,
 }
 
 impl Owner {
@@ -25,6 +27,8 @@ impl Owner {
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
             batch: std::array::from_fn(|_| AtomicU64::new(0)),
+            batch_first: AtomicU64::new(0),
+            batch_accepted: AtomicU8::new(0),
         })
     }
 
@@ -161,6 +165,36 @@ impl Owner {
                 .batch
                 .iter()
                 .any(|slot| slot.load(Ordering::Acquire) == request.get())
+    }
+    /// Retain the latest successful batch independently of live slot authority.
+    /// Revocation intentionally leaves this receipt snapshot readable by its
+    /// action handle.
+    pub fn set_latest_batch(&self, first: NonZeroU64) {
+        self.batch_accepted.store(0, Ordering::Release);
+        self.batch_first.store(first.get(), Ordering::Release);
+    }
+
+    pub fn record_batch_receipt(&self, request: NonZeroU64, accepted: bool) {
+        if !accepted {
+            return;
+        }
+        let first = self.batch_first.load(Ordering::Acquire);
+        let Some(offset) = request.get().checked_sub(first) else {
+            return;
+        };
+        if first == 0 || offset >= self.batch.len() as u64 {
+            return;
+        }
+        self.batch_accepted.fetch_or(1 << offset, Ordering::AcqRel);
+    }
+
+    pub fn latest_batch_receipt(&self) -> Option<(u64, usize)> {
+        let first = self.batch_first.load(Ordering::Acquire);
+        if first == 0 {
+            return None;
+        }
+        let accepted = self.batch_accepted.load(Ordering::Acquire);
+        Some((first, accepted.trailing_ones() as usize))
     }
 
     pub fn interaction_live(&self, request: NonZeroU64) -> bool {

@@ -445,7 +445,14 @@ fn combat_test_run(
         last_outcome: None,
         target_gone_restarts: 0,
         walk_outcome_seq_at_begin: 0,
+        raised_prayers: crate::combat::RaisedPrayers::empty(),
     }
+}
+pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    run.begin_combat(cx).unwrap();
+    Box::new(run)
 }
 
 pub(crate) fn no_food_abort_run_for_runner(
