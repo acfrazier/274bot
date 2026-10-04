@@ -552,6 +552,7 @@ impl Combat {
             family,
             arbiter::stat(frame, 0).1,
             false,
+            &[],
             |name| {
                 frame.inventory.iter().chain(frame.equipment).any(|row| {
                     row.def

@@ -1708,6 +1708,20 @@ impl SelectedGameData {
             .iter()
             .find(|item| item.alias.as_deref() == Some(alias))
     }
+    /// Resolve an item key by exact alias, then by case-insensitive display
+    /// name. Display-name collisions retain selected content order.
+    pub fn resolve_item_name(&self, value: &str) -> Option<&GameItem> {
+        if value.is_empty() {
+            return None;
+        }
+        self.item_by_alias(value).or_else(|| {
+            self.items.iter().find(|item| {
+                item.name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(value))
+            })
+        })
+    }
 
     /// Generated consumption rows, including source effect and next item stage.
     pub fn consumption_facts(&self) -> &[ConsumptionFact] {
