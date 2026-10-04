@@ -269,7 +269,7 @@ table ApiGatherOutcome {
   end: ubyte; // 1 stopped, 2 blocked, 3 refused, 4 failed.
   code: string;
   message: string;
-  retryable: bool;
+  retryable: bool (deprecated);
   yielded: uint;
   dropped: uint;
   deposited: uint;

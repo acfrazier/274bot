@@ -582,7 +582,7 @@ fn bank_pick_walk_reset_abort_takeover_and_newer_route_lease_reject_late_results
         ));
         gate.0.wait(1);
         match replacement {
-            0 => super::super::reset_script_nav(&navs, "test"),
+            0 => super::super::reset_script_nav(&navs, "test", None),
             1 => super::super::abort_script_walk(&navs, "test"),
             2 => {
                 // Publish another walk owner's refusal while the bank worker
@@ -1638,6 +1638,8 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
         open_loc_id: None,
         skill_req: vec![(6, 37)],
         item_req: vec![(555, 1), (556, 3), (563, 1)],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

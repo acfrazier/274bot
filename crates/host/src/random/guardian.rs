@@ -144,6 +144,13 @@ pub struct Guardian {
     box_opened: bool,
     /// Maze: the active solve state, None while trapped without a route.
     maze: Option<maze::MazeSolve>,
+    /// Maze: solver ticks spent on this visit ([`maze::SOLVE_TICKS`] cap).
+    maze_ticks: u32,
+    /// Maze: the solver gave this visit up with the player still on the
+    /// square — no act, no hold and no `ours` until the player leaves it,
+    /// so the slot's native run sees the trap and blocks instead of
+    /// staying frozen.
+    maze_stalled: bool,
     /// Strange Plant's bounded server-authenticated ownership probe.
     plant: PlantProbe,
     /// Exact foreign/refused/timed-out identities still present in the scene.
@@ -188,6 +195,8 @@ impl Guardian {
             lamp_stalled: false,
             box_opened: false,
             maze: None,
+            maze_ticks: 0,
+            maze_stalled: false,
             plant: PlantProbe::Idle,
             plant_ignored: Vec::new(),
             gear_loss: GearLoss::new(),
@@ -337,6 +346,18 @@ impl Guardian {
             // redemption gave up with the lamp still held.
             self.acting = false;
         }
+        // A trap square the host will not solve (random events off, or a Maze
+        // visit it gave up) is inert like a stalled lamp: the square stays
+        // detected, but nothing holds the slot on a trap the guardian is not
+        // walking out of.
+        let on_maze = ev.as_ref().is_some_and(|e| e.kind == RandomKind::Maze);
+        if !on_maze {
+            self.maze_ticks = 0;
+            self.maze_stalled = false;
+        }
+        let on_trap_square = on_maze || ev.as_ref().is_some_and(|e| e.kind == RandomKind::Mime);
+        let inert_trap =
+            on_trap_square && (!settings.random_events || (on_maze && self.maze_stalled));
 
         if fresh
             && active
@@ -344,6 +365,7 @@ impl Guardian {
             && self.claim == RandomClaim::Host
             && !inert_lamp
             && !inert_tool
+            && !inert_trap
         {
             let plant_before_act = self.plant.clone();
             let ignored_before_act = self.plant_ignored.len();
@@ -374,7 +396,7 @@ impl Guardian {
                 && ev
                     .as_ref()
                     .is_some_and(|event| event.kind == RandomKind::LostTool));
-
+        let inert_trap = inert_trap || (on_maze && self.maze_stalled);
         let cooldown = ev
             .as_ref()
             .and_then(|e| e.npc_index)
@@ -384,10 +406,14 @@ impl Guardian {
             name: ev.as_ref().map(|e| e.name.clone()),
             // Inert leftover lamp still detects for the status row, but
             // must not publish ours — EventSignal.pending is hold OR ours.
-            ours: !inert_lamp && !inert_tool && ev.as_ref().map(|e| e.ours).unwrap_or(false),
+            ours: !inert_lamp
+                && !inert_tool
+                && !inert_trap
+                && ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
             hold: settings.random_events
                 && self.claim == RandomClaim::Host
+                && !inert_trap
                 && (self.in_flight
                     || self.acting
                     || ev.as_ref().is_some_and(|e| is_trapped(e.kind))),
@@ -1031,13 +1057,27 @@ impl Guardian {
     /// route from the observed tile, then drive the door / shrine phase
     /// machine. No route → log and keep the trapped hold (never replay a
     /// different spawn's route). The hold lifts on its own once the
-    /// player is no longer on the maze square.
+    /// player is no longer on the maze square; a visit still on it after
+    /// [`maze::SOLVE_TICKS`] solver ticks is given up (inert, no hold).
     fn step_maze<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
-        let Some((px, pz, _)) = snap.tile() else {
+        let Some((px, pz, level)) = snap.tile() else {
             self.acting = false;
             return;
         };
-        if (px >> 6, pz >> 6) != maze::MAZE_SQUARE {
+        if api::random::trapped_area(px, pz, level) != Some(RandomKind::Maze) {
+            self.acting = false;
+            return;
+        }
+        self.maze_ticks += 1;
+        if self.maze_ticks > maze::SOLVE_TICKS {
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "maze: still inside after {} solver ticks at ({px},{pz}); giving the Maze up and releasing the slot",
+                maze::SOLVE_TICKS
+            );
+            self.maze = None;
+            self.maze_stalled = true;
             self.acting = false;
             return;
         }

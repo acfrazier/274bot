@@ -138,7 +138,6 @@ impl WithdrawCell {
         ScriptFlow::Blocked(ScriptFailure {
             code: "bank-core-live".into(),
             message: message.into(),
-            retryable: false,
         })
     }
 }

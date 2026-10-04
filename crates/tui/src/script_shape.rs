@@ -1094,7 +1094,6 @@ mod tests {
             failure: Some(script::native::ScriptFailure {
                 code: "queue-blocked".into(),
                 message: "quest list unavailable; log in normally, then Stop/Start Quester".into(),
-                retryable: true,
             }),
         };
         let text = render(

@@ -204,7 +204,6 @@ pub enum ScriptFlow {
 pub struct ScriptFailure {
     pub code: Arc<str>,
     pub message: Arc<str>,
-    pub retryable: bool,
 }
 
 pub trait Script: Send {
@@ -216,19 +215,11 @@ pub trait Script: Send {
             "this instance has no configuration receiver",
         ))
     }
-    fn retry(&mut self) -> Result<(), ScriptFailure> {
-        Err(ScriptFailure {
-            code: "retry-unsupported".into(),
-            message: "this instance cannot retry".into(),
-            retryable: false,
-        })
-    }
     /// Request one colour-first journal read at the next safe step boundary.
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
         Err(ScriptFailure {
             code: "read-journal-unsupported".into(),
             message: "this card does not read quest journals".into(),
-            retryable: false,
         })
     }
     fn interrupt(&mut self, _event: Interrupt) {}

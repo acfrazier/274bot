@@ -30,13 +30,6 @@ pub use api::random::{DetectedRandom, RandomClaim, RandomKind};
 /// `now_ms < value`. Task 4 stores `now_ms + 45_000` on a wrong-talk.
 pub type CooldownMap = HashMap<usize, u64>;
 
-/// Maze square: `x>>6 == 45 && z>>6 == 71` at level 0.
-const MAZE_X: i32 = 45;
-const MAZE_Z: i32 = 71;
-/// Mime square: `x>>6 == 31 && z>>6 == 74` at level 0.
-const MIME_X: i32 = 31;
-const MIME_Z: i32 = 74;
-
 /// Dialog act-set names, lowercase (`NpcView.name`).
 const DIALOG_NAMES: &[&str] = &[
     "genie",
@@ -201,15 +194,16 @@ fn detect_ignoring_plants(
     ignored_plants: &[PlantActor],
     gear_loss: Option<&GearLoss>,
 ) -> Option<DetectedRandom> {
-    if let Some((x, z, level)) = snap.tile() {
-        if level == 0 {
-            if x >> 6 == MIME_X && z >> 6 == MIME_Z {
-                return Some(no_npc_event(RandomKind::Mime, "mime"));
-            }
-            if x >> 6 == MAZE_X && z >> 6 == MAZE_Z {
-                return Some(no_npc_event(RandomKind::Maze, "maze"));
-            }
-        }
+    if let Some(kind) = snap
+        .tile()
+        .and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
+    {
+        let name = if kind == RandomKind::Maze {
+            "maze"
+        } else {
+            "mime"
+        };
+        return Some(no_npc_event(kind, name));
     }
     if let Some(ev) = detect_scene(snap, now_ms, cooldown) {
         return Some(ev);
@@ -642,7 +636,8 @@ fn same_name(a: &str, b: &str) -> bool {
 /// Whether the local player stands on the mime stage square.
 fn on_mime_square(snap: &GameSnapshot) -> bool {
     snap.tile()
-        .is_some_and(|(x, z, level)| level == 0 && x >> 6 == MIME_X && z >> 6 == MIME_Z)
+        .and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
+        == Some(RandomKind::Mime)
 }
 
 /// Whether the backpack has no free slot (the pack-full gate for the
