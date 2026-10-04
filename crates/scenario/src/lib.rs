@@ -20,6 +20,7 @@ mod catalog;
 pub mod evidence;
 pub mod fixture;
 pub mod proof;
+pub mod quester;
 mod render_betty_views;
 mod runner;
 mod scenarios;

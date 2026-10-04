@@ -19,7 +19,7 @@ pub const CARD: CompiledCard = CompiledCard {
     category: "Quests",
     schema_version: 3,
     schema: settings_schema,
-    per_account_settings: &["partner_account", "gang"],
+    per_account_settings: &["partner_account", "gang", "crest_gauntlets"],
     prepare,
     create,
 };
@@ -37,6 +37,8 @@ struct QuesterSettings {
     partner_account: Option<String>,
     #[serde(default)]
     gang: Option<String>,
+    #[serde(default)]
+    crest_gauntlets: super::choices::CrestGauntlets,
     #[serde(default = "crate::native::death::default_max_deaths")]
     max_deaths: u8,
 }
@@ -87,6 +89,14 @@ fn settings_schema() -> &'static [SettingDef] {
                 "Gang",
                 "Explicit partner-quest gang for this account.",
                 &["phoenix", "blackarm"],
+            ),
+            setting(
+                "crest_gauntlets",
+                "string",
+                "chaos",
+                "Family Crest gauntlets",
+                "Gauntlet enchantment for this account. Defaults to chaos.",
+                &["chaos", "cooking", "goldsmith"],
             ),
             max_deaths,
         ]
@@ -214,6 +224,7 @@ struct Prepared {
     banks: Arc<api::named_banks::NamedBankFacts>,
     queue: Queue<'static>,
     max_deaths: u8,
+    choices: super::choices::QuestChoices,
 }
 
 fn prepare(
@@ -289,6 +300,9 @@ fn prepare(
         banks: Arc::clone(&cx.banks),
         queue,
         max_deaths: settings.max_deaths,
+        choices: super::choices::QuestChoices {
+            crest_gauntlets: settings.crest_gauntlets,
+        },
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -315,6 +329,7 @@ fn create(
         prepared.queue.clone(),
         prepared.max_deaths,
     );
+    script.set_choices(prepared.choices);
     script.restore(retained.quester());
     Ok(Box::new(script))
 }
@@ -390,10 +405,14 @@ mod tests {
                 "skip",
                 "partner_account",
                 "gang",
+                "crest_gauntlets",
                 "max_deaths",
             ]
         );
-        assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
+        assert_eq!(
+            CARD.per_account_settings,
+            ["partner_account", "gang", "crest_gauntlets"]
+        );
         let paths = released_setting_paths();
         assert!(!paths.is_empty());
         let quests = settings_schema()
@@ -496,5 +515,34 @@ mod tests {
                 "out-of-range max_deaths {cap} must be rejected"
             );
         }
+    }
+    #[test]
+    fn crest_reward_is_a_persisted_account_choice_with_a_chaos_default() {
+        use super::super::choices::CrestGauntlets;
+        let decode = |value: serde_json::Value| serde_json::from_value::<QuesterSettings>(value);
+        assert_eq!(
+            decode(serde_json::json!({})).unwrap().crest_gauntlets,
+            CrestGauntlets::Chaos
+        );
+        for (value, expected) in [
+            ("chaos", CrestGauntlets::Chaos),
+            ("cooking", CrestGauntlets::Cooking),
+            ("goldsmith", CrestGauntlets::Goldsmith),
+        ] {
+            assert_eq!(
+                decode(serde_json::json!({"crest_gauntlets": value}))
+                    .unwrap()
+                    .crest_gauntlets,
+                expected
+            );
+        }
+        assert!(decode(serde_json::json!({"crest_gauntlets": "random"})).is_err());
+        assert!(CARD.per_account_settings.contains(&"crest_gauntlets"));
+        let setting = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "crest_gauntlets")
+            .unwrap();
+        assert_eq!(setting.default.as_deref(), Some("chaos"));
+        assert_eq!(setting.options, ["chaos", "cooking", "goldsmith"]);
     }
 }

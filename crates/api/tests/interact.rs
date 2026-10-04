@@ -2462,7 +2462,7 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
     let mut rec = Recorder::default();
     {
         let mut ix = Interactions::new(&snap, &mut rec);
-        match ix.continue_dialog() {
+        match ix.continue_dialog(None) {
             SendResult::Sent { tick, command } => {
                 assert_eq!(tick, snap.tick() as u64);
                 assert!(matches!(
@@ -2484,7 +2484,7 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
     {
         let mut ix = Interactions::new(&snap, &mut rec);
         assert!(matches!(
-            ix.continue_dialog(),
+            ix.continue_dialog(None),
             SendResult::Refused {
                 reason: SendReason::NoContinue,
                 ..
@@ -2492,6 +2492,129 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
         ));
     }
     assert!(rec.actions.is_empty());
+}
+
+#[test]
+fn explicit_continue_resumes_main_modal_pause_without_changing_ordinary_press() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    set_iface_mut(
+        &mut s.client,
+        104,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
+        },
+    );
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.chat_continue_component_id(), -1);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.continue_dialog(Some(104)),
+            SendResult::Sent {
+                command: WireCommand::Continue { component_id: 104 },
+                ..
+            }
+        ));
+        let ordinary = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 102)
+            .unwrap();
+        assert!(matches!(
+            ix.press(ordinary),
+            SendResult::Sent {
+                command: WireCommand::Button {
+                    component_id: 102,
+                    button_type: 1
+                },
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 104),
+            (0, MiniMenuAction::IF_BUTTON, 0, 0, 102),
+        ]
+    );
+}
+
+#[test]
+fn explicit_continue_refuses_every_non_pause_button_type() {
+    for button_type in [-1, 0, 1, 2, 3, 4, 5, 7, i32::MAX] {
+        let mut s = scene();
+        plant_modal(&mut s.client);
+        set_iface_mut(
+            &mut s.client,
+            102,
+            IfTypeMut {
+                button_type,
+                ..Default::default()
+            },
+        );
+        let snap = rebuild(&mut s.client);
+        let mut rec = Recorder::default();
+        assert!(
+            matches!(
+                Interactions::new(&snap, &mut rec).continue_dialog(Some(102)),
+                SendResult::Refused {
+                    reason: SendReason::InvalidAction,
+                    ..
+                }
+            ),
+            "button type {button_type}"
+        );
+        assert!(rec.menus.is_empty());
+        assert!(rec.actions.is_empty());
+    }
+}
+
+#[test]
+fn explicit_continue_refuses_hidden_ancestors_closed_roots_and_client_code() {
+    for (hidden, closed, client_code, reason) in [
+        (Some(102), false, false, SendReason::ComponentNotVisible),
+        (Some(100), false, false, SendReason::ComponentNotVisible),
+        (None, true, false, SendReason::StaleTarget),
+        (None, false, true, SendReason::ClientSideOnly),
+    ] {
+        let mut s = scene();
+        plant_modal(&mut s.client);
+        let component_id = if client_code { 103 } else { 102 };
+        set_iface_mut(
+            &mut s.client,
+            component_id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                hide: hidden == Some(component_id),
+                ..Default::default()
+            },
+        );
+        if hidden == Some(100) {
+            set_iface_mut(
+                &mut s.client,
+                100,
+                IfTypeMut {
+                    hide: true,
+                    ..Default::default()
+                },
+            );
+        }
+        if closed {
+            s.client.main_modal_id = -1;
+        }
+        let snap = rebuild(&mut s.client);
+        let mut rec = Recorder::default();
+        assert!(matches!(
+            Interactions::new(&snap, &mut rec).continue_dialog(Some(component_id as i32)),
+            SendResult::Refused { reason: actual, .. } if actual == reason
+        ));
+        assert!(rec.menus.is_empty());
+        assert!(rec.actions.is_empty());
+    }
 }
 
 /// `answer_choice` presses the chat modal's `option`-th BUTTON_OK choice

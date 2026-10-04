@@ -559,7 +559,7 @@ impl Guardian {
             }
             let mut ix = Interactions::new(snap, driver);
             let result = if snap.chat_options().is_empty() {
-                ix.continue_dialog()
+                ix.continue_dialog(None)
             } else {
                 ix.answer_choice(1)
             };
@@ -883,7 +883,7 @@ impl Guardian {
                 }
                 if chat_is_open(snap) {
                     let mut ix = Interactions::new(snap, driver);
-                    match ix.continue_dialog() {
+                    match ix.continue_dialog(None) {
                         SendResult::Sent { .. } => {
                             if let PlantProbe::Authenticated { continues, .. } = &mut self.plant {
                                 *continues += 1;
@@ -1261,7 +1261,7 @@ impl Guardian {
             }
             if chat && self.lamp_dialog < MAX_LAMP_DIALOGUE {
                 let mut ix = Interactions::new(snap, driver);
-                if matches!(ix.continue_dialog(), SendResult::Sent { .. }) {
+                if matches!(ix.continue_dialog(None), SendResult::Sent { .. }) {
                     self.lamp_dialog += 1;
                     self.lamp_wait = 0;
                     return;
@@ -1489,7 +1489,7 @@ fn step_maze_phase<D: Driver>(
         if st.continues < maze::MESBOX_LIMIT {
             st.continues += 1;
             let mut ix = Interactions::new(snap, driver);
-            let _ = ix.continue_dialog();
+            let _ = ix.continue_dialog(None);
         }
         return true;
     }

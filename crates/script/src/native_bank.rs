@@ -7,8 +7,8 @@
 //! kernel.
 use crate::bank::npc;
 use crate::bank::ops::{
-    self, DepositKind, DepositScan, DepositSpec, NoteIntent, Progress, WithdrawGoal,
-    DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO, TRANSFER_BOUND,
+    self, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec, NoteIntent, Progress,
+    WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO, TRANSFER_BOUND,
 };
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
@@ -266,7 +266,12 @@ enum Phase {
         item_id: i32,
         evidence: EvidenceStamp,
     },
-    AwaitClose,
+    /// The Close verb's bank session and side root, and the login run
+    /// that sent it.
+    AwaitClose {
+        baseline: CloseBaseline,
+        run: api::selected::RunKey,
+    },
 }
 
 pub struct BankMachine {
@@ -367,16 +372,22 @@ impl NativeMachine for BankMachine {
             match self.phase {
                 Phase::Open => {
                     if matches!(self.request.action, BankAction::Close) {
-                        let open = cx
-                            .snapshot()
-                            .bank_session()
-                            .is_some_and(|session| session.value.open);
-                        if !open {
+                        let Some(session) = cx.snapshot().bank_session().map(|s| s.value) else {
+                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        };
+                        if ops::close_begin(session.open).is_some() {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         }
+                        let run = cx.evidence().run;
                         cx.emit(InteractReq::Close)?;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitClose;
+                        self.deadline = cx.active_now().saturating_add(ops::close_deadline(None));
+                        self.phase = Phase::AwaitClose {
+                            baseline: CloseBaseline {
+                                generation: session.generation,
+                                side: session.side,
+                            },
+                            run,
+                        };
                         return Poll::Pending;
                     }
                     if matches!(
@@ -954,20 +965,34 @@ impl NativeMachine for BankMachine {
                     }
                     return Poll::Pending;
                 }
-                Phase::AwaitClose => {
-                    let open = cx
-                        .snapshot()
-                        .bank_session()
-                        .is_some_and(|session| session.value.open);
-                    if !open {
-                        return Poll::Ready(Ok(self.receipt(cx, true)));
+                Phase::AwaitClose { baseline, run } => {
+                    let session = cx.snapshot().bank_session().map(|s| s.value);
+                    // Logged out: no session to read; the replaced login
+                    // settles it whatever the other facts say.
+                    let same_login = session.is_some() && cx.evidence().run == run;
+                    match ops::close_progress(
+                        session.is_some_and(|s| s.open),
+                        session.map_or(-1, |s| s.side),
+                        session.map_or(baseline.generation, |s| s.generation),
+                        baseline,
+                        same_login,
+                        cx.active_now() >= self.deadline,
+                    ) {
+                        CloseScan::Complete | CloseScan::AlreadyShut => {
+                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        }
+                        CloseScan::Waiting | CloseScan::SideHeld => return Poll::Pending,
+                        CloseScan::SessionReplaced => {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank session replaced before the close settled",
+                            ))));
+                        }
+                        CloseScan::TimedOut => {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank did not close",
+                            ))));
+                        }
                     }
-                    if cx.active_now() >= self.deadline {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank did not close",
-                        ))));
-                    }
-                    return Poll::Pending;
                 }
             }
         }
@@ -1639,7 +1664,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 2),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(2, vec!["Second page".into()]);
@@ -1652,7 +1677,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 4),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(3, vec!["Final page".into()]);
@@ -2281,6 +2306,87 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
+    }
+
+    /// P-close (native): already shut is true with no verb. A Close is done
+    /// only once the bank is shut, its old side root released and the
+    /// session generation newer; main shut with the side still up keeps
+    /// waiting. A reopened session or the 4 s bound fails it.
+    #[test]
+    fn close_settles_on_the_acknowledged_close_not_the_main_root() {
+        let open = || {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+            snapshot
+        };
+        let close = || bank_request(BankAction::Close, false);
+        let poll_at = |snapshot: &GameSnapshot,
+                       ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+                       handle: &crate::native::ActionHandle<BankMachine>,
+                       tick: u64| {
+            with_tick(snapshot, ledger, tick, |t| {
+                t.actions.poll(handle, &mut t.cx)
+            })
+        };
+
+        let mut shut = GameSnapshot::new();
+        shut.seed_ingame(2);
+        let mut ledger = None;
+        let (_, poll) = begin_bank(&shut, &mut ledger, close());
+        assert!(matches!(
+            poll,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+        let mut snapshot = open();
+        let side = snapshot.modals().side;
+        assert!(side >= 0, "the fixture raises a side root");
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, close());
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Close)
+        ));
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        snapshot.seed_side_modal(side);
+        assert!(
+            poll_at(&snapshot, &mut ledger, &handle, 2).is_pending(),
+            "main shut, old side root still up"
+        );
+        snapshot.seed_side_modal(-1);
+        assert!(matches!(
+            poll_at(&snapshot, &mut ledger, &handle, 3),
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+
+        // Reopened as another session before the close settled.
+        let mut snapshot = open();
+        let mut ledger = None;
+        let (handle, _) = begin_bank(&snapshot, &mut ledger, close());
+        let _ = acknowledge(&mut ledger, 1);
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        assert!(matches!(
+            poll_at(&snapshot, &mut ledger, &handle, 2),
+            Poll::Ready(Err(ActionError::Failed(_)))
+        ));
+
+        // Still open at the 4 s bound (tick 1 + 4 s is tick 8 at 600 ms).
+        let snapshot = open();
+        let mut ledger = None;
+        let (handle, _) = begin_bank(&snapshot, &mut ledger, close());
+        let _ = acknowledge(&mut ledger, 1);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 7).is_pending());
+        assert!(matches!(
+            poll_at(&snapshot, &mut ledger, &handle, 8),
+            Poll::Ready(Err(ActionError::Failed(_)))
+        ));
     }
 
     #[test]

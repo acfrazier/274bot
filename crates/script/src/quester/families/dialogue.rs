@@ -287,7 +287,7 @@ impl Dialogue {
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
             self.phase = Phase::WaitContinueAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
-            return match cx.emit(InteractReq::ContinueDialog) {
+            return match cx.emit(InteractReq::ContinueDialog { component_id: None }) {
                 Ok(_) => Poll::Pending,
                 Err(error) => Poll::Ready(Err(error)),
             };

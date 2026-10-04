@@ -946,7 +946,7 @@ impl StepRun for EquipmentRun {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LoadoutArgs {
+pub(super) struct LoadoutArgs {
     loadout: String,
     #[serde(default)]
     at: Option<String>,
@@ -954,6 +954,9 @@ struct LoadoutArgs {
     allow_lower_tier: bool,
     #[serde(default)]
     strip: bool,
+    /// Require exactly the listed worn items; remove other worn items into inventory.
+    #[serde(default)]
+    exclusive: bool,
 }
 
 pub fn compile_loadout(
@@ -962,6 +965,9 @@ pub fn compile_loadout(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let args: LoadoutArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if args.exclusive && (args.strip || args.allow_lower_tier) {
+        return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
+    }
     if args
         .at
         .as_deref()
@@ -1021,6 +1027,7 @@ pub fn compile_loadout(
         resolved: Arc::from(resolved),
         allow_lower_tier: args.allow_lower_tier,
         strip: args.strip,
+        exclusive: args.exclusive,
     }))
 }
 
@@ -1032,6 +1039,7 @@ struct LoadoutPlan {
     resolved: Arc<[BankItem]>,
     allow_lower_tier: bool,
     strip: bool,
+    exclusive: bool,
 }
 impl StepPlan for LoadoutPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
@@ -1077,10 +1085,19 @@ impl StepPlan for LoadoutPlan {
         let mut worn = Vec::new();
         if !self.strip {
             for carry in &self.row.carry {
-                bank_actions.push(BankAction::Withdraw {
-                    item: resolve(&carry.item)?,
-                    qty: i32::try_from(carry.qty).unwrap_or(i32::MAX),
-                });
+                let item = resolve(&carry.item)?;
+                let qty = i32::try_from(carry.qty).unwrap_or(i32::MAX);
+                if !snapshot.inventory().is_some_and(|inventory| {
+                    inventory
+                        .value
+                        .iter()
+                        .filter(|row| row.def.id == item.id)
+                        .map(|row| i64::from(row.count.max(0)))
+                        .sum::<i64>()
+                        >= i64::from(qty)
+                }) {
+                    bank_actions.push(BankAction::Withdraw { item, qty });
+                }
             }
             for (slot, name) in &self.row.worn {
                 let names = if self.allow_lower_tier {
@@ -1102,7 +1119,17 @@ impl StepPlan for LoadoutPlan {
                         items: Arc::from(items.clone()),
                         qty: 1,
                     });
-                } else {
+                } else if !snapshot.equipment().is_some_and(|equipment| {
+                    equipment
+                        .value
+                        .iter()
+                        .any(|row| row.count > 0 && row.def.id == items[0].id)
+                }) && !snapshot.inventory().is_some_and(|inventory| {
+                    inventory
+                        .value
+                        .iter()
+                        .any(|row| row.count > 0 && row.def.id == items[0].id)
+                }) {
                     bank_actions.push(BankAction::Withdraw {
                         item: items[0].clone(),
                         qty: 1,
@@ -1110,7 +1137,9 @@ impl StepPlan for LoadoutPlan {
                 }
                 worn.push(Arc::from(items));
             }
-            bank_actions.push(BankAction::Close);
+            if !bank_actions.is_empty() {
+                bank_actions.push(BankAction::Close);
+            }
         }
         Ok(Box::new(LoadoutRun {
             bank: if bank_actions.is_empty() {
@@ -1129,6 +1158,8 @@ impl StepPlan for LoadoutPlan {
             equipment: None,
             strip: self.strip,
             stripped: false,
+            exclusive: self.exclusive,
+            removing: false,
             receipt: None,
         }))
     }
@@ -1141,10 +1172,84 @@ struct LoadoutRun {
     equipment: Option<ActionHandle<EquipmentMachine>>,
     strip: bool,
     stripped: bool,
+    exclusive: bool,
+    removing: bool,
     receipt: Option<Arc<dyn FamilyReceipt>>,
 }
 impl StepRun for LoadoutRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if let Some(handle) = &self.equipment {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.equipment = None;
+                    if self.removing {
+                        self.removing = false;
+                    } else if self.strip {
+                        self.stripped = true;
+                    } else {
+                        self.worn_index += 1;
+                    }
+                }
+            }
+        }
+        if self.exclusive {
+            let snapshot = cx.tick.cx.snapshot();
+            let Some(equipment) = snapshot.equipment() else {
+                return Poll::Pending;
+            };
+            if let Some(extra) = equipment.value.iter().find(|row| {
+                row.count > 0
+                    && !self
+                        .worn
+                        .iter()
+                        .any(|items| items.iter().any(|wanted| wanted.id == row.def.id))
+            }) {
+                let (Some(inventory), Some(capacity)) =
+                    (snapshot.inventory(), snapshot.inventory_capacity())
+                else {
+                    return Poll::Pending;
+                };
+                let held_stack = inventory
+                    .value
+                    .iter()
+                    .find(|row| row.count > 0 && row.def.id == extra.def.id);
+                let space = if extra.def.stackable {
+                    held_stack.map_or_else(
+                        || {
+                            inventory.value.iter().filter(|row| row.count > 0).count()
+                                < usize::from(capacity.value)
+                        },
+                        |held| {
+                            i64::from(held.count) + i64::from(extra.count) <= i64::from(i32::MAX)
+                        },
+                    )
+                } else {
+                    inventory.value.iter().filter(|row| row.count > 0).count()
+                        < usize::from(capacity.value)
+                };
+                if !space {
+                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                        "exclusive loadout: inventory space required to remove worn items",
+                    ))));
+                }
+                let Some(name) = extra.def.name.as_deref() else {
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                        "exclusive loadout: worn item name unavailable",
+                    ))));
+                };
+                self.equipment = Some(cx.tick.actions.begin::<EquipmentMachine>(
+                    EquipmentRequest::Unequip {
+                        id: extra.def.id,
+                        name: Arc::from(name),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                self.removing = true;
+                return Poll::Pending;
+            }
+        }
         if let Some(bank) = &mut self.bank {
             match bank.poll(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1152,20 +1257,6 @@ impl StepRun for LoadoutRun {
                 Poll::Ready(Ok(outcome)) => {
                     self.receipt = outcome.receipt;
                     self.bank = None;
-                }
-            }
-        }
-        if let Some(handle) = &self.equipment {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => {
-                    self.equipment = None;
-                    if self.strip {
-                        self.stripped = true;
-                    } else {
-                        self.worn_index += 1;
-                    }
                 }
             }
         }
@@ -1291,6 +1382,9 @@ pub fn compile_loadout_ready(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     let args: LoadoutArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if args.exclusive && (args.strip || args.allow_lower_tier) {
+        return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
+    }
     let qualified = if args.loadout.contains('/') {
         args.loadout
     } else {
@@ -1346,6 +1440,7 @@ pub fn compile_loadout_ready(
         carry: Arc::from(carry),
         worn: Arc::from(worn),
         strip: args.strip,
+        exclusive: args.exclusive,
     }))
 }
 
@@ -1353,6 +1448,7 @@ struct LoadoutReady {
     carry: Arc<[(i32, i32)]>,
     worn: Arc<[Arc<[i32]>]>,
     strip: bool,
+    exclusive: bool,
 }
 impl PredicatePlan for LoadoutReady {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
@@ -1379,10 +1475,66 @@ impl PredicatePlan for LoadoutReady {
                 equipment
                     .value
                     .iter()
-                    .any(|item| ids.contains(&item.def.id))
+                    .any(|item| item.count > 0 && ids.contains(&item.def.id))
             })
         };
-        if carry_ready && worn_ready {
+        let no_extra_equipment = !self.exclusive
+            || equipment.value.iter().all(|item| {
+                item.count <= 0 || self.worn.iter().any(|ids| ids.contains(&item.def.id))
+            });
+        if carry_ready && worn_ready && no_extra_equipment {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EquipmentOnlyArgs {
+    /// Exact set of object aliases that must be worn; an empty list requires no equipment.
+    objs: Vec<String>,
+}
+
+pub fn compile_equipment_only(
+    args: &serde_json::Value,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let args: EquipmentOnlyArgs =
+        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let mut ids = args
+        .objs
+        .iter()
+        .map(|alias| item(cx, alias).map(|item| item.id))
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(Arc::new(EquipmentOnly {
+        ids: Arc::from(ids),
+    }))
+}
+
+struct EquipmentOnly {
+    ids: Arc<[i32]>,
+}
+
+impl PredicatePlan for EquipmentOnly {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let Some(equipment) = cx.cx.snapshot().equipment() else {
+            return Truth::Unknown;
+        };
+        let exact = equipment
+            .value
+            .iter()
+            .all(|item| item.count <= 0 || self.ids.contains(&item.def.id))
+            && self.ids.iter().all(|id| {
+                equipment
+                    .value
+                    .iter()
+                    .any(|item| item.count > 0 && item.def.id == *id)
+            });
+        if exact {
             Truth::True
         } else {
             Truth::False

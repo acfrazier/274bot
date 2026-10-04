@@ -83268,6 +83268,24 @@
   ],
   "gather_sites": [
     {
+      "id": "woodcutting.agility_arena",
+      "skill": "woodcutting",
+      "label": "Agility Arena · Logs 42",
+      "region": {
+        "min_x": 2828,
+        "min_z": 3160,
+        "max_x": 2859,
+        "max_z": 3187,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 42
+        }
+      ]
+    },
+    {
       "id": "mining.agility_arena.ne",
       "skill": "mining",
       "label": "Agility Arena NE50 · Adamantite ore 3, Coal 3",
@@ -83290,20 +83308,36 @@
       ]
     },
     {
-      "id": "woodcutting.agility_arena",
+      "id": "woodcutting.agility_training_area",
       "skill": "woodcutting",
-      "label": "Agility Arena · Logs 42",
+      "label": "Agility Training Area · Logs 57, Oak logs 38, Yew logs 2 +2",
       "region": {
-        "min_x": 2828,
-        "min_z": 3160,
-        "max_x": 2859,
-        "max_z": 3187,
+        "min_x": 2419,
+        "min_z": 3371,
+        "max_x": 2513,
+        "max_z": 3453,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 42
+          "count": 57
+        },
+        {
+          "key": "oak",
+          "count": 38
+        },
+        {
+          "key": "yew",
+          "count": 2
+        },
+        {
+          "key": "magic",
+          "count": 1
+        },
+        {
+          "key": "willow",
+          "count": 1
         }
       ]
     },
@@ -83414,36 +83448,24 @@
       ]
     },
     {
-      "id": "woodcutting.agility_training_area",
-      "skill": "woodcutting",
-      "label": "Agility Training Area · Logs 57, Oak logs 38, Yew logs 2 +2",
+      "id": "fishing.al_kharid",
+      "skill": "fishing",
+      "label": "Al Kharid · Bait, Net",
       "region": {
-        "min_x": 2419,
-        "min_z": 3371,
-        "max_x": 2513,
-        "max_z": 3453,
+        "min_x": 3267,
+        "min_z": 3140,
+        "max_x": 3276,
+        "max_z": 3148,
         "level": 0
       },
       "keys": [
         {
-          "key": "normal",
-          "count": 57
-        },
-        {
-          "key": "oak",
-          "count": 38
-        },
-        {
-          "key": "yew",
+          "key": "fishing.bait.tool_307.products_327_345",
           "count": 2
         },
         {
-          "key": "magic",
-          "count": 1
-        },
-        {
-          "key": "willow",
-          "count": 1
+          "key": "fishing.net.tool_303.products_317_321",
+          "count": 2
         }
       ]
     },
@@ -83474,24 +83496,20 @@
       ]
     },
     {
-      "id": "fishing.al_kharid",
-      "skill": "fishing",
-      "label": "Al Kharid · Bait, Net",
+      "id": "woodcutting.arandar",
+      "skill": "woodcutting",
+      "label": "Arandar · Logs 10",
       "region": {
-        "min_x": 3267,
-        "min_z": 3140,
-        "max_x": 3276,
-        "max_z": 3148,
+        "min_x": 2344,
+        "min_z": 3271,
+        "max_x": 2352,
+        "max_z": 3306,
         "level": 0
       },
       "keys": [
         {
-          "key": "fishing.bait.tool_307.products_327_345",
-          "count": 2
-        },
-        {
-          "key": "fishing.net.tool_303.products_317_321",
-          "count": 2
+          "key": "normal",
+          "count": 10
         }
       ]
     },
@@ -83622,46 +83640,6 @@
       ]
     },
     {
-      "id": "woodcutting.arandar",
-      "skill": "woodcutting",
-      "label": "Arandar · Logs 10",
-      "region": {
-        "min_x": 2344,
-        "min_z": 3271,
-        "max_x": 2352,
-        "max_z": 3306,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 10
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.ardougne_east.2",
-      "skill": "woodcutting",
-      "label": "Ardougne East (2) · Logs 8, Oak logs 1",
-      "region": {
-        "min_x": 2628,
-        "min_z": 3269,
-        "max_x": 2644,
-        "max_z": 3309,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 8
-        },
-        {
-          "key": "oak",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "woodcutting.ardougne_east",
       "skill": "woodcutting",
       "label": "Ardougne East · Logs 47, Oak logs 19, Willow logs 8",
@@ -83688,6 +83666,28 @@
       ]
     },
     {
+      "id": "woodcutting.ardougne_east.2",
+      "skill": "woodcutting",
+      "label": "Ardougne East (2) · Logs 8, Oak logs 1",
+      "region": {
+        "min_x": 2628,
+        "min_z": 3269,
+        "max_x": 2644,
+        "max_z": 3309,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 8
+        },
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "fishing.ardougne_river",
       "skill": "fishing",
       "label": "Ardougne River · Bait, Lure",
@@ -83706,28 +83706,6 @@
         {
           "key": "fishing.lure.tool_309.products_331_335",
           "count": 2
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.ardougne_west.2",
-      "skill": "woodcutting",
-      "label": "Ardougne West (2) · Logs 48, Oak logs 13",
-      "region": {
-        "min_x": 2624,
-        "min_z": 3317,
-        "max_x": 2674,
-        "max_z": 3384,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 48
-        },
-        {
-          "key": "oak",
-          "count": 13
         }
       ]
     },
@@ -83754,6 +83732,50 @@
         {
           "key": "willow",
           "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.ardougne_west.2",
+      "skill": "woodcutting",
+      "label": "Ardougne West (2) · Logs 48, Oak logs 13",
+      "region": {
+        "min_x": 2624,
+        "min_z": 3317,
+        "max_x": 2674,
+        "max_z": 3384,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 48
+        },
+        {
+          "key": "oak",
+          "count": 13
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.bandit_camp",
+      "skill": "woodcutting",
+      "label": "Bandit Camp · Logs 202, Charcoal 11",
+      "region": {
+        "min_x": 3001,
+        "min_z": 3635,
+        "max_x": 3100,
+        "max_z": 3738,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 202
+        },
+        {
+          "key": "burnt",
+          "count": 11
         }
       ]
     },
@@ -83806,24 +83828,28 @@
       ]
     },
     {
-      "id": "woodcutting.bandit_camp",
+      "id": "woodcutting.barbarian_outpost",
       "skill": "woodcutting",
-      "label": "Bandit Camp · Logs 202, Charcoal 11",
+      "label": "Barbarian Outpost · Logs 32, Willow logs 5, Oak logs 1",
       "region": {
-        "min_x": 3001,
-        "min_z": 3635,
-        "max_x": 3100,
-        "max_z": 3738,
+        "min_x": 2516,
+        "min_z": 3561,
+        "max_x": 2555,
+        "max_z": 3585,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 202
+          "count": 32
         },
         {
-          "key": "burnt",
-          "count": 11
+          "key": "willow",
+          "count": 5
+        },
+        {
+          "key": "oak",
+          "count": 1
         }
       ]
     },
@@ -83850,28 +83876,46 @@
       ]
     },
     {
-      "id": "woodcutting.barbarian_outpost",
-      "skill": "woodcutting",
-      "label": "Barbarian Outpost · Logs 32, Willow logs 5, Oak logs 1",
+      "id": "fishing.barbarian_village",
+      "skill": "fishing",
+      "label": "Barbarian Village · Bait, Lure",
       "region": {
-        "min_x": 2516,
-        "min_z": 3561,
-        "max_x": 2555,
-        "max_z": 3585,
+        "min_x": 3104,
+        "min_z": 3424,
+        "max_x": 3110,
+        "max_z": 3434,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_307.products_349",
+          "count": 2
+        },
+        {
+          "key": "fishing.lure.tool_309.products_331_335",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.barbarian_village",
+      "skill": "woodcutting",
+      "label": "Barbarian Village · Logs 87, Oak logs 4",
+      "region": {
+        "min_x": 3035,
+        "min_z": 3381,
+        "max_x": 3105,
+        "max_z": 3416,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 32
-        },
-        {
-          "key": "willow",
-          "count": 5
+          "count": 87
         },
         {
           "key": "oak",
-          "count": 1
+          "count": 4
         }
       ]
     },
@@ -83920,46 +83964,28 @@
       ]
     },
     {
-      "id": "fishing.barbarian_village",
-      "skill": "fishing",
-      "label": "Barbarian Village · Bait, Lure",
-      "region": {
-        "min_x": 3104,
-        "min_z": 3424,
-        "max_x": 3110,
-        "max_z": 3434,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_349",
-          "count": 2
-        },
-        {
-          "key": "fishing.lure.tool_309.products_331_335",
-          "count": 2
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.barbarian_village",
+      "id": "woodcutting.battlefield",
       "skill": "woodcutting",
-      "label": "Barbarian Village · Logs 87, Oak logs 4",
+      "label": "Battlefield · Logs 94, Willow logs 10, Oak logs 5",
       "region": {
-        "min_x": 3035,
-        "min_z": 3381,
-        "max_x": 3105,
-        "max_z": 3416,
+        "min_x": 2459,
+        "min_z": 3190,
+        "max_x": 2538,
+        "max_z": 3269,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 87
+          "count": 94
+        },
+        {
+          "key": "willow",
+          "count": 10
         },
         {
           "key": "oak",
-          "count": 4
+          "count": 5
         }
       ]
     },
@@ -84022,76 +84048,6 @@
       ]
     },
     {
-      "id": "woodcutting.battlefield",
-      "skill": "woodcutting",
-      "label": "Battlefield · Logs 94, Willow logs 10, Oak logs 5",
-      "region": {
-        "min_x": 2459,
-        "min_z": 3190,
-        "max_x": 2538,
-        "max_z": 3269,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 94
-        },
-        {
-          "key": "willow",
-          "count": 10
-        },
-        {
-          "key": "oak",
-          "count": 5
-        }
-      ]
-    },
-    {
-      "id": "fishing.baxtorian_falls.2",
-      "skill": "fishing",
-      "label": "Baxtorian Falls (2) · Bait, Lure",
-      "region": {
-        "min_x": 2508,
-        "min_z": 3421,
-        "max_x": 2508,
-        "max_z": 3421,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_349",
-          "count": 1
-        },
-        {
-          "key": "fishing.lure.tool_309.products_331_335",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.baxtorian_falls.2",
-      "skill": "woodcutting",
-      "label": "Baxtorian Falls (2) · Logs 35, Oak logs 9",
-      "region": {
-        "min_x": 2524,
-        "min_z": 3417,
-        "max_x": 2550,
-        "max_z": 3496,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 35
-        },
-        {
-          "key": "oak",
-          "count": 9
-        }
-      ]
-    },
-    {
       "id": "fishing.baxtorian_falls",
       "skill": "fishing",
       "label": "Baxtorian Falls · Bait, Lure",
@@ -84136,6 +84092,50 @@
         {
           "key": "willow",
           "count": 1
+        }
+      ]
+    },
+    {
+      "id": "fishing.baxtorian_falls.2",
+      "skill": "fishing",
+      "label": "Baxtorian Falls (2) · Bait, Lure",
+      "region": {
+        "min_x": 2508,
+        "min_z": 3421,
+        "max_x": 2508,
+        "max_z": 3421,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_307.products_349",
+          "count": 1
+        },
+        {
+          "key": "fishing.lure.tool_309.products_331_335",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.baxtorian_falls.2",
+      "skill": "woodcutting",
+      "label": "Baxtorian Falls (2) · Logs 35, Oak logs 9",
+      "region": {
+        "min_x": 2524,
+        "min_z": 3417,
+        "max_x": 2550,
+        "max_z": 3496,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 35
+        },
+        {
+          "key": "oak",
+          "count": 9
         }
       ]
     },
@@ -84188,6 +84188,24 @@
         {
           "key": "oak",
           "count": 8
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.bone_yard",
+      "skill": "woodcutting",
+      "label": "Bone Yard · Logs 197",
+      "region": {
+        "min_x": 3248,
+        "min_z": 3714,
+        "max_x": 3310,
+        "max_z": 3769,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 197
         }
       ]
     },
@@ -84268,24 +84286,6 @@
       ]
     },
     {
-      "id": "woodcutting.bone_yard",
-      "skill": "woodcutting",
-      "label": "Bone Yard · Logs 197",
-      "region": {
-        "min_x": 3248,
-        "min_z": 3714,
-        "max_x": 3310,
-        "max_z": 3769,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 197
-        }
-      ]
-    },
-    {
       "id": "mining.brimhaven.nw",
       "skill": "mining",
       "label": "Brimhaven NW49 · Gold ore 10",
@@ -84318,6 +84318,24 @@
         {
           "key": "gold",
           "count": 6
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.burthorpe",
+      "skill": "woodcutting",
+      "label": "Burthorpe · Logs 3",
+      "region": {
+        "min_x": 2910,
+        "min_z": 3548,
+        "max_x": 2916,
+        "max_z": 3550,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 3
         }
       ]
     },
@@ -84358,24 +84376,6 @@
       ]
     },
     {
-      "id": "woodcutting.burthorpe",
-      "skill": "woodcutting",
-      "label": "Burthorpe · Logs 3",
-      "region": {
-        "min_x": 2910,
-        "min_z": 3548,
-        "max_x": 2916,
-        "max_z": 3550,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 3
-        }
-      ]
-    },
-    {
       "id": "fishing.cairn_isle.ne",
       "skill": "fishing",
       "label": "Cairn Isle NE31 · Net",
@@ -84412,24 +84412,6 @@
       ]
     },
     {
-      "id": "fishing.canifis.sw",
-      "skill": "fishing",
-      "label": "Canifis SW31 · Bait",
-      "region": {
-        "min_x": 3479,
-        "min_z": 3430,
-        "max_x": 3490,
-        "max_z": 3449,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_3379",
-          "count": 5
-        }
-      ]
-    },
-    {
       "id": "woodcutting.canifis",
       "skill": "woodcutting",
       "label": "Canifis · Bark 7",
@@ -84448,20 +84430,20 @@
       ]
     },
     {
-      "id": "woodcutting.castle_wars.nw",
-      "skill": "woodcutting",
-      "label": "Castle Wars NW42 · Logs 8",
+      "id": "fishing.canifis.sw",
+      "skill": "fishing",
+      "label": "Canifis SW31 · Bait",
       "region": {
-        "min_x": 2369,
-        "min_z": 3153,
-        "max_x": 2392,
-        "max_z": 3174,
+        "min_x": 3479,
+        "min_z": 3430,
+        "max_x": 3490,
+        "max_z": 3449,
         "level": 0
       },
       "keys": [
         {
-          "key": "normal",
-          "count": 8
+          "key": "fishing.bait.tool_307.products_3379",
+          "count": 5
         }
       ]
     },
@@ -84488,6 +84470,84 @@
         {
           "key": "willow",
           "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.castle_wars.nw",
+      "skill": "woodcutting",
+      "label": "Castle Wars NW42 · Logs 8",
+      "region": {
+        "min_x": 2369,
+        "min_z": 3153,
+        "max_x": 2392,
+        "max_z": 3174,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "id": "fishing.catherby",
+      "skill": "fishing",
+      "label": "Catherby · Harpoon, Net, Bait, Cage",
+      "region": {
+        "min_x": 2836,
+        "min_z": 3423,
+        "max_x": 2859,
+        "max_z": 3431,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.harpoon.tool_311.products_383",
+          "count": 3
+        },
+        {
+          "key": "fishing.net.tool_305.products_341_353_363_401_405_407_1059_1061",
+          "count": 3
+        },
+        {
+          "key": "fishing.bait.tool_307.products_327_345",
+          "count": 2
+        },
+        {
+          "key": "fishing.cage.tool_301.products_377",
+          "count": 2
+        },
+        {
+          "key": "fishing.harpoon.tool_311.products_359_371",
+          "count": 2
+        },
+        {
+          "key": "fishing.net.tool_303.products_317_321",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.catherby",
+      "skill": "woodcutting",
+      "label": "Catherby · Logs 36, Oak logs 3",
+      "region": {
+        "min_x": 2791,
+        "min_z": 3438,
+        "max_x": 2814,
+        "max_z": 3475,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 36
+        },
+        {
+          "key": "oak",
+          "count": 3
         }
       ]
     },
@@ -84554,62 +84614,32 @@
       ]
     },
     {
-      "id": "fishing.catherby",
-      "skill": "fishing",
-      "label": "Catherby · Harpoon, Net, Bait, Cage",
-      "region": {
-        "min_x": 2836,
-        "min_z": 3423,
-        "max_x": 2859,
-        "max_z": 3431,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.harpoon.tool_311.products_383",
-          "count": 3
-        },
-        {
-          "key": "fishing.net.tool_305.products_341_353_363_401_405_407_1059_1061",
-          "count": 3
-        },
-        {
-          "key": "fishing.bait.tool_307.products_327_345",
-          "count": 2
-        },
-        {
-          "key": "fishing.cage.tool_301.products_377",
-          "count": 2
-        },
-        {
-          "key": "fishing.harpoon.tool_311.products_359_371",
-          "count": 2
-        },
-        {
-          "key": "fishing.net.tool_303.products_317_321",
-          "count": 2
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.catherby",
+      "id": "woodcutting.champions_guild",
       "skill": "woodcutting",
-      "label": "Catherby · Logs 36, Oak logs 3",
+      "label": "Champions' Guild · Logs 56, Oak logs 19, Willow logs 4 +1",
       "region": {
-        "min_x": 2791,
-        "min_z": 3438,
-        "max_x": 2814,
-        "max_z": 3475,
+        "min_x": 3159,
+        "min_z": 3314,
+        "max_x": 3261,
+        "max_z": 3395,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 36
+          "count": 56
         },
         {
           "key": "oak",
-          "count": 3
+          "count": 19
+        },
+        {
+          "key": "willow",
+          "count": 4
+        },
+        {
+          "key": "yew",
+          "count": 1
         }
       ]
     },
@@ -84650,32 +84680,24 @@
       ]
     },
     {
-      "id": "woodcutting.champions_guild",
+      "id": "woodcutting.chaos_temple",
       "skill": "woodcutting",
-      "label": "Champions' Guild · Logs 56, Oak logs 19, Willow logs 4 +1",
+      "label": "Chaos Temple · Logs 529, Charcoal 7",
       "region": {
-        "min_x": 3159,
-        "min_z": 3314,
-        "max_x": 3261,
-        "max_z": 3395,
+        "min_x": 3175,
+        "min_z": 3548,
+        "max_x": 3302,
+        "max_z": 3670,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 56
+          "count": 529
         },
         {
-          "key": "oak",
-          "count": 19
-        },
-        {
-          "key": "willow",
-          "count": 4
-        },
-        {
-          "key": "yew",
-          "count": 1
+          "key": "burnt",
+          "count": 7
         }
       ]
     },
@@ -84756,28 +84778,6 @@
         {
           "key": "normal",
           "count": 10
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.chaos_temple",
-      "skill": "woodcutting",
-      "label": "Chaos Temple · Logs 529, Charcoal 7",
-      "region": {
-        "min_x": 3175,
-        "min_z": 3548,
-        "max_x": 3302,
-        "max_z": 3670,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 529
-        },
-        {
-          "key": "burnt",
-          "count": 7
         }
       ]
     },
@@ -84930,6 +84930,28 @@
       ]
     },
     {
+      "id": "woodcutting.dark_knight_fortress",
+      "skill": "woodcutting",
+      "label": "Dark Knight Fortress · Logs 275, Charcoal 4",
+      "region": {
+        "min_x": 2967,
+        "min_z": 3578,
+        "max_x": 3094,
+        "max_z": 3659,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 275
+        },
+        {
+          "key": "burnt",
+          "count": 4
+        }
+      ]
+    },
+    {
       "id": "mining.dark_knight_fortress.s",
       "skill": "mining",
       "label": "Dark Knight Fortress S35 · Coal 34",
@@ -84966,24 +84988,28 @@
       ]
     },
     {
-      "id": "woodcutting.dark_knight_fortress",
+      "id": "woodcutting.dark_wizards_tower",
       "skill": "woodcutting",
-      "label": "Dark Knight Fortress · Logs 275, Charcoal 4",
+      "label": "Dark Wizards' Tower · Logs 105, Willow logs 11, Oak logs 3",
       "region": {
-        "min_x": 2967,
-        "min_z": 3578,
-        "max_x": 3094,
-        "max_z": 3659,
+        "min_x": 2882,
+        "min_z": 3310,
+        "max_x": 2933,
+        "max_z": 3394,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 275
+          "count": 105
         },
         {
-          "key": "burnt",
-          "count": 4
+          "key": "willow",
+          "count": 11
+        },
+        {
+          "key": "oak",
+          "count": 3
         }
       ]
     },
@@ -85080,32 +85106,6 @@
       ]
     },
     {
-      "id": "woodcutting.dark_wizards_tower",
-      "skill": "woodcutting",
-      "label": "Dark Wizards' Tower · Logs 105, Willow logs 11, Oak logs 3",
-      "region": {
-        "min_x": 2882,
-        "min_z": 3310,
-        "max_x": 2933,
-        "max_z": 3394,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 105
-        },
-        {
-          "key": "willow",
-          "count": 11
-        },
-        {
-          "key": "oak",
-          "count": 3
-        }
-      ]
-    },
-    {
       "id": "woodcutting.death_plateau.sw",
       "skill": "woodcutting",
       "label": "Death Plateau SW43 · Logs 5",
@@ -85120,6 +85120,24 @@
         {
           "key": "normal",
           "count": 5
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.demonic_ruins",
+      "skill": "woodcutting",
+      "label": "Demonic Ruins · Charcoal 6",
+      "region": {
+        "min_x": 3296,
+        "min_z": 3872,
+        "max_x": 3322,
+        "max_z": 3885,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "burnt",
+          "count": 6
         }
       ]
     },
@@ -85182,24 +85200,6 @@
       ]
     },
     {
-      "id": "woodcutting.demonic_ruins",
-      "skill": "woodcutting",
-      "label": "Demonic Ruins · Charcoal 6",
-      "region": {
-        "min_x": 3296,
-        "min_z": 3872,
-        "max_x": 3322,
-        "max_z": 3885,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "burnt",
-          "count": 6
-        }
-      ]
-    },
-    {
       "id": "mining.desert_mining_camp",
       "skill": "mining",
       "label": "Desert Mining Camp · Coal 4, Copper ore 4, Tin ore 4 +1",
@@ -85248,6 +85248,28 @@
         {
           "key": "normal",
           "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.dig_site",
+      "skill": "woodcutting",
+      "label": "Dig Site · Logs 44, Oak logs 4",
+      "region": {
+        "min_x": 3310,
+        "min_z": 3397,
+        "max_x": 3375,
+        "max_z": 3463,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 44
+        },
+        {
+          "key": "oak",
+          "count": 4
         }
       ]
     },
@@ -85306,20 +85328,24 @@
       ]
     },
     {
-      "id": "woodcutting.dig_site",
+      "id": "woodcutting.draynor",
       "skill": "woodcutting",
-      "label": "Dig Site · Logs 44, Oak logs 4",
+      "label": "Draynor · Logs 25, Willow logs 5, Oak logs 4",
       "region": {
-        "min_x": 3310,
-        "min_z": 3397,
-        "max_x": 3375,
-        "max_z": 3463,
+        "min_x": 3082,
+        "min_z": 3200,
+        "max_x": 3136,
+        "max_z": 3256,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 44
+          "count": 25
+        },
+        {
+          "key": "willow",
+          "count": 5
         },
         {
           "key": "oak",
@@ -85346,28 +85372,6 @@
         {
           "key": "oak",
           "count": 9
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.draynor_village.2",
-      "skill": "woodcutting",
-      "label": "Draynor Village (2) · Logs 42, Oak logs 11",
-      "region": {
-        "min_x": 3078,
-        "min_z": 3282,
-        "max_x": 3127,
-        "max_z": 3306,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 42
-        },
-        {
-          "key": "oak",
-          "count": 11
         }
       ]
     },
@@ -85416,50 +85420,24 @@
       ]
     },
     {
-      "id": "woodcutting.draynor",
+      "id": "woodcutting.draynor_village.2",
       "skill": "woodcutting",
-      "label": "Draynor · Logs 25, Willow logs 5, Oak logs 4",
+      "label": "Draynor Village (2) · Logs 42, Oak logs 11",
       "region": {
-        "min_x": 3082,
-        "min_z": 3200,
-        "max_x": 3136,
-        "max_z": 3256,
+        "min_x": 3078,
+        "min_z": 3282,
+        "max_x": 3127,
+        "max_z": 3306,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 25
-        },
-        {
-          "key": "willow",
-          "count": 5
+          "count": 42
         },
         {
           "key": "oak",
-          "count": 4
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.druids_circle.2",
-      "skill": "woodcutting",
-      "label": "Druids' Circle (2) · Logs 15, Oak logs 2",
-      "region": {
-        "min_x": 2934,
-        "min_z": 3425,
-        "max_x": 2964,
-        "max_z": 3464,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 15
-        },
-        {
-          "key": "oak",
-          "count": 2
+          "count": 11
         }
       ]
     },
@@ -85486,6 +85464,28 @@
       ]
     },
     {
+      "id": "woodcutting.druids_circle.2",
+      "skill": "woodcutting",
+      "label": "Druids' Circle (2) · Logs 15, Oak logs 2",
+      "region": {
+        "min_x": 2934,
+        "min_z": 3425,
+        "max_x": 2964,
+        "max_z": 3464,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 15
+        },
+        {
+          "key": "oak",
+          "count": 2
+        }
+      ]
+    },
+    {
       "id": "woodcutting.dwarven_mine",
       "skill": "woodcutting",
       "label": "Dwarven Mine · Logs 43, Oak logs 3",
@@ -85504,6 +85504,32 @@
         {
           "key": "oak",
           "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.east_ardougne",
+      "skill": "woodcutting",
+      "label": "East Ardougne · Logs 3, Oak logs 2, Willow logs 1",
+      "region": {
+        "min_x": 2588,
+        "min_z": 3302,
+        "max_x": 2605,
+        "max_z": 3314,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 3
+        },
+        {
+          "key": "oak",
+          "count": 2
+        },
+        {
+          "key": "willow",
+          "count": 1
         }
       ]
     },
@@ -85544,14 +85570,14 @@
       ]
     },
     {
-      "id": "woodcutting.east_ardougne",
+      "id": "woodcutting.edgeville",
       "skill": "woodcutting",
-      "label": "East Ardougne · Logs 3, Oak logs 2, Willow logs 1",
+      "label": "Edgeville · Logs 3, Yew logs 1",
       "region": {
-        "min_x": 2588,
-        "min_z": 3302,
-        "max_x": 2605,
-        "max_z": 3314,
+        "min_x": 3073,
+        "min_z": 3478,
+        "max_x": 3085,
+        "max_z": 3488,
         "level": 0
       },
       "keys": [
@@ -85560,11 +85586,7 @@
           "count": 3
         },
         {
-          "key": "oak",
-          "count": 2
-        },
-        {
-          "key": "willow",
+          "key": "yew",
           "count": 1
         }
       ]
@@ -85676,24 +85698,42 @@
       ]
     },
     {
-      "id": "woodcutting.edgeville",
-      "skill": "woodcutting",
-      "label": "Edgeville · Logs 3, Yew logs 1",
+      "id": "fishing.elf_camp",
+      "skill": "fishing",
+      "label": "Elf Camp · Bait, Lure",
       "region": {
-        "min_x": 3073,
-        "min_z": 3478,
-        "max_x": 3085,
-        "max_z": 3488,
+        "min_x": 2210,
+        "min_z": 3232,
+        "max_x": 2225,
+        "max_z": 3248,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_307.products_349",
+          "count": 4
+        },
+        {
+          "key": "fishing.lure.tool_309.products_331_335",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.elf_camp",
+      "skill": "woodcutting",
+      "label": "Elf Camp · Logs 58",
+      "region": {
+        "min_x": 2164,
+        "min_z": 3203,
+        "max_x": 2200,
+        "max_z": 3251,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 3
-        },
-        {
-          "key": "yew",
-          "count": 1
+          "count": 58
         }
       ]
     },
@@ -85796,68 +85836,6 @@
       ]
     },
     {
-      "id": "fishing.elf_camp",
-      "skill": "fishing",
-      "label": "Elf Camp · Bait, Lure",
-      "region": {
-        "min_x": 2210,
-        "min_z": 3232,
-        "max_x": 2225,
-        "max_z": 3248,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_349",
-          "count": 4
-        },
-        {
-          "key": "fishing.lure.tool_309.products_331_335",
-          "count": 4
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.elf_camp",
-      "skill": "woodcutting",
-      "label": "Elf Camp · Logs 58",
-      "region": {
-        "min_x": 2164,
-        "min_z": 3203,
-        "max_x": 2200,
-        "max_z": 3251,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 58
-        }
-      ]
-    },
-    {
-      "id": "fishing.entrana.2",
-      "skill": "fishing",
-      "label": "Entrana (2) · Bait, Net",
-      "region": {
-        "min_x": 2875,
-        "min_z": 3331,
-        "max_x": 2877,
-        "max_z": 3342,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_327_345",
-          "count": 4
-        },
-        {
-          "key": "fishing.net.tool_303.products_317_321",
-          "count": 4
-        }
-      ]
-    },
-    {
       "id": "fishing.entrana",
       "skill": "fishing",
       "label": "Entrana · Bait, Lure",
@@ -85880,20 +85858,24 @@
       ]
     },
     {
-      "id": "woodcutting.exam_centre.e",
-      "skill": "woodcutting",
-      "label": "Exam Centre E34 · Logs 3",
+      "id": "fishing.entrana.2",
+      "skill": "fishing",
+      "label": "Entrana (2) · Bait, Net",
       "region": {
-        "min_x": 3395,
-        "min_z": 3342,
-        "max_x": 3399,
-        "max_z": 3347,
+        "min_x": 2875,
+        "min_z": 3331,
+        "max_x": 2877,
+        "max_z": 3342,
         "level": 0
       },
       "keys": [
         {
-          "key": "normal",
-          "count": 3
+          "key": "fishing.bait.tool_307.products_327_345",
+          "count": 4
+        },
+        {
+          "key": "fishing.net.tool_303.products_317_321",
+          "count": 4
         }
       ]
     },
@@ -85924,20 +85906,42 @@
       ]
     },
     {
-      "id": "woodcutting.falador_east.2",
+      "id": "woodcutting.exam_centre.e",
       "skill": "woodcutting",
-      "label": "Falador East (2) · Oak logs 1",
+      "label": "Exam Centre E34 · Logs 3",
       "region": {
-        "min_x": 3028,
-        "min_z": 3370,
-        "max_x": 3028,
-        "max_z": 3370,
+        "min_x": 3395,
+        "min_z": 3342,
+        "max_x": 3399,
+        "max_z": 3347,
         "level": 0
       },
       "keys": [
         {
+          "key": "normal",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.falador",
+      "skill": "woodcutting",
+      "label": "Falador · Logs 9, Oak logs 2",
+      "region": {
+        "min_x": 2972,
+        "min_z": 3356,
+        "max_x": 3005,
+        "max_z": 3376,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 9
+        },
+        {
           "key": "oak",
-          "count": 1
+          "count": 2
         }
       ]
     },
@@ -85964,6 +85968,42 @@
         {
           "key": "yew",
           "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.falador_east.2",
+      "skill": "woodcutting",
+      "label": "Falador East (2) · Oak logs 1",
+      "region": {
+        "min_x": 3028,
+        "min_z": 3370,
+        "max_x": 3028,
+        "max_z": 3370,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.falador_west",
+      "skill": "woodcutting",
+      "label": "Falador West · Logs 3",
+      "region": {
+        "min_x": 2945,
+        "min_z": 3354,
+        "max_x": 2953,
+        "max_z": 3363,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 3
         }
       ]
     },
@@ -86016,42 +86056,24 @@
       ]
     },
     {
-      "id": "woodcutting.falador_west",
+      "id": "woodcutting.fight_arena",
       "skill": "woodcutting",
-      "label": "Falador West · Logs 3",
+      "label": "Fight Arena · Logs 42, Oak logs 9",
       "region": {
-        "min_x": 2945,
-        "min_z": 3354,
-        "max_x": 2953,
-        "max_z": 3363,
+        "min_x": 2561,
+        "min_z": 3127,
+        "max_x": 2625,
+        "max_z": 3217,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 3
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.falador",
-      "skill": "woodcutting",
-      "label": "Falador · Logs 9, Oak logs 2",
-      "region": {
-        "min_x": 2972,
-        "min_z": 3356,
-        "max_x": 3005,
-        "max_z": 3376,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 9
+          "count": 42
         },
         {
           "key": "oak",
-          "count": 2
+          "count": 9
         }
       ]
     },
@@ -86094,24 +86116,54 @@
       ]
     },
     {
-      "id": "woodcutting.fight_arena",
-      "skill": "woodcutting",
-      "label": "Fight Arena · Logs 42, Oak logs 9",
+      "id": "fishing.fishing_guild",
+      "skill": "fishing",
+      "label": "Fishing Guild · Cage, Harpoon, Net",
       "region": {
-        "min_x": 2561,
-        "min_z": 3127,
-        "max_x": 2625,
-        "max_z": 3217,
+        "min_x": 2599,
+        "min_z": 3410,
+        "max_x": 2612,
+        "max_z": 3426,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.cage.tool_301.products_377",
+          "count": 11
+        },
+        {
+          "key": "fishing.harpoon.tool_311.products_359_371",
+          "count": 11
+        },
+        {
+          "key": "fishing.harpoon.tool_311.products_383",
+          "count": 6
+        },
+        {
+          "key": "fishing.net.tool_305.products_341_353_363_401_405_407_1059_1061",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.fishing_guild",
+      "skill": "woodcutting",
+      "label": "Fishing Guild · Logs 81, Oak logs 16",
+      "region": {
+        "min_x": 2546,
+        "min_z": 3394,
+        "max_x": 2586,
+        "max_z": 3456,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 42
+          "count": 81
         },
         {
           "key": "oak",
-          "count": 9
+          "count": 16
         }
       ]
     },
@@ -86186,54 +86238,24 @@
       ]
     },
     {
-      "id": "fishing.fishing_guild",
+      "id": "fishing.fishing_platform",
       "skill": "fishing",
-      "label": "Fishing Guild · Cage, Harpoon, Net",
+      "label": "Fishing Platform · Bait, Net",
       "region": {
-        "min_x": 2599,
-        "min_z": 3410,
-        "max_x": 2612,
-        "max_z": 3426,
+        "min_x": 2789,
+        "min_z": 3273,
+        "max_x": 2795,
+        "max_z": 3283,
         "level": 0
       },
       "keys": [
         {
-          "key": "fishing.cage.tool_301.products_377",
-          "count": 11
+          "key": "fishing.bait.tool_307.products_327_345",
+          "count": 4
         },
         {
-          "key": "fishing.harpoon.tool_311.products_359_371",
-          "count": 11
-        },
-        {
-          "key": "fishing.harpoon.tool_311.products_383",
-          "count": 6
-        },
-        {
-          "key": "fishing.net.tool_305.products_341_353_363_401_405_407_1059_1061",
-          "count": 6
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.fishing_guild",
-      "skill": "woodcutting",
-      "label": "Fishing Guild · Logs 81, Oak logs 16",
-      "region": {
-        "min_x": 2546,
-        "min_z": 3394,
-        "max_x": 2586,
-        "max_z": 3456,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 81
-        },
-        {
-          "key": "oak",
-          "count": 16
+          "key": "fishing.net.tool_303.products_317_321",
+          "count": 4
         }
       ]
     },
@@ -86300,24 +86322,28 @@
       ]
     },
     {
-      "id": "fishing.fishing_platform",
-      "skill": "fishing",
-      "label": "Fishing Platform · Bait, Net",
+      "id": "woodcutting.flax",
+      "skill": "woodcutting",
+      "label": "Flax · Logs 21, Oak logs 4, Maple logs 2",
       "region": {
-        "min_x": 2789,
-        "min_z": 3273,
-        "max_x": 2795,
-        "max_z": 3283,
+        "min_x": 2749,
+        "min_z": 3454,
+        "max_x": 2769,
+        "max_z": 3474,
         "level": 0
       },
       "keys": [
         {
-          "key": "fishing.bait.tool_307.products_327_345",
+          "key": "normal",
+          "count": 21
+        },
+        {
+          "key": "oak",
           "count": 4
         },
         {
-          "key": "fishing.net.tool_303.products_317_321",
-          "count": 4
+          "key": "maple",
+          "count": 2
         }
       ]
     },
@@ -86348,32 +86374,6 @@
       ]
     },
     {
-      "id": "woodcutting.flax",
-      "skill": "woodcutting",
-      "label": "Flax · Logs 21, Oak logs 4, Maple logs 2",
-      "region": {
-        "min_x": 2749,
-        "min_z": 3454,
-        "max_x": 2769,
-        "max_z": 3474,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 21
-        },
-        {
-          "key": "oak",
-          "count": 4
-        },
-        {
-          "key": "maple",
-          "count": 2
-        }
-      ]
-    },
-    {
       "id": "woodcutting.fremennik_province",
       "skill": "woodcutting",
       "label": "Fremennik Province · Logs 232, Oak logs 32, Maple logs 2",
@@ -86396,6 +86396,28 @@
         {
           "key": "maple",
           "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.frozen_waste_plateau",
+      "skill": "woodcutting",
+      "label": "Frozen Waste Plateau · Logs 52, Charcoal 4",
+      "region": {
+        "min_x": 2945,
+        "min_z": 3871,
+        "max_x": 3005,
+        "max_z": 3953,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 52
+        },
+        {
+          "key": "burnt",
+          "count": 4
         }
       ]
     },
@@ -86436,24 +86458,32 @@
       ]
     },
     {
-      "id": "woodcutting.frozen_waste_plateau",
+      "id": "woodcutting.gnome_ball_field",
       "skill": "woodcutting",
-      "label": "Frozen Waste Plateau · Logs 52, Charcoal 4",
+      "label": "Gnome Ball Field · Logs 45, Oak logs 11, Willow logs 2 +1",
       "region": {
-        "min_x": 2945,
-        "min_z": 3871,
-        "max_x": 3005,
-        "max_z": 3953,
+        "min_x": 2355,
+        "min_z": 3423,
+        "max_x": 2429,
+        "max_z": 3488,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 52
+          "count": 45
         },
         {
-          "key": "burnt",
-          "count": 4
+          "key": "oak",
+          "count": 11
+        },
+        {
+          "key": "willow",
+          "count": 2
+        },
+        {
+          "key": "magic",
+          "count": 1
         }
       ]
     },
@@ -86498,24 +86528,6 @@
       ]
     },
     {
-      "id": "woodcutting.gnome_ball_field.w.2",
-      "skill": "woodcutting",
-      "label": "Gnome Ball Field W50 (2) · Logs 4",
-      "region": {
-        "min_x": 2348,
-        "min_z": 3466,
-        "max_x": 2351,
-        "max_z": 3470,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 4
-        }
-      ]
-    },
-    {
       "id": "woodcutting.gnome_ball_field.w",
       "skill": "woodcutting",
       "label": "Gnome Ball Field W50 · Logs 5",
@@ -86534,32 +86546,20 @@
       ]
     },
     {
-      "id": "woodcutting.gnome_ball_field",
+      "id": "woodcutting.gnome_ball_field.w.2",
       "skill": "woodcutting",
-      "label": "Gnome Ball Field · Logs 45, Oak logs 11, Willow logs 2 +1",
+      "label": "Gnome Ball Field W50 (2) · Logs 4",
       "region": {
-        "min_x": 2355,
-        "min_z": 3423,
-        "max_x": 2429,
-        "max_z": 3488,
+        "min_x": 2348,
+        "min_z": 3466,
+        "max_x": 2351,
+        "max_z": 3470,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 45
-        },
-        {
-          "key": "oak",
-          "count": 11
-        },
-        {
-          "key": "willow",
-          "count": 2
-        },
-        {
-          "key": "magic",
-          "count": 1
+          "count": 4
         }
       ]
     },
@@ -86634,24 +86634,6 @@
       ]
     },
     {
-      "id": "woodcutting.grand_tree.e",
-      "skill": "woodcutting",
-      "label": "Grand Tree E61 · Logs 1",
-      "region": {
-        "min_x": 2510,
-        "min_z": 3463,
-        "max_x": 2510,
-        "max_z": 3463,
-        "level": 1
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "woodcutting.grand_tree",
       "skill": "woodcutting",
       "label": "Grand Tree · Logs 67, Oak logs 16, Willow logs 8 +1",
@@ -86682,6 +86664,24 @@
       ]
     },
     {
+      "id": "woodcutting.grand_tree.e",
+      "skill": "woodcutting",
+      "label": "Grand Tree E61 · Logs 1",
+      "region": {
+        "min_x": 2510,
+        "min_z": 3463,
+        "max_x": 2510,
+        "max_z": 3463,
+        "level": 1
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "woodcutting.graveyard_of_shadows",
       "skill": "woodcutting",
       "label": "Graveyard of Shadows · Logs 359",
@@ -86696,6 +86696,24 @@
         {
           "key": "normal",
           "count": 359
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.gu_tanoth",
+      "skill": "woodcutting",
+      "label": "Gu'Tanoth · Logs 78",
+      "region": {
+        "min_x": 2486,
+        "min_z": 2982,
+        "max_x": 2589,
+        "max_z": 3042,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 78
         }
       ]
     },
@@ -86780,20 +86798,20 @@
       ]
     },
     {
-      "id": "woodcutting.gu_tanoth",
+      "id": "woodcutting.haunted_woods",
       "skill": "woodcutting",
-      "label": "Gu'Tanoth · Logs 78",
+      "label": "Haunted Woods · Bark 25",
       "region": {
-        "min_x": 2486,
-        "min_z": 2982,
-        "max_x": 2589,
-        "max_z": 3042,
+        "min_x": 3569,
+        "min_z": 3461,
+        "max_x": 3597,
+        "max_z": 3503,
         "level": 0
       },
       "keys": [
         {
-          "key": "normal",
-          "count": 78
+          "key": "hollow",
+          "count": 25
         }
       ]
     },
@@ -86830,24 +86848,6 @@
         {
           "key": "hollow",
           "count": 37
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.haunted_woods",
-      "skill": "woodcutting",
-      "label": "Haunted Woods · Bark 25",
-      "region": {
-        "min_x": 3569,
-        "min_z": 3461,
-        "max_x": 3597,
-        "max_z": 3503,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "hollow",
-          "count": 25
         }
       ]
     },
@@ -86918,24 +86918,6 @@
       ]
     },
     {
-      "id": "mining.isafdar.se",
-      "skill": "mining",
-      "label": "Isafdar SE35 · Adamantite ore 4",
-      "region": {
-        "min_x": 2278,
-        "min_z": 3156,
-        "max_x": 2280,
-        "max_z": 3161,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "adamantite",
-          "count": 4
-        }
-      ]
-    },
-    {
       "id": "woodcutting.isafdar",
       "skill": "woodcutting",
       "label": "Isafdar · Logs 395, Magic logs 1",
@@ -86954,6 +86936,24 @@
         {
           "key": "magic",
           "count": 1
+        }
+      ]
+    },
+    {
+      "id": "mining.isafdar.se",
+      "skill": "mining",
+      "label": "Isafdar SE35 · Adamantite ore 4",
+      "region": {
+        "min_x": 2278,
+        "min_z": 3156,
+        "max_x": 2280,
+        "max_z": 3161,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "adamantite",
+          "count": 4
         }
       ]
     },
@@ -86988,24 +86988,6 @@
       ]
     },
     {
-      "id": "woodcutting.keep_le_faye.se",
-      "skill": "woodcutting",
-      "label": "Keep Le Faye SE38 · Logs 26",
-      "region": {
-        "min_x": 2808,
-        "min_z": 3363,
-        "max_x": 2825,
-        "max_z": 3385,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 26
-        }
-      ]
-    },
-    {
       "id": "woodcutting.keep_le_faye",
       "skill": "woodcutting",
       "label": "Keep Le Faye · Logs 29",
@@ -87024,38 +87006,20 @@
       ]
     },
     {
-      "id": "woodcutting.lava_maze.ne",
+      "id": "woodcutting.keep_le_faye.se",
       "skill": "woodcutting",
-      "label": "Lava Maze NE35 · Charcoal 3",
+      "label": "Keep Le Faye SE38 · Logs 26",
       "region": {
-        "min_x": 3114,
-        "min_z": 3876,
-        "max_x": 3132,
-        "max_z": 3888,
+        "min_x": 2808,
+        "min_z": 3363,
+        "max_x": 2825,
+        "max_z": 3385,
         "level": 0
       },
       "keys": [
         {
-          "key": "burnt",
-          "count": 3
-        }
-      ]
-    },
-    {
-      "id": "mining.lava_maze.nw",
-      "skill": "mining",
-      "label": "Lava Maze NW36 · Runite ore 2",
-      "region": {
-        "min_x": 3059,
-        "min_z": 3884,
-        "max_x": 3060,
-        "max_z": 3885,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "runite",
-          "count": 2
+          "key": "normal",
+          "count": 26
         }
       ]
     },
@@ -87100,24 +87064,38 @@
       ]
     },
     {
-      "id": "mining.legends_guild.sw",
-      "skill": "mining",
-      "label": "Legends' Guild SW38 · Coal 13, Iron ore 11",
+      "id": "woodcutting.lava_maze.ne",
+      "skill": "woodcutting",
+      "label": "Lava Maze NE35 · Charcoal 3",
       "region": {
-        "min_x": 2689,
-        "min_z": 3328,
-        "max_x": 2715,
-        "max_z": 3336,
+        "min_x": 3114,
+        "min_z": 3876,
+        "max_x": 3132,
+        "max_z": 3888,
         "level": 0
       },
       "keys": [
         {
-          "key": "coal",
-          "count": 13
-        },
+          "key": "burnt",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "mining.lava_maze.nw",
+      "skill": "mining",
+      "label": "Lava Maze NW36 · Runite ore 2",
+      "region": {
+        "min_x": 3059,
+        "min_z": 3884,
+        "max_x": 3060,
+        "max_z": 3885,
+        "level": 0
+      },
+      "keys": [
         {
-          "key": "iron",
-          "count": 11
+          "key": "runite",
+          "count": 2
         }
       ]
     },
@@ -87156,6 +87134,28 @@
       ]
     },
     {
+      "id": "mining.legends_guild.sw",
+      "skill": "mining",
+      "label": "Legends' Guild SW38 · Coal 13, Iron ore 11",
+      "region": {
+        "min_x": 2689,
+        "min_z": 3328,
+        "max_x": 2715,
+        "max_z": 3336,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "coal",
+          "count": 13
+        },
+        {
+          "key": "iron",
+          "count": 11
+        }
+      ]
+    },
+    {
       "id": "woodcutting.lumber_yard",
       "skill": "woodcutting",
       "label": "Lumber Yard · Logs 216, Oak logs 24, Yew logs 3",
@@ -87177,6 +87177,32 @@
         },
         {
           "key": "yew",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.lumbridge",
+      "skill": "woodcutting",
+      "label": "Lumbridge · Logs 63, Oak logs 9, Willow logs 3",
+      "region": {
+        "min_x": 3185,
+        "min_z": 3221,
+        "max_x": 3262,
+        "max_z": 3290,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 63
+        },
+        {
+          "key": "oak",
+          "count": 9
+        },
+        {
+          "key": "willow",
           "count": 3
         }
       ]
@@ -87250,6 +87276,28 @@
       ]
     },
     {
+      "id": "woodcutting.lumbridge_swamp",
+      "skill": "woodcutting",
+      "label": "Lumbridge Swamp · Logs 12, Oak logs 1",
+      "region": {
+        "min_x": 3205,
+        "min_z": 3173,
+        "max_x": 3223,
+        "max_z": 3205,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 12
+        },
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "woodcutting.lumbridge_swamp.2",
       "skill": "woodcutting",
       "label": "Lumbridge Swamp (2) · Logs 7",
@@ -87308,54 +87356,6 @@
         {
           "key": "normal",
           "count": 6
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.lumbridge_swamp",
-      "skill": "woodcutting",
-      "label": "Lumbridge Swamp · Logs 12, Oak logs 1",
-      "region": {
-        "min_x": 3205,
-        "min_z": 3173,
-        "max_x": 3223,
-        "max_z": 3205,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 12
-        },
-        {
-          "key": "oak",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.lumbridge",
-      "skill": "woodcutting",
-      "label": "Lumbridge · Logs 63, Oak logs 9, Willow logs 3",
-      "region": {
-        "min_x": 3185,
-        "min_z": 3221,
-        "max_x": 3262,
-        "max_z": 3290,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 63
-        },
-        {
-          "key": "oak",
-          "count": 9
-        },
-        {
-          "key": "willow",
-          "count": 3
         }
       ]
     },
@@ -87436,24 +87436,6 @@
       ]
     },
     {
-      "id": "woodcutting.market.nw",
-      "skill": "woodcutting",
-      "label": "Market NW46 · Logs 3",
-      "region": {
-        "min_x": 3040,
-        "min_z": 3298,
-        "max_x": 3044,
-        "max_z": 3303,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 3
-        }
-      ]
-    },
-    {
       "id": "woodcutting.market",
       "skill": "woodcutting",
       "label": "Market · Logs 33, Willow logs 5, Oak logs 4 +1",
@@ -87480,6 +87462,24 @@
         {
           "key": "yew",
           "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.market.nw",
+      "skill": "woodcutting",
+      "label": "Market NW46 · Logs 3",
+      "region": {
+        "min_x": 3040,
+        "min_z": 3298,
+        "max_x": 3044,
+        "max_z": 3303,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 3
         }
       ]
     },
@@ -87536,6 +87536,24 @@
       ]
     },
     {
+      "id": "woodcutting.monastery",
+      "skill": "woodcutting",
+      "label": "Monastery · Logs 29",
+      "region": {
+        "min_x": 3031,
+        "min_z": 3447,
+        "max_x": 3060,
+        "max_z": 3474,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 29
+        }
+      ]
+    },
+    {
       "id": "woodcutting.monastery.se",
       "skill": "woodcutting",
       "label": "Monastery SE21 · Logs 8",
@@ -87554,20 +87572,20 @@
       ]
     },
     {
-      "id": "woodcutting.monastery",
+      "id": "woodcutting.mort_ton",
       "skill": "woodcutting",
-      "label": "Monastery · Logs 29",
+      "label": "Mort'ton · Logs 60",
       "region": {
-        "min_x": 3031,
-        "min_z": 3447,
-        "max_x": 3060,
-        "max_z": 3474,
+        "min_x": 3459,
+        "min_z": 3264,
+        "max_x": 3516,
+        "max_z": 3319,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 29
+          "count": 60
         }
       ]
     },
@@ -87622,24 +87640,6 @@
         {
           "key": "fishing.bait.tool_307.products_3379",
           "count": 6
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.mort_ton",
-      "skill": "woodcutting",
-      "label": "Mort'ton · Logs 60",
-      "region": {
-        "min_x": 3459,
-        "min_z": 3264,
-        "max_x": 3516,
-        "max_z": 3319,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 60
         }
       ]
     },
@@ -87748,28 +87748,6 @@
       ]
     },
     {
-      "id": "woodcutting.palace.2",
-      "skill": "woodcutting",
-      "label": "Palace (2) · Logs 8, Yew logs 1",
-      "region": {
-        "min_x": 3226,
-        "min_z": 3458,
-        "max_x": 3258,
-        "max_z": 3472,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 8
-        },
-        {
-          "key": "yew",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "woodcutting.palace",
       "skill": "woodcutting",
       "label": "Palace · Logs 108, Oak logs 14, Yew logs 3",
@@ -87792,6 +87770,50 @@
         {
           "key": "yew",
           "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.palace.2",
+      "skill": "woodcutting",
+      "label": "Palace (2) · Logs 8, Yew logs 1",
+      "region": {
+        "min_x": 3226,
+        "min_z": 3458,
+        "max_x": 3258,
+        "max_z": 3472,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 8
+        },
+        {
+          "key": "yew",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.park",
+      "skill": "woodcutting",
+      "label": "Park · Logs 4, Oak logs 1",
+      "region": {
+        "min_x": 2978,
+        "min_z": 3389,
+        "max_x": 2998,
+        "max_z": 3390,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 4
+        },
+        {
+          "key": "oak",
+          "count": 1
         }
       ]
     },
@@ -87832,28 +87854,6 @@
         {
           "key": "normal",
           "count": 5
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.park",
-      "skill": "woodcutting",
-      "label": "Park · Logs 4, Oak logs 1",
-      "region": {
-        "min_x": 2978,
-        "min_z": 3389,
-        "max_x": 2998,
-        "max_z": 3390,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 4
-        },
-        {
-          "key": "oak",
-          "count": 1
         }
       ]
     },
@@ -88034,6 +88034,32 @@
       ]
     },
     {
+      "id": "woodcutting.port_sarim",
+      "skill": "woodcutting",
+      "label": "Port Sarim · Logs 32, Oak logs 7, Willow logs 1",
+      "region": {
+        "min_x": 3004,
+        "min_z": 3210,
+        "max_x": 3057,
+        "max_z": 3279,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 32
+        },
+        {
+          "key": "oak",
+          "count": 7
+        },
+        {
+          "key": "willow",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "woodcutting.port_sarim.sw",
       "skill": "woodcutting",
       "label": "Port Sarim SW27 · Logs 14, Willow logs 7, Oak logs 2",
@@ -88060,28 +88086,20 @@
       ]
     },
     {
-      "id": "woodcutting.port_sarim",
+      "id": "woodcutting.prifddinas",
       "skill": "woodcutting",
-      "label": "Port Sarim · Logs 32, Oak logs 7, Willow logs 1",
+      "label": "Prifddinas · Logs 35",
       "region": {
-        "min_x": 3004,
-        "min_z": 3210,
-        "max_x": 3057,
-        "max_z": 3279,
+        "min_x": 2209,
+        "min_z": 3281,
+        "max_x": 2287,
+        "max_z": 3371,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 32
-        },
-        {
-          "key": "oak",
-          "count": 7
-        },
-        {
-          "key": "willow",
-          "count": 1
+          "count": 35
         }
       ]
     },
@@ -88144,20 +88162,24 @@
       ]
     },
     {
-      "id": "woodcutting.prifddinas",
+      "id": "woodcutting.red_dragon_isle",
       "skill": "woodcutting",
-      "label": "Prifddinas · Logs 35",
+      "label": "Red Dragon Isle · Charcoal 69, Logs 6",
       "region": {
-        "min_x": 2209,
-        "min_z": 3281,
-        "max_x": 2287,
-        "max_z": 3371,
+        "min_x": 3140,
+        "min_z": 3780,
+        "max_x": 3242,
+        "max_z": 3866,
         "level": 0
       },
       "keys": [
         {
+          "key": "burnt",
+          "count": 69
+        },
+        {
           "key": "normal",
-          "count": 35
+          "count": 6
         }
       ]
     },
@@ -88180,28 +88202,6 @@
         {
           "key": "normal",
           "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.red_dragon_isle",
-      "skill": "woodcutting",
-      "label": "Red Dragon Isle · Charcoal 69, Logs 6",
-      "region": {
-        "min_x": 3140,
-        "min_z": 3780,
-        "max_x": 3242,
-        "max_z": 3866,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "burnt",
-          "count": 69
-        },
-        {
-          "key": "normal",
-          "count": 6
         }
       ]
     },
@@ -88328,46 +88328,6 @@
       ]
     },
     {
-      "id": "fishing.rimmington.2",
-      "skill": "fishing",
-      "label": "Rimmington (2) · Bait, Net",
-      "region": {
-        "min_x": 2996,
-        "min_z": 3158,
-        "max_x": 2996,
-        "max_z": 3158,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "fishing.bait.tool_307.products_327_345",
-          "count": 1
-        },
-        {
-          "key": "fishing.net.tool_303.products_317_321",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.rimmington.sw",
-      "skill": "woodcutting",
-      "label": "Rimmington SW23 · Logs 1",
-      "region": {
-        "min_x": 2937,
-        "min_z": 3201,
-        "max_x": 2937,
-        "max_z": 3201,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "fishing.rimmington",
       "skill": "fishing",
       "label": "Rimmington · Bait, Net",
@@ -88450,23 +88410,41 @@
       ]
     },
     {
-      "id": "woodcutting.river_lum.w",
-      "skill": "woodcutting",
-      "label": "River Lum W17 · Logs 44, Oak logs 1",
+      "id": "fishing.rimmington.2",
+      "skill": "fishing",
+      "label": "Rimmington (2) · Bait, Net",
       "region": {
-        "min_x": 3129,
-        "min_z": 3317,
-        "max_x": 3150,
-        "max_z": 3384,
+        "min_x": 2996,
+        "min_z": 3158,
+        "max_x": 2996,
+        "max_z": 3158,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_307.products_327_345",
+          "count": 1
+        },
+        {
+          "key": "fishing.net.tool_303.products_317_321",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.rimmington.sw",
+      "skill": "woodcutting",
+      "label": "Rimmington SW23 · Logs 1",
+      "region": {
+        "min_x": 2937,
+        "min_z": 3201,
+        "max_x": 2937,
+        "max_z": 3201,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 44
-        },
-        {
-          "key": "oak",
           "count": 1
         }
       ]
@@ -88528,6 +88506,28 @@
       ]
     },
     {
+      "id": "woodcutting.river_lum.w",
+      "skill": "woodcutting",
+      "label": "River Lum W17 · Logs 44, Oak logs 1",
+      "region": {
+        "min_x": 3129,
+        "min_z": 3317,
+        "max_x": 3150,
+        "max_z": 3384,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 44
+        },
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "woodcutting.river_salve.ne",
       "skill": "woodcutting",
       "label": "River Salve NE21 · Logs 1",
@@ -88564,6 +88564,24 @@
       ]
     },
     {
+      "id": "woodcutting.rogues_castle",
+      "skill": "woodcutting",
+      "label": "Rogues' Castle · Logs 21",
+      "region": {
+        "min_x": 3268,
+        "min_z": 3921,
+        "max_x": 3301,
+        "max_z": 3952,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 21
+        }
+      ]
+    },
+    {
       "id": "woodcutting.rogues_castle.sw",
       "skill": "woodcutting",
       "label": "Rogues' Castle SW36 · Logs 2, Charcoal 1",
@@ -88586,20 +88604,20 @@
       ]
     },
     {
-      "id": "woodcutting.rogues_castle",
+      "id": "woodcutting.ruins",
       "skill": "woodcutting",
-      "label": "Rogues' Castle · Logs 21",
+      "label": "Ruins · Logs 194",
       "region": {
-        "min_x": 3268,
-        "min_z": 3921,
-        "max_x": 3301,
-        "max_z": 3952,
+        "min_x": 3101,
+        "min_z": 3705,
+        "max_x": 3203,
+        "max_z": 3788,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 21
+          "count": 194
         }
       ]
     },
@@ -88640,20 +88658,20 @@
       ]
     },
     {
-      "id": "woodcutting.ruins",
+      "id": "woodcutting.scorpion_pit",
       "skill": "woodcutting",
-      "label": "Ruins · Logs 194",
+      "label": "Scorpion Pit · Charcoal 8",
       "region": {
-        "min_x": 3101,
-        "min_z": 3705,
-        "max_x": 3203,
-        "max_z": 3788,
+        "min_x": 3222,
+        "min_z": 3910,
+        "max_x": 3258,
+        "max_z": 3937,
         "level": 0
       },
       "keys": [
         {
-          "key": "normal",
-          "count": 194
+          "key": "burnt",
+          "count": 8
         }
       ]
     },
@@ -88694,50 +88712,6 @@
       ]
     },
     {
-      "id": "woodcutting.scorpion_pit",
-      "skill": "woodcutting",
-      "label": "Scorpion Pit · Charcoal 8",
-      "region": {
-        "min_x": 3222,
-        "min_z": 3910,
-        "max_x": 3258,
-        "max_z": 3937,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "burnt",
-          "count": 8
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.seers.nw",
-      "skill": "woodcutting",
-      "label": "Seers NW38 · Maple logs 10, Logs 4, Willow logs 4",
-      "region": {
-        "min_x": 2667,
-        "min_z": 3529,
-        "max_x": 2697,
-        "max_z": 3554,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "maple",
-          "count": 10
-        },
-        {
-          "key": "normal",
-          "count": 4
-        },
-        {
-          "key": "willow",
-          "count": 4
-        }
-      ]
-    },
-    {
       "id": "woodcutting.seers",
       "skill": "woodcutting",
       "label": "Seers · Logs 25, Maple logs 6, Oak logs 5 +1",
@@ -88764,6 +88738,32 @@
         {
           "key": "willow",
           "count": 5
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.seers.nw",
+      "skill": "woodcutting",
+      "label": "Seers NW38 · Maple logs 10, Logs 4, Willow logs 4",
+      "region": {
+        "min_x": 2667,
+        "min_z": 3529,
+        "max_x": 2697,
+        "max_z": 3554,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "maple",
+          "count": 10
+        },
+        {
+          "key": "normal",
+          "count": 4
+        },
+        {
+          "key": "willow",
+          "count": 4
         }
       ]
     },
@@ -88815,6 +88815,28 @@
         },
         {
           "key": "yew",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "fishing.shilo_village",
+      "skill": "fishing",
+      "label": "Shilo Village · Bait, Lure",
+      "region": {
+        "min_x": 2855,
+        "min_z": 2973,
+        "max_x": 2856,
+        "max_z": 2977,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_307.products_349",
+          "count": 3
+        },
+        {
+          "key": "fishing.lure.tool_309.products_331_335",
           "count": 3
         }
       ]
@@ -88890,24 +88912,32 @@
       ]
     },
     {
-      "id": "fishing.shilo_village",
-      "skill": "fishing",
-      "label": "Shilo Village · Bait, Lure",
+      "id": "woodcutting.sinclair_mansion",
+      "skill": "woodcutting",
+      "label": "Sinclair Mansion · Logs 62, Maple logs 38, Oak logs 1 +1",
       "region": {
-        "min_x": 2855,
-        "min_z": 2973,
-        "max_x": 2856,
-        "max_z": 2977,
+        "min_x": 2675,
+        "min_z": 3533,
+        "max_x": 2739,
+        "max_z": 3591,
         "level": 0
       },
       "keys": [
         {
-          "key": "fishing.bait.tool_307.products_349",
-          "count": 3
+          "key": "normal",
+          "count": 62
         },
         {
-          "key": "fishing.lure.tool_309.products_331_335",
-          "count": 3
+          "key": "maple",
+          "count": 38
+        },
+        {
+          "key": "oak",
+          "count": 1
+        },
+        {
+          "key": "willow",
+          "count": 1
         }
       ]
     },
@@ -88941,36 +88971,6 @@
         "level": 0
       },
       "keys": [
-        {
-          "key": "willow",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.sinclair_mansion",
-      "skill": "woodcutting",
-      "label": "Sinclair Mansion · Logs 62, Maple logs 38, Oak logs 1 +1",
-      "region": {
-        "min_x": 2675,
-        "min_z": 3533,
-        "max_x": 2739,
-        "max_z": 3591,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 62
-        },
-        {
-          "key": "maple",
-          "count": 38
-        },
-        {
-          "key": "oak",
-          "count": 1
-        },
         {
           "key": "willow",
           "count": 1
@@ -89022,6 +89022,24 @@
         {
           "key": "oak",
           "count": 15
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.taverley",
+      "skill": "woodcutting",
+      "label": "Taverley · Logs 13",
+      "region": {
+        "min_x": 2871,
+        "min_z": 3462,
+        "max_x": 2896,
+        "max_z": 3478,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 13
         }
       ]
     },
@@ -89092,20 +89110,20 @@
       ]
     },
     {
-      "id": "woodcutting.taverley",
+      "id": "woodcutting.temple",
       "skill": "woodcutting",
-      "label": "Taverley · Logs 13",
+      "label": "Temple · Logs 12",
       "region": {
-        "min_x": 2871,
-        "min_z": 3462,
-        "max_x": 2896,
-        "max_z": 3478,
+        "min_x": 3430,
+        "min_z": 3457,
+        "max_x": 3443,
+        "max_z": 3498,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 13
+          "count": 12
         }
       ]
     },
@@ -89182,24 +89200,6 @@
       ]
     },
     {
-      "id": "woodcutting.temple",
-      "skill": "woodcutting",
-      "label": "Temple · Logs 12",
-      "region": {
-        "min_x": 3430,
-        "min_z": 3457,
-        "max_x": 3443,
-        "max_z": 3498,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 12
-        }
-      ]
-    },
-    {
       "id": "woodcutting.the_forgotten_cemetery",
       "skill": "woodcutting",
       "label": "The Forgotten Cemetery · Logs 248",
@@ -89214,28 +89214,6 @@
         {
           "key": "normal",
           "count": 248
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.toll_gate.sw",
-      "skill": "woodcutting",
-      "label": "Toll Gate SW26 · Logs 2, Yew logs 1",
-      "region": {
-        "min_x": 3249,
-        "min_z": 3194,
-        "max_x": 3253,
-        "max_z": 3201,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 2
-        },
-        {
-          "key": "yew",
-          "count": 1
         }
       ]
     },
@@ -89257,6 +89235,28 @@
         },
         {
           "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.toll_gate.sw",
+      "skill": "woodcutting",
+      "label": "Toll Gate SW26 · Logs 2, Yew logs 1",
+      "region": {
+        "min_x": 3249,
+        "min_z": 3194,
+        "max_x": 3253,
+        "max_z": 3201,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 2
+        },
+        {
+          "key": "yew",
           "count": 1
         }
       ]
@@ -89296,28 +89296,6 @@
       ]
     },
     {
-      "id": "woodcutting.tree_gnome_village.2",
-      "skill": "woodcutting",
-      "label": "Tree Gnome Village (2) · Logs 28, Oak logs 2",
-      "region": {
-        "min_x": 2514,
-        "min_z": 3158,
-        "max_x": 2560,
-        "max_z": 3184,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 28
-        },
-        {
-          "key": "oak",
-          "count": 2
-        }
-      ]
-    },
-    {
       "id": "woodcutting.tree_gnome_village",
       "skill": "woodcutting",
       "label": "Tree Gnome Village · Logs 64, Oak logs 14, Willow logs 2",
@@ -89339,6 +89317,28 @@
         },
         {
           "key": "willow",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.tree_gnome_village.2",
+      "skill": "woodcutting",
+      "label": "Tree Gnome Village (2) · Logs 28, Oak logs 2",
+      "region": {
+        "min_x": 2514,
+        "min_z": 3158,
+        "max_x": 2560,
+        "max_z": 3184,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 28
+        },
+        {
+          "key": "oak",
           "count": 2
         }
       ]
@@ -89402,6 +89402,46 @@
         {
           "key": "oak",
           "count": 30
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.varrock",
+      "skill": "woodcutting",
+      "label": "Varrock · Logs 13, Oak logs 1",
+      "region": {
+        "min_x": 3201,
+        "min_z": 3421,
+        "max_x": 3229,
+        "max_z": 3463,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 13
+        },
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.varrock_east",
+      "skill": "woodcutting",
+      "label": "Varrock East · Logs 9",
+      "region": {
+        "min_x": 3220,
+        "min_z": 3397,
+        "max_x": 3258,
+        "max_z": 3419,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 9
         }
       ]
     },
@@ -89512,24 +89552,6 @@
       ]
     },
     {
-      "id": "woodcutting.varrock_east",
-      "skill": "woodcutting",
-      "label": "Varrock East · Logs 9",
-      "region": {
-        "min_x": 3220,
-        "min_z": 3397,
-        "max_x": 3258,
-        "max_z": 3419,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 9
-        }
-      ]
-    },
-    {
       "id": "woodcutting.varrock.nw",
       "skill": "woodcutting",
       "label": "Varrock NW19 · Logs 17, Oak logs 3",
@@ -89548,6 +89570,28 @@
         {
           "key": "oak",
           "count": 3
+        }
+      ]
+    },
+    {
+      "id": "woodcutting.varrock_west",
+      "skill": "woodcutting",
+      "label": "Varrock West · Logs 41, Oak logs 9",
+      "region": {
+        "min_x": 3146,
+        "min_z": 3434,
+        "max_x": 3194,
+        "max_z": 3495,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "normal",
+          "count": 41
+        },
+        {
+          "key": "oak",
+          "count": 9
         }
       ]
     },
@@ -89610,42 +89654,20 @@
       ]
     },
     {
-      "id": "woodcutting.varrock_west",
+      "id": "woodcutting.west_ardougne",
       "skill": "woodcutting",
-      "label": "Varrock West · Logs 41, Oak logs 9",
+      "label": "West Ardougne · Logs 56, Oak logs 1",
       "region": {
-        "min_x": 3146,
-        "min_z": 3434,
-        "max_x": 3194,
-        "max_z": 3495,
+        "min_x": 2484,
+        "min_z": 3270,
+        "max_x": 2514,
+        "max_z": 3326,
         "level": 0
       },
       "keys": [
         {
           "key": "normal",
-          "count": 41
-        },
-        {
-          "key": "oak",
-          "count": 9
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.varrock",
-      "skill": "woodcutting",
-      "label": "Varrock · Logs 13, Oak logs 1",
-      "region": {
-        "min_x": 3201,
-        "min_z": 3421,
-        "max_x": 3229,
-        "max_z": 3463,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 13
+          "count": 56
         },
         {
           "key": "oak",
@@ -89689,28 +89711,6 @@
       "keys": [
         {
           "key": "normal",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "woodcutting.west_ardougne",
-      "skill": "woodcutting",
-      "label": "West Ardougne · Logs 56, Oak logs 1",
-      "region": {
-        "min_x": 2484,
-        "min_z": 3270,
-        "max_x": 2514,
-        "max_z": 3326,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 56
-        },
-        {
-          "key": "oak",
           "count": 1
         }
       ]
@@ -89830,6 +89830,24 @@
       ]
     },
     {
+      "id": "woodcutting.wizards_tower",
+      "skill": "woodcutting",
+      "label": "Wizards' Tower · Oak logs 1",
+      "region": {
+        "min_x": 3104,
+        "min_z": 3150,
+        "max_x": 3104,
+        "max_z": 3150,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "oak",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "woodcutting.wizards_tower.n",
       "skill": "woodcutting",
       "label": "Wizards' Tower N17 · Logs 1",
@@ -89848,20 +89866,24 @@
       ]
     },
     {
-      "id": "woodcutting.wizards_tower",
+      "id": "woodcutting.yanille",
       "skill": "woodcutting",
-      "label": "Wizards' Tower · Oak logs 1",
+      "label": "Yanille · Logs 62, Oak logs 13",
       "region": {
-        "min_x": 3104,
-        "min_z": 3150,
-        "max_x": 3104,
-        "max_z": 3150,
+        "min_x": 2508,
+        "min_z": 3095,
+        "max_x": 2576,
+        "max_z": 3132,
         "level": 0
       },
       "keys": [
         {
+          "key": "normal",
+          "count": 62
+        },
+        {
           "key": "oak",
-          "count": 1
+          "count": 13
         }
       ]
     },
@@ -89950,50 +89972,6 @@
       ]
     },
     {
-      "id": "woodcutting.yanille",
-      "skill": "woodcutting",
-      "label": "Yanille · Logs 62, Oak logs 13",
-      "region": {
-        "min_x": 2508,
-        "min_z": 3095,
-        "max_x": 2576,
-        "max_z": 3132,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "normal",
-          "count": 62
-        },
-        {
-          "key": "oak",
-          "count": 13
-        }
-      ]
-    },
-    {
-      "id": "mining.zoo.sw",
-      "skill": "mining",
-      "label": "Zoo SW35 · Iron ore 13, Coal 4",
-      "region": {
-        "min_x": 2581,
-        "min_z": 3223,
-        "max_x": 2608,
-        "max_z": 3238,
-        "level": 0
-      },
-      "keys": [
-        {
-          "key": "iron",
-          "count": 13
-        },
-        {
-          "key": "coal",
-          "count": 4
-        }
-      ]
-    },
-    {
       "id": "woodcutting.zoo",
       "skill": "woodcutting",
       "label": "Zoo · Logs 91, Oak logs 8, Willow logs 3",
@@ -90016,6 +89994,28 @@
         {
           "key": "willow",
           "count": 3
+        }
+      ]
+    },
+    {
+      "id": "mining.zoo.sw",
+      "skill": "mining",
+      "label": "Zoo SW35 · Iron ore 13, Coal 4",
+      "region": {
+        "min_x": 2581,
+        "min_z": 3223,
+        "max_x": 2608,
+        "max_z": 3238,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "iron",
+          "count": 13
+        },
+        {
+          "key": "coal",
+          "count": 4
         }
       ]
     }
