@@ -361,10 +361,13 @@ fn compile_uncached(
     // Path headers use config aliases; the shared Loadouts consumer uses
     // display names. Resolve each kit row once, without an intermediate copy.
     let loadout_item_name = |alias: &str| -> Result<&str, CompileError> {
-        selected
+        let item = selected
             .item_by_alias(alias)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?
-            .name
+            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        if item.is_certificate() {
+            return Err(CompileError::code("certificate-loadout-item"));
+        }
+        item.name
             .as_deref()
             .ok_or_else(|| CompileError::code("unresolved-obj-name"))
     };
@@ -1621,6 +1624,52 @@ mod tests {
                 panic!("valid alias loadout could not begin application: {error:?}");
             }
         });
+    }
+
+    #[test]
+    fn certificate_worn_header_loadout_is_rejected() {
+        let _home = crate::IsolatedEnv::enter("quester-cert-worn-header");
+        let data = selected();
+        let certificate = data.item_by_alias("cert_rune_scimitar").unwrap();
+        assert!(certificate.is_certificate());
+        assert_eq!(
+            certificate.name.as_deref(),
+            data.item_by_alias("rune_scimitar").unwrap().name.as_deref()
+        );
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().loadouts = serde_json::from_value(serde_json::json!({
+                "probe": {
+                    "worn": { "righthand": "cert_rune_scimitar" },
+                    "carry": []
+                }
+            }))
+            .unwrap();
+        });
+        assert_eq!(error.code.as_ref(), "certificate-loadout-item");
+        assert_eq!(error.path, FactKey::new("cook"));
+    }
+
+    #[test]
+    fn certificate_carry_header_loadout_is_rejected() {
+        let _home = crate::IsolatedEnv::enter("quester-cert-carry-header");
+        let data = selected();
+        let certificate = data.item_by_alias("cert_lobster").unwrap();
+        assert!(certificate.is_certificate());
+        assert_eq!(
+            certificate.name.as_deref(),
+            data.item_by_alias("lobster").unwrap().name.as_deref()
+        );
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().loadouts = serde_json::from_value(serde_json::json!({
+                "probe": {
+                    "worn": {},
+                    "carry": [{ "item": "cert_lobster", "qty": 6 }]
+                }
+            }))
+            .unwrap();
+        });
+        assert_eq!(error.code.as_ref(), "certificate-loadout-item");
+        assert_eq!(error.path, FactKey::new("cook"));
     }
 
     #[test]

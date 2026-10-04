@@ -214,6 +214,8 @@ Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
 the display-name rows consumed by Loadouts; operator overrides remain ordinary
 display-name Loadouts rows.
+Certificate aliases in either header section are rejected before that conversion;
+the shared display name must not erase a certificate's distinct item identity.
 
 Acquisition recipes can call other recipes with `acquire` steps. The compiler
 binds dependencies first and compiles each recipe once, independent of its
