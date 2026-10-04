@@ -3787,24 +3787,35 @@ fn path_walk_permissions_decode_as_tri_state_options() {
 
 #[test]
 fn path_walk_crossing_and_protection_are_independent() {
-    let crossing = super::parse_walk_plan(&serde_json::json!({
-        "tile": [3224, 3200, 0],
-        "source": "walk opt-in test",
-        "radius": 1,
-        "cross": ["death-plateau-throwers"],
-    }))
-    .unwrap();
-    assert_eq!(crossing.cross.len(), 1);
-    assert_eq!(&*crossing.cross[0], "death-plateau-throwers");
-    assert!(!crossing.protect);
-
-    let protected = super::parse_walk_plan(&serde_json::json!({
-        "tile": [3224, 3200, 0],
-        "source": "walk opt-in test",
-        "radius": 1,
-        "guard": "protect",
-    }))
-    .unwrap();
-    assert!(protected.cross.is_empty());
-    assert!(protected.protect);
+    compile_context_test(|cx| {
+        for protect in [false, true] {
+            let mut args = serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "walk opt-in test",
+                "radius": 1,
+            });
+            if protect {
+                args["guard"] = serde_json::json!("protect");
+            } else {
+                args["cross"] = serde_json::json!(["death-plateau-throwers"]);
+            }
+            let plan = super::compile_walk(&args, cx).unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3100, 3200)));
+            let mut ledger = None;
+            let _run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the compiled Path must emit a real native walk");
+            };
+            assert_eq!(request.protect, protect);
+            if protect {
+                assert!(request.cross.is_empty());
+            } else {
+                assert_eq!(request.cross.len(), 1);
+                assert_eq!(&*request.cross[0], "death-plateau-throwers");
+            }
+        }
+    });
 }

@@ -1295,6 +1295,8 @@ impl Session {
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
         core.set_walk_globals(ui.nav.walk_globals());
+        #[cfg(not(test))]
+        core.set_walk_globals_store(crate::ui_state::path());
         core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
 
         // The fleet rows show the WalkTo walks this panel arms.
@@ -4524,10 +4526,11 @@ impl Session {
     }
 
     fn walk_find_options(&self) -> FindOptions {
-        self.ui
-            .nav
-            .walk_globals()
-            .manual_options(self.route_through_zones)
+        #[cfg(not(test))]
+        let globals = host_play::WalkGlobals::read_at(&crate::ui_state::path()).unwrap_or_default();
+        #[cfg(test)]
+        let globals = self.ui.nav.walk_globals();
+        globals.manual_options(self.route_through_zones)
     }
 
     /// Consume a pending selection once. Missing player/focus is an explicit

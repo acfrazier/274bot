@@ -119,7 +119,15 @@ impl TuiApp {
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
-            frame.render_widget(pane, area);
+            let settings_area = if self.regions.message.is_empty() {
+                area
+            } else {
+                Rect {
+                    height: self.regions.message.y.saturating_sub(area.y),
+                    ..area
+                }
+            };
+            frame.render_widget(pane, settings_area);
         }
         self.draw_modal(frame);
     }

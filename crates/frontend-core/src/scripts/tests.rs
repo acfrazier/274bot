@@ -1696,7 +1696,7 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
 }
 
 #[test]
-fn compiled_restore_distinguishes_known_empty_from_unknown_or_malformed_schema() {
+fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
     let mut f = fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
@@ -1716,10 +1716,17 @@ fn compiled_restore_distinguishes_known_empty_from_unknown_or_malformed_schema()
             .save_profile(row, crate::ArmMirror::None, "restore")
             .unwrap();
         f.core.flush_writes();
-        assert!(matches!(
-            f.scripts.compiled_schema(&f.core, Some("alice"), id),
-            super::SchemaView::Ready { fields: [], .. }
-        ));
+        let super::SchemaView::Ready { version, fields } =
+            f.scripts.compiled_schema(&f.core, Some("alice"), id)
+        else {
+            panic!("legacy Sherlock settings stay usable without a schema bump");
+        };
+        assert_eq!(version, 1);
+        let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        for key in ["allow_teleports", "allow_wilderness", "allow_danger_zones"] {
+            assert!(fields.iter().any(|field| field.id == key));
+            assert_eq!(bag[key], false, "missing legacy permission defaults off");
+        }
     }
     for entry in [
         json!({"schema_version": 2, "values": {"future": 9}}),

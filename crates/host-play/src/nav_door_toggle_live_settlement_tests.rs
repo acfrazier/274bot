@@ -68,7 +68,7 @@ impl Script for SettlementWalker {
                 radius: 1,
                 arrival: nav::arrival::ArrivalKind::Reach,
                 loc_id: Some(0),
-                options: script::FindOptions::default(),
+                options: script::native::WalkOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),

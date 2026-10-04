@@ -237,15 +237,14 @@ fn merge_saved_panel_state(
         return Ok(Some(sibling));
     }
 
-    let previous_nav = document
-        .get("nav")
-        .and_then(serde_json::Value::as_object);
+    let previous_nav = document.get("nav").and_then(serde_json::Value::as_object);
     let replacement_nav = replacement
         .get("nav")
         .and_then(serde_json::Value::as_object)
         .expect("serialized PanelUiState always has a nav object")
         .clone();
-    let mut merged_nav = replacement_nav;
+    let mut merged_nav = previous_nav.cloned().unwrap_or_default();
+    merged_nav.extend(replacement_nav);
     for key in MERGED_NAV_KEYS {
         let enabled = previous_nav
             .and_then(|nav| nav.get(*key))
@@ -258,7 +257,15 @@ fn merge_saved_panel_state(
         .as_object_mut()
         .expect("serialized PanelUiState is always an object")
         .insert("nav".into(), serde_json::Value::Object(merged_nav));
-    *document = replacement;
+    document
+        .as_object_mut()
+        .expect("valid panel preferences are an object")
+        .extend(
+            replacement
+                .as_object()
+                .expect("serialized PanelUiState is an object")
+                .clone(),
+        );
     Ok(None)
 }
 
@@ -457,6 +464,8 @@ mod tests {
             },
         )
         .unwrap();
+        host_play::persist_panel_ui_value_at(&path, "unrelated", serde_json::json!({"keep": 7}))
+            .unwrap();
         let panel_state = PanelUiState {
             last_focus: Some("panel-save".into()),
             capture: true,
@@ -515,7 +524,13 @@ mod tests {
         assert_eq!(after_second_writer["nav"]["allow_bank_fetch"], true);
         assert_eq!(after_second_writer["nav"]["allow_danger_zones"], true);
         assert_eq!(after_second_writer["nav"]["script_scope_notice_ack"], true);
-
+        let mut refreshed_nav = panel_state.nav.clone();
+        refreshed_nav.refresh_walk_globals_at(&path).unwrap();
+        assert!(!refreshed_nav.allow_teleports);
+        assert!(refreshed_nav.allow_wilderness);
+        assert!(refreshed_nav.allow_bank_fetch);
+        assert!(refreshed_nav.allow_danger_zones);
+        assert!(refreshed_nav.script_scope_notice_ack);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let panel_path = path.clone();
@@ -531,12 +546,7 @@ mod tests {
         let writer = std::thread::spawn(move || {
             for _ in 0..32 {
                 nav_barrier.wait();
-                host_play::persist_panel_ui_value_at(
-                    &nav_path,
-                    "nav",
-                    nav.clone(),
-                )
-                .unwrap();
+                host_play::persist_panel_ui_value_at(&nav_path, "nav", nav.clone()).unwrap();
             }
         });
         panel.join().unwrap();
@@ -552,6 +562,7 @@ mod tests {
         assert_eq!(document["nav"]["allow_bank_fetch"], true);
         assert_eq!(document["nav"]["allow_danger_zones"], true);
         assert_eq!(document["nav"]["script_scope_notice_ack"], true);
+        assert_eq!(document["unrelated"]["keep"], 7);
     }
 
     #[test]

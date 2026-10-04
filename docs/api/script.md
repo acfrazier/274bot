@@ -583,13 +583,26 @@ the host's shared `nav::router::find` and the slot pump's
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walks correlate
 host outcomes with their run, action and request owners. Inherited walk options
-resolve against the captured global and per-script permissions; either may
-allow the walk, while a walk-local `false` forbids it even when a global or
+resolve against the current global grants and the instance's committed script
+permissions, captured at Start and when a settings revision becomes effective.
+Either may allow the walk, while a walk-local `false` forbids it even when a global or
 per-script setting allows it. Native script settings default off and use
 `allow_teleports`, `allow_wilderness` and `allow_danger_zones` (Gatherer
 exposes camelCase ids). Path `walk` steps accept the same three optional
 booleans, so omitted bits inherit and `true` opts in for only that step. Native
 script walking never exposes bank fetch.
+
+The panel Nav config and TUI settings share these global permissions in
+`panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
+walks. Danger is off by default; the map danger control opts in for this walk
+only while the global is off, and is replaced by a warning when it is on.
+Native scripts cannot use BankBudget, even when global bank fetch is enabled.
+Native bank selection ranks walking routes without teleports; the walk to the
+chosen bank may still use granted teleports. Compatibility scripts keep their
+existing option wiring, including always-enabled wilderness and bank fetch.
+Both preference writers serialize through an in-process mutex and the
+`panel-ui.json.lock` advisory lock. New admissions reread the durable globals,
+including when the user permits two frontends to run on the same HOME.
 
 Path `cross` names danger-zone exemptions for that walk; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may

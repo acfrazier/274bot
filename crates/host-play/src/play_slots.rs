@@ -426,6 +426,12 @@ impl Play {
             .unwrap()
             .entry(username.clone())
             .or_default();
+        {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(username.clone()).or_default();
+            bot.walk_globals = Some(Arc::clone(&self.walk_globals));
+            bot.walk_globals_store = self.walk_globals_store.clone();
+        }
         let world = world_round.as_ref().and_then(|round| {
             self.connection
                 .profile()
