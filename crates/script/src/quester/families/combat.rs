@@ -7,8 +7,8 @@ use super::super::path::PredicateDocument;
 use super::reach::{self, Reach, ReachArgs, ReachKind};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
-    Tactic, Target,
+    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, SpellRef,
+    Style, Tactic, Target,
 };
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
@@ -56,6 +56,8 @@ struct CombatArgs {
     loadout: Option<String>,
     #[serde(default)]
     spells: Option<Vec<String>>,
+    #[serde(default)]
+    fallback_spells: bool,
     #[serde(default, alias = "anchor")]
     stand: Option<super::AnchorArg>,
     #[serde(default)]
@@ -164,19 +166,26 @@ pub(super) fn compile(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let args: CombatArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if args
-        .spells
-        .as_ref()
-        .is_some_and(|spells| !spells.is_empty())
+    Ok(Arc::new(compile_plan(args, cx)?))
+}
+
+fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan, CompileError> {
+    let style = match args.tactic.style.as_str() {
+        "melee" => Style::Melee,
+        "mage" => Style::Mage,
+        _ => return Err(CompileError::code("unsupported-combat-style")),
+    };
+    if style != Style::Mage
+        && args
+            .spells
+            .as_ref()
+            .is_some_and(|spells| !spells.is_empty())
     {
         return Err(CompileError::code("unsupported-combat-spells"));
     }
     let target = compile_target(args.target, cx)?;
     if args.tactic.kind != "open" {
         return Err(CompileError::code("unsupported-combat-tactic"));
-    }
-    if args.tactic.style != "melee" {
-        return Err(CompileError::code("unsupported-combat-style"));
     }
     if args.tactic.engage_radius == 0 || args.lost_radius == 0 {
         return Err(CompileError::code("invalid-combat-radius"));
@@ -210,15 +219,40 @@ pub(super) fn compile(
         .map(|predicate| super::compile_predicate(predicate, cx))
         .transpose()?;
     let tables = build_tables(cx)?;
+    let spells = if style == Style::Mage {
+        args.spells
+            .map(|names| {
+                if names.is_empty() || names.len() > u8::MAX as usize {
+                    return Err(CompileError::code("invalid-combat-spells"));
+                }
+                names
+                    .into_iter()
+                    .map(|name| {
+                        let index = crate::combat::style::magic::spell_index(&tables, &name)
+                            .ok_or_else(|| CompileError::code("unresolved-combat-spell"))?;
+                        Ok(SpellRef {
+                            alias: Arc::from(
+                                tables.selected().spells()[usize::from(index)]
+                                    .source_row
+                                    .as_str(),
+                            ),
+                        })
+                    })
+                    .collect::<Result<Arc<[SpellRef]>, CompileError>>()
+            })
+            .transpose()?
+    } else {
+        None
+    };
 
     let request = CombatRequest {
         target,
         tactic: Tactic::Open,
-        style: Style::Melee,
+        style,
         melee_mode: args.melee_mode,
         kit,
-        spells: None,
-        fallback_spells: false,
+        spells,
+        fallback_spells: args.fallback_spells,
         stand,
         search_bounds,
         engage_radius: args.tactic.engage_radius,
@@ -232,13 +266,13 @@ pub(super) fn compile(
         until_ticks: 0,
     };
 
-    Ok(Arc::new(CombatPlan {
+    Ok(CombatPlan {
         request: Arc::new(request),
         tables,
         until,
         win,
         loot: Arc::from(loot),
-    }))
+    })
 }
 
 pub(super) fn compile_end_predicate(
