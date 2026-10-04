@@ -40,7 +40,7 @@ use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
-use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
+use crate::zones::{ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
 
 mod resources;
 use resources::{Budget, Predecessors, ResourceBudget, SearchKey, Unmetered};
@@ -117,7 +117,8 @@ pub struct FindOptions {
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
     pub essence: Option<EssenceSession>,
-    /// Whole-walk danger-zone opt-outs; chosen endpoints are also exempt.
+    /// Named whole-walk zone opt-outs. The route origin may exit its danger
+    /// zones and the selected destination may be reached inside its own zones.
     pub zones: ZoneExempt,
 }
 
@@ -566,25 +567,17 @@ fn zone_filter<'a>(
         .map(|table| ZoneFilter::new(table, state.combat_level, endpoints, exemptions))
 }
 
-/// A cap miss at the goal is insufficient: only globally inactive zones
-/// can be omitted from the chosen endpoint's geometric exemption set.
+/// Partition only active destination zones that need completion permission.
+/// Inactive wilderness portions and continuously escapable origin zones
+/// retain the shared safe pass.
 fn goal_zone_key(
-    table: &ZoneTable,
     filter: &ZoneFilter<'_>,
-    state: &WorldState,
+    wilderness: &crate::transport::WildernessRules,
     goal: WorldTile,
 ) -> Vec<u16> {
-    let mut key: Vec<_> = table
-        .at(goal)
-        .filter(|&index| {
-            let zone = &table.zones()[usize::from(index)];
-            !filter.masked(index)
-                && !(zone.class == ZoneClass::LevelRule
-                    && !zone.wild
-                    && state
-                        .combat_level
-                        .is_some_and(|combat| combat > i32::from(zone.cap)))
-        })
+    let mut key: Vec<_> = filter
+        .blocking_at(wilderness, goal)
+        .filter(|&index| !filter.origin_active(wilderness, index))
         .collect();
     key.sort_unstable();
     key
@@ -640,32 +633,13 @@ fn first_search(
     let table = graph.zones.as_ref().expect("a filter has a table");
     let mut partitions =
         std::collections::BTreeMap::<Vec<u16>, (Vec<WorldTile>, Vec<WorldTile>)>::new();
-    let mut shared_targets = Vec::new();
-    let mut shared_fallback = Vec::new();
-    for (index, (&goal, preferred)) in targets
+    for (goal, preferred) in targets
         .iter()
-        .map(|t| (t, true))
-        .chain(fallback.iter().map(|t| (t, false)))
-        .enumerate()
+        .map(|&goal| (goal, true))
+        .chain(fallback.iter().map(|&goal| (goal, false)))
     {
-        let key = goal_zone_key(table, &filter, state, goal);
-        if key.is_empty() {
-            if !partitions.is_empty() {
-                if preferred {
-                    shared_targets.push(goal);
-                } else {
-                    shared_fallback.push(goal);
-                }
-            }
-        } else {
-            if partitions.is_empty() {
-                // Before the first keyed goal, every preceding goal was
-                // unkeyed. Delay these allocations until a partition exists.
-                shared_targets.extend_from_slice(&targets[..index.min(targets.len())]);
-                if index >= targets.len() {
-                    shared_fallback.extend_from_slice(&fallback[..index - targets.len()]);
-                }
-            }
+        let key = goal_zone_key(&filter, &graph.wilderness, goal);
+        if !key.is_empty() {
             let partition = partitions.entry(key).or_default();
             if preferred {
                 partition.0.push(goal);
@@ -734,8 +708,10 @@ fn first_search(
             )
         }
     };
-    let mut merged = run(&shared_targets, &shared_fallback, &filter);
-    merged.completion_partitions = partitions.len();
+    let mut merged = run(targets, fallback, &filter);
+    if !matches!(merged.route, Err(RouteError::NoPath)) {
+        return merged;
+    }
     for (_, (preferred, fallbacks)) in partitions {
         let endpoint = preferred
             .first()
@@ -743,6 +719,7 @@ fn first_search(
             .expect("a completion partition is nonempty");
         let completion =
             ZoneFilter::new(table, state.combat_level, &[from, *endpoint], &opts.zones);
+        merged.completion_partitions += 1;
         let mut result = run(&preferred, &fallbacks, &completion);
         // The shared mask remains live while this completion runs.
         result.capacities.zone_mask_words += filter.mask_words();
@@ -1044,17 +1021,9 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     };
     let table = graph.zones.as_ref().expect("a filter has a table");
     let mut partitions = std::collections::BTreeMap::<Vec<u16>, Vec<usize>>::new();
-    let mut shared_indices = Vec::new();
     for (index, &target) in targets.iter().enumerate() {
-        let key = goal_zone_key(table, &filter, state, target);
-        if key.is_empty() {
-            if !partitions.is_empty() {
-                shared_indices.push(index);
-            }
-        } else {
-            if partitions.is_empty() {
-                shared_indices.extend(0..index);
-            }
+        let key = goal_zone_key(&filter, &graph.wilderness, target);
+        if !key.is_empty() {
             partitions.entry(key).or_default().push(index);
         }
     }
@@ -1072,12 +1041,11 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             Some(&filter),
         );
     }
-    let shared_targets: Vec<_> = shared_indices.iter().map(|&index| targets[index]).collect();
     let shared = many_search(
         collision,
         graph,
         from,
-        &shared_targets,
+        targets,
         opts,
         state,
         avoid,
@@ -1085,14 +1053,11 @@ pub fn find_many_with_avoid_bounded_until<'a>(
         deadline,
         Some(&filter),
     );
-    let mut results = vec![Err(TargetError::NotSettled); targets.len()];
-    for (&index, &result) in shared_indices.iter().zip(&shared.results) {
-        results[index] = result;
-    }
+    let mut results = shared.results;
     let mut settled = shared.settled;
     let mut complete = shared.complete;
     let mut capacities = shared.capacities;
-    let shared_tree = if shared.results.iter().any(Result::is_ok) {
+    let shared_tree = if results.iter().any(Result::is_ok) {
         shared.came_from
     } else {
         Predecessors::empty()
@@ -1100,6 +1065,13 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     let mut retained_capacity = shared_tree.capacity();
     let mut completions = Vec::with_capacity(partitions.len());
     for (_, indices) in partitions {
+        let indices: Vec<_> = indices
+            .into_iter()
+            .filter(|&index| results[index] == Err(TargetError::NoPath))
+            .collect();
+        if indices.is_empty() {
+            continue;
+        }
         let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
         let completion = ZoneFilter::new(table, state.combat_level, &[from, goals[0]], &opts.zones);
         let pass = many_search(
@@ -1226,8 +1198,10 @@ fn many_search<'a>(
     }
 }
 
-/// Diagnose a refused route with the shortest all-exempt witness. These are
-/// active zones on that witness, not a proved minimal cut.
+/// Diagnose a refused route with every active zone on the reachable search
+/// frontier. An all-zone-exempt search is used only to establish that the
+/// same hard gates admit a route; its shortest witness does not determine the
+/// reported zones.
 #[allow(clippy::too_many_arguments)]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
@@ -1239,16 +1213,37 @@ pub fn find_blocking_zones(
     avoid: &[AvoidRect],
 ) -> Option<Vec<ZoneKey>> {
     let filter = zone_filter(graph, state, &[from, to], &opts.zones)?;
+    if !matches!(
+        find_with_avoid(collision, graph, from, to, opts, state, avoid),
+        Err(RouteError::NoPath)
+    ) {
+        return None;
+    }
     let relaxed = FindOptions {
         zones: ZoneExempt::all(),
         ..opts
     };
-    let route = find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
-    blocking_on_route(graph, &filter, &route)
+    find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
+    let mut blockers = HashSet::new();
+    if !blocking_frontier(
+        collision,
+        graph,
+        from,
+        &[to],
+        opts,
+        state,
+        avoid,
+        &filter,
+        &mut blockers,
+    ) {
+        return None;
+    }
+    blocking_zone_keys(graph.zones.as_ref()?, blockers)
 }
 
-/// First/many-goal refusal witness, attributed against the chosen destination's
-/// endpoint exemptions. It never unions unchosen endpoints.
+/// Multi-goal refusal attribution uses the union of reachable frontiers for
+/// the selected target set, grouped by active destination zones. A goal's
+/// own zones allow arrival, never transit to targets outside those zones.
 #[allow(clippy::too_many_arguments)]
 pub fn find_first_blocking_zones(
     collision: &WorldCollision,
@@ -1259,41 +1254,90 @@ pub fn find_first_blocking_zones(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Option<Vec<ZoneKey>> {
-    if opts.zones.is_all() || graph.zones.is_none() {
+    let mut filter = zone_filter(graph, state, &[from], &opts.zones)?;
+    if !matches!(
+        find_first_with_avoid(collision, graph, from, targets, opts, state, avoid).into_route(),
+        Err(RouteError::NoPath)
+    ) {
         return None;
     }
     let relaxed = FindOptions {
         zones: ZoneExempt::all(),
         ..opts
     };
-    let route = find_first_with_avoid(collision, graph, from, targets, relaxed, state, avoid)
+    find_first_with_avoid(collision, graph, from, targets, relaxed, state, avoid)
         .into_route()
         .ok()?;
-    let filter = zone_filter(graph, state, &[from, route.dest], &opts.zones)?;
-    blocking_on_route(graph, &filter, &route)
-}
-
-fn blocking_on_route(
-    graph: &TransportGraph,
-    filter: &ZoneFilter<'_>,
-    route: &Route,
-) -> Option<Vec<ZoneKey>> {
-    let table = graph.zones.as_ref()?;
-    let mut keys = Vec::new();
-    let mut visit = |tile| {
-        for index in filter.blocking_at(&graph.wilderness, tile) {
-            let key = table.key(index);
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-    };
-    for leg in &route.legs {
-        match leg {
-            Leg::Walk { tiles } => tiles.iter().copied().for_each(&mut visit),
-            Leg::Transport { edge } => visit(edge.to),
+    let mut partitions: std::collections::BTreeMap<Vec<u16>, Vec<WorldTile>> =
+        std::collections::BTreeMap::new();
+    for &goal in targets {
+        partitions
+            .entry(goal_zone_key(&filter, &graph.wilderness, goal))
+            .or_default()
+            .push(goal);
+    }
+    let mut blockers = HashSet::new();
+    for (key, goals) in partitions {
+        filter.select_destination((!key.is_empty()).then_some(goals[0]));
+        if !blocking_frontier(
+            collision,
+            graph,
+            from,
+            &goals,
+            opts,
+            state,
+            avoid,
+            &filter,
+            &mut blockers,
+        ) {
+            return None;
         }
     }
+    blocking_zone_keys(graph.zones.as_ref()?, blockers)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blocking_frontier(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    filter: &ZoneFilter<'_>,
+    blockers: &mut HashSet<u16>,
+) -> bool {
+    let mut goals = Goals::Frontier {
+        targets: FirstTargets::new(targets),
+        blockers,
+    };
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        CostModel::running(),
+        NODE_BUDGET,
+        opts.allow_teleports,
+        opts.allow_wilderness,
+        state,
+        opts.essence.as_ref(),
+        Relax::Strict,
+        avoid,
+        Some(filter),
+        &mut goals,
+        None,
+    );
+    search.stop == SearchStop::Exhausted
+}
+
+fn blocking_zone_keys(table: &ZoneTable, blockers: HashSet<u16>) -> Option<Vec<ZoneKey>> {
+    let mut keys: Vec<_> = blockers.into_iter().map(|index| table.key(index)).collect();
+    keys.sort_unstable_by_key(|key| match key {
+        ZoneKey::Zone(index) => (0, *index),
+        ZoneKey::Group(index) => (1, *index),
+    });
+    keys.dedup();
     (!keys.is_empty()).then_some(keys)
 }
 
@@ -1417,26 +1461,24 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// Counts are total initial supply; BankBudget withdraws only the shortage.
 pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
     let mut required = HashMap::<i32, i32>::new();
-    let mut spent = HashMap::<i32, i32>::new();
     let mut missing = Vec::new();
-    for leg in &route.legs {
+    for leg in route.legs.iter().rev() {
         let Leg::Transport { edge } = leg else {
             continue;
         };
-        for &(id, count) in &edge.item_req {
-            let demand = spent.get(&id).copied().unwrap_or(0).saturating_add(count);
-            let peak = required.entry(id).or_default();
-            *peak = (*peak).max(demand);
-        }
-        for &(id, count) in &edge.consumed_req {
-            let debit = spent.entry(id).or_default();
-            *debit = debit.saturating_add(count);
-            let peak = required.entry(id).or_default();
-            *peak = (*peak).max(*debit);
-        }
+        // Work backwards so a balance-dependent debit has one exact
+        // inverse and earlier charge returns reduce only later demand.
         for &(id, count) in &edge.item_returns {
-            let debit = spent.entry(id).or_default();
-            *debit = debit.saturating_sub(count);
+            let demand = required.entry(id).or_default();
+            *demand = demand.saturating_sub(count).max(0);
+        }
+        for &(id, packed_count) in &edge.consumed_req {
+            let demand = required.entry(id).or_default();
+            *demand = edge.required_supply_before(id, packed_count, *demand);
+        }
+        for &(id, count) in &edge.item_req {
+            let demand = required.entry(id).or_default();
+            *demand = (*demand).max(count);
         }
         if !edge.worn_req.is_empty() && !edge.worn_req.iter().any(|id| state.worn.contains(id)) {
             missing.push(MissingReq::WearAny {
@@ -1695,6 +1737,12 @@ enum Goals<'a> {
         costs: &'a mut [Result<TargetCost, TargetError>],
         remaining: usize,
     },
+    /// Exhausts the source-reachable graph while recording zone-blocked
+    /// transitions; used only for refusal attribution.
+    Frontier {
+        targets: FirstTargets<'a>,
+        blockers: &'a mut HashSet<u16>,
+    },
 }
 
 /// What one settled node decided for the search.
@@ -1714,6 +1762,19 @@ impl Goals<'_> {
                 first.preferred.targets.contains(&tile) || first.fallback.targets.contains(&tile)
             }
             Self::Many { unique, .. } => unique.contains_key(&tile),
+            Self::Frontier { targets, .. } => targets.contains(&tile),
+        }
+    }
+    fn is_frontier(&self) -> bool {
+        matches!(self, Self::Frontier { .. })
+    }
+
+    fn record_blockers(&mut self, blockers: impl Iterator<Item = u16>) {
+        if let Self::Frontier {
+            blockers: recorded, ..
+        } = self
+        {
+            recorded.extend(blockers);
         }
     }
 
@@ -1742,6 +1803,7 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
+            Goals::Frontier { .. } => return Settle::Continue,
         };
         if done {
             Settle::Stop
@@ -1761,7 +1823,9 @@ impl Goals<'_> {
     fn finish_proofs(&mut self) -> ReverseReport {
         match self {
             Goals::First(first) => first.finish_proofs(),
-            Goals::Single { .. } | Goals::Many { .. } => ReverseReport::default(),
+            Goals::Single { .. } | Goals::Many { .. } | Goals::Frontier { .. } => {
+                ReverseReport::default()
+            }
         }
     }
 }
@@ -2395,39 +2459,53 @@ fn find_bounded_impl(
         });
     }
 
-    let zones = zone_filter(graph, state, &[from, to], &exemptions);
-    let mut goals = Goals::Single { to, cost: None };
-    let search = search_kernel(
-        collision,
-        graph,
-        from,
-        model,
-        budget,
-        use_teleports,
-        allow_wilderness,
-        state,
-        essence,
-        Relax::Strict,
-        avoid,
-        zones.as_ref(),
-        &mut goals,
-        None,
-    );
-    match goals {
-        Goals::Single {
-            cost: Some(cost), ..
-        } => {
-            let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
-            debug_assert_eq!(ticks, cost.ticks);
-            Ok(Route {
-                legs,
-                dest: to,
-                ticks,
-            })
+    let mut zones = zone_filter(graph, state, &[from], &exemptions);
+    let run = |zones: Option<&ZoneFilter<'_>>| {
+        let mut goals = Goals::Single { to, cost: None };
+        let search = search_kernel(
+            collision,
+            graph,
+            from,
+            model,
+            budget,
+            use_teleports,
+            allow_wilderness,
+            state,
+            essence,
+            Relax::Strict,
+            avoid,
+            zones,
+            &mut goals,
+            None,
+        );
+        match goals {
+            Goals::Single {
+                cost: Some(cost), ..
+            } => {
+                let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
+                debug_assert_eq!(ticks, cost.ticks);
+                Ok(Route {
+                    legs,
+                    dest: to,
+                    ticks,
+                })
+            }
+            _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+            _ => Err(RouteError::NoPath),
         }
-        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
-        _ => Err(RouteError::NoPath),
+    };
+    let result = run(zones.as_ref());
+    if matches!(result, Err(RouteError::NoPath)) {
+        if let Some(filter) = zones.as_mut().filter(|filter| {
+            filter
+                .blocking_at(&graph.wilderness, to)
+                .any(|index| !filter.origin_active(&graph.wilderness, index))
+        }) {
+            filter.select_destination(Some(to));
+            return run(Some(filter));
+        }
     }
+    result
 }
 
 /// The Dijkstra kernel shared by every search shape. `relax` is
@@ -2606,6 +2684,11 @@ fn search_kernel_budget<B: Budget>(
                 reached,
             );
         }
+        if zones.is_some_and(|filter| {
+            goals.is_target(cur) && filter.destination_only_at(&graph.wilderness, cur)
+        }) {
+            continue;
+        }
 
         let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
 
@@ -2619,11 +2702,20 @@ fn search_kernel_budget<B: Budget>(
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(nb, avoid) {
                     continue;
                 }
-                if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, nb)) {
-                    continue;
-                }
                 if !wildy_step_ok(graph, cur, nb, allow_wilderness) {
                     continue;
+                }
+                if let Some(filter) = zones {
+                    let mut blocked = filter.blocking_transition_at(
+                        &graph.wilderness,
+                        cur,
+                        nb,
+                        goals.is_target(nb),
+                    );
+                    if let Some(first) = blocked.next() {
+                        goals.record_blockers(std::iter::once(first).chain(blocked));
+                        continue;
+                    }
                 }
                 let nd = n.cost + model.run_per_step;
                 let nb = n.tile.at(nb);
@@ -2670,11 +2762,30 @@ fn search_kernel_budget<B: Budget>(
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(to, avoid) {
                             continue;
                         }
-                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, to)) {
-                            continue;
-                        }
                         if !wildy_step_ok(graph, cur, to, allow_wilderness) {
                             continue;
+                        }
+                        if let Some(filter) = zones {
+                            let mut blocked = filter.blocking_transition_at(
+                                &graph.wilderness,
+                                cur,
+                                to,
+                                goals.is_target(to),
+                            );
+                            if let Some(first) = blocked.next() {
+                                if goals.is_frontier() {
+                                    match resources.cross(n.tile, edge, state, relax) {
+                                        Ok(Some(_)) => goals
+                                            .record_blockers(std::iter::once(first).chain(blocked)),
+                                        Ok(None) => {}
+                                        Err(()) => {
+                                            balance_budget_spent = true;
+                                            break 'search;
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
                         }
                         let next = match resources.cross(n.tile, edge, state, relax) {
                             Ok(Some(next)) => next.at(to),
@@ -2716,13 +2827,20 @@ fn search_kernel_budget<B: Budget>(
                     {
                         continue;
                     }
-                    if zones
-                        .is_some_and(|filter| filter.blocks(&graph.wilderness, session.return_tile))
-                    {
-                        continue;
-                    }
                     if !wildy_step_ok(graph, cur, session.return_tile, allow_wilderness) {
                         continue;
+                    }
+                    if let Some(filter) = zones {
+                        let mut blocked = filter.blocking_transition_at(
+                            &graph.wilderness,
+                            cur,
+                            session.return_tile,
+                            goals.is_target(session.return_tile),
+                        );
+                        if let Some(first) = blocked.next() {
+                            goals.record_blockers(std::iter::once(first).chain(blocked));
+                            continue;
+                        }
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
                     let next = n.tile.at(session.return_tile);
@@ -2754,14 +2872,33 @@ fn search_kernel_budget<B: Budget>(
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }
-                if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, edge.to)) {
+                if !wildy_step_ok(graph, cur, edge.to, allow_wilderness)
+                    || !TransportGraph::teleport_legal_at_level(wildy_level, edge)
+                {
                     continue;
                 }
-                if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
-                    continue;
-                }
-                if !TransportGraph::teleport_legal_at_level(wildy_level, edge) {
-                    continue;
+                if let Some(filter) = zones {
+                    let mut blocked = filter.blocking_transition_at(
+                        &graph.wilderness,
+                        cur,
+                        edge.to,
+                        goals.is_target(edge.to),
+                    );
+                    if let Some(first) = blocked.next() {
+                        if goals.is_frontier() {
+                            match resources.cross(n.tile, edge, state, relax) {
+                                Ok(Some(_)) => {
+                                    goals.record_blockers(std::iter::once(first).chain(blocked))
+                                }
+                                Ok(None) => {}
+                                Err(()) => {
+                                    balance_budget_spent = true;
+                                    break 'search;
+                                }
+                            }
+                        }
+                        continue;
+                    }
                 }
                 let next = match resources.cross(n.tile, edge, state, relax) {
                     Ok(Some(next)) => next.at(edge.to),

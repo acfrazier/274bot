@@ -2199,3 +2199,81 @@ impl HuntKind for Bank {
         BANK_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::isolate_fb::Snapshot;
+
+    /// Builds an old-reader snapshot plus the appended vtable slot 286. The
+    /// current reader treats 0 as unknown, 1 as stationary, and 2 as moving;
+    /// older generated readers ignore the extra slot.
+    fn motion_outcome_snapshot(tick: u64, request_id: u64, motion: u8) -> Vec<u8> {
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let start = builder.start_table();
+        builder.push_slot::<u64>(Snapshot::VT_TICK, tick, 0);
+        builder.push_slot::<bool>(Snapshot::VT_INGAME, true, false);
+        builder.push_slot::<u64>(Snapshot::VT_WALK_OUTCOME_SEQ, 1, 0);
+        builder.push_slot::<u64>(Snapshot::VT_WALK_OUTCOME_GENERATION, 1, 0);
+        builder.push_slot::<u64>(Snapshot::VT_WALK_OUTCOME_REQUEST_ID, request_id, 0);
+        builder.push_slot::<bool>(Snapshot::VT_WALK_OUTCOME_FAILED, false, false);
+        builder.push_slot::<i32>(Snapshot::VT_WALK_OUTCOME_X, 2820, 0);
+        builder.push_slot::<i32>(Snapshot::VT_WALK_OUTCOME_Z, 3557, 0);
+        builder.push_slot::<i32>(Snapshot::VT_WALK_OUTCOME_LEVEL, 0, 0);
+        builder.push_slot::<i32>(Snapshot::VT_WALK_OUTCOME_RADIUS, 3, 0);
+        builder.push_slot::<bool>(Snapshot::VT_WALK_OUTCOME_ALLOW_TELEPORTS, false, false);
+        builder.push_slot::<i32>(Snapshot::VT_SELF_ANIM, 390, -1);
+        builder.push_slot::<u8>(286, motion, 0);
+        let table = builder.end_table(start);
+        builder.finish(
+            flatbuffers::WIPOffset::<Snapshot<'_>>::new(table.value()),
+            None,
+        );
+        builder.finished_data().to_vec()
+    }
+
+    fn post_motion_outcome(tick: u64, request_id: u64, motion: u8) {
+        let bytes = motion_outcome_snapshot(tick, request_id, motion);
+        let snapshot = Snapshot::from_bytes(&bytes).expect("motion outcome snapshot");
+        crate::observed::apply(&snapshot);
+        crate::walk_wait::on_snapshot(&snapshot);
+    }
+
+    #[test]
+    fn compat_hunt_bank_waits_for_route_motion_then_retries_when_stationary() {
+        crate::observed::on_reset();
+        crate::walk_wait::on_reset();
+        BankObservation::empty().post();
+
+        let target = Tile {
+            x: 2820,
+            z: 3557,
+            level: 0,
+        };
+        let request_id = crate::walk_wait::dispatch(&json!({
+            "op": "begin",
+            "x": target.x,
+            "z": target.z,
+            "level": target.level,
+            "radius": APPROACH_RADIUS,
+            "allow_teleports": false,
+        }))
+        .as_u64()
+        .expect("wait token");
+        let mut rt = BankRuntime::new(1);
+        rt.phase = Phase::AckWalk;
+        rt.walk_token = Some(request_id);
+        rt.walk_dest = Some(target);
+        let proj = parse_proj(&json!({}));
+
+        post_motion_outcome(1, request_id, 2);
+        let while_moving = ack_walk(&mut rt, &proj, None);
+        assert_eq!(while_moving["kind"], "delay-ticks");
+        assert_eq!(while_moving["n"], 1);
+
+        post_motion_outcome(2, request_id, 1);
+        let after_stopping = ack_walk(&mut rt, &proj, None);
+        assert_eq!(after_stopping["kind"], "yield");
+        assert_eq!(after_stopping["value"], false);
+    }
+}

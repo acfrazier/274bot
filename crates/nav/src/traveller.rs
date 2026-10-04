@@ -642,17 +642,14 @@ impl FollowRun {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Refused { at: here, reason });
                             }
-                            TeleportSend::Wait => {
+                            TeleportSend::Wait(reason) => {
                                 self.loc_wait += 1;
                                 if self.loc_wait > self.budget {
                                     fire_leg(options, &leg, LegPhase::Failed);
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
                                         leg: self.leg_index,
-                                        detail: format!(
-                                            "packed teleport to ({}, {}, {}) never became workable in the loaded scene",
-                                            edge.to.x, edge.to.z, edge.to.level
-                                        ),
+                                        detail: reason.detail(),
                                     });
                                 }
                                 self.legs.push_front(leg);
