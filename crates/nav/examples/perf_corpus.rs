@@ -390,10 +390,13 @@ fn main() -> Result<(), String> {
             )
             .expect("zone refusal witness");
             let table = world.graph.zones.as_ref().expect("v12 zones");
-            let names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
-            // Preserve the actual diagnostic witness for cross-version
-            // comparison; its shape belongs to the refusal implementation.
-            assert!(!names.is_empty());
+            let mut names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
+            names.sort_unstable();
+            assert_eq!(
+                names,
+                vec!["white-wolf-mountain", "wolf@2647,3584,0"],
+                "single-target refusal reports only the best relaxed-route witness"
+            );
             Observation {
                 outcome: format!("NoPath blocked:{names:?}"),
                 settled: search.settled(),
