@@ -18,7 +18,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
 
-const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2";
+fn evidence_dir() -> Result<PathBuf, String> {
+    std::env::var_os("LIVE_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| "W1 live proof requires LIVE_EVIDENCE_DIR".to_owned())
+}
 const MISSILES_VARP: i32 = 96;
 const MISSILES_BUTTON: i32 = 5622;
 const PRAYER_STABLE_TICKS: u32 = 3;
@@ -183,7 +187,7 @@ impl ThrowawayHome {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
-        let path = PathBuf::from(EVIDENCE_DIR)
+        let path = evidence_dir()?
             .join("homes")
             .join(format!("w1-{}-{id}", std::process::id()));
         std::fs::create_dir_all(&path)
@@ -1554,8 +1558,8 @@ fn run_live_w1(mode: W1Mode) {
         "W1 requires LIVE=1"
     );
     std::env::set_var("BOT_LIVE_NAME_PREFIX", "wg");
-    std::fs::create_dir_all(EVIDENCE_DIR)
-        .expect("create WALK-GUARD-LIFECYCLE-1/r2 evidence directory");
+    let evidence = evidence_dir().expect("W1 live prerequisites");
+    std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
     let home = ThrowawayHome::enter().expect("create isolated HOME");
     let options = profile_options(&home.path).expect("W1 live prerequisites");
     let template = options
@@ -1847,7 +1851,7 @@ fn run_live_w1(mode: W1Mode) {
         "last_status": capture_snapshot.statuses.last(),
         "final_snapshot": final_w1_snapshot(&snapshot.snapshot),
     });
-    let path = PathBuf::from(EVIDENCE_DIR).join(format!("W1-{account}-receipt.json"));
+    let path = evidence.join(format!("W1-{account}-receipt.json"));
     let pixels = shot_buffer.snapshot();
     assert_eq!(pixels.len(), 765 * 503, "W1 requires a real rendered frame");
     let mut rgba = Vec::with_capacity(pixels.len() * 4);
@@ -1859,7 +1863,7 @@ fn run_live_w1(mode: W1Mode) {
             0xff,
         ]);
     }
-    let capture_dir = PathBuf::from(EVIDENCE_DIR).join(format!(
+    let capture_dir = evidence.join(format!(
         "WALK-GUARD-LIFECYCLE-1_R2_W1_{mode_name}_{account}_{}",
         scenario::shot::stamp_utc(SystemTime::now())
     ));
@@ -2552,30 +2556,31 @@ fn receipt_arrival_uses_host_network_tile_while_rendered_actor_lags() {
 #[test]
 #[ignore = "offline replay reads retained W1 receipts and writes evidence"]
 fn replay_walk_guard_w1_retained_receipts() {
+    let Some(root) = std::env::var_os("LIVE_EVIDENCE_DIR") else {
+        eprintln!("skip: replay_walk_guard_w1_retained_receipts requires LIVE_EVIDENCE_DIR");
+        return;
+    };
+    let root = PathBuf::from(root);
     let cases = [
-        (
-            "/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/W1-wgkiu3hcw6_0-receipt.json",
-            false,
-        ),
-        (
-            "/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/W1-wg9l6smxhw_0-receipt.json",
-            true,
-        ),
-        (
-            "/Volumes/dev-scratch/274bot-evidence/REVIEW-WALK-GUARD-OPUS/W1-wgefe0xaj8_0-receipt.json",
-            true,
-        ),
+        (root.join("W1-wgkiu3hcw6_0-receipt.json"), false),
+        (root.join("W1-wg9l6smxhw_0-receipt.json"), true),
+        (root.join("W1-wgefe0xaj8_0-receipt.json"), true),
     ];
-    std::fs::create_dir_all(EVIDENCE_DIR).expect("create W1 lifecycle evidence directory");
+    std::fs::create_dir_all(&root).expect("create W1 lifecycle evidence directory");
     let mut table = Vec::with_capacity(cases.len());
     for (path, expected_pass) in cases {
-        let bytes = std::fs::read(path).unwrap_or_else(|error| {
-            panic!("read retained W1 receipt {path}: {error}");
-        });
+        let path_label = path.display().to_string();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                eprintln!("skip: retained W1 receipt {path_label} is absent");
+                return;
+            }
+        };
         let value: serde_json::Value = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("parse retained W1 receipt {path}: {error}"));
+            .unwrap_or_else(|error| panic!("parse retained W1 receipt {path_label}: {error}"));
         let parsed = parse_w1_receipt(&value)
-            .unwrap_or_else(|error| panic!("decode retained W1 receipt {path}: {error}"));
+            .unwrap_or_else(|error| panic!("decode retained W1 receipt {path_label}: {error}"));
         let input = parsed.gate_input();
         let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
         let (replay, reason) = match decision {
@@ -2587,11 +2592,11 @@ fn replay_walk_guard_w1_retained_receipts() {
             replay == "PASS",
             expected_pass,
             "{} replayed as {replay}: {}",
-            parsed.account.as_deref().unwrap_or(path),
+            parsed.account.as_deref().unwrap_or(path_label.as_str()),
             reason.as_deref().unwrap_or("no gate detail")
         );
         table.push(json!({
-            "receipt": path,
+            "receipt": path_label,
             "account": parsed.account,
             "recorded_outcome": parsed.recorded_outcome,
             "replayed_outcome": replay,
@@ -2608,7 +2613,7 @@ fn replay_walk_guard_w1_retained_receipts() {
             ),
         }));
     }
-    let output = PathBuf::from(EVIDENCE_DIR).join("W1-lifecycle-replay.json");
+    let output = root.join("W1-lifecycle-replay.json");
     std::fs::write(&output, serde_json::to_vec_pretty(&table).unwrap())
         .unwrap_or_else(|error| panic!("write replay table {}: {error}", output.display()));
 }
