@@ -507,9 +507,16 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     boat_edges(&mut graph, &gates, &mut audit);
-    cart_edges(&mut graph);
-    essence_mine_edges(&mut graph);
-    elkoy_edges(&mut graph);
+    cart_edges(
+        &mut graph,
+        gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
+    );
+    if let Some(name) = gates.completed_quest_name("runemysteries", "runemysteries_complete") {
+        essence_mine_edges(&mut graph, name);
+    }
+    if let Some(name) = gates.completed_quest_name("treequest", "tree_complete") {
+        elkoy_edges(&mut graph, name);
+    }
     glider_edges(content_root, &mut graph);
     spirit_tree_edges(
         content_root,

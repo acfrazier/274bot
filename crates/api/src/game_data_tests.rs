@@ -1168,6 +1168,49 @@ fn gather_resources_decode_and_skill_lookup() {
 }
 
 #[test]
+fn generated_karamja_facts_join_selected_items_npcs_and_locs() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let facts = data.karamja().expect("generated Karamja facts");
+        assert!(facts.crate_capacity > 0);
+        assert!(facts.coin_payout > 0);
+        assert!(!facts.banana_tree_configs.is_empty());
+        assert!(!facts.banana_tree_spawns.is_empty());
+        assert!(facts
+            .banana_tree_spawns
+            .iter()
+            .all(|spawn| facts.banana_tree_configs.contains(&spawn.config)));
+        assert!(data.item_by_alias("coins").is_some());
+        assert!(data.item_by_alias("banana").is_some());
+
+        let luthas = data
+            .npc_by_config(&facts.luthas_spawn.config)
+            .expect("Luthas joins the selected NPC pack");
+        assert!(luthas
+            .display
+            .as_deref()
+            .is_some_and(|display| !display.is_empty()));
+        assert!(luthas
+            .ops
+            .iter()
+            .any(|op| op.eq_ignore_ascii_case("Talk-to")));
+        for config in facts
+            .banana_tree_configs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(facts.crate_spawn.config.as_str()))
+        {
+            assert!(data
+                .loc_by_config(config)
+                .is_some_and(|loc| !loc.ops.is_empty()));
+        }
+        assert!(!facts.dialogue.employment.is_empty());
+        assert!(!facts.dialogue.paid.is_empty());
+        assert!(!facts.dialogue.incomplete.is_empty());
+    }
+}
+
+#[test]
 fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).unwrap();
