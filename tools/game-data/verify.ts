@@ -137,7 +137,7 @@ async function verifyRevision(revision: number) {
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
-    const npcNames = extractNpcNamesFacts(pin.contentRoot);
+    const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
     const combatScripts = parseCombatScripts(pin.contentRoot);
     const expectedContentFiles = [...new Set([
         ...baseContentFiles,
