@@ -50,7 +50,6 @@ use nav::paint::{
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Secret, Vault};
 
@@ -940,6 +939,9 @@ pub struct Session {
     pub walkto_open: bool,
     /// WalkTo-only opt-out, reset when the picker opens; never persisted.
     pub route_through_zones: bool,
+    /// Shared durable walk-policy projection; `ui.nav` is only an edit/render buffer.
+    pub(crate) walk_permissions: frontend_core::WalkGlobalsView,
+    pub(crate) walk_permissions_path: PathBuf,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1282,6 +1284,14 @@ fn publish_frontend_slot(
     publication.session_boundary
 }
 
+fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::WalkGlobalsView) {
+    nav.allow_teleports = view.globals.allow_teleports;
+    nav.allow_wilderness = view.globals.allow_wilderness;
+    nav.allow_bank_fetch = view.globals.allow_bank_fetch;
+    nav.allow_danger_zones = view.globals.allow_danger_zones;
+    nav.script_scope_notice_ack = view.script_scope_notice_ack;
+}
+
 impl Session {
     /// Empty session for tests. Product startup uses [`Self::with_instance`].
     #[cfg(test)]
@@ -1294,12 +1304,18 @@ impl Session {
     pub fn with_instance(_instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
-        let ui = crate::ui_state::load();
+        let mut ui = crate::ui_state::load();
+        let walk_permissions_path = crate::ui_state::path();
+        let walk_permissions = frontend_core::WalkGlobalsView::read_at(&walk_permissions_path);
+        apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
+        core.set_walk_globals(walk_permissions.globals);
+        core.set_walk_globals_store(walk_permissions_path.clone());
         core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
+
         // The fleet rows show the WalkTo walks this panel arms.
         core.set_walk_arms(Arc::clone(&travellers));
         Self {
@@ -1351,6 +1367,8 @@ impl Session {
             fleet_restart_confirm: false,
             walkto_open: false,
             route_through_zones: false,
+            walk_permissions,
+            walk_permissions_path,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -1463,6 +1481,15 @@ impl Session {
             requested_unlock: None,
             validated_template: None,
         }
+    }
+
+    /// Refresh the durable policy before rendering or admitting a manual walk.
+    pub(crate) fn refresh_walk_permissions(&mut self) {
+        let view = frontend_core::WalkGlobalsView::read_at(&self.walk_permissions_path);
+        self.walk_permissions = view;
+        apply_walk_permissions_to_nav(&mut self.ui.nav, view);
+        self.route_through_zones = view.danger_this_walk(self.route_through_zones);
+        self.core.set_walk_globals(view.globals);
     }
 
     /// Enable full-core proof only for the dedicated catalog_watch entry.
@@ -4528,18 +4555,10 @@ impl Session {
             .availability(kind, &self.picker_context(world), origin)
     }
 
-    fn walk_find_options(&self) -> FindOptions {
-        FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            zones: if self.route_through_zones {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            },
-            ..Default::default()
-        }
+    fn walk_find_options(&mut self) -> FindOptions {
+        self.refresh_walk_permissions();
+        self.walk_permissions
+            .manual_options(self.route_through_zones)
     }
 
     /// Consume a pending selection once. Missing player/focus is an explicit

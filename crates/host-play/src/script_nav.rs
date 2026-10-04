@@ -96,6 +96,12 @@ impl ScriptRouteExclusions {
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
+    /// Shared session globals, attached before a production slot starts.
+    pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
+    pub(crate) walk_globals_store: Option<Arc<std::path::PathBuf>>,
+    /// The compiled instance's effective Start/config revision, never a draft.
+    /// `None` identifies isolate walks, which keep their existing option wiring.
+    pub(crate) native_permissions: Option<script::native::WalkPermissions>,
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
     pub(crate) route_worker: Option<Arc<()>>,
@@ -466,12 +472,7 @@ impl ScriptWalkArm {
             request.target.x,
             request.target.z,
             request.target.level,
-            FindOptions {
-                allow_teleports: request.options.allow_teleports,
-                allow_wilderness: request.options.allow_wilderness,
-                allow_bank_fetch: request.options.allow_bank_fetch,
-                ..FindOptions::default()
-            },
+            super::walk_permissions::native_options(&self.navs, &self.name, request.options),
             i32::from(request.radius),
             true,
             authority.request_id().get(),
@@ -641,6 +642,7 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
     ) -> bool {
+        let opts = super::walk_permissions::compiled_options(&self.navs, &self.name, opts);
         self.queue_route_impl(
             x,
             z,

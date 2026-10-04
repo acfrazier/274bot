@@ -71,6 +71,10 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         quest: "priest",
         profile: TestProfile::Base40,
     },
+    QuestFixtureProfile {
+        quest: "vampire",
+        profile: TestProfile::Base40,
+    },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
     QuestFixtureProfile {
         quest: "dragon",

@@ -24,6 +24,7 @@ struct Walker {
     later_target: Option<WorldTile>,
     radius: u16,
     arrival: nav::arrival::ArrivalKind,
+    options: script::native::WalkOptions,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
     events: Vec<WalkEvent>,
@@ -80,7 +81,7 @@ impl Script for WalkerScript {
                 radius: shared.radius,
                 arrival: shared.arrival,
                 loc_id: None,
-                options: script::FindOptions::default(),
+                options: shared.options,
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
@@ -1752,6 +1753,226 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         .detail
         .as_deref()
         .is_some_and(|detail| detail.contains("test-barrier@2,0,0")));
+}
+
+#[test]
+fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+    use script::native::WalkBit;
+    for (global, bit, permitted) in [
+        (false, WalkBit::Inherit, false),
+        (false, WalkBit::Allow, true),
+        (false, WalkBit::Forbid, false),
+        (true, WalkBit::Inherit, true),
+        (true, WalkBit::Allow, true),
+        (true, WalkBit::Forbid, false),
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let globals = Arc::new(Mutex::new(WalkGlobals {
+            allow_danger_zones: global,
+            allow_bank_fetch: true,
+            ..Default::default()
+        }));
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(globals);
+        rig.shared.lock().options.allow_danger_zones = bit;
+        assert!(
+            !crate::walk_permissions::native_options(
+                &rig.navs,
+                "alice",
+                rig.shared.lock().options,
+            )
+            .allow_bank_fetch,
+            "global fetch stays manual-only at the native admission"
+        );
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        {
+            let all = rig.navs.lock().unwrap();
+            let bot = &all["alice"];
+            assert_eq!(
+                bot.route.is_some(),
+                permitted,
+                "global={global}, walk={bit:?}"
+            );
+            assert!(
+                bot.bank_fetch.is_none(),
+                "native walks never use BankBudget"
+            );
+            if permitted {
+                assert!(!bot.requested_route.unwrap().4);
+            } else {
+                assert!(bot.native_walk_failure.is_some());
+                assert!(
+                    bot.requested_route.is_none(),
+                    "a failed admission retires its route request"
+                );
+            }
+            assert!(
+                bot.walk_guard.is_none(),
+                "danger crossing does not start protection"
+            );
+        }
+        if !permitted {
+            rig.observe(2);
+            assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        }
+    }
+}
+
+#[test]
+fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
+    use script::native::WalkBit;
+    for bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+        let mut rig = open_rig(false);
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        rig.shared.lock().options = script::native::WalkOptions {
+            allow_teleports: bit,
+            allow_wilderness: bit,
+            ..Default::default()
+        };
+        rig.observe(1);
+        rig.wait_routed();
+        let all = rig.navs.lock().unwrap();
+        let request = all["alice"].requested_route.unwrap();
+        assert_eq!(request.2, bit != WalkBit::Forbid);
+        assert_eq!(request.3, bit != WalkBit::Forbid);
+        assert!(!request.4);
+    }
+}
+
+#[test]
+fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+    {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().protect = true;
+        seed_prayer(&mut rig.snapshot, 43);
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk_failure.is_some())
+        }));
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    }
+    for names in [
+        vec![Arc::from("unknown-danger-zone")],
+        vec![Arc::from("test-barrier@2,0,0"); 9],
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().cross_first = names;
+        rig.observe(1);
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard.is_none());
+    }
+}
+
+#[test]
+fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(84);
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "allow_teleports": true,
+                "allow_wilderness": true,
+                "allow_danger_zones": true,
+            }))
+            .unwrap(),
+        ),
+        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert!(wait_until(5_000, || {
+        slot.observe_lifecycle();
+        slot.state() == script::RunState::Running
+    }));
+    let permissions = slot.native_walk_permissions().unwrap();
+    for compiled in [true, false] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let mut all = rig.navs.lock().unwrap();
+        let bot = all.entry("alice".into()).or_default();
+        bot.native_permissions = compiled.then_some(permissions);
+        bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        drop(all);
+        let options = crate::walk_permissions::compiled_options(
+            &rig.navs,
+            "alice",
+            nav::router::FindOptions::default(),
+        );
+        assert_eq!(options.allow_teleports, compiled);
+        assert_eq!(options.allow_wilderness, compiled);
+        assert!(!options.allow_bank_fetch);
+        assert_eq!(options.zones.is_all(), compiled);
+        assert!(dispatch_script_interact(
+            &mut rig.client,
+            &rig.snapshot,
+            None,
+            Some((0, 0, 0)),
+            &rig.navs,
+            &rig.world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Walk {
+                x: 4,
+                z: 0,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 1,
+                avoid: vec![],
+                cross: vec![],
+            }],
+        ));
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        let all = rig.navs.lock().unwrap();
+        let bot = &all["alice"];
+        assert_eq!(bot.route.is_some(), compiled);
+        if compiled {
+            let request = bot.requested_route.unwrap();
+            assert!(request.2 && request.3 && request.5.is_all());
+            assert!(!request.4);
+        } else {
+            assert!(bot.requested_route.is_none());
+            assert!(bot.walk_outcome_failed);
+        }
+    }
 }
 
 #[test]
