@@ -1251,11 +1251,11 @@ fn use_on_item_target_emits_inventory_kind() {
         let mut snapshot = ready();
         snapshot.seed_inventory(vec![source, target], 28);
         let plan = compile_use_on(
-            &serde_json::json!({
+            test_args::<UseOnArgs>(serde_json::json!({
                 "item": "shears",
                 "target": {"item": "wool"},
                 "settle_ms": 20_000,
-            }),
+            })),
             cx,
         )
         .unwrap();
