@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
-import { extractGatheringFamily, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
@@ -16,6 +16,18 @@ import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
+
+assert.deepEqual(
+    ['fishing.a_b.op1', 'fishing.a-b.op1', 'fishing.A.op1'].sort(compareCodepoint),
+    ['fishing.A.op1', 'fishing.a-b.op1', 'fishing.a_b.op1'],
+    'group members use locale-independent string ordering',
+);
+assert.deepEqual(
+    ['\u{10000}', '\uE000'].sort(compareCodepoint),
+    ['\uE000', '\u{10000}'],
+    'ordering compares Unicode code points rather than locale collation or UTF-16 units',
+);
+
 
 /** Pinned-tree roots are the generator's required GAME_DATA_*_CONTENT variables, never literals. */
 function pinContentRoot(revision: 274 | 289): string {
@@ -2610,8 +2622,8 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(fishingRows.length, 12, `${revision} fishing groups`);
     assert.equal(new Set(fishingRows.map((row) => row.label)).size, fishingRows.length, `${revision} fishing labels are unique`);
     assert.deepEqual(
-        fishingRows.flatMap((row) => row.methods).sort(),
-        facts.methods.filter((method) => method.skill === 'fishing').map((method) => method.id).sort(),
+        fishingRows.flatMap((row) => row.methods).sort(compareCodepoint),
+        facts.methods.filter((method) => method.skill === 'fishing').map((method) => method.id).sort(compareCodepoint),
         `${revision} every fishing method belongs to one group`,
     );
     assert.equal(

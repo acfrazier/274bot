@@ -432,15 +432,14 @@ impl TargetPreference {
     }
 }
 
-/// Resolve selected settings to catalog method indices, applying the one
-/// admission rule from the G1 contract. The returned bitset is safe for the
-/// 40-method 289 catalog; an unexpectedly larger catalog refuses explicitly.
+/// Resolved method indices and any setting error deferred until Start.
 pub(super) struct PreparedMethods {
     pub(super) bits: u64,
     pub(super) indices: Arc<[usize]>,
     pub(super) resource_error: Option<ConfigError>,
 }
-
+/// Resolve selected settings to catalog method indices for Start validation.
+#[cfg(test)]
 pub fn resolve_methods(
     settings: &GathererSettings,
     selected: &SelectedGameData,

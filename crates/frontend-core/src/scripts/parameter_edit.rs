@@ -9,6 +9,7 @@ use serde_json::Value;
 pub struct ParameterOptions {
     pub values: Vec<String>,
     pub labels: Vec<String>,
+    selectable: Vec<bool>,
     aliases: Vec<(String, String)>,
     case_insensitive: bool,
 }
@@ -51,6 +52,24 @@ impl ParameterOptions {
             .map(String::as_str)
             .unwrap_or(value)
     }
+    /// Return the next selectable value, wrapping and skipping refused rows.
+    pub fn next_selectable(&self, value: &str) -> Option<&str> {
+        let len = self.values.len();
+        if len == 0 {
+            return None;
+        }
+        let current = self
+            .values
+            .iter()
+            .position(|option| option.as_str() == self.canonical_option(value));
+        for distance in 1..=len {
+            let index = current.map_or(distance - 1, |current| (current + distance) % len);
+            if self.selectable.get(index).copied().unwrap_or(true) {
+                return Some(self.values[index].as_str());
+            }
+        }
+        None
+    }
 
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
@@ -90,9 +109,20 @@ pub fn resolve_parameter_options(
     if options.labels.len() != options.values.len() {
         options.labels.clone_from(&options.values);
     }
+    options.selectable.resize(options.values.len(), true);
 
     let source = def.options_from.as_deref().unwrap_or_default();
     options.case_insensitive = source == "gatherer-food" || source.starts_with("gather:");
+    if let (Some(skill), Some(data)) = (source.strip_prefix("gather:"), game_data) {
+        for (value, selectable) in options.values.iter().zip(&mut options.selectable) {
+            if let Some(row) = data
+                .gather_resources_for(skill)
+                .find(|row| row.key.as_str() == value)
+            {
+                *selectable = row.selectable;
+            }
+        }
+    }
     if let Some(skill) = source.strip_prefix("gather:") {
         if let Some(data) = game_data {
             for row in data.gather_resources_for(skill) {
@@ -108,15 +138,15 @@ pub fn resolve_parameter_options(
     if source == "released-path-order" {
         let candidate_values = options.values.clone();
         let candidate_labels = options.labels.clone();
-        let picked = bag
+        let quests = bag
             .get("quests")
             .and_then(Value::as_array)
             .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
             .unwrap_or_default();
-        let ids = if picked.is_empty() {
+        let ids = if quests.is_empty() {
             candidate_values.clone()
         } else {
-            picked
+            quests
                 .into_iter()
                 .filter(|id| {
                     candidate_values
@@ -126,9 +156,11 @@ pub fn resolve_parameter_options(
                 .map(str::to_owned)
                 .collect()
         };
+        let priority = setting_values(def, bag);
         options.values.clear();
         options.labels.clear();
-        for (number, id) in ids.iter().enumerate() {
+        options.selectable.clear();
+        for id in &ids {
             if options.values.iter().any(|existing| existing == id) {
                 continue;
             }
@@ -138,32 +170,47 @@ pub fn resolve_parameter_options(
             else {
                 continue;
             };
+            let label = candidate_labels
+                .get(index)
+                .map_or(id.as_str(), String::as_str);
+            let label = priority
+                .iter()
+                .position(|selected| selected == id)
+                .map_or_else(
+                    || label.to_owned(),
+                    |number| format!("{}. {label}", number + 1),
+                );
             options.values.push(id.clone());
-            options.labels.push(format!(
-                "{}. {}",
-                number + 1,
-                candidate_labels
-                    .get(index)
-                    .map_or(id.as_str(), String::as_str)
-            ));
+            options.labels.push(label);
+            options.selectable.push(true);
         }
         options.aliases.clear();
+        preserve_unknown_values(def, bag, &mut options);
         return options;
     }
 
-    if source.starts_with("gather:") || source == "gatherer-food" {
-        for value in setting_values(def, bag) {
-            if value.is_empty() {
-                continue;
-            }
-            let resolved = options.canonical_option(&value);
-            if !options.values.iter().any(|option| option == resolved) {
-                options.values.push(value.clone());
-                options.labels.push(format!("Unknown: {value}"));
-            }
-        }
+    if source.starts_with("gather:") || source == "gatherer-food" || source == "released-paths" {
+        preserve_unknown_values(def, bag, &mut options);
     }
     options
+}
+
+fn preserve_unknown_values(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, Value>,
+    options: &mut ParameterOptions,
+) {
+    for value in setting_values(def, bag) {
+        if value.is_empty() {
+            continue;
+        }
+        let resolved = options.canonical_option(&value);
+        if !options.values.iter().any(|option| option == resolved) {
+            options.values.push(value.clone());
+            options.labels.push(format!("Unknown: {value}"));
+            options.selectable.push(false);
+        }
+    }
 }
 
 fn setting_values(def: &script::SettingDef, bag: &serde_json::Map<String, Value>) -> Vec<String> {
@@ -863,12 +910,50 @@ mod tests {
         order.options = vec!["cook".into(), "sheep".into()];
         order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
         bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
-        bag.insert("order_override".into(), serde_json::json!(["cook"]));
+        bag.insert(
+            "order_override".into(),
+            serde_json::json!(["cook", "sheep"]),
+        );
         let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
         assert_eq!(order_options.values, ["sheep", "cook"]);
         assert_eq!(
             order_options.labels,
-            ["1. Sheep display", "2. Cook display"]
+            ["2. Sheep display", "1. Cook display"]
+        );
+
+        let mut paths = source_setting("quests", "string[]", "released-paths");
+        paths.options = vec!["cook".into(), "sheep".into()];
+        paths.option_labels = vec!["Cook display".into(), "Sheep display".into()];
+        bag.insert("quests".into(), serde_json::json!(["removed-path"]));
+        let quest_options = resolve_parameter_options(&paths, &bag, &loadouts, None);
+        assert!(quest_options.values.contains(&"removed-path".to_string()));
+        assert_eq!(
+            quest_options.label_for("removed-path"),
+            "Unknown: removed-path"
+        );
+        assert_eq!(
+            quest_options.normalize_value(&bag["quests"]),
+            serde_json::json!(["removed-path"]),
+            "unknown saved Path ids remain unchanged until explicitly removed"
+        );
+
+        let skip = source_setting("skip", "string[]", "released-paths");
+        bag.insert("skip".into(), serde_json::json!(["removed-path"]));
+        let skip_options = resolve_parameter_options(&skip, &bag, &loadouts, None);
+        assert_eq!(
+            skip_options.label_for("removed-path"),
+            "Unknown: removed-path"
+        );
+
+        let mut order = source_setting("order_override", "string[]", "released-path-order");
+        order.options = vec!["cook".into(), "sheep".into()];
+        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
+        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        bag.insert("order_override".into(), serde_json::json!(["removed-path"]));
+        let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
+        assert_eq!(
+            order_options.label_for("removed-path"),
+            "Unknown: removed-path"
         );
 
         let unavailable =
@@ -909,5 +994,58 @@ mod tests {
             Ok(serde_json::json!(["mithril"]))
         );
         assert!(parse_parameter_text(&setting("list"), "coppe", &resources).is_err());
+    }
+
+    #[test]
+    fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("fishing-cycle-{}.json", std::process::id())),
+        );
+        let fishing = source_setting("fishingMethod", "string", "gather:fishing");
+        let options = resolve_parameter_options(
+            &fishing,
+            &serde_json::Map::new(),
+            &loadouts,
+            Some(data.as_ref()),
+        );
+        let selectable = data
+            .gather_resources_for("fishing")
+            .filter(|row| row.selectable)
+            .map(|row| row.key.as_str())
+            .collect::<Vec<_>>();
+        let refused = data
+            .gather_resources_for("fishing")
+            .filter(|row| !row.selectable)
+            .map(|row| row.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(!selectable.is_empty());
+        assert!(!refused.is_empty());
+
+        let start = options
+            .values
+            .iter()
+            .find(|value| value.as_str() == selectable[0])
+            .map(String::as_str)
+            .unwrap();
+        let mut current = start;
+        let mut cycle = Vec::with_capacity(selectable.len() + 1);
+        cycle.push(start);
+        for _ in 0..selectable.len() {
+            current = options
+                .next_selectable(current)
+                .expect("at least one fishing group is selectable");
+            cycle.push(current);
+        }
+
+        assert_eq!(current, start, "the cycle wraps to its starting group");
+        let cycle = &cycle[1..];
+        assert_eq!(
+            cycle.iter().collect::<std::collections::HashSet<_>>().len(),
+            selectable.len(),
+            "every selectable group appears exactly once"
+        );
+        assert!(selectable.iter().all(|value| cycle.contains(value)));
+        assert!(refused.iter().all(|value| !cycle.contains(value)));
     }
 }

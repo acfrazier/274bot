@@ -304,13 +304,9 @@ impl<'a> ParamsPane<'a> {
                 .and_then(|v| v.as_str())
                 .or(def.default.as_deref())
                 .unwrap_or("");
-            let cur = opts.value_for(stored);
-            let next = opts
-                .values
-                .iter()
-                .position(|option| option == &cur)
-                .map(|index| opts.values[(index + 1) % opts.values.len()].clone())
-                .unwrap_or_else(|| opts.values[0].clone());
+            let Some(next) = opts.next_selectable(stored) else {
+                return ParamsKey::None;
+            };
             return if self.persist(&def.id, serde_json::json!(next)) {
                 ParamsKey::Toggle
             } else {
@@ -574,7 +570,11 @@ impl Widget for ParamsPane<'_> {
                 } else {
                     let options = self.resolved_options(def);
                     if def.options_from.is_some() && options.is_empty() {
-                        "options unavailable".to_string()
+                        if def.options_from.as_deref() == Some("loadouts") {
+                            "no loadouts available".to_string()
+                        } else {
+                            "options unavailable".to_string()
+                        }
                     } else {
                         display_value(self.bag, def, &options)
                     }
@@ -1449,5 +1449,207 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(text.contains("options unavailable"), "{text:?}");
+    }
+
+    #[test]
+    fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
+        let dir = temp_dir("fishing-cycle");
+        let store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let mut fishing = setting("fishingMethod", "string", None, Some("Fishing method"), &[]);
+        fishing.options_from = Some("gather:fishing".into());
+        let schema = vec![fishing];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        let selectable = data
+            .gather_resources_for("fishing")
+            .filter(|row| row.selectable)
+            .map(|row| row.key.clone())
+            .collect::<Vec<_>>();
+        let refused = data
+            .gather_resources_for("fishing")
+            .filter(|row| !row.selectable)
+            .map(|row| row.key.clone())
+            .collect::<Vec<_>>();
+        assert!(!selectable.is_empty());
+        assert!(!refused.is_empty());
+        let start = selectable[0].clone();
+        bag.insert("fishingMethod".into(), serde_json::json!(start.clone()));
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        let mut commit = |_: &str, value: serde_json::Value, _: Option<serde_json::Value>| {
+            let value = value.as_str().unwrap();
+            if data
+                .gather_resources_for("fishing")
+                .any(|row| row.key.as_str() == value && row.selectable)
+            {
+                Ok(())
+            } else {
+                Err("method-incomplete".into())
+            }
+        };
+        let mut cycle = Vec::new();
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut commit,
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            for _ in 0..selectable.len() {
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Toggle);
+                cycle.push(
+                    pane.bag
+                        .get("fishingMethod")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+            assert_eq!(cycle.last(), Some(&start), "the cycle returns to its start");
+        }
+        assert_eq!(
+            cycle.iter().collect::<std::collections::HashSet<_>>().len(),
+            selectable.len(),
+            "every selectable fishing group appears once per cycle"
+        );
+        assert!(
+            selectable.iter().all(|key| cycle.contains(key)),
+            "all selectable groups are reachable: {cycle:?}"
+        );
+        assert!(
+            refused.iter().all(|key| !cycle.contains(key)),
+            "refused groups are never offered: {cycle:?}"
+        );
+    }
+
+    #[test]
+    fn quester_picker_keeps_unknown_path_visible_and_removable() {
+        let dir = temp_dir("quest-unknown");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
+        quests.options = vec!["cook".into(), "sheep".into()];
+        quests.option_labels = vec!["Cook's Assistant".into(), "Sheep Shearer".into()];
+        quests.options_from = Some("released-paths".into());
+        let schema = vec![quests];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", &schema, None);
+        bag.insert("quests".into(), serde_json::json!(["removed-path"]));
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert_eq!(pane.state.choice_selected, ["removed-path"]);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Unknown: removed-path"), "{text:?}");
+
+        let mut pane = ParamsPane {
+            schema: &schema,
+            bag: &mut bag,
+            commit: &mut store_commit(&mut store, "Quester"),
+            loadouts: &loadouts,
+            game_data: None,
+            state: &mut state,
+        };
+        let options = pane.resolved_options(&schema[0]);
+        pane.state.choice_cursor = options
+            .values
+            .iter()
+            .position(|value| value == "removed-path")
+            .unwrap();
+        assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+        assert!(pane.state.choice_selected.is_empty());
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+        assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!([])));
+    }
+
+    #[test]
+    fn empty_loadout_source_shows_a_clear_disabled_state() {
+        let dir = temp_dir("empty-loadout-options");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let mut loadout = setting("loadout", "string", None, Some("Loadout"), &[]);
+        loadout.options_from = Some("loadouts".into());
+        let schema = vec![loadout];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Thiever", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Thiever"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+            assert!(
+                !pane.state.editing,
+                "an empty option source is not free text"
+            );
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Thiever"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("no loadouts available"), "{text:?}");
     }
 }

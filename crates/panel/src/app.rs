@@ -3302,7 +3302,11 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             game_data_ref,
         );
         if def.options_from.is_some() && resolved.is_empty() {
-            ui.text_disabled(format!("{label} (options unavailable)"));
+            if def.options_from.as_deref() == Some("loadouts") {
+                ui.text_disabled(format!("{label} (no loadouts available)"));
+            } else {
+                ui.text_disabled(format!("{label} (options unavailable)"));
+            }
             continue;
         }
         match def.ty.as_str() {

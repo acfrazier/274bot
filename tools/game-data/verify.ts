@@ -7,7 +7,7 @@ import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertT
 import { parsePack } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
-import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
@@ -308,7 +308,7 @@ async function verifyRevision(revision: number) {
     if (new Set(fishingLabels).size !== fishingLabels.length) throw new Error(`${revision}: fishing gather labels are not unique`);
     for (const row of fishingOptions) {
         if (row.methods.length === 0
-            || JSON.stringify(row.methods) !== JSON.stringify([...row.methods].sort())
+            || JSON.stringify(row.methods) !== JSON.stringify([...row.methods].sort(compareCodepoint))
             || row.method !== row.methods[0]
             || JSON.stringify(row.aliases) !== JSON.stringify(row.methods)) {
             throw new Error(`${revision}: fishing group methods/aliases are not stable: ${JSON.stringify(row)}`);
