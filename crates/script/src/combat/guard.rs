@@ -3,6 +3,7 @@
 use super::arbiter;
 use super::frame::Frame;
 use super::policy;
+use super::prayer::RaisedPrayers;
 use super::schedule::{elapsed, reached, InputEffect, OpKind, Schedule};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
@@ -72,6 +73,7 @@ pub struct WalkGuard {
     follow_until: u16,
     drop_component: i32,
     pending_com: i32,
+    raised_prayers: RaisedPrayers,
     prayer_admission_tick: u16,
     unprotectable: u8,
     flags: u8,
@@ -81,7 +83,6 @@ pub struct WalkGuard {
 
 const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
-const FLAG_OWNED_ON: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
 
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
@@ -154,6 +155,7 @@ impl WalkGuard {
             follow_until: 0,
             drop_component: 0,
             pending_com: 0,
+            raised_prayers: RaisedPrayers::default(),
             prayer_admission_tick: 0,
             unprotectable: 0,
             flags: 0,
@@ -193,14 +195,15 @@ impl WalkGuard {
             if self.pending_protect() == Some(fact.button_com) {
                 self.schedule.settle(OpKind::Prayer);
                 self.drop_component = fact.button_com;
-                self.flags |= FLAG_OWNED_ON;
-            } else if self.flags & FLAG_OWNED_ON == 0 || self.drop_component != fact.button_com {
+                self.raised_prayers = RaisedPrayers::default();
+                self.raised_prayers.accepted(fact.varp, true, 0);
+            } else if !self.raised_prayers.contains(fact.varp) {
                 self.drop_component = 0;
-                self.flags &= !FLAG_OWNED_ON;
+                self.raised_prayers = RaisedPrayers::default();
             }
         } else {
             self.drop_component = 0;
-            self.flags &= !FLAG_OWNED_ON;
+            self.raised_prayers = RaisedPrayers::default();
         }
     }
 
@@ -332,7 +335,7 @@ impl WalkGuard {
         GuardOp::IfButton {
             component: self
                 .pending_protect()
-                .or_else(|| (self.flags & FLAG_OWNED_ON != 0).then_some(self.drop_component))
+                .or_else(|| (self.raised_prayers.mask() != 0).then_some(self.drop_component))
                 .unwrap_or(0),
         }
     }

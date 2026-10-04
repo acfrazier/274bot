@@ -1,7 +1,7 @@
 use super::arbiter::{self, PlanRow, RowKind, TickPlan};
 use super::frame::Frame;
 use super::policy;
-use super::prayer::PrayerSweep;
+use super::prayer::{PrayerSweep, RaisedPrayers};
 use super::request::*;
 use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
 use super::select;
@@ -64,8 +64,12 @@ pub struct Combat {
     plan_first_id: u64,
     pending: [PendingRow; 5],
     staged_pending: u8,
-    prayer_ready: [u16; 15],
+    // Three-tick deadlines are retired every observed tick, before byte wrap.
+    prayer_ready: [u8; 15],
     prayer_ready_mask: u16,
+    // Bit 15 marks readiness; the low 15 bits protect the complete user baseline.
+    baseline_on: u16,
+    raised_prayers: RaisedPrayers,
     eat_ready: u16,
     food_total: u16,
     mode_fallback: Option<MeleeMode>,
@@ -109,6 +113,7 @@ const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
+const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
     type Args = (Arc<CombatRequest>, Arc<CombatTables>);
@@ -187,6 +192,8 @@ impl NativeMachine for Combat {
             staged_pending: 0,
             prayer_ready: [0; 15],
             prayer_ready_mask: 0,
+            baseline_on: 0,
+            raised_prayers: RaisedPrayers::default(),
             eat_ready: 0,
             food_total: 0,
             mode_fallback: None,
@@ -203,6 +210,7 @@ impl NativeMachine for Combat {
                 .unwrap_or(-1);
         }
         if let Some(frame) = Frame::borrow(cx.snapshot()) {
+            machine.capture_prayer_baseline(&prayer_observation(&frame));
             let picked = select::pick_target(
                 &machine.request,
                 &frame,
@@ -243,7 +251,9 @@ impl NativeMachine for Combat {
         if !self.receipts(cx) {
             return Poll::Pending;
         }
+        self.capture_prayer_baseline(&prayer_observation(&frame));
         let tick = evidence.tick as u16;
+        self.advance_prayer_ready(tick);
         let gap = self.flags & OBSERVED == 0 || elapsed(tick, self.last_tick) > 1;
         self.sequence = evidence.sequence;
         self.last_tick = tick;
@@ -348,12 +358,13 @@ impl NativeMachine for Combat {
                 self.plan = plan;
                 if plan.len == 0 {
                     if self.phase == Phase::WindDown
+                        && self.baseline_on & BASELINE_READY != 0
                         && self.sweep.pending_mask() == 0
                         && !(self.flags & TERMINAL_FOOD != 0 && self.pending_row(RowKind::Eat))
                         && self
                             .sweep
                             .candidates(self.tables.selected(), &prayer_observation(&frame))
-                            .next()
+                            .find(|click| self.raised_prayers.contains(click.varp))
                             .is_none()
                     {
                         if self.sweep.report().timed_out != 0 {
@@ -826,9 +837,12 @@ impl Combat {
             match row.kind {
                 RowKind::Prayer => {
                     let varp = self.prayer_varp(row.id).expect("planned prayer component");
+                    let displaced = self.prayer_displaced(varp, row.aux != 0);
+                    self.baseline_on &= !(displaced | prayer_bit(varp));
+                    self.raised_prayers.accepted(varp, row.aux != 0, displaced);
                     if row.aux != 0 {
                         let bit = (varp - api::prayer::PRAYER_VARP0) as usize;
-                        self.prayer_ready[bit] = self.emitted_tick.wrapping_add(3);
+                        self.prayer_ready[bit] = self.emitted_tick.wrapping_add(3) as u8;
                         self.prayer_ready_mask |= 1 << bit;
                         if (0..3)
                             .filter_map(|tier| self.tables.prayer(PrayerRole::Protect, tier))
@@ -909,7 +923,13 @@ impl Combat {
             .fold(0u32, |mask, varp| {
                 mask | (1 << (varp - api::prayer::PRAYER_VARP0))
             });
-        self.sweep.observe(&prayer_observation(frame), timed_out);
+        let observation = prayer_observation(frame);
+        self.sweep.observe(&observation, timed_out);
+        for row in self.tables.selected().prayers() {
+            if observation.is_off(row.varp) && !self.pending_id(RowKind::Prayer, row.button_com) {
+                self.raised_prayers.accepted(row.varp, false, 0);
+            }
+        }
         if super::style::melee::onset(
             &frame.local.player.actor,
             self.engaged,
@@ -1003,6 +1023,13 @@ impl Combat {
                     continue;
                 }
                 self.pending[slot] = PendingRow::default();
+                if row.kind == RowKind::Prayer && row.aux != 0 {
+                    if let Some(varp) = self.prayer_varp(row.id) {
+                        if observation.is_off(varp) {
+                            self.raised_prayers.accepted(varp, false, 0);
+                        }
+                    }
+                }
                 if !self.pending_row(row.kind) {
                     self.schedule.timeout(kind);
                 }
@@ -1227,10 +1254,26 @@ impl Combat {
             }
         }
     }
+    fn advance_prayer_ready(&mut self, tick: u16) {
+        if self.flags & OBSERVED != 0 && elapsed(tick, self.last_tick) >= 128 {
+            self.prayer_ready_mask = 0;
+            return;
+        }
+        let mut pending = self.prayer_ready_mask;
+        while pending != 0 {
+            let bit = pending.trailing_zeros() as usize;
+            let mask = 1 << bit;
+            pending &= !mask;
+            if (tick as u8).wrapping_sub(self.prayer_ready[bit]) as i8 >= 0 {
+                self.prayer_ready_mask &= !mask;
+            }
+        }
+    }
     fn prayer_ready(&self, varp: i32, tick: u16) -> bool {
         let bit = (varp - api::prayer::PRAYER_VARP0) as usize;
         bit < 15
-            && (self.prayer_ready_mask & (1 << bit) == 0 || reached(tick, self.prayer_ready[bit]))
+            && (self.prayer_ready_mask & (1 << bit) == 0
+                || (tick as u8).wrapping_sub(self.prayer_ready[bit]) as i8 >= 0)
     }
     fn project_prayer(&self, mask: &mut u16, varp: i32, on: bool) {
         if on {
@@ -1253,6 +1296,74 @@ impl Combat {
             *mask &= !(1 << (varp - api::prayer::PRAYER_VARP0));
         }
     }
+    fn capture_prayer_baseline(&mut self, observation: &PrayerObservation) {
+        if self.baseline_on & BASELINE_READY != 0 {
+            return;
+        }
+        if (0..api::prayer::PRAYER_COUNT)
+            .all(|index| observation.varp_observed(api::prayer::PRAYER_VARP0 + index as i32))
+        {
+            self.baseline_on = BASELINE_READY
+                | (0..api::prayer::PRAYER_COUNT).fold(0, |mask, index| {
+                    let varp = api::prayer::PRAYER_VARP0 + index as i32;
+                    mask | if observation.is_on(varp) {
+                        prayer_bit(varp)
+                    } else {
+                        0
+                    }
+                });
+        }
+    }
+    fn prayer_displaced(&self, varp: i32, on: bool) -> u16 {
+        if !on {
+            return 0;
+        }
+        let mut projected = BASELINE_READY - 1;
+        self.project_prayer(&mut projected, varp, true);
+        (BASELINE_READY - 1) & !projected
+    }
+    pub(crate) fn prayer_plan_first_id(&self) -> u64 {
+        self.plan_first_id
+    }
+    /// Include accepted dispatches that a cancellation interrupted before poll.
+    /// Planned, queued, missing and refused receipts confer no ownership.
+    pub(crate) fn prayer_cleanup(&self, accepted_prefix: usize) -> RaisedPrayers {
+        let mut raised = self.raised_prayers;
+        if self.plan_first_id != 0 {
+            for row in self.plan.iter().take(accepted_prefix) {
+                if row.kind == RowKind::Prayer {
+                    let varp = self.prayer_varp(row.id).expect("planned prayer component");
+                    raised.accepted(
+                        varp,
+                        row.aux != 0,
+                        self.prayer_displaced(varp, row.aux != 0),
+                    );
+                }
+            }
+        }
+        raised
+    }
+    fn offensive_prayer(
+        &self,
+        role: PrayerRole,
+        base: i32,
+        observation: &PrayerObservation,
+    ) -> Option<&api::game_data::PrayerFact> {
+        // A user's tier wins even when Combat can afford a stronger one.
+        (0..3)
+            .rev()
+            .filter_map(|tier| self.tables.prayer(role, tier))
+            .find(|row| {
+                self.baseline_on & prayer_bit(row.varp) != 0
+                    || (observation.is_on(row.varp) && !self.raised_prayers.contains(row.varp))
+            })
+            .or_else(|| {
+                (0..3)
+                    .rev()
+                    .filter_map(|tier| self.tables.prayer(role, tier))
+                    .find(|row| base >= row.level)
+            })
+    }
     fn plan(
         &mut self,
         frame: &Frame<'_>,
@@ -1273,7 +1384,14 @@ impl Combat {
         self.safety_end(frame, tick, danger, lines.emergency, food_available);
         if self.phase == Phase::WindDown {
             let obs = prayer_observation(frame);
-            for click in self.sweep.candidates(self.tables.selected(), &obs) {
+            if self.baseline_on & BASELINE_READY == 0 {
+                return Ok(plan);
+            }
+            for click in self
+                .sweep
+                .candidates(self.tables.selected(), &obs)
+                .filter(|click| self.raised_prayers.contains(click.varp))
+            {
                 if !self.pending_id(RowKind::Prayer, click.button_com) {
                     self.push(
                         &mut plan,
@@ -1328,10 +1446,8 @@ impl Combat {
             return Ok(plan);
         }
         let (points, base) = arbiter::stat(frame, 5);
-        let wanted = self
-            .request
-            .allow
-            .prayer
+        let prayer_allowed = self.baseline_on & BASELINE_READY != 0 && self.request.allow.prayer;
+        let wanted = prayer_allowed
             .then(|| {
                 policy::wanted_protect(
                     &self.threats,
@@ -1343,6 +1459,7 @@ impl Combat {
                 )
             })
             .flatten();
+        let observation = prayer_observation(frame);
         let mut prayers = frame
             .varps
             .iter()
@@ -1354,7 +1471,8 @@ impl Combat {
             .fold(0u16, |mask, row| {
                 mask | (1 << (row.index - api::prayer::PRAYER_VARP0))
             });
-        if let Some(protect) = wanted.filter(|row| base >= row.level && !prayer_on(frame, row.varp))
+        if let Some(protect) =
+            wanted.filter(|row| base >= row.level && observation.is_off(row.varp))
         {
             if points == 0 {
                 self.drink_or_recover(
@@ -1548,46 +1666,42 @@ impl Combat {
             return Ok(plan);
         }
         let offense = self.flags & BOOST_WORTH != 0
-            && self.request.allow.prayer
+            && prayer_allowed
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
             && (points > policy::prayer_sip_floor(base)
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
-        if offense {
-            for role in [PrayerRole::Strength, PrayerRole::Attack] {
-                if let Some(row) = (0..3)
-                    .rev()
-                    .filter_map(|tier| self.tables.prayer(role, tier))
-                    .find(|row| base >= row.level)
-                {
-                    if prayers & (1 << (row.varp - api::prayer::PRAYER_VARP0)) == 0
-                        && self.prayer_ready(row.varp, tick)
-                        && !self.pending_id(RowKind::Prayer, row.button_com)
-                        && self.push(&mut plan, PlanRow::new(RowKind::Prayer, row.button_com, 1))
-                    {
-                        self.project_prayer(&mut prayers, row.varp, true);
-                    }
-                }
+        let offensives = if offense {
+            [
+                self.offensive_prayer(PrayerRole::Strength, base, &observation),
+                self.offensive_prayer(PrayerRole::Attack, base, &observation),
+            ]
+        } else {
+            [None, None]
+        };
+        for row in offensives.into_iter().flatten() {
+            if prayers & prayer_bit(row.varp) == 0
+                && observation.is_off(row.varp)
+                && self.prayer_ready(row.varp, tick)
+                && !self.pending_id(RowKind::Prayer, row.button_com)
+                && self.push(&mut plan, PlanRow::new(RowKind::Prayer, row.button_com, 1))
+            {
+                self.project_prayer(&mut prayers, row.varp, true);
             }
         }
         for row in self.tables.selected().prayers() {
             if prayers & (1 << (row.varp - api::prayer::PRAYER_VARP0)) == 0
+                || !self.raised_prayers.contains(row.varp)
                 || self.pending_id(RowKind::Prayer, row.button_com)
             {
                 continue;
             }
-            let keep = self.request.allow.prayer
+            let keep = prayer_allowed
                 && (wanted_varp == Some(row.varp)
-                    || (offense
-                        && [PrayerRole::Strength, PrayerRole::Attack]
-                            .iter()
-                            .any(|role| {
-                                (0..3)
-                                    .rev()
-                                    .filter_map(|tier| self.tables.prayer(*role, tier))
-                                    .find(|row| base >= row.level)
-                                    .is_some_and(|best| best.varp == row.varp)
-                            })));
+                    || offensives
+                        .iter()
+                        .flatten()
+                        .any(|best| best.varp == row.varp));
             if !keep && self.push(&mut plan, PlanRow::new(RowKind::Prayer, row.button_com, 0)) {
                 self.project_prayer(&mut prayers, row.varp, false);
             }
@@ -2014,11 +2128,8 @@ fn potion_kind(code: u8) -> PotionKind {
 fn unavailable(reason: &'static str) -> ActionError {
     ActionError::Unavailable(reason.into())
 }
-fn prayer_on(frame: &Frame<'_>, varp: i32) -> bool {
-    frame
-        .varps
-        .iter()
-        .any(|row| row.index == varp && row.value == 1)
+fn prayer_bit(varp: i32) -> u16 {
+    1 << (varp - api::prayer::PRAYER_VARP0)
 }
 fn retaliate_on(frame: &Frame<'_>) -> bool {
     frame
