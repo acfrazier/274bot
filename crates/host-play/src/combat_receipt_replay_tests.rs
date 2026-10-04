@@ -12,8 +12,7 @@ fn capture(value: &Value) -> CombatCapture {
     capture.start_baseline =
         (!value["start_baseline"].is_null()).then(|| value["start_baseline"].clone());
     capture.started = value["started"] == json!(true);
-    capture.magic_setup =
-        (!value["magic_setup"].is_null()).then(|| value["magic_setup"].clone());
+    capture.magic_setup = (!value["magic_setup"].is_null()).then(|| value["magic_setup"].clone());
     capture.magic_npc_events = value["magic"]["raw_npc_mask_and_landing_events"]
         .as_array()
         .cloned()
@@ -332,11 +331,13 @@ fn replay_all_retained_combat_receipts() {
                 leaves["runes_coherent"] = json!(evidence.coherent);
                 leaves["cast_cadence"] = json!(rune_cast_cadence_ok(&evidence.casts));
                 leaves["fire_bolts"] = json!(rune_cast_count(&evidence.casts, MageSpell::FireBolt));
-                leaves["fire_strikes"] = json!(rune_cast_count(&evidence.casts, MageSpell::FireStrike));
+                leaves["fire_strikes"] =
+                    json!(rune_cast_count(&evidence.casts, MageSpell::FireStrike));
                 leaves["protect_timing"] = json!(protection_timing_ok(&c));
                 leaves["protect_restoring_terminal"] = json!(protect_plan_ends_with_terminal(&c));
-                leaves["manual_cast_contract"] =
-                    json!(case == Case::MageAuto || manual_magic_cast_contract(&c, &evidence.casts));
+                leaves["manual_cast_contract"] = json!(
+                    case == Case::MageAuto || manual_magic_cast_contract(&c, &evidence.casts)
+                );
                 if case == Case::MageAuto {
                     leaves["queue_contract"] = json!(magic_queue_contract(&c, &evidence.casts));
                     leaves["splash_count"] = json!(magic_splashes(&c, &evidence.casts).len());
@@ -350,14 +351,21 @@ fn replay_all_retained_combat_receipts() {
                             }
                         }
                     }
-                    assert!(!protection_timing_ok(&capture(&never_on)), "never-on mutant accepted");
+                    assert!(
+                        !protection_timing_ok(&capture(&never_on)),
+                        "never-on mutant accepted"
+                    );
                     leaves["never_on_mutant_rejected"] = json!(true);
 
                     let onset = first_warlord_attack_onset(&c).unwrap();
                     let component = prayer_component(&c, "Protect from Melee").unwrap();
                     let mut late = value.clone();
-                    let action = late["actions"].as_array_mut().unwrap().iter_mut()
-                        .find(|row| prayer_action(row, component)).unwrap();
+                    let action = late["actions"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|row| prayer_action(row, component))
+                        .unwrap();
                     action["tick"] = json!(onset + 3);
                     for frame in late["frames"].as_array_mut().unwrap() {
                         if frame["tick"].as_i64().is_some_and(|tick| tick <= onset + 2) {
@@ -368,7 +376,10 @@ fn replay_all_retained_combat_receipts() {
                             }
                         }
                     }
-                    assert!(!protection_timing_ok(&capture(&late)), "late-on mutant accepted");
+                    assert!(
+                        !protection_timing_ok(&capture(&late)),
+                        "late-on mutant accepted"
+                    );
                     leaves["late_on_mutant_rejected"] = json!(true);
                 }
             }
