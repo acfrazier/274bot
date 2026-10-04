@@ -4,6 +4,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 
 const STAMP_POIS_SHA256: &str = "5656565656565656565656565656565656565656565656565656565656565656";
+const STAMP_MANIFEST_SHA256: &str =
+    "6767676767676767676767676767676767676767676767676767676767676767";
+const STAMP_INPUT_SHA256: &str = "7878787878787878787878787878787878787878787878787878787878787878";
+const STAMP_PACK_SHA256: &str = "abababababababababababababababababababababababababababababababab";
+const STAMP_FLAGS_SHA256: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+const STAMP_REACH_SHA256: &str = "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+const STAMP_CANLIGHT_SHA256: &str =
+    "1212121212121212121212121212121212121212121212121212121212121212";
+
 fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> BakeStamp {
     BakeStamp {
         content_id: None,
@@ -13,19 +22,22 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
         revision: 289,
         cache_id: cache_id.into(),
         cache_manifest: None,
-        nav_sha256: "ab".repeat(32),
-        flags_sha256: "cd".repeat(32),
-        reach_sha256: "ef".repeat(32),
-        canlight_sha256: "12".repeat(32),
+        nav_sha256: STAMP_PACK_SHA256.into(),
+        flags_sha256: STAMP_FLAGS_SHA256.into(),
+        reach_sha256: STAMP_REACH_SHA256.into(),
+        canlight_sha256: STAMP_CANLIGHT_SHA256.into(),
         canlight_identity: "34".repeat(32),
         pack_bytes,
         flags_bytes: 7,
         reach_bytes: 9,
         canlight_bytes: 5,
+        manifest_sha256: Some(STAMP_MANIFEST_SHA256.into()),
+        manifest_bytes: Some(13),
         relative_pack: "nav/289/274bot.navpack".into(),
         relative_flags: "nav/289/274bot.navflags".into(),
         relative_reach: "nav/289/274bot.navreach".into(),
         relative_canlight: "nav/289/274bot.navcanlight".into(),
+        relative_manifest: Some("nav/289/274bot.navpack.json".into()),
         pois_sha256: Some(STAMP_POIS_SHA256.into()),
         pois_bytes: Some(3),
         relative_pois: Some("nav/289/274bot.navpois".into()),
@@ -34,6 +46,7 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
             path: "/content/maps/m1.jm2".into(),
             bytes: 10,
             modified_nanos: 5,
+            sha256: STAMP_INPUT_SHA256.into(),
         }],
     }
 }
@@ -41,14 +54,20 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
 fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
     StampExpectation {
         revision: 289,
-        format: "274V8",
+        format: "274V15",
         generator: "gen-1",
         cache_id: "cache-1",
         inputs,
         staged_pack_bytes: Some(11),
+        staged_pack_sha256: Some(STAMP_PACK_SHA256),
         staged_flags_bytes: Some(7),
+        staged_flags_sha256: Some(STAMP_FLAGS_SHA256),
         staged_reach_bytes: Some(9),
+        staged_reach_sha256: Some(STAMP_REACH_SHA256),
         staged_canlight_bytes: Some(5),
+        staged_canlight_sha256: Some(STAMP_CANLIGHT_SHA256),
+        staged_manifest_bytes: Some(13),
+        staged_manifest_sha256: Some(STAMP_MANIFEST_SHA256),
         staged_pois_bytes: Some(3),
         staged_pois_sha256: Some(STAMP_POIS_SHA256),
         pois_generator: "pois-1",
@@ -57,7 +76,7 @@ fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
 
 #[test]
 fn a_matching_stamp_covers_and_every_change_is_stale() {
-    let baked = stamp("gen-1", "274V8", "cache-1", 11);
+    let baked = stamp("gen-1", "274V15", "cache-1", 11);
     let inputs = baked.inputs.clone();
     assert!(baked.covers(&expectation(&inputs)).is_ok());
 
@@ -104,14 +123,43 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     changed.staged_pois_sha256 =
         Some("0000000000000000000000000000000000000000000000000000000000000000");
     assert!(baked.covers(&changed).unwrap_err().contains("digest"));
-
+    let mut changed = expectation(&inputs);
+    changed.staged_pack_sha256 = Some(STAMP_INPUT_SHA256);
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    let mut changed = expectation(&inputs);
+    changed.staged_flags_sha256 = Some(STAMP_INPUT_SHA256);
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    let mut changed = expectation(&inputs);
+    changed.staged_reach_sha256 = Some(STAMP_INPUT_SHA256);
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    let mut changed = expectation(&inputs);
+    changed.staged_canlight_sha256 = Some(STAMP_INPUT_SHA256);
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    let mut changed = expectation(&inputs);
+    changed.staged_manifest_sha256 = Some(STAMP_INPUT_SHA256);
+    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    let mut changed = expectation(&inputs);
+    changed.staged_manifest_bytes = None;
+    assert!(baked.covers(&changed).unwrap_err().contains("manifest"));
     let modified = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
         modified_nanos: 6,
+        sha256: STAMP_INPUT_SHA256.into(),
     }];
+
     assert!(baked
         .covers(&expectation(&modified))
+        .unwrap_err()
+        .contains("changed"));
+    let same_metadata_replacement = [InputFingerprint {
+        path: "/content/maps/m1.jm2".into(),
+        bytes: 10,
+        modified_nanos: 5,
+        sha256: "99".repeat(32),
+    }];
+    assert!(baked
+        .covers(&expectation(&same_metadata_replacement))
         .unwrap_err()
         .contains("changed"));
 
@@ -121,6 +169,7 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
             path: "/content/maps/m2.jm2".into(),
             bytes: 1,
             modified_nanos: 1,
+            sha256: STAMP_INPUT_SHA256.into(),
         },
     ];
     assert!(baked
@@ -133,23 +182,26 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
 fn old_stamps_without_pois_parse_and_are_stale() {
     let json = r#"{
         "generator":"gen-1",
-        "format":"274V8",
+        "format":"274V15",
         "revision":289,
         "cache_id":"cache-1",
         "cache_manifest":null,
-        "nav_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "flags_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "reach_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "canlight_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "canlight_identity":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nav_sha256":"abababababababababababababababababababababababababababababababab",
+        "flags_sha256":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "reach_sha256":"efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+        "canlight_sha256":"1212121212121212121212121212121212121212121212121212121212121212",
+        "canlight_identity":"3434343434343434343434343434343434343434343434343434343434343434",
         "pack_bytes":11,
         "flags_bytes":7,
         "reach_bytes":9,
         "canlight_bytes":5,
+        "manifest_sha256":"6767676767676767676767676767676767676767676767676767676767676767",
+        "manifest_bytes":13,
         "relative_pack":"nav/289/274bot.navpack",
         "relative_flags":"nav/289/274bot.navflags",
         "relative_reach":"nav/289/274bot.navreach",
         "relative_canlight":"nav/289/274bot.navcanlight",
+        "relative_manifest":"nav/289/274bot.navpack.json",
         "inputs":[{"path":"/content/maps/m1.jm2","bytes":10,"modified_nanos":5}]
     }"#;
     let stamp: BakeStamp = serde_json::from_str(json).expect("legacy stamp still parses");
@@ -171,6 +223,29 @@ fn content_digest_detects_same_size_replacement() {
     std::fs::write(&file, b"two").unwrap();
     assert_ne!(first, super::source_digest(&root, &[]).unwrap());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn content_digest_reuses_the_captured_fingerprint_hashes() {
+    let root = std::env::temp_dir().join(format!("nav-source-snapshot-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("map.jm2");
+    let explicit = root.with_extension("config");
+    std::fs::write(&file, b"one").unwrap();
+    std::fs::write(&explicit, b"config-one").unwrap();
+    let snapshot = fingerprints(&root, &[&explicit]).unwrap();
+    let before = source_digest_from_fingerprints(&root, &[&explicit], &snapshot).unwrap();
+
+    std::fs::write(&file, b"two").unwrap();
+    std::fs::write(&explicit, b"config-two").unwrap();
+    assert_eq!(
+        source_digest_from_fingerprints(&root, &[&explicit], &snapshot).unwrap(),
+        before,
+        "a snapshot digest must consume the stored hashes, not re-read files"
+    );
+    assert_ne!(source_digest(&root, &[&explicit]).unwrap(), before);
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_file(explicit).unwrap();
 }
 
 /// Provenance is machine-independent: nested inputs digest to the same

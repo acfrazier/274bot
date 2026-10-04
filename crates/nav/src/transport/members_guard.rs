@@ -398,30 +398,29 @@ pub(super) fn members_spell_landings(content_root: &Path) -> Vec<WorldTile> {
 /// parameter list (`[proc,name](int $x)`), and every header ends the
 /// previous block.
 fn handler_blocks(text: &str) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String, String)> = None;
-    for raw in text.lines() {
+    super::script_text::collect_script_blocks(text, |raw| {
         let line = raw.trim();
-        let header = line
-            .strip_prefix('[')
-            .and_then(|rest| rest.split_once(']'))
-            .and_then(|(inner, rest)| Some((inner.split_once(',')?, rest)))
-            .filter(|((op, name), _)| is_word(op) && is_word(name));
-        if let Some(((op, name), rest)) = header {
-            out.extend(cur.take());
-            let inline = if rest.trim_start().starts_with('(') {
-                ""
-            } else {
-                rest
-            };
-            cur = Some((op.to_string(), name.to_string(), format!("{inline}\n")));
-        } else if let Some((_, _, body)) = &mut cur {
-            body.push_str(line);
-            body.push('\n');
+        let Some(header) = super::script_text::parse_script_header(
+            line,
+            super::script_text::ScriptHeaderStyle::Trimmed,
+        ) else {
+            return super::script_text::ScriptBlockLine::Body(line);
+        };
+        let inline = if header.tail.trim_start().starts_with('(') {
+            ""
+        } else {
+            header.tail
+        };
+        super::script_text::ScriptBlockLine::Header {
+            value: (header.kind.to_string(), header.name.to_string()),
+            inline_body: Some(inline),
+            inline_body_newline: true,
+            keep: true,
         }
-    }
-    out.extend(cur);
-    out
+    })
+    .into_iter()
+    .map(|((kind, name), body)| (kind, name, body))
+    .collect()
 }
 
 fn is_word(s: &str) -> bool {

@@ -669,7 +669,7 @@ fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
     );
     for (name, (c, g)) in [("disconnected", disconnected), ("courtyard", courtyard)] {
         let expected = bake_reach(&c, &g);
-        let pack = encode(&c, &g, &[]);
+        let pack = encode(&c, &g, &[]).unwrap();
         let digest: [u8; 32] = Sha256::digest(&pack).into();
         let bytes = encode_reach_sidecar(c.origin, c.width, c.height, &expected, &digest);
         let side = decode_reach_sidecar(&bytes).unwrap();
@@ -714,8 +714,8 @@ fn same_geometry_different_transport_does_not_reuse_reach_binding() {
         bits_a, bits_b,
         "different seeds must produce different reach"
     );
-    let pack_a = encode(&c, &corner, &[]);
-    let pack_b = encode(&c, &island, &[]);
+    let pack_a = encode(&c, &corner, &[]).unwrap();
+    let pack_b = encode(&c, &island, &[]).unwrap();
     let digest_a: [u8; 32] = Sha256::digest(&pack_a).into();
     let digest_b: [u8; 32] = Sha256::digest(&pack_b).into();
     assert_ne!(digest_a, digest_b);
