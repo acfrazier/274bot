@@ -343,6 +343,8 @@ fn blocked_door_fixture() -> WorldCollision {
 /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at,
@@ -380,6 +382,25 @@ fn find_skips_relative_transport_when_takeoff_landing_overflows() {
         find(&collision, &graph, tile(1, 2, 0), tile(4, 2, 0)).err(),
         Some(RouteError::NoPath)
     );
+}
+
+#[test]
+fn exact_takeoff_is_the_only_indexed_transport_stand() {
+    let collision = bake(10, 10, &[]);
+    let required = tile(4, 3, 0);
+    let mut graph = door(tile(4, 4, 0), tile(9, 9, 0), 1);
+    graph.edges[0].kind = TransportKind::AgilityShortcut;
+    graph.edges[0].takeoff = Some(required);
+    graph.rebuild_index(&collision);
+
+    assert_eq!(graph.at.get(&required).map(Vec::as_slice), Some(&[0][..]));
+    assert!(!graph.at.contains_key(&tile(4, 4, 0)));
+    let route = find(&collision, &graph, tile(4, 2, 0), tile(9, 9, 0)).unwrap();
+    let (Leg::Walk { tiles }, Leg::Transport { edge }) = (&route.legs[0], &route.legs[1]) else {
+        panic!("expected walk to exact takeoff followed by the transport");
+    };
+    assert_eq!(tiles.last(), Some(&required));
+    assert_eq!(edge.takeoff, Some(required));
 }
 
 #[test]
@@ -446,6 +467,8 @@ fn teleport(
 ) -> TransportGraph {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: tile(0, 0, 0),
@@ -546,6 +569,8 @@ fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available(
     let at = tile(1, 2, 0);
     let to = tile(2, 2, 0);
     let edge = |option, item_req, worn_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         at,
         to,
@@ -755,6 +780,8 @@ fn wall_tile_blocks_through_wall_steps_and_the_router_avoids_it() {
 fn find_transport_changes_level_and_walks_upstairs() {
     let wc = bake(4, 4, &[]);
     let ladder = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: tile(0, 0, 0),
@@ -1266,6 +1293,8 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
         let at = tile(199, 201, 0);
         graph.at.entry(at).or_default().push(0);
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
             at,
@@ -1726,6 +1755,8 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
         seed % bound
     };
     let edge = |kind, at, to, ticks, item_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind,
         player_delta: None,
         at,
@@ -2779,6 +2810,35 @@ fn find_missing_item_reqs_treats_worn_req_as_any_of() {
         }]),
         "no worn alternative: the session may fetch either blade"
     );
+}
+
+#[test]
+fn worn_all_req_requires_every_equipped_piece_on_a_route() {
+    let wc = walled_5x5();
+    let mut graph = toll_graph();
+    graph.edges[0].consumed_req.clear();
+    graph.edges[0].worn_all_req = vec![1277, 1321];
+    let from = tile(0, 0, 0);
+    let to = tile(4, 4, 0);
+    let one_worn = WorldState {
+        inv: HashMap::from([(1277, 1), (1321, 1)]),
+        worn: HashSet::from([1277]),
+        ..WorldState::empty()
+    };
+    assert!(matches!(
+        find_with(&wc, &graph, from, to, FindOptions::default(), &one_worn),
+        Err(RouteError::NoPath)
+    ));
+    assert!(
+        find_missing_item_reqs(&wc, &graph, from, to, FindOptions::default(), &one_worn).is_none(),
+        "worn_all_req is not relaxed into a BankBudget shopping list"
+    );
+
+    let all_worn = WorldState {
+        worn: HashSet::from([1277, 1321]),
+        ..WorldState::empty()
+    };
+    assert!(find_with(&wc, &graph, from, to, FindOptions::default(), &all_worn).is_ok());
 }
 
 /// A route blocked by a skill gate is not a banking problem: the

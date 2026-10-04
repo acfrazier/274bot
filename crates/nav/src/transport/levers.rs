@@ -87,6 +87,8 @@ pub(super) fn lever_edges(
             };
             for to in &tos {
                 graph.edges.push(TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
                     kind: TransportKind::Door,
                     player_delta: None,
                     at,

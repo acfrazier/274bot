@@ -523,6 +523,7 @@ mod rasterize_rules {
             TransportGraph {
                 edges: vec![TransportEdge {
                     kind: TransportKind::Door,
+                    takeoff: None,
                     player_delta: None,
                     at: WorldTile {
                         x: 0,
@@ -546,6 +547,7 @@ mod rasterize_rules {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    worn_all_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
