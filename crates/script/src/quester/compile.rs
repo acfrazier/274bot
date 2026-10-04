@@ -492,20 +492,18 @@ fn compile_uncached(
         bank_items: &bank_items,
         loadouts: &loadouts,
     };
-    let mut recipes = HashMap::new();
-    for (name, steps) in &header.acquire {
-        recipes.insert(
-            name.clone(),
-            compile_steps(steps, &recipe_ctx, document)?
-                .into_iter()
-                .map(|step| CompiledAcquireStep {
-                    advances: step.advances,
-                    skip_if: step.skip_if,
-                    settle: step.settle,
-                    plan: step.plan,
-                })
-                .collect(),
-        );
+    let mut recipes = HashMap::with_capacity(header.acquire.len());
+    let mut bindings = HashMap::with_capacity(header.acquire.len());
+    let mut active = Vec::with_capacity(header.acquire.len().min(MAX_RECIPE_NESTING_DEPTH));
+    for name in header.acquire.keys() {
+        compile_recipe(
+            name,
+            document,
+            &recipe_ctx,
+            &mut recipes,
+            &mut bindings,
+            &mut active,
+        )?;
     }
     recipe_ctx.recipes = &recipes;
     let mut warnings: Vec<Arc<str>> = Vec::new();
@@ -786,6 +784,97 @@ fn compile_acquire_step(
     }))
 }
 
+const MAX_RECIPE_NESTING_DEPTH: usize = 32;
+
+enum RecipeBinding {
+    Active { index: usize },
+    Bound { depth: usize },
+}
+
+fn recipe_nesting_error(document: &PathDocument, name: &str, depth: usize) -> CompileError {
+    let mut error = CompileError::code("recipe-nesting-limit").with_path(document.id.clone());
+    error.detail = Some(Arc::from(format!(
+        "Recipe {name} needs nesting depth {depth}. The limit is {MAX_RECIPE_NESTING_DEPTH}."
+    )));
+    error
+}
+
+fn compile_recipe<'a>(
+    name: &'a str,
+    document: &'a PathDocument,
+    base: &CompileContext<'_>,
+    recipes: &mut HashMap<String, Vec<CompiledAcquireStep>>,
+    bindings: &mut HashMap<&'a str, RecipeBinding>,
+    active: &mut Vec<&'a str>,
+) -> Result<usize, CompileError> {
+    match bindings.get(name) {
+        Some(RecipeBinding::Bound { depth }) => return Ok(*depth),
+        Some(RecipeBinding::Active { index }) => {
+            let mut error = CompileError::code("recipe-cycle").with_path(document.id.clone());
+            error.detail = Some(Arc::from(format!(
+                "Acquisition recipe cycle: {} -> {name}",
+                active[*index..].join(" -> ")
+            )));
+            return Err(error);
+        }
+        None => {}
+    }
+    let steps = document
+        .quest
+        .as_ref()
+        .expect("recipe compilation follows header validation")
+        .acquire
+        .get(name)
+        .ok_or_else(|| CompileError::code("unresolved-recipe").with_path(document.id.clone()))?;
+    if active.len() >= MAX_RECIPE_NESTING_DEPTH {
+        return Err(recipe_nesting_error(document, name, active.len() + 1));
+    }
+    bindings.insert(
+        name,
+        RecipeBinding::Active {
+            index: active.len(),
+        },
+    );
+    active.push(name);
+    let mut depth = 1;
+    for step in steps.iter().filter(|step| step.kind == "acquire") {
+        let dependency = step
+            .args
+            .get("recipe")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                let mut error = CompileError::code("invalid-args").with_path(document.id.clone());
+                error.step = Some(step.id.clone());
+                error
+            })?;
+        let child_depth = compile_recipe(dependency, document, base, recipes, bindings, active)
+            .map_err(|mut error| {
+                if error.step.is_none() {
+                    error.step = Some(step.id.clone());
+                }
+                error
+            })?;
+        depth = depth.max(child_depth + 1);
+        if depth > MAX_RECIPE_NESTING_DEPTH {
+            return Err(recipe_nesting_error(document, name, depth));
+        }
+    }
+    let context = CompileContext { recipes, ..*base };
+    let compiled = compile_steps(steps, &context, document)?
+        .into_iter()
+        .map(|step| CompiledAcquireStep {
+            advances: step.advances,
+            skip_if: step.skip_if,
+            settle: step.settle,
+            plan: step.plan,
+        })
+        .collect();
+    recipes.insert(name.to_owned(), compiled);
+    bindings.insert(name, RecipeBinding::Bound { depth });
+    active.pop();
+    Ok(depth)
+}
+
 fn validate_header(
     header: &super::path::QuestHeaderDocument,
     selected: &SelectedGameData,
@@ -994,6 +1083,114 @@ mod tests {
         match compile_uncached_for_test(&document, &data, &quests) {
             Err(err) => err,
             Ok(_) => panic!("compile must fail"),
+        }
+    }
+
+    fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
+        StepDocument {
+            id: FactKey::new(id),
+            kind: "acquire".into(),
+            version: 1,
+            args: serde_json::json!({"recipe": recipe}),
+            comment: None,
+            advances: false,
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: PredicateDocument::All(vec![]),
+        }
+    }
+
+    #[test]
+    fn acquire_recipe_forward_and_shared_dependencies_resolve() {
+        let mut document = decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        let mut leaf = header.acquire["acquire:egg"][0].clone();
+        leaf.id = FactKey::new("recipe-leaf");
+        header.acquire.insert("acquire:z-leaf".into(), vec![leaf]);
+        header.acquire.insert(
+            "acquire:a-root".into(),
+            vec![
+                acquire_recipe_step("nested-first", "acquire:z-leaf"),
+                acquire_recipe_step("nested-second", "acquire:z-leaf"),
+            ],
+        );
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests)
+            .unwrap_or_else(|error| panic!("nested recipe: {} {:?}", error.code, error.detail));
+        assert_eq!(compiled.provisioning.recipes["acquire:a-root"].len(), 2);
+        assert_eq!(compiled.provisioning.recipes["acquire:z-leaf"].len(), 1);
+    }
+
+    #[test]
+    fn acquire_recipe_cycle_names_the_cycle() {
+        let error = compile_err(|document| {
+            let recipes = &mut document.quest.as_mut().unwrap().acquire;
+            recipes.insert(
+                "acquire:cycle-a".into(),
+                vec![acquire_recipe_step("cycle-a", "acquire:cycle-b")],
+            );
+            recipes.insert(
+                "acquire:cycle-b".into(),
+                vec![acquire_recipe_step("cycle-b", "acquire:cycle-a")],
+            );
+        });
+        assert_eq!(error.code.as_ref(), "recipe-cycle");
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("acquire:cycle-a -> acquire:cycle-b -> acquire:cycle-a"));
+    }
+
+    #[test]
+    fn acquire_recipe_missing_dependency_stays_unresolved_recipe() {
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().acquire.insert(
+                "acquire:root".into(),
+                vec![acquire_recipe_step("missing-child", "acquire:absent")],
+            );
+        });
+        assert_eq!(error.code.as_ref(), "unresolved-recipe");
+    }
+
+    #[test]
+    fn acquire_recipe_depth_limit_is_order_independent() {
+        let data = selected();
+        let quests = quests(&data);
+        for leaf_first in [true, false] {
+            let name = |depth| {
+                let index = if leaf_first { depth } else { 32 - depth };
+                format!("acquire:chain-{index:02}")
+            };
+            let mut document = decode_cook().unwrap();
+            let header = document.quest.as_mut().unwrap();
+            let mut leaf = header.acquire["acquire:egg"][0].clone();
+            leaf.id = FactKey::new("depth-leaf");
+            header.acquire.insert(name(0), vec![leaf]);
+            // Leaf-first order tests memoized heights. Root-first order
+            // tests the traversal stack bound before compilation.
+            for depth in 1..32 {
+                header.acquire.insert(
+                    name(depth),
+                    vec![acquire_recipe_step(
+                        &format!("depth-{depth}"),
+                        &name(depth - 1),
+                    )],
+                );
+            }
+            assert!(compile_uncached_for_test(&document, &data, &quests).is_ok());
+            document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .insert(name(32), vec![acquire_recipe_step("depth-32", &name(31))]);
+            let error = match compile_uncached_for_test(&document, &data, &quests) {
+                Err(error) => error,
+                Ok(_) => panic!("a 33-recipe chain must fail"),
+            };
+            assert_eq!(error.code.as_ref(), "recipe-nesting-limit");
+            assert!(error.detail.as_deref().unwrap().contains("32"));
         }
     }
 
