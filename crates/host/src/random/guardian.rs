@@ -1060,11 +1060,11 @@ impl Guardian {
     /// player is no longer on the maze square; a visit still on it after
     /// [`maze::SOLVE_TICKS`] solver ticks is given up (inert, no hold).
     fn step_maze<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
-        let Some((px, pz, _)) = snap.tile() else {
+        let Some((px, pz, level)) = snap.tile() else {
             self.acting = false;
             return;
         };
-        if (px >> 6, pz >> 6) != api::random::MAZE_SQUARE {
+        if api::random::trapped_area(px, pz, level) != Some(RandomKind::Maze) {
             self.acting = false;
             return;
         }
