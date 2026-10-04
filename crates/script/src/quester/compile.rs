@@ -27,7 +27,9 @@ use std::{
 
 pub struct CompileContext<'a> {
     pub path: &'a FactKey,
+    pub kind: super::path::PathKind,
     pub progress: &'a CompiledProgress,
+    pub pair: Option<PairCompileContext<'a>>,
     pub selected: &'a SelectedGameData,
     pub quests: &'a QuestCatalog,
     pub gathering: Option<&'a GatherCatalog>,
@@ -39,6 +41,13 @@ pub struct CompileContext<'a> {
     pub bank_items: &'a [i32],
     pub keep_ids: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
+}
+
+#[derive(Clone, Copy)]
+pub struct PairCompileContext<'a> {
+    pub declaration: &'a super::pair::PartnerDeclaration,
+    pub role: &'a FactKey,
+    pub digest: [u8; 32],
 }
 #[derive(Debug, Clone)]
 pub struct CompileError {
@@ -127,6 +136,8 @@ pub(crate) use crate::{fact, step};
 pub struct CompiledPath {
     pub id: FactKey,
     pub role: Option<FactKey>,
+    pub kind: super::path::PathKind,
+    pub partner: Option<super::pair::PartnerDeclaration>,
     pub display_name: Arc<str>,
     pub tested_stats: Option<Arc<[api::selected::SkillMinimum]>>,
     pub digest: [u8; 32],
@@ -134,6 +145,7 @@ pub struct CompiledPath {
     pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
     pub progress: CompiledProgress,
+    pub progress_reader: Option<Box<CompiledStep>>,
     pub eligibility: CompiledEligibility,
     pub provisioning: CompiledProvisioning,
     pub prelude: Vec<CompiledStep>,
@@ -196,6 +208,7 @@ pub struct CompiledProvisioning {
 pub struct CompiledSequence {
     pub stage: FactKey,
     pub terminal: bool,
+    pub order: super::path::SequenceOrder,
     pub steps: Vec<CompiledStep>,
 }
 
@@ -243,6 +256,10 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Stable authored world anchor for nearest-first selection.
+    fn anchor(&self) -> Option<api::WorldTile> {
+        None
+    }
     /// Post-machine predicate window, measured on the eligible clock.
     fn settle_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(8)
@@ -305,6 +322,7 @@ struct CacheKey {
     content: Arc<str>,
     digest: [u8; 32],
     abi: u64,
+    gang: Option<super::pair::Gang>,
 }
 
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
@@ -344,6 +362,16 @@ pub fn compile_path(
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_path_for_gang(bytes, selected, quests, None)
+}
+
+/// Select an immutable gang role after the owned membership read.
+pub fn compile_path_for_gang(
+    bytes: &[u8],
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    gang: Option<super::pair::Gang>,
+) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
     let (revision, engine, content) = match selected.selected_pin() {
         Ok(pin) => {
@@ -365,6 +393,7 @@ pub fn compile_path(
         content,
         digest,
         abi: abi_set(),
+        gang,
     };
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
@@ -373,7 +402,7 @@ pub fn compile_path(
     }
     let document: PathDocument =
         serde_json::from_slice(bytes).map_err(|_| CompileError::code("invalid-json"))?;
-    let compiled = Arc::new(compile_uncached(&document, digest, selected, quests)?);
+    let compiled = Arc::new(compile_uncached(&document, digest, selected, quests, gang)?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
         cache.insert(key, Arc::downgrade(&compiled));
@@ -387,7 +416,7 @@ pub fn compile_uncached_for_test(
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_uncached(document, digest_bytes(b"test"), selected, quests).map(Arc::new)
+    compile_uncached(document, digest_bytes(b"test"), selected, quests, None).map(Arc::new)
 }
 
 fn compile_requirement(
@@ -463,6 +492,7 @@ fn compile_uncached(
     digest: [u8; 32],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    gang: Option<super::pair::Gang>,
 ) -> Result<CompiledPath, CompileError> {
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
@@ -473,10 +503,25 @@ fn compile_uncached(
         .ok_or_else(|| CompileError::code("missing-quest-header").with_path(document.id.clone()))?;
     validate_header(header, selected).map_err(|err| err.with_path(document.id.clone()))?;
     validate_nav_coverage(document).map_err(|err| err.with_path(document.id.clone()))?;
-    let role = document
-        .roles
-        .first()
-        .ok_or_else(|| CompileError::code("missing-role").with_path(document.id.clone()))?;
+    let role = if let Some(declaration) = &document.partner {
+        if document.roles.len() != 2 || declaration.roles[0].id == declaration.roles[1].id
+            || declaration.roles[0].gang == declaration.roles[1].gang {
+            return Err(CompileError::code("invalid-partner-roles").with_path(document.id.clone()));
+        }
+        let gang = gang.ok_or_else(|| CompileError::code("missing-gang").with_path(document.id.clone()))?;
+        let selected_role = declaration.roles.iter().find(|role| role.gang == gang)
+            .ok_or_else(|| CompileError::code("invalid-partner-role"))?;
+        document.roles.iter().find(|role| role.role.as_ref() == Some(&selected_role.id))
+            .ok_or_else(|| CompileError::code("missing-partner-role"))?
+    } else {
+        if document.roles.len() != 1 {
+            return Err(CompileError::code("invalid-solo-roles").with_path(document.id.clone()));
+        }
+        &document.roles[0]
+    };
+    if document.kind == super::path::PathKind::Miniquest && role.progress_reader.is_none() {
+        return Err(CompileError::code("missing-miniquest-reader").with_path(document.id.clone()));
+    }
     let progress = role
         .progress
         .as_ref()
@@ -624,7 +669,11 @@ fn compile_uncached(
     };
     let mut recipe_ctx = CompileContext {
         path: &document.id,
+        kind: document.kind,
         progress: &compiled_progress,
+        pair: document.partner.as_ref().zip(role.role.as_ref()).map(|(declaration, role)| {
+            PairCompileContext { declaration, role, digest }
+        }),
         selected,
         quests,
         gathering: None,
@@ -651,6 +700,10 @@ fn compile_uncached(
         )?;
     }
     recipe_ctx.recipes = &recipes;
+    let progress_reader = role.progress_reader.as_ref().map(|reader| {
+        compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
+            .map(|mut steps| Box::new(steps.remove(0)))
+    }).transpose()?;
     let mut warnings: Vec<Arc<str>> = Vec::new();
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
@@ -675,6 +728,7 @@ fn compile_uncached(
         .prelude
         .iter()
         .chain(role.sequences.iter().flat_map(|s| s.steps.iter()))
+        .chain(role.progress_reader.iter())
     {
         if !global_ids.insert(step.id.0.clone()) {
             return Err(CompileError {
@@ -695,9 +749,14 @@ fn compile_uncached(
             return Err(CompileError::code("empty-nonterminal").with_path(document.id.clone()));
         }
         let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
+        if sequence.order == super::path::SequenceOrder::Nearest
+            && steps.iter().any(|step| step.plan.anchor().is_none()) {
+            return Err(CompileError::code("nearest-step-missing-anchor").with_path(document.id.clone()));
+        }
         sequences.push(CompiledSequence {
             stage: sequence.stage.clone(),
             terminal: sequence.terminal,
+            order: sequence.order,
             steps,
         });
     }
@@ -739,6 +798,8 @@ fn compile_uncached(
     Ok(CompiledPath {
         id: document.id.clone(),
         role: role.role.clone(),
+        kind: document.kind,
+        partner: document.partner.clone(),
         display_name: Arc::from(document.display_name.as_str()),
         tested_stats: document.tested_stats.as_deref().map(Arc::from),
         digest,
@@ -746,6 +807,7 @@ fn compile_uncached(
         colour_complete: progress.colour.complete.clone(),
         colour_in_progress: progress.colour.in_progress.clone(),
         progress: compiled_progress,
+        progress_reader,
         eligibility,
         provisioning,
         prelude,

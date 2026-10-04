@@ -156,6 +156,8 @@ pub struct SlotScript {
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
+    quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
+    pair_evidence: Option<api::quest_progress::EvidenceStamp>,
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
@@ -280,6 +282,8 @@ impl SlotScript {
             api: None,
             retained: None,
             native_runtime: Default::default(),
+            quest_pairs: None,
+            pair_evidence: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
             control_generation: 0,
@@ -343,6 +347,17 @@ impl SlotScript {
             fail_spawn_for_test: false,
         }
     }
+    /// Install this Play's account-bound authority, without taking another slot lock.
+    pub fn bind_quest_pairs(&mut self, port: Arc<dyn crate::quester::pair::QuestPairPort>) {
+        self.quest_pairs = Some(port);
+    }
+
+    pub fn pair_world_changed(&self, host: &str, port: u16) {
+        if let Some(pairs) = &self.quest_pairs {
+            pairs.world_changed(host, port);
+        }
+    }
+
 
     /// True when either a compiled script or a JS isolate is installed.
     fn has_instance(&self) -> bool {
@@ -1817,6 +1832,7 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
+        let previous_gameplay = self.watchdog.gameplay_stamp();
         use crate::shim::InteractReq;
         let mut anchor_reply = None;
         for op in lifecycle {
@@ -1847,7 +1863,14 @@ impl SlotScript {
             }
         }
         self.watchdog.on_xp(now, xp);
-        let action = self.watchdog.observe(now, running && self.want_run);
+        if self.watchdog.gameplay_stamp() != previous_gameplay {
+            if let (Some(pairs), Some(evidence)) = (&self.quest_pairs, self.pair_evidence) {
+                pairs.gameplay_progress(evidence.run, evidence, now);
+            }
+        }
+        let pair_wait = self.quest_pairs.as_ref().zip(self.native_run())
+            .is_some_and(|(pairs, run)| pairs.waiting(run));
+        let action = self.watchdog.observe_with_pair_wait(now, running && self.want_run, pair_wait);
         if action == WatchdogAction::RequestAnchor {
             if let Some(run) = &self.compiled {
                 let anchor = match catch_unwind(AssertUnwindSafe(|| run.script.recovery_anchor())) {
@@ -2096,7 +2119,12 @@ impl SlotScript {
                     .expect("compiled retention")
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                run.tick(ctx, &mut retained, &mut self.native_runtime)
+                self.pair_evidence = Some(api::quest_progress::EvidenceStamp {
+                    run: run.run,
+                    tick: ctx.tick,
+                    sequence: ctx.tick,
+                });
+                run.tick(ctx, &mut retained, &mut self.native_runtime, self.quest_pairs.as_deref())
             }
         };
         if result.is_ok() {

@@ -49,6 +49,25 @@ struct QuesterSettings {
     _allow_danger_zones: bool,
 }
 
+fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
+    QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+        bag.iter().map(|(key, value)| (key.as_str(), value)),
+    )).map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
+}
+
+/// These are the two explicitly paired release Paths, never implicit helpers.
+pub(crate) fn is_pair_path(id: &str) -> bool {
+    matches!(id, "blackarmgang" | "hero")
+}
+
+pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
+    let settings = decode_settings(bag)?;
+    Ok(RELEASE_INDEX.paths.iter().any(|entry| {
+        is_pair_path(&entry.id) && !settings.skip.contains(&entry.id)
+            && (settings.quests.is_empty() || settings.quests.contains(&entry.id))
+    }))
+}
+
 static RELEASE_INDEX: LazyLock<ReleaseIndex> =
     LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
 
@@ -93,7 +112,7 @@ fn settings_schema() -> &'static [SettingDef] {
                 "string",
                 "",
                 "Gang",
-                "Explicit partner-quest gang for this account.",
+                "Irreversible gang choice for an account not yet joined; must match its owned journal.",
                 &["phoenix", "blackarm"],
             ),
             setting(
@@ -297,10 +316,7 @@ fn prepare(
             "Quester S1 supports revision 289 only".into(),
         ));
     }
-    let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
-        bag.iter().map(|(key, value)| (key.as_str(), value)),
-    ))
-    .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
+    let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
         .as_deref()

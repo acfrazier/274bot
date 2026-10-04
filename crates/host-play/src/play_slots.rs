@@ -416,6 +416,9 @@ impl Play {
             .lock()
             .unwrap()
             .bind_native_input(slot_input.authority());
+        slot_script.lock().unwrap().bind_quest_pairs(
+            self.quest_pairs.seat(&username, self.connection.game_host(), self.connection.game_port()),
+        );
         self.cheats
             .lock()
             .unwrap()
@@ -952,6 +955,9 @@ fn spawn_slot_thread(
                             }
                             clear_startup_progress(&slot_statuses, &username);
                             return;
+                        }
+                        if let Some(slot) = script_slot(&slot_scripts, &username) {
+                            slot.lock().unwrap().pair_world_changed(&client.config.host, client.config.port);
                         }
                         if arm.stop.load(Ordering::Relaxed) {
                             return;

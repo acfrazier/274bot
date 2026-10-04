@@ -62,6 +62,7 @@ pub mod settings_store;
 pub mod shim;
 pub mod slot;
 pub mod watchdog;
+pub mod trade_screen;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]
