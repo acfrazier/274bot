@@ -56,9 +56,10 @@ pub enum Mode {
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
     Restart { at: [String; 2] },
-    /// Send one `~death` while the stage key is `at` and the active step is
-    /// `step` (after it has run [`MID_STEP`]); complete with one death. The
-    /// status at injection is kept in the receipt (`death_status`).
+    /// Send one `~death` while the stage key is `at` and the active step
+    /// (`child_step_id` inside an acquire recipe, else `step_id`) is `step`,
+    /// after it has run [`MID_STEP`]; complete with one death. The status at
+    /// injection is kept in the receipt (`death_status`).
     Death { at: String, step: String },
 }
 
@@ -671,9 +672,13 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
             }
             Mode::Death { at, step } if death_status.is_none() => {
                 let on_step = current.as_deref() == Some(at.as_str())
-                    && status
-                        .as_ref()
-                        .is_some_and(|s| text(s, "step_id") == Some(step.as_str()));
+                    && status.as_ref().is_some_and(|s| {
+                        // An acquire recipe's running child step is published as
+                        // child_step_id; the root step_id names the acquire step.
+                        text(s, "child_step_id").or_else(|| text(s, "step_id"))
+                            == Some(step.as_str())
+                            || text(s, "step_id") == Some(step.as_str())
+                    });
                 if !on_step {
                     stop_at = None;
                 } else if Instant::now()
@@ -777,4 +782,74 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
     play.script_stop(&account);
     play.stop_slot(&account);
     result.map(|()| receipt)
+}
+
+/// One Path-backed fixture cell (`scenario::quester::quester_stage`): the
+/// quest's `FIXTURE_PROFILES` row, its varp-hinted stage, the chosen kit and
+/// extras, the stand tile, and Start with the fixture's own settings. The
+/// fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
+pub struct PathCell<'a> {
+    /// Content quest id; the Path body comes from the release index.
+    pub quest: &'static str,
+    /// Selected quest-tab display (checked against the identity row).
+    pub display: &'static str,
+    pub label: String,
+    /// Stage key with a `progress.rules` varp hint (`squire:3`).
+    pub stage: &'a str,
+    pub loadout: Option<scenario::quester::FixtureLoadout<'a>>,
+    pub extra_items: &'a [(&'a str, i32)],
+    pub stand: WorldTile,
+    pub mode: Mode,
+    /// Auxiliary pre-Start setup (bank stock, prerequisite quest flags),
+    /// inserted before the fixture's final relog. Never gameplay.
+    pub before_relog: Vec<scenario::Step>,
+}
+
+pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
+    let bytes = script::quester::compile::path_bytes(spec.quest)
+        .ok_or_else(|| format!("{} is not an embedded release Path", spec.quest))?;
+    let path: script::quester::path::PathDocument =
+        serde_json::from_slice(bytes).map_err(|error| format!("{}: {error}", spec.quest))?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let identity = selected
+        .quest_identity()
+        .and_then(|table| table.rows.iter().find(|row| row.id == spec.quest))
+        .ok_or_else(|| format!("no quest identity row for {}", spec.quest))?;
+    if identity.display != spec.display {
+        return Err(format!(
+            "{} displays as {:?}, not {:?}",
+            spec.quest, identity.display, spec.display
+        ));
+    }
+    let name: &'static str = Box::leak(format!("quester_{}", spec.quest).into_boxed_str());
+    let fixture = scenario::quester::quester_stage(scenario::quester::QuesterStage {
+        name,
+        quest_display: spec.display,
+        path: &path,
+        identity,
+        selected: &selected,
+        stage: spec.stage,
+        loadout: spec.loadout,
+        extra_items: spec.extra_items,
+        stand: spec.stand,
+    })?;
+    let mut scenario = fixture.scenario;
+    if !spec.before_relog.is_empty() {
+        let relog = scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, scenario::StepKind::Relog))
+            .ok_or("fixture has no relog")?;
+        scenario.steps.splice(relog..relog, spec.before_relog);
+    }
+    let seed = fixture.seed;
+    Ok(Cell {
+        quest: spec.quest,
+        display: spec.display,
+        label: spec.label,
+        scenario,
+        start_settings: fixture.start_settings,
+        mode: spec.mode,
+        observe_start: Some(Box::new(move |snapshot| seed.observe_start(snapshot))),
+    })
 }
