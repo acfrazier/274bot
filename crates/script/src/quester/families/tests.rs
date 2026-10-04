@@ -207,6 +207,7 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
             }),
         }]),
         current: Some(child),
+        child_outcome: None,
         index: 0,
         chat_since: 0,
         settling: false,
@@ -1360,6 +1361,10 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
         with_step(tick, |cx| run.poll(cx))
     })
     .is_pending());
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
     let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
     assert!(matches!(
         &action.effect,
@@ -1373,8 +1378,8 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
             request_id: authority.request_id().get(),
             evidence: EvidenceStamp {
                 run: authority.run(),
-                tick: 3,
-                sequence: 3,
+                tick: 4,
+                sequence: 4,
             },
             accepted: true,
             chat_since: 0,
@@ -1382,7 +1387,7 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
     );
     snapshot.seed_varps(varps(false));
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
             with_step(tick, |cx| run.poll(cx))
         }),
         Poll::Ready(Ok(_))

@@ -210,6 +210,11 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Completed bank scans inside nested acquisition recipes update the runner's
+bank knowledge before the parent recipe evaluates its next child or settlement
+predicate. An observed empty bank is known zero stock; missing bank evidence
+remains unknown.
+
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
 the display-name rows consumed by Loadouts; operator overrides remain ordinary
@@ -292,6 +297,13 @@ over-255-entry orders fail compilation. `fallback_spells: false` is the default;
 `true` permits the native strongest-castable fallback when the fixed order is
 exhausted. Spell-specific refusal and rune evidence still belong to the native
 combat core.
+
+### Exact loc use-on targets
+
+Item/widget use-on dispatch keeps the exact loc tile and applies every supplied
+loc name and id. Names compare without case sensitivity. If a supplied name/id
+is absent from the snapshot, or the id and name disagree, dispatch sends nothing;
+a co-located wall cannot replace the requested loc.
 
 ### Quester expected combat handoff
 

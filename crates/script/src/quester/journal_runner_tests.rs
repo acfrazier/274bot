@@ -1467,3 +1467,234 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
         crate::ScriptTerminalState::Completed
     );
 }
+#[test]
+fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
+    use crate::quester::families::tests::local_player;
+    use crate::quester::path::StepDocument;
+    use api::snapshot::{LocLayer, LocView, WorldTile};
+
+    let _isolated = crate::IsolatedEnv::enter("quester-nested-bank-receipt");
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let mut document = super::super::compile::decode_cook().unwrap();
+    let bank_has_egg = |qty| PredicateDocument::Fact {
+        kind: "bank_has".into(),
+        version: 1,
+        args: serde_json::json!({"obj": "egg", "qty": qty}),
+    };
+    let bank_known = PredicateDocument::Fact {
+        kind: "bank_known".into(),
+        version: 1,
+        args: serde_json::json!({}),
+    };
+    let bank_empty = PredicateDocument::All(vec![
+        bank_known.clone(),
+        PredicateDocument::Not(Box::new(bank_has_egg(1))),
+    ]);
+
+    let header = document.quest.as_mut().unwrap();
+    header.owns_inventory = true;
+    header.acquire.insert(
+        "acquire:egg".into(),
+        vec![StepDocument {
+            id: FactKey::new("nested-bank-acquire"),
+            kind: "acquire".into(),
+            version: 1,
+            args: serde_json::json!({"recipe": "acquire:egg-bank-scan"}),
+            comment: None,
+            advances: Some(false),
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: bank_empty.clone(),
+        }],
+    );
+    header.acquire.insert(
+        "acquire:egg-bank-scan".into(),
+        vec![
+            StepDocument {
+                id: FactKey::new("real-empty-bank-scan"),
+                kind: "bank".into(),
+                version: 1,
+                args: serde_json::json!({
+                    "op": "scan",
+                    "at": "nearest",
+                    "items": [],
+                    "keep": [],
+                    "keep_ids": [],
+                    "partial_ok": false
+                }),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: bank_known,
+            },
+            StepDocument {
+                id: FactKey::new("skip-if-egg-is-absent-from-bank"),
+                kind: "wait".into(),
+                version: 1,
+                args: serde_json::json!({"until": {"All": []}, "max_ticks": 4}),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Not(Box::new(bank_has_egg(1))),
+                settle: PredicateDocument::All(vec![]),
+            },
+        ],
+    );
+    let sequence = &mut document.roles[0].sequences[1];
+    sequence.steps.truncate(1);
+    sequence.terminal = true;
+    sequence.steps[0].skip_if = bank_empty.clone();
+    sequence.steps[0].settle = bank_empty;
+
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
+        .expect("nested cook bank recipes compile");
+    let bank_tile = WorldTile {
+        x: 3092,
+        z: 3242,
+        level: 0,
+    };
+    let bank = api::named_banks::NamedBank::new("Nested receipt bank", bank_tile);
+    let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+    let egg_id = data.item_by_alias("egg").unwrap().id;
+    let mut script = Quester::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        path,
+        Arc::clone(&data),
+        quests,
+        banks,
+    );
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(local_player(bank_tile));
+    snapshot.seed_inventory(vec![], 28);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf8f800,
+        }],
+        true,
+    );
+    snapshot.seed_locs(vec![LocView {
+        id: 2213,
+        name: Some("Bank booth".into()),
+        actions: vec![Some("Use-quickly".into())],
+        tile: bank_tile,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+
+    let mut ledger = None;
+    let mut flow = ScriptFlow::Continue;
+    let mut selected_bank = false;
+    let mut opened_bank = false;
+    for tick in 1..=48 {
+        flow = drive(&mut script, &snapshot, &mut ledger, tick);
+        let Some(action) = ledger.as_ref().and_then(|ledger| ledger.outbox.first()) else {
+            if matches!(flow, ScriptFlow::Complete) {
+                break;
+            }
+            continue;
+        };
+        match &action.effect {
+            HostEffect::BankPick(_) => {
+                let action = ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                ledger.as_mut().unwrap().complete_bank_pick(
+                    &authority,
+                    crate::bank::BankPickReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        selected: crate::bank::SelectedBank {
+                            bank_index: 0,
+                            access_tile: bank_tile,
+                            kind: crate::bank::PickKind::Reachable,
+                            access: Some(Arc::new(crate::bank::BankStandAccess {
+                                bank,
+                                stand_tile: bank_tile,
+                                kind: crate::bank::AccessKind::Booth,
+                                stand_op: 1,
+                                name: None,
+                                choose: None,
+                            })),
+                        },
+                    },
+                );
+                selected_bank = true;
+            }
+            HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. }) => {
+                assert!(matches!(
+                    ack(&mut ledger, tick),
+                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                ));
+                snapshot.seed_bank_observation(1, tick, Some(vec![]), vec![]);
+                opened_bank = true;
+            }
+            _ => panic!("unexpected nested bank effect"),
+        }
+        if matches!(flow, ScriptFlow::Complete) {
+            break;
+        }
+    }
+
+    assert!(selected_bank, "the real scan must request bank selection");
+    assert!(
+        opened_bank,
+        "the selected stand must open before the real scan"
+    );
+    assert_eq!(
+        flow,
+        ScriptFlow::Complete,
+        "the nested outer acquire must settle instead of timing out on unknown bank evidence"
+    );
+    assert!(script.bank.known());
+    assert_eq!(script.bank.count(egg_id), Some(0));
+    assert!(!script.parked);
+    assert!(
+        script
+            .last_error
+            .as_ref()
+            .is_none_or(|error| !error.contains("step settle timeout")),
+        "the root must not report an unknown-settle timeout"
+    );
+
+    let dependent = &script.path.provisioning.recipes["acquire:egg-bank-scan"][1].skip_if;
+    let outer_settle = &script.path.sequences[1].steps[0].settle;
+    let (dependent_truth, settle_truth) = with_tick(&snapshot, &mut ledger, 49, |tick| {
+        let cx = PredicateContext {
+            cx: &tick.cx,
+            quests: &script.quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            outcome: None,
+            bank: &script.bank,
+        };
+        (dependent.evaluate(&cx), outer_settle.evaluate(&cx))
+    });
+    assert_eq!(dependent_truth, Truth::True);
+    assert_eq!(settle_truth, Truth::True);
+}

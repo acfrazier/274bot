@@ -11278,6 +11278,140 @@ fn colocated_wall_flax(wall_first: bool) -> (Client, GameSnapshot) {
     (c, snap)
 }
 
+fn colocated_loc_use_fixture(wall_first: bool) -> (GameSnapshot, api::obj_names::ObjNames) {
+    use client::config::ObjType;
+
+    let (mut client, mut snapshot) = colocated_wall_flax(wall_first);
+    {
+        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        cache.objs.resize(433, ObjType::default());
+        cache.objs[432].id = 432;
+        cache.objs[432].name = "Chest key".into();
+    }
+    client.side_icon[3] = 500;
+    client.set_iface(
+        500,
+        IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![433]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    snapshot.rebuild(&client);
+    assert_eq!(
+        snapshot
+            .inventory()
+            .iter()
+            .map(|item| (item.def.id, item.slot))
+            .collect::<Vec<_>>(),
+        [(432, 0)],
+    );
+    let names = api::obj_names::ObjNames::from_objs(&client.cache.objs);
+    (snapshot, names)
+}
+
+#[test]
+fn dispatch_use_on_loc_honors_co_located_name_and_exact_id() {
+    for wall_first in [true, false] {
+        let (snapshot, names) = colocated_loc_use_fixture(wall_first);
+        let (navs, world) = empty_nav();
+        for (target_name, target_item_id) in [
+            (Some("fLaX"), None),
+            (None, Some(2646)),
+            (Some("Flax"), Some(2646)),
+        ] {
+            let mut rec = GuardRec::default();
+            assert!(dispatch_script_interact(
+                &mut rec,
+                &snapshot,
+                Some(&names),
+                Some((4, 5, 0)),
+                &navs,
+                &world,
+                None,
+                "alice",
+                vec![script::shim::InteractReq::UseOn {
+                    name: "Chest key".into(),
+                    kind: "loc".into(),
+                    target_name: target_name.map(str::to_owned),
+                    x: 5,
+                    z: 6,
+                    level: 0,
+                    index: None,
+                    source_item_id: Some(432),
+                    source_item_slot: Some(0),
+                    target_item_id,
+                    target_item_slot: None,
+                }],
+            ));
+            assert_eq!(
+                rec.menus,
+                [
+                    (0, MiniMenuAction::USEHELD_START, 432, 0, 500),
+                    (
+                        0,
+                        MiniMenuAction::USEHELD_ONLOC,
+                        flax_typecode(&snapshot),
+                        5,
+                        6,
+                    ),
+                ],
+                "requested name/id must beat a co-located wall (wall_first={wall_first})",
+            );
+        }
+    }
+}
+
+#[test]
+fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
+    let (snapshot, names) = colocated_loc_use_fixture(true);
+    let (navs, world) = empty_nav();
+    for (target_name, target_item_id) in [
+        (Some("Missing"), None),
+        (None, Some(9999)),
+        (Some("Flax"), Some(980)),
+    ] {
+        let mut rec = GuardRec::default();
+        assert!(!dispatch_script_interact(
+            &mut rec,
+            &snapshot,
+            Some(&names),
+            Some((4, 5, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::UseOn {
+                name: "Chest key".into(),
+                kind: "loc".into(),
+                target_name: target_name.map(str::to_owned),
+                x: 5,
+                z: 6,
+                level: 0,
+                index: None,
+                source_item_id: Some(432),
+                source_item_slot: Some(0),
+                target_item_id,
+                target_item_slot: None,
+            }],
+        ));
+        assert!(
+            rec.menus.is_empty(),
+            "a missing name/id or identity disagreement must send nothing",
+        );
+    }
+}
+
 fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
     script::shim::InteractReq::Loc {
         x: 5,
