@@ -55,37 +55,104 @@ fn weapon_names(family: &[EquipmentNameEntry]) -> impl Iterator<Item = &str> {
         .map(|row| row.requested_name.as_str())
 }
 
-fn tier_of(name: &str) -> String {
-    name.split(' ').next().unwrap_or("").to_lowercase()
+fn metal_suffix(name: &str) -> Option<&str> {
+    name.trim().split_once(' ').map(|(_, suffix)| suffix)
 }
 
-fn type_of(name: &str) -> String {
-    let rest = name
-        .split(' ')
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    rest.strip_suffix("(p)").map(str::to_string).unwrap_or(rest)
+pub(crate) fn metal_tier_rank(name: &str) -> Option<usize> {
+    let tier = name.trim().split_once(' ')?.0;
+    TIER_RANK
+        .iter()
+        .position(|known| known.eq_ignore_ascii_case(tier))
+}
+
+pub(crate) fn metal_level(name: &str) -> Option<i32> {
+    let tier = name.trim().split_once(' ')?.0;
+    TIER_ATTACK
+        .iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(tier))
+        .map(|(_, level)| *level)
+}
+
+fn melee_type(name: &str) -> &str {
+    let suffix = metal_suffix(name).unwrap_or(name);
+    let Some(start) = suffix.len().checked_sub(3) else {
+        return suffix;
+    };
+    if suffix
+        .get(start..)
+        .is_some_and(|poison| poison.eq_ignore_ascii_case("(p)"))
+    {
+        &suffix[..start]
+    } else {
+        suffix
+    }
+}
+
+pub(crate) fn same_or_lower_melee_weapon(candidate: &str, wanted: &str) -> bool {
+    match (metal_tier_rank(candidate), metal_tier_rank(wanted)) {
+        (Some(candidate_rank), Some(wanted_rank)) => {
+            candidate_rank <= wanted_rank
+                && melee_type(candidate).eq_ignore_ascii_case(melee_type(wanted))
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn same_or_lower_metal_item(candidate: &str, wanted: &str) -> bool {
+    match (metal_tier_rank(candidate), metal_tier_rank(wanted)) {
+        (Some(candidate_rank), Some(wanted_rank)) => {
+            candidate_rank <= wanted_rank
+                && metal_suffix(candidate)
+                    .zip(metal_suffix(wanted))
+                    .is_some_and(|(candidate, wanted)| candidate.eq_ignore_ascii_case(wanted))
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn is_melee_weapon(family: &[EquipmentNameEntry], name: &str) -> bool {
+    weapon_names(family).any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
 /// JS `indexOf`: -1 when absent.
 fn index_of(list: &[&str], key: &str) -> i32 {
     list.iter()
-        .position(|entry| *entry == key)
+        .position(|entry| entry.eq_ignore_ascii_case(key))
         .map_or(-1, |i| i as i32)
 }
 
 fn wield_level(name: &str) -> i32 {
-    let tier = tier_of(name);
-    TIER_ATTACK
-        .iter()
-        .find(|(t, _)| *t == tier)
-        .map_or(1, |(_, level)| *level)
+    metal_level(name).unwrap_or(1)
 }
 
-fn lowered(names: &[String]) -> Vec<String> {
-    names.iter().map(|name| name.to_lowercase()).collect()
+fn order_key(name: &str, order: &[&str]) -> (i32, i32) {
+    let tier = metal_tier_rank(name).map_or(-1, |index| index as i32);
+    (-tier, index_of(order, melee_type(name)))
+}
+
+/// Shared candidate policy for compat, native combat, and Quester loadouts.
+/// `permitted` narrows the policy for a caller; ordering and Attack gates stay
+/// native and refused names retain compat's exact-match semantics.
+pub(crate) fn best_melee_weapon_by_where<'a>(
+    family: &'a [EquipmentNameEntry],
+    attack: f64,
+    prefer_stab: bool,
+    unusable: &[String],
+    mut permitted: impl FnMut(&str) -> bool,
+    mut available: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
+    let order = if prefer_stab {
+        &STAB_ORDER
+    } else {
+        &SLASH_ORDER
+    };
+    weapon_names(family)
+        .filter(|name| available(name))
+        .filter(|name| !unusable.iter().any(|refused| refused == name))
+        .filter(|name| permitted(name))
+        .filter(|name| f64::from(wield_level(name)) <= attack)
+        .min_by_key(|name| order_key(name, order))
 }
 
 /// The highest-tier weapon among `available` (case-insensitive) the pick can
@@ -95,70 +162,40 @@ pub fn best_melee_weapon(
     available: &[String],
     pick: &WeaponPick<'_>,
 ) -> Option<String> {
-    let order: &[&str] = if pick.prefer_stab {
-        &STAB_ORDER
-    } else {
-        &SLASH_ORDER
-    };
-    let have = lowered(available);
-    let mut usable: Vec<&str> = weapon_names(family)
-        .filter(|name| have.contains(&name.to_lowercase()))
-        .filter(|name| !pick.unusable.iter().any(|refused| refused == name))
-        .filter(|name| f64::from(wield_level(name)) <= pick.attack)
-        .collect();
-    // Stable, like the frozen `Array.prototype.sort`.
-    usable.sort_by_key(|name| {
-        (
-            -index_of(&TIER_RANK, &tier_of(name)),
-            index_of(order, &type_of(name)),
-        )
-    });
-    usable.first().map(|name| (*name).to_string())
+    best_melee_weapon_by_where(
+        family,
+        pick.attack,
+        pick.prefer_stab,
+        pick.unusable,
+        |_| true,
+        |name| available.iter().any(|have| have.eq_ignore_ascii_case(name)),
+    )
+    .map(str::to_string)
 }
 
-/// Borrowed native pick. Reuses the frozen tier/type ordering without making
-/// temporary names or copying the inventory at engagement start.
-pub(crate) fn best_melee_weapon_by(
-    family: &[EquipmentNameEntry],
+/// Borrowed native pick. It uses the same refusal, wield, and ordering policy
+/// without copying the inventory at engagement start.
+pub(crate) fn best_melee_weapon_by<'a>(
+    family: &'a [EquipmentNameEntry],
     attack: i32,
     prefer_stab: bool,
-    mut available: impl FnMut(&str) -> bool,
-) -> Option<&str> {
-    let order = if prefer_stab {
-        &STAB_ORDER
-    } else {
-        &SLASH_ORDER
-    };
-    weapon_names(family)
-        .filter(|name| available(name))
-        .filter(|name| {
-            let tier = name.split(' ').next().unwrap_or("");
-            let level = TIER_ATTACK
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(tier))
-                .map_or(1, |(_, level)| *level);
-            level <= attack
-        })
-        .min_by_key(|name| {
-            let (tier, kind) = name.split_once(' ').unwrap_or((name, ""));
-            let kind = kind.strip_suffix("(p)").unwrap_or(kind);
-            let tier = TIER_RANK
-                .iter()
-                .position(|key| key.eq_ignore_ascii_case(tier))
-                .map_or(-1, |index| index as i32);
-            let kind = order
-                .iter()
-                .position(|key| key.eq_ignore_ascii_case(kind))
-                .map_or(-1, |index| index as i32);
-            (-tier, kind)
-        })
+    unusable: &[String],
+    available: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
+    best_melee_weapon_by_where(
+        family,
+        f64::from(attack),
+        prefer_stab,
+        unusable,
+        |_| true,
+        available,
+    )
 }
 
 /// The first family weapon (family order) named in `names`, case-insensitive.
 pub fn known_melee_weapon(family: &[EquipmentNameEntry], names: &[String]) -> Option<String> {
-    let have = lowered(names);
     weapon_names(family)
-        .find(|name| have.contains(&name.to_lowercase()))
+        .find(|name| names.iter().any(|have| have.eq_ignore_ascii_case(name)))
         .map(str::to_string)
 }
 
@@ -271,6 +308,28 @@ mod tests {
             best(&bank, 40.0, false, &["rune scimitar"]).as_deref(),
             Some("Rune scimitar")
         );
+    }
+
+    #[test]
+    fn borrowed_native_and_compat_pickers_share_refusal_and_candidate_policy() {
+        let family = family();
+        let available = names(&["Rune scimitar", "Rune sword"]);
+        let unusable = names(&["Rune scimitar"]);
+        let compat = best_melee_weapon(
+            &family,
+            &available,
+            &WeaponPick {
+                attack: 40.0,
+                prefer_stab: false,
+                unusable: &unusable,
+            },
+        );
+        let native = best_melee_weapon_by(&family, 40, false, &unusable, |name| {
+            available.iter().any(|have| have.eq_ignore_ascii_case(name))
+        });
+
+        assert_eq!(native, Some("Rune sword"));
+        assert_eq!(compat.as_deref(), native);
     }
 
     #[test]
