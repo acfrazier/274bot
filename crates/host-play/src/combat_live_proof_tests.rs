@@ -10,11 +10,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::game_data::SelectedGameData;
+use api::game_data::{RangedAmmoFamily, RangedModeFact, SelectedGameData};
 use api::interact::{Interactions, SendResult};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, RunKey};
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{ActorKind, GameSnapshot, WorldTile};
 use host::{FrameBuf, Pump};
 use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScriptInjectValue, ScriptSettingInject, Step,
@@ -108,6 +108,18 @@ const M6_RESERVE_ITEMS: &[(&str, i32)] = &[
     ("lobster", 23),
     ("tbwt_cooked_karambwan", 4),
 ];
+const R1_ITEMS: &[(&str, i32)] = &[
+    ("maple_shortbow", 1),
+    ("steel_arrow", 150),
+    ("4doseprayerrestore", 1),
+];
+const R2_ITEMS: &[(&str, i32)] = &[
+    ("maple_shortbow", 1),
+    ("bolt", 50),
+    ("4doseprayerrestore", 1),
+];
+const R3_ITEMS: &[(&str, i32)] = &[("bronze_dart", 200), ("4doseprayerrestore", 1)];
+const WARLORD_NPC_ID: usize = 477;
 
 // Selected content drop tables/scripts/imp.rs2:10-19 has four mutually
 // exclusive 5/128 buckets. Inclusion-exclusion gives 95% joint coverage at
@@ -135,6 +147,9 @@ enum Case {
     M5,
     M5Stop,
     M6,
+    R1,
+    R2,
+    R3,
 }
 
 impl Case {
@@ -148,6 +163,9 @@ impl Case {
             Self::M5 => "M5",
             Self::M5Stop => "M5-Stop",
             Self::M6 => "M6",
+            Self::R1 => "R1",
+            Self::R2 => "R2",
+            Self::R3 => "R3",
         }
     }
 
@@ -161,13 +179,20 @@ impl Case {
             Self::M5 => "combat_m5_raised_prayer_interrupt_hygiene",
             Self::M5Stop => "combat_stop_owned_prayer_cleanup",
             Self::M6 => "combat_m6_melee_combo_eat",
+            Self::R1 => "combat_r1_ranged_rapid",
+            Self::R2 => "combat_r2_ranged_wrong_ammo",
+            Self::R3 => "combat_r3_ranged_thrown",
         }
+    }
+
+    fn is_ranged(self) -> bool {
+        matches!(self, Self::R1 | Self::R2 | Self::R3)
     }
 
     fn path_relative(self) -> &'static str {
         match self {
             Self::M1 | Self::M1HandIn | Self::M5 | Self::M5Stop => "imp.json",
-            Self::M2 => "fixtures/combat_melee_upkeep.json",
+            Self::M2 | Self::R1 | Self::R2 | Self::R3 => "fixtures/combat_melee_upkeep.json",
             Self::M3 | Self::M6 => "fixtures/combat_melee_food_only.json",
             Self::M4 => "fixtures/combat_unattackable.json",
         }
@@ -189,16 +214,18 @@ impl Case {
             Self::M5 | Self::M5Stop => M5_ITEMS,
             Self::M6 if std::env::var_os("BOT_COMBAT_M6_ORIGINAL_FOOD").is_some() => M6_ITEMS,
             Self::M6 => M6_RESERVE_ITEMS,
+            Self::R1 => R1_ITEMS,
+            Self::R2 => R2_ITEMS,
+            Self::R3 => R3_ITEMS,
         }
     }
 
     fn timeout(self) -> Duration {
         match self {
             Self::M1 => Duration::from_secs(m1_coverage_budget().2),
-            Self::M1HandIn => Duration::from_secs(1_200),
-            Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
-            Self::M2 | Self::M3 | Self::M6 => Duration::from_secs(900),
-            Self::M4 => Duration::from_secs(300),
+            Self::M1HandIn | Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
+            Self::M2 | Self::M3 | Self::M6 | Self::R1 | Self::R3 => Duration::from_secs(900),
+            Self::M4 | Self::R2 => Duration::from_secs(300),
         }
     }
 
@@ -227,6 +254,7 @@ impl Case {
                 .standable(TREE_APPROACH)
                 .then_some(TREE_APPROACH)
                 .ok_or_else(|| "safe Draynor Manor tree approach is not standable".to_owned()),
+            Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }
 
@@ -298,6 +326,7 @@ struct LiveState {
     path: Arc<CompiledPath>,
     capture: Arc<Mutex<CombatCapture>>,
     started: bool,
+    ranged_probe_signature: Option<String>,
 }
 
 impl LiveState {
@@ -307,10 +336,14 @@ impl LiveState {
 
         if self.runner.on_start_script() && !self.started {
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
-            if let Some(reason) = start_preflight(
-                self.case,
-                &combat_proof::snapshot_facts(&self.snapshot, None),
-            ) {
+            let baseline = combat_proof::snapshot_facts(&self.snapshot, None);
+            let preflight = if self.case.is_ranged() {
+                let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
+                ranged_start_preflight(self.case, &baseline, &self.selected, &capture)
+            } else {
+                start_preflight(self.case, &baseline)
+            };
+            if let Some(reason) = preflight {
                 combat_proof::mark_invalid(&self.account, reason);
                 return;
             }
@@ -353,6 +386,15 @@ impl LiveState {
                     return;
                 }
             }
+        }
+        if self.case.is_ranged() && self.started {
+            record_ranged_probe(
+                client,
+                &self.snapshot,
+                &self.selected,
+                &self.capture,
+                &mut self.ranged_probe_signature,
+            );
         }
         if self.case == Case::M5Stop && self.started {
             let trigger = {
@@ -474,6 +516,11 @@ impl EvidenceWriter {
         } else {
             Value::Null
         };
+        let ranged = if self.case.is_ranged() {
+            ranged_receipt(self.case, &capture)
+        } else {
+            Value::Null
+        };
         let mut receipt = json!({
             "proof": if self.case == Case::M5Stop { "LIFECYCLE-FOLLOWUPS-1" } else { "COMBAT-S3A-3" },
             "case": self.case.key(),
@@ -496,6 +543,7 @@ impl EvidenceWriter {
             "maze_attack_owner_live_after": capture.maze_owner_live_after,
             "m3_timing": m3_timing,
             "m6_combo": m6_combo,
+            "ranged": ranged,
             "warlord_first_open_hitbar": capture.frames.iter().find_map(|frame| {
                 frame["nearby_npcs"].as_array()?.iter().find(|npc| {
                     npc["type"] == 477 && npc["total_health"].as_i64().is_some_and(|hp| hp > 0)
@@ -622,7 +670,12 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
     })
 }
 
-fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>) -> Scenario {
+fn scenario_for(
+    case: Case,
+    stand: WorldTile,
+    placement: Option<RangedPlacement>,
+    capture: Arc<Mutex<CombatCapture>>,
+) -> Scenario {
     let mut scenario =
         scenario::quester_stage(case.label(), "Imp Catcher", "imp", 0, case.items(), stand);
     scenario.settings.script_settings_inject = Some(IMP_QUESTER_SETTINGS);
@@ -640,10 +693,13 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         .expect("Quester stage has a final quest-colour relog step");
     let relog = scenario.steps.remove(relog_index);
     scenario.steps.insert(stand_index, relog);
-    let preparation = preparation_steps(case);
+    // Ranged staging must observe arrival at the spawn before npcadd, then
+    // finish at its five-tile firing stand without another stand teleport.
+    let preparation_index = stand_index + if placement.is_some() { 2 } else { 1 };
+    let preparation = preparation_steps(case, stand, placement, Arc::clone(&capture));
     scenario
         .steps
-        .splice(stand_index + 1..stand_index + 1, preparation);
+        .splice(preparation_index..preparation_index, preparation);
     let start_index = scenario
         .steps
         .iter()
@@ -673,7 +729,12 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
     scenario
 }
 
-fn preparation_steps(case: Case) -> Vec<Step> {
+fn preparation_steps(
+    case: Case,
+    _stand: WorldTile,
+    placement: Option<RangedPlacement>,
+    capture: Arc<Mutex<CombatCapture>>,
+) -> Vec<Step> {
     let stats: &[(&'static str, i32, i32)] = match case {
         Case::M1 | Case::M1HandIn => &[
             ("attack", 0, 40),
@@ -700,6 +761,12 @@ fn preparation_steps(case: Case) -> Vec<Step> {
         Case::M5 | Case::M5Stop => &[
             ("attack", 0, 40),
             ("strength", 2, 40),
+            ("defence", 1, 40),
+            ("hitpoints", 3, 40),
+            ("prayer", 5, 43),
+        ],
+        Case::R1 | Case::R2 | Case::R3 => &[
+            ("ranged", 4, 70),
             ("defence", 1, 40),
             ("hitpoints", 3, 40),
             ("prayer", 5, 43),
@@ -747,8 +814,478 @@ fn preparation_steps(case: Case) -> Vec<Step> {
             "~stat_drain hitpoints 24 0".to_owned(),
             Proof::Stat { id: 3, min: 16 },
         )),
+        Case::R1 | Case::R2 | Case::R3 => {
+            let placement = placement.expect("ranged case has a collision-backed placement");
+            steps.push(ranged_npcadd_step(placement.spawn, Arc::clone(&capture)));
+            steps.push(ranged_spawn_observed_step(
+                placement.spawn,
+                Arc::clone(&capture),
+            ));
+            steps.push(ranged_tele_step(
+                placement.spawn,
+                placement.stand,
+                Arc::clone(&capture),
+            ));
+            steps.push(ranged_tele_observed_step(Arc::clone(&capture)));
+        }
     }
     steps
+}
+
+fn ranged_spawn_event(capture: &CombatCapture) -> Option<&Value> {
+    capture
+        .random_events
+        .iter()
+        .rev()
+        .find(|event| event["kind"] == json!("RangedNpcAdd"))
+}
+
+fn ranged_spawn_event_mut(capture: &mut CombatCapture) -> Option<&mut Value> {
+    capture
+        .random_events
+        .iter_mut()
+        .rev()
+        .find(|event| event["kind"] == json!("RangedNpcAdd"))
+}
+
+fn tile_value(tile: WorldTile) -> Value {
+    json!({"x": tile.x, "z": tile.z, "level": tile.level})
+}
+
+fn value_tile(value: &Value) -> Option<WorldTile> {
+    Some(WorldTile {
+        x: i32::try_from(value["x"].as_i64()?).ok()?,
+        z: i32::try_from(value["z"].as_i64()?).ok()?,
+        level: i32::try_from(value["level"].as_i64()?).ok()?,
+    })
+}
+#[derive(Clone, Copy)]
+struct SelectedRangedFacts {
+    weapon_id: i32,
+    ammo_id: i32,
+    weapon_family: RangedAmmoFamily,
+    ammo_family: RangedAmmoFamily,
+    rapid: RangedModeFact,
+    tab_root_id: i32,
+    mode_varp: i32,
+}
+
+fn ranged_aliases(case: Case) -> (&'static str, &'static str) {
+    match case {
+        Case::R1 => ("maple_shortbow", "steel_arrow"),
+        Case::R2 => ("maple_shortbow", "bolt"),
+        Case::R3 => ("bronze_dart", "bronze_dart"),
+        _ => unreachable!("ranged aliases requested for a melee case"),
+    }
+}
+
+fn selected_ranged_facts(
+    case: Case,
+    selected: &SelectedGameData,
+) -> Result<SelectedRangedFacts, String> {
+    let (weapon_alias, ammo_alias) = ranged_aliases(case);
+    let weapon_id = selected
+        .item_by_alias(weapon_alias)
+        .map(|item| item.id)
+        .ok_or_else(|| format!("selected content has no `{weapon_alias}` item"))?;
+    let ammo_id = selected
+        .item_by_alias(ammo_alias)
+        .map(|item| item.id)
+        .ok_or_else(|| format!("selected content has no `{ammo_alias}` item"))?;
+    let weapon = selected
+        .ranged_weapons()
+        .iter()
+        .find(|fact| fact.obj_id == weapon_id)
+        .ok_or_else(|| format!("selected content has no ranged weapon fact for {weapon_alias}"))?;
+    let ammo_family = if ammo_id == weapon_id
+        && matches!(
+            weapon.ammo_family,
+            RangedAmmoFamily::Thrown | RangedAmmoFamily::Javelin
+        ) {
+        weapon.ammo_family
+    } else {
+        selected
+            .ranged_ammo()
+            .iter()
+            .find(|fact| fact.obj_id == ammo_id)
+            .map(|fact| fact.family)
+            .ok_or_else(|| format!("selected content has no ranged ammo fact for {ammo_alias}"))?
+    };
+    let tab = selected
+        .weapon_styles()
+        .iter()
+        .find(|fact| fact.obj_id == weapon_id)
+        .and_then(|fact| fact.tab)
+        .ok_or_else(|| format!("selected content has no combat tab for {weapon_alias}"))?;
+    let tab_root_id = selected
+        .combat_tabs()
+        .iter()
+        .find(|fact| fact.tab == tab)
+        .map(|fact| fact.root_id)
+        .ok_or_else(|| format!("selected content has no interface root for combat tab {tab}"))?;
+    let rapid = selected
+        .ranged_modes()
+        .iter()
+        .copied()
+        .find(|fact| fact.tab == tab && fact.mode == 1)
+        .ok_or_else(|| format!("selected content has no rapid mode for combat tab {tab}"))?;
+    let mode_varp = selected
+        .ranged_mode_varp()
+        .ok_or_else(|| "selected content has no ranged mode varp".to_owned())?;
+    Ok(SelectedRangedFacts {
+        weapon_id,
+        ammo_id,
+        weapon_family: weapon.ammo_family,
+        ammo_family,
+        rapid,
+        tab_root_id,
+        mode_varp,
+    })
+}
+
+fn ranged_selected_facts_event(case: Case, selected: &SelectedGameData) -> Value {
+    match selected_ranged_facts(case, selected) {
+        Ok(facts) => {
+            let (weapon_alias, ammo_alias) = ranged_aliases(case);
+            let weapon = selected
+                .ranged_weapons()
+                .iter()
+                .find(|fact| fact.obj_id == facts.weapon_id)
+                .expect("ranged fact lookup already succeeded");
+            let ammo = selected
+                .ranged_ammo()
+                .iter()
+                .find(|fact| fact.obj_id == facts.ammo_id);
+            json!({
+                "kind": "RangedSelectedFacts",
+                "case": case.key(),
+                "weapon_alias": weapon_alias,
+                "weapon_obj_id": facts.weapon_id,
+                "weapon_family": format!("{:?}", facts.weapon_family),
+                "weapon_attackrange": weapon.attackrange,
+                "weapon_levelrequire": weapon.levelrequire,
+                "ammo_alias": ammo_alias,
+                "ammo_obj_id": facts.ammo_id,
+                "ammo_family": format!("{:?}", facts.ammo_family),
+                "ammo_levelrequire": ammo.map_or(weapon.levelrequire, |fact| fact.levelrequire),
+                "rapid": {
+                    "tab": facts.rapid.tab,
+                    "slot": facts.rapid.slot,
+                    "mode": facts.rapid.mode,
+                    "button": facts.rapid.button,
+                },
+                "tab_root_id": facts.tab_root_id,
+                "mode_varp": facts.mode_varp,
+            })
+        }
+        Err(error) => json!({
+            "kind": "RangedSelectedFacts",
+            "case": case.key(),
+            "error": error,
+        }),
+    }
+}
+
+fn record_ranged_probe(
+    client: &client::client::Client,
+    snapshot: &GameSnapshot,
+    selected: &SelectedGameData,
+    capture: &Arc<Mutex<CombatCapture>>,
+    last_signature: &mut Option<String>,
+) {
+    let tick = i64::from(snapshot.tick());
+    let local_tile = snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level });
+    let projectiles = snapshot
+        .projectiles()
+        .iter()
+        .map(|projectile| {
+            let target = projectile.target;
+            let target_index = target
+                .filter(|target| target.kind == ActorKind::Npc)
+                .map(|target| target.index);
+            let target_tile = target_index.and_then(|index| {
+                snapshot
+                    .npcs()
+                    .iter()
+                    .find(|npc| npc.index == index)
+                    .map(|npc| (npc.network, npc.size.max(1)))
+            });
+            json!({
+                "spotanim": projectile.spotanim,
+                "level": projectile.level,
+                "src": projectile.src,
+                "t1": projectile.t1,
+                "t2": projectile.t2,
+                "target": target.map(|target| {
+                    json!({"kind": format!("{:?}", target.kind), "index": target.index})
+                }),
+                "target_tile": target_tile.map(|(tile, _)| tile),
+                "distance": local_tile.zip(target_tile).map(|(from, (to, size))| {
+                    let closest = WorldTile {
+                        x: from.x.clamp(to.x, to.x + size - 1),
+                        z: from.z.clamp(to.z, to.z + size - 1),
+                        level: to.level,
+                    };
+                    tile_distance(from, closest)
+                }),
+                "local_launch": local_tile.is_some_and(|tile| projectile.src == tile),
+            })
+        })
+        .collect::<Vec<_>>();
+    let npc_hitmarks = client
+        .npc_ids
+        .iter()
+        .filter_map(|index| {
+            let slot = usize::try_from(*index).ok()?;
+            let npc = client.npc.get(slot)?.as_ref()?;
+            (npc.r#type == Some(WARLORD_NPC_ID)).then(|| {
+                let tile = snapshot
+                    .npcs()
+                    .iter()
+                    .find(|view| view.index == slot)
+                    .map(|view| view.tile);
+                json!({
+                    "index": slot,
+                    "type": npc.r#type,
+                    "tile": tile,
+                    "damage_values": npc.entity.damage_values,
+                    "damage_types": npc.entity.damage_types,
+                    "damage_cycles": npc.entity.damage_cycles,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let mode_varp = selected.ranged_mode_varp().and_then(|id| {
+        snapshot
+            .varps()
+            .iter()
+            .find(|row| row.index == id)
+            .map(|row| row.value)
+    });
+    let active_side_tab = snapshot.active_side_tab();
+    let combat_tab = snapshot.side_tabs().iter().find(|tab| tab.index == 0);
+    let combat_root_id = combat_tab.map(|tab| tab.root_component_id);
+    let combat_style_buttons = combat_tab
+        .map(|tab| {
+            api::query::widget_search::combat_style_labels(
+                snapshot,
+                tab.root_component_id,
+                selected.ranged_mode_varp().unwrap_or(-1),
+            )
+            .into_iter()
+            .map(|style| {
+                json!({
+                    "component_id": style.component_id,
+                    "mode": style.mode,
+                    "label": style.label,
+                })
+            })
+            .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let signature = serde_json::to_string(&(
+        local_tile,
+        active_side_tab,
+        combat_root_id,
+        mode_varp,
+        &combat_style_buttons,
+        &projectiles,
+        &npc_hitmarks,
+    ))
+    .unwrap_or_default();
+    if last_signature.as_deref() == Some(&signature) {
+        return;
+    }
+    *last_signature = Some(signature);
+    capture
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .random_events
+        .push(json!({
+            "kind": "RangedProbe",
+            "tick": tick,
+            "snapshot_tick": snapshot.tick(),
+            "loop_cycle": client.loop_cycle,
+            "tile": local_tile,
+            "active_side_tab": active_side_tab,
+            "combat_root_id": combat_root_id,
+            "combat_style_buttons": combat_style_buttons,
+            "mode_varp": mode_varp,
+            "projectiles": projectiles,
+            "npc_hitmarks": npc_hitmarks,
+        }));
+}
+
+fn tele_cheat_command(tile: WorldTile) -> String {
+    format!(
+        "tele {},{},{},{},{}",
+        tile.level,
+        tile.x >> 6,
+        tile.z >> 6,
+        tile.x & 63,
+        tile.z & 63
+    )
+}
+
+fn ranged_npcadd_step(spawn: WorldTile, capture: Arc<Mutex<CombatCapture>>) -> Step {
+    Step {
+        name: "spawn a local Khazard Warlord before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |client, snapshot| {
+                let before_indices = snapshot
+                    .npcs()
+                    .iter()
+                    .filter(|npc| npc.r#type == Some(WARLORD_NPC_ID))
+                    .map(|npc| npc.index)
+                    .collect::<Vec<_>>();
+                let sent = matches!(
+                    api::interact::cheat(client, "npcadd khazard_warlord"),
+                    client::CheatSend::Sent
+                );
+                if sent {
+                    capture
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .random_events
+                        .push(json!({
+                            "kind": "RangedNpcAdd",
+                            "spawn_tile": tile_value(spawn),
+                            "preexisting_indices": before_indices,
+                            "spawned_index": null,
+                            "stand_tile": null,
+                            "tele_observed": false,
+                        }));
+                }
+                sent
+            }),
+        },
+        wait: Wait {
+            // The following Await checks the unique spawned index in world
+            // coordinates; NpcAt uses scene-local actor coordinates.
+            arm: Proof::IngameScene2,
+            budget_ticks: 120,
+        },
+    }
+}
+
+fn ranged_spawn_observed_step(spawn: WorldTile, capture: Arc<Mutex<CombatCapture>>) -> Step {
+    let ready_capture = Arc::clone(&capture);
+    Step {
+        name: "observe the newly added Warlord before moving five tiles",
+        kind: StepKind::Await {
+            evidence: "new NPC index at the fixture spawn",
+            ready: Box::new(move |snapshot| {
+                let mut capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(event) = ranged_spawn_event_mut(&mut capture) else {
+                    return false;
+                };
+                if event["spawned_index"].is_i64() {
+                    return true;
+                }
+                let before = event["preexisting_indices"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_i64)
+                    .collect::<std::collections::HashSet<_>>();
+                let spawned = snapshot
+                    .npcs()
+                    .iter()
+                    .filter(|npc| npc.r#type == Some(WARLORD_NPC_ID) && npc.tile == spawn)
+                    .find(|npc| !before.contains(&(npc.index as i64)));
+                if let Some(npc) = spawned {
+                    event["spawned_index"] = json!(npc.index);
+                    true
+                } else {
+                    false
+                }
+            }),
+        },
+        wait: Wait {
+            arm: Proof::IngameScene2,
+            budget_ticks: 120,
+        },
+    }
+}
+
+fn ranged_tele_step(
+    spawn: WorldTile,
+    stand: WorldTile,
+    capture: Arc<Mutex<CombatCapture>>,
+) -> Step {
+    Step {
+        name: "teleport exactly five tiles from the new Warlord",
+        kind: StepKind::Perform {
+            send: Box::new(move |client, snapshot| {
+                let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(event) = ranged_spawn_event_mut(&mut capture) else {
+                    return false;
+                };
+                let Some(spawned_index) = event["spawned_index"].as_i64() else {
+                    return false;
+                };
+                if tile_distance(spawn, stand) != 5
+                    || !snapshot.npcs().iter().any(|npc| {
+                        npc.index as i64 == spawned_index && npc.r#type == Some(WARLORD_NPC_ID)
+                    })
+                {
+                    return false;
+                }
+                let command = tele_cheat_command(stand);
+                let sent = matches!(
+                    api::interact::cheat(client, &command),
+                    client::CheatSend::Sent
+                );
+                if sent {
+                    event["stand_tile"] = tile_value(stand);
+                    event["tele_command"] = json!(command);
+                }
+                sent
+            }),
+        },
+        wait: Wait {
+            arm: Proof::IngameScene2,
+            budget_ticks: 120,
+        },
+    }
+}
+
+fn ranged_tele_observed_step(capture: Arc<Mutex<CombatCapture>>) -> Step {
+    let ready_capture = Arc::clone(&capture);
+    Step {
+        name: "observe the exact five-tile ranged start before Start",
+        kind: StepKind::Await {
+            evidence: "teleport and NPC spawn baseline",
+            ready: Box::new(move |snapshot| {
+                let mut capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(event) = ranged_spawn_event_mut(&mut capture) else {
+                    return false;
+                };
+                let Some(stand) = value_tile(&event["stand_tile"]) else {
+                    return false;
+                };
+                let Some(spawned_index) = event["spawned_index"].as_i64() else {
+                    return false;
+                };
+                let arrived = snapshot.tile() == Some((stand.x, stand.z, stand.level));
+                let still_present = snapshot.npcs().iter().any(|npc| {
+                    npc.index as i64 == spawned_index && npc.r#type == Some(WARLORD_NPC_ID)
+                });
+                if arrived && still_present {
+                    event["tele_observed"] = json!(true);
+                    true
+                } else {
+                    false
+                }
+            }),
+        },
+        wait: Wait {
+            arm: Proof::IngameScene2,
+            budget_ticks: 120,
+        },
+    }
 }
 
 fn cheat_step(name: &'static str, command: String, arm: Proof) -> Step {
@@ -810,6 +1347,63 @@ fn standable_neighbor(
         })
         .find(|tile| world.collision.standable(*tile))
         .ok_or_else(|| format!("no standable neighbor around {anchor:?}"))
+}
+#[derive(Clone)]
+struct RangedPlacement {
+    spawn: WorldTile,
+    stand: WorldTile,
+}
+
+fn ranged_placement(case: Case, world: &nav::world::NavWorld) -> Result<RangedPlacement, String> {
+    // Killing cells share a quiet parcel; keep the non-attacking ammo cell
+    // separate because its staged actor survives the proof.
+    let offset = match case {
+        Case::R1 | Case::R3 => 32,
+        Case::R2 => 64,
+        _ => unreachable!("ranged placement requested for a melee case"),
+    };
+    // R2 must refuse before attacking, so only its spawn-to-stand corridor
+    // needs clearing. Fighting cells additionally need the full wander margin.
+    let (x_clear, z_clear) = if case == Case::R2 {
+        (0..=6, 0..=1)
+    } else {
+        (-5..=11, -5..=6)
+    };
+    for dx in -8..=8 {
+        for dz in -256..=256 {
+            let spawn = WorldTile {
+                x: IMP_START.x - offset + dx,
+                z: IMP_START.z + dz,
+                level: 0,
+            };
+            if x_clear.clone().all(|x| {
+                z_clear.clone().all(|z| {
+                    world.collision.standable(WorldTile {
+                        x: spawn.x + x,
+                        z: spawn.z + z,
+                        level: 0,
+                    })
+                })
+            }) {
+                return Ok(RangedPlacement {
+                    spawn,
+                    stand: WorldTile {
+                        x: spawn.x + 5,
+                        ..spawn
+                    },
+                });
+            }
+        }
+    }
+    Err("no clear five-tile ranged staging corridor in the assigned parcel".to_owned())
+}
+
+fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
+    if a.level != b.level {
+        i32::MAX
+    } else {
+        (a.x - b.x).abs().max((a.z - b.z).abs())
+    }
 }
 
 fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
@@ -937,6 +1531,85 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 );
             }
         }
+        Case::R1 | Case::R2 | Case::R3 => {}
+    }
+    None
+}
+fn ranged_start_preflight(
+    case: Case,
+    baseline: &Value,
+    selected: &SelectedGameData,
+    capture: &CombatCapture,
+) -> Option<String> {
+    if baseline["ingame"] != json!(true) || baseline["scene_state"] != json!(2) {
+        return Some("ranged Start baseline is not an attached in-game scene".to_owned());
+    }
+    let Some(spawn_event) = ranged_spawn_event(capture) else {
+        return Some("ranged Start has no recorded npcadd fixture".to_owned());
+    };
+    let (Some(spawn), Some(stand), Some(spawned_index)) = (
+        value_tile(&spawn_event["spawn_tile"]),
+        value_tile(&spawn_event["stand_tile"]),
+        spawn_event["spawned_index"].as_i64(),
+    ) else {
+        return Some("ranged Start fixture lacks its spawn identity or stand tile".to_owned());
+    };
+    let Some(player_tile) = value_tile(&baseline["local_player"]["tile"]) else {
+        return Some("ranged Start baseline has no local world tile".to_owned());
+    };
+    if spawn_event["tele_observed"] != true
+        || tile_distance(spawn, stand) != 5
+        || player_tile != stand
+        || !baseline["nearby_npcs"].as_array().is_some_and(|npcs| {
+            npcs.iter().any(|npc| {
+                npc["index"] == json!(spawned_index) && npc["type"] == json!(WARLORD_NPC_ID)
+            })
+        })
+    {
+        return Some(
+            "ranged Start did not preserve the spawned Warlord identity and observed staging stand"
+                .to_owned(),
+        );
+    }
+    if stat_pair(baseline, "ranged") != Some((70, 70))
+        || stat_pair(baseline, "defence") != Some((40, 40))
+        || stat_pair(baseline, "hitpoints") != Some((40, 40))
+        || stat_pair(baseline, "prayer") != Some((43, 43))
+    {
+        return Some(
+            "ranged Start did not reach ranged70, defence40, hitpoints40, prayer43".to_owned(),
+        );
+    }
+    let facts = match selected_ranged_facts(case, selected) {
+        Ok(facts) => facts,
+        Err(error) => return Some(error),
+    };
+    let (weapon_alias, ammo_alias) = ranged_aliases(case);
+    let (expected_weapon_family, expected_ammo_family, expected_ammo_count) = match case {
+        Case::R1 => (RangedAmmoFamily::Arrow, RangedAmmoFamily::Arrow, 150),
+        Case::R2 => (RangedAmmoFamily::Arrow, RangedAmmoFamily::Bolt, 50),
+        Case::R3 => (RangedAmmoFamily::Thrown, RangedAmmoFamily::Thrown, 200),
+        _ => unreachable!("ranged preflight requested for a melee case"),
+    };
+    let expected_weapon_count = if facts.weapon_id == facts.ammo_id {
+        expected_ammo_count
+    } else {
+        1
+    };
+    if facts.weapon_family != expected_weapon_family
+        || facts.ammo_family != expected_ammo_family
+        || item_count(baseline, facts.weapon_id) != expected_weapon_count
+        || item_count(baseline, facts.ammo_id) != expected_ammo_count
+        || item_count(baseline, PRAYER_POTION_4_ID) != 1
+    {
+        return Some(format!(
+            "{} did not seed {}×{}, {}×{}, prayer restore×1 with source-backed ranged families",
+            case.key(),
+            weapon_alias,
+            expected_weapon_count,
+            ammo_alias,
+            expected_ammo_count,
+        ));
     }
     None
 }
@@ -957,7 +1630,668 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
         Case::M5 => m5_ready(capture),
         Case::M5Stop => stop_ready(capture),
         Case::M6 => m6_ready(capture),
+        Case::R1 | Case::R2 | Case::R3 => ranged_ready(case, capture),
     }
+}
+fn ranged_selected_event(capture: &CombatCapture) -> Option<&Value> {
+    capture
+        .random_events
+        .iter()
+        .find(|event| event["kind"] == json!("RangedSelectedFacts"))
+}
+
+fn ranged_probes(capture: &CombatCapture) -> impl Iterator<Item = &Value> {
+    capture
+        .random_events
+        .iter()
+        .filter(|event| event["kind"] == json!("RangedProbe"))
+}
+
+fn ranged_spawned_index(capture: &CombatCapture) -> Option<i64> {
+    ranged_spawn_event(capture)?["spawned_index"].as_i64()
+}
+
+fn ranged_launches(capture: &CombatCapture) -> Vec<Value> {
+    let Some(spawned_index) = ranged_spawned_index(capture) else {
+        return Vec::new();
+    };
+    let mut launches: Vec<Value> = Vec::new();
+    for probe in ranged_probes(capture) {
+        let Some(projectiles) = probe["projectiles"].as_array() else {
+            continue;
+        };
+        for projectile in projectiles {
+            if projectile["local_launch"] != true
+                || projectile["target"]["kind"] != json!("Npc")
+                || projectile["target"]["index"].as_i64() != Some(spawned_index)
+            {
+                continue;
+            }
+            let (Some(t1), Some(t2), Some(distance), Some(launch_tick), Some(launch_cycle)) = (
+                projectile["t1"].as_i64(),
+                projectile["t2"].as_i64(),
+                projectile["distance"].as_i64(),
+                probe["tick"].as_i64(),
+                probe["loop_cycle"].as_i64(),
+            ) else {
+                continue;
+            };
+            let spotanim = projectile["spotanim"].clone();
+            if launches
+                .iter()
+                .any(|launch| launch["t1"] == json!(t1) && launch["spotanim"] == spotanim)
+            {
+                continue;
+            }
+            launches.push(json!({
+                "spotanim": spotanim,
+                "t1": t1,
+                "t2": t2,
+                "flight_cycles": t2 - t1,
+                "distance": distance,
+                "launch_tick": launch_tick,
+                "snapshot_tick": probe["snapshot_tick"],
+                "launch_cycle": launch_cycle,
+            }));
+        }
+    }
+    launches.sort_by_key(|launch| launch["launch_cycle"].as_i64().unwrap_or(i64::MAX));
+    launches
+}
+
+fn ranged_hitmark_onsets(capture: &CombatCapture) -> Vec<Value> {
+    let Some(spawned_index) = ranged_spawned_index(capture) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut onsets = Vec::new();
+    for probe in ranged_probes(capture) {
+        let Some(npcs) = probe["npc_hitmarks"].as_array() else {
+            continue;
+        };
+        for npc in npcs
+            .iter()
+            .filter(|npc| npc["index"].as_i64() == Some(spawned_index))
+        {
+            let (Some(values), Some(types), Some(cycles)) = (
+                npc["damage_values"].as_array(),
+                npc["damage_types"].as_array(),
+                npc["damage_cycles"].as_array(),
+            ) else {
+                continue;
+            };
+            for (slot, ((value, kind), cycle)) in values.iter().zip(types).zip(cycles).enumerate() {
+                let (Some(value), Some(kind), Some(cycle)) =
+                    (value.as_i64(), kind.as_i64(), cycle.as_i64())
+                else {
+                    continue;
+                };
+                if cycle <= 0 || !seen.insert((slot, value, kind, cycle)) {
+                    continue;
+                }
+                onsets.push(json!({
+                    "tick": probe["tick"],
+                    "loop_cycle": probe["loop_cycle"],
+                    "slot": slot,
+                    "value": value,
+                    "type": kind,
+                    "damage_cycle": cycle,
+                }));
+            }
+        }
+    }
+    onsets
+}
+
+fn ranged_timing_receipt(case: Case, capture: &CombatCapture) -> Value {
+    let launches = ranged_launches(capture);
+    let impacts = ranged_hitmark_onsets(capture);
+    let rate = if case == Case::R3 { 2 } else { 3 };
+    let damage_delay = if case == Case::R3 { 32 } else { 46 };
+    let flight_length = if case == Case::R3 { 0 } else { 5 };
+    let mut cadence_rows = Vec::new();
+    let mut cadence_ok = true;
+    let mut cadence_samples = 0usize;
+    for pair in launches.windows(2) {
+        let previous_tick = pair[0]["launch_tick"].as_i64().unwrap_or(i64::MIN);
+        let tick = pair[1]["launch_tick"].as_i64().unwrap_or(i64::MAX);
+        let interval = tick - previous_tick;
+        let interrupted = capture.actions.iter().any(|action| {
+            action["snapshot_tick"].as_i64().is_some_and(|action_tick| {
+                previous_tick < action_tick
+                    && action_tick <= tick
+                    && is_fight_clearing_action(action)
+            })
+        });
+        if !interrupted {
+            cadence_samples += 1;
+            cadence_ok &= interval == rate;
+        }
+        cadence_rows.push(json!({
+            "from_tick": previous_tick,
+            "to_tick": tick,
+            "interval": interval,
+            "interrupted_by_clearing_action": interrupted,
+            "valid": interrupted || interval == rate,
+        }));
+    }
+    let flight_rows = launches
+        .iter()
+        .map(|launch| {
+            let distance = launch["distance"].as_i64().unwrap_or(-1);
+            let expected = i64::from(flight_length) + 5 * distance;
+            json!({
+                "distance": distance,
+                "t1": launch["t1"],
+                "t2": launch["t2"],
+                "observed_cycles": launch["flight_cycles"],
+                "expected_cycles": expected,
+                "valid": launch["flight_cycles"].as_i64() == Some(expected),
+            })
+        })
+        .collect::<Vec<_>>();
+    let impact_rows = launches
+        .iter()
+        .enumerate()
+        .map(|(index, launch)| {
+            let distance = launch["distance"].as_i64().unwrap_or(-1);
+            let expected = (i64::from(damage_delay) + 5 * distance + 30) / 30;
+            let impact = impacts.get(index);
+            let observed = impact.and_then(|impact| {
+                Some(impact["tick"].as_i64()? - launch["launch_tick"].as_i64()?)
+            });
+            json!({
+                "launch_tick": launch["launch_tick"],
+                "distance": distance,
+                "expected_impact_ticks": expected,
+                "impact": impact,
+                "observed_impact_ticks": observed,
+                "valid": observed == Some(expected),
+            })
+        })
+        .collect::<Vec<_>>();
+    let distinct_distances = launches
+        .iter()
+        .filter_map(|launch| launch["distance"].as_i64())
+        .collect::<std::collections::BTreeSet<_>>();
+    let flight_valid =
+        !launches.is_empty() && flight_rows.iter().all(|row| row["valid"] == json!(true));
+    let impact_valid = !launches.is_empty()
+        && impacts.len() == launches.len()
+        && impact_rows.iter().all(|row| row["valid"] == json!(true));
+    let cadence_valid = cadence_samples >= 2 && cadence_ok;
+    let distance_valid = case != Case::R1
+        || (distinct_distances.len() >= 2
+            && distinct_distances.iter().any(|distance| *distance >= 3));
+    json!({
+        "expected_launch_rate_ticks": rate,
+        "launches": launches,
+        "hitmark_onsets": impacts,
+        "cadence_intervals": cadence_rows,
+        "cadence_uninterrupted_samples": cadence_samples,
+        "cadence_valid": cadence_valid,
+        "flights": flight_rows,
+        "flight_valid": flight_valid,
+        "impacts": impact_rows,
+        "impact_valid": impact_valid,
+        "distinct_distances": distinct_distances,
+        "distance_valid": distance_valid,
+    })
+}
+
+fn normalized_name(value: &str) -> String {
+    value
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect()
+}
+
+fn ranged_style_timing(capture: &CombatCapture) -> Value {
+    let selected = ranged_selected_event(capture);
+    let weapon_wear = selected.and_then(|selected| {
+        capture.actions.iter().find(|action| {
+            action["request"]["op"] == "wear"
+                && action["request"]["name"].as_str().is_some_and(|name| {
+                    selected["weapon_alias"]
+                        .as_str()
+                        .is_some_and(|alias| normalized_name(name) == normalized_name(alias))
+                })
+        })
+    });
+    let style = selected.and_then(|selected| {
+        capture.actions.iter().find(|action| {
+            action["request"]["op"] == "if-button"
+                && action["request"]["component_id"] == selected["rapid"]["button"]
+        })
+    });
+    json!({
+        "weapon_wear_snapshot_tick": weapon_wear.map(|action| &action["snapshot_tick"]),
+        "style_snapshot_tick": style.map(|action| &action["snapshot_tick"]),
+        "wear_to_style_ticks": weapon_wear.and_then(|wear| {
+            style?["snapshot_tick"].as_i64()?.checked_sub(wear["snapshot_tick"].as_i64()?)
+        }),
+        "oracle": "first native poll observing equipped weapon and exact combat tab",
+    })
+}
+
+fn ranged_style_prep_ok(case: Case, capture: &CombatCapture) -> bool {
+    let Some(selected) = ranged_selected_event(capture) else {
+        return false;
+    };
+    let Some(first_attack) = first_attack_action(capture) else {
+        return false;
+    };
+    let Some(first_attack_sequence) = first_attack["sequence"].as_u64() else {
+        return false;
+    };
+    let Some(first_attack_tick) = first_attack["snapshot_tick"].as_i64() else {
+        return false;
+    };
+    let Some(button) = selected["rapid"]["button"].as_i64() else {
+        return false;
+    };
+    if selected["rapid"]["mode"] != json!(1) {
+        return false;
+    }
+    let Some(style_action) = capture.actions.iter().find(|action| {
+        action["request"]["op"] == json!("if-button")
+            && action["request"]["component_id"] == json!(button)
+            && action["sequence"]
+                .as_u64()
+                .is_some_and(|sequence| sequence < first_attack_sequence)
+            && action_wire_valid(action)
+    }) else {
+        return false;
+    };
+    let Some(style_tick) = style_action["snapshot_tick"].as_i64() else {
+        return false;
+    };
+    let (weapon_alias, ammo_alias) = ranged_aliases(case);
+    let wears = capture
+        .actions
+        .iter()
+        .filter(|action| {
+            action["request"]["op"] == json!("wear")
+                && action["sequence"]
+                    .as_u64()
+                    .is_some_and(|sequence| sequence < first_attack_sequence)
+                && action_wire_valid(action)
+        })
+        .collect::<Vec<_>>();
+    let named_wear = |alias: &str| {
+        let expected = normalized_name(alias);
+        wears.iter().copied().find(|action| {
+            action["request"]["name"]
+                .as_str()
+                .is_some_and(|name| normalized_name(name) == expected)
+        })
+    };
+    let Some(weapon_wear) = named_wear(weapon_alias) else {
+        return false;
+    };
+    if case == Case::R1 {
+        let Some(ammo_wear) = named_wear(ammo_alias) else {
+            return false;
+        };
+        if weapon_wear["batch"].as_u64().filter(|batch| *batch > 0)
+            != ammo_wear["batch"].as_u64().filter(|batch| *batch > 0)
+            || weapon_wear["tick"] != ammo_wear["tick"]
+            || weapon_wear["sequence"].as_u64() >= ammo_wear["sequence"].as_u64()
+            || ammo_wear["sequence"].as_u64() >= style_action["sequence"].as_u64()
+        {
+            return false;
+        }
+    } else if weapon_wear["sequence"].as_u64() >= style_action["sequence"].as_u64() {
+        return false;
+    }
+    let wear_tick = weapon_wear["snapshot_tick"].as_i64().unwrap_or(i64::MIN);
+    let tab_root_id = selected["tab_root_id"].as_i64().unwrap_or(-1);
+    let first_eligible_poll = capture.observations.iter().find(|observation| {
+        observation["native_tick_edge"] == true
+            && observation["snapshot_tick"]
+                .as_i64()
+                .is_some_and(|tick| tick > wear_tick)
+            && observation["combat_root_id"] == selected["tab_root_id"]
+            && observation["equipment"]
+                .as_array()
+                .is_some_and(|items| items.contains(&selected["weapon_obj_id"]))
+    });
+    if first_eligible_poll.is_none_or(|poll| {
+        poll["snapshot_tick"] != style_action["snapshot_tick"]
+            || poll["host_tick"] != style_action["tick"]
+    }) {
+        return false;
+    }
+    let tab_observed = tab_root_id >= 0
+        && ranged_probes(capture).any(|probe| {
+            probe["combat_root_id"] == json!(tab_root_id)
+                && probe["combat_style_buttons"]
+                    .as_array()
+                    .is_some_and(|buttons| {
+                        buttons.iter().any(|style| {
+                            style["component_id"] == json!(button) && style["mode"] == json!(1)
+                        })
+                    })
+                && probe["tick"]
+                    .as_i64()
+                    .is_some_and(|tick| wear_tick <= tick && tick <= style_tick)
+        });
+    let mode_echoed = ranged_probes(capture).any(|probe| {
+        probe["mode_varp"] == json!(1)
+            && probe["tick"]
+                .as_i64()
+                .is_some_and(|tick| style_tick <= tick && tick <= first_attack_tick)
+    });
+    tab_observed && mode_echoed
+}
+
+fn is_take_of_alias(action: &Value, alias: &str) -> bool {
+    let request = &action["request"];
+    let take = request["action"]
+        .as_str()
+        .is_some_and(|action| action.eq_ignore_ascii_case("take"))
+        || request["debug"]
+            .as_str()
+            .is_some_and(|debug| debug.to_ascii_lowercase().contains("take"));
+    if !take {
+        return false;
+    }
+    let expected = normalized_name(alias);
+    request["name"]
+        .as_str()
+        .is_some_and(|name| normalized_name(name).contains(&expected))
+        || request["debug"]
+            .as_str()
+            .is_some_and(|debug| normalized_name(debug).contains(&expected))
+}
+
+fn ranged_pickup_count(action: &Value, ammo_id: i32) -> Option<i64> {
+    let request = &action["request"];
+    let (x, z, level) = (
+        request["x"].as_i64()?,
+        request["z"].as_i64()?,
+        request["level"].as_i64()?,
+    );
+    let mut count = 0_i64;
+    let mut found = false;
+    for item in action["snapshot"]["ground_items"].as_array()? {
+        if item["id"].as_i64() == Some(i64::from(ammo_id))
+            && item["tile"]["x"].as_i64() == Some(x)
+            && item["tile"]["z"].as_i64() == Some(z)
+            && item["tile"]["level"].as_i64() == Some(level)
+        {
+            count = count.checked_add(item["count"].as_i64()?)?;
+            found = true;
+        }
+    }
+    found.then_some(count)
+}
+
+fn ranged_dart_count_steps(
+    capture: &CombatCapture,
+    ammo_id: i32,
+    launches: &[Value],
+) -> Vec<Value> {
+    let ammo_count = |frame: &Value| item_count(frame, ammo_id) + equipment_count(frame, ammo_id);
+    launches
+        .iter()
+        .map(|launch| {
+            let snapshot_tick = launch["snapshot_tick"].as_i64();
+            let before = snapshot_tick.and_then(|tick| {
+                capture
+                    .frames
+                    .iter()
+                    .rfind(|frame| {
+                        frame["snapshot_tick"]
+                            .as_i64()
+                            .is_some_and(|frame_tick| frame_tick < tick)
+                    })
+                    .map(&ammo_count)
+            });
+            let after = snapshot_tick.and_then(|tick| {
+                capture
+                    .frames
+                    .iter()
+                    .rfind(|frame| frame["snapshot_tick"].as_i64() == Some(tick))
+                    .or_else(|| {
+                        capture.frames.iter().find(|frame| {
+                            frame["snapshot_tick"]
+                                .as_i64()
+                                .is_some_and(|frame_tick| frame_tick > tick)
+                        })
+                    })
+                    .map(&ammo_count)
+            });
+            let decrement = before.zip(after).map(|(before, after)| before - after);
+            json!({
+                "launch_tick": launch["launch_tick"],
+                "snapshot_tick": snapshot_tick,
+                "before": before,
+                "after": after,
+                "decrement": decrement,
+                "valid": decrement == Some(1),
+            })
+        })
+        .collect()
+}
+
+fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> Value {
+    let Some(selected) = ranged_selected_event(capture) else {
+        return json!({"valid": false, "error": "selected ranged fact receipt missing"});
+    };
+    let Some(ammo_id) = selected["ammo_obj_id"].as_i64() else {
+        return json!({"valid": false, "error": "selected ammo object id missing"});
+    };
+    let Some(start) = capture.start_baseline.as_ref() else {
+        return json!({"valid": false, "error": "start baseline missing"});
+    };
+    let Some(final_frame) = capture.frames.last() else {
+        return json!({"valid": false, "error": "terminal item frame missing"});
+    };
+    let Some(killed_tick) = integer(report, "combat_evidence_tick") else {
+        return json!({"valid": false, "error": "Killed evidence tick missing"});
+    };
+    let ammo_id = ammo_id as i32;
+    let ammo_start = item_count(start, ammo_id) + equipment_count(start, ammo_id);
+    let ammo_final = item_count(final_frame, ammo_id) + equipment_count(final_frame, ammo_id);
+    let (_, ammo_alias) = ranged_aliases(case);
+    let launches = ranged_launches(capture);
+    let dart_count_steps = if case == Case::R3 {
+        ranged_dart_count_steps(capture, ammo_id, &launches)
+    } else {
+        Vec::new()
+    };
+    let dart_count_per_launch = case != Case::R3
+        || (!dart_count_steps.is_empty()
+            && dart_count_steps.len() == launches.len()
+            && dart_count_steps
+                .iter()
+                .all(|step| step["valid"] == json!(true)));
+    let pickups = capture
+        .actions
+        .iter()
+        .filter(|action| is_take_of_alias(action, ammo_alias))
+        .collect::<Vec<_>>();
+    let pickup_after_kill = pickups.iter().all(|action| {
+        action["tick"]
+            .as_i64()
+            .is_some_and(|tick| tick >= killed_tick)
+    });
+    let take_wire = [
+        i64::from(client::io::ClientProt289::MOVE_OPCLICK.id),
+        i64::from(client::io::ClientProt289::OPOBJ3.id),
+    ];
+    let pickup_counts = pickups
+        .iter()
+        .map(|action| ranged_pickup_count(action, ammo_id))
+        .collect::<Vec<_>>();
+    let pickup_counts_valid = pickup_counts
+        .iter()
+        .all(|count| count.is_some_and(|count| count > 0));
+    let swept_units = pickup_counts
+        .iter()
+        .try_fold(0_i64, |total, count| total.checked_add((*count)?));
+    let pickup_plan_valid = pickups.iter().all(|action| {
+        action["request"]["op"] == json!("obj")
+            && action["request"]["action"] == json!("Take")
+            && action["batch"].as_u64().is_some_and(|batch| batch > 0)
+            && plan_rows(capture, action).len() == 1
+            && action_wire_valid(action)
+            && wire_opcodes(action).is_some_and(|wire| {
+                wire.len() == take_wire.len()
+                    && wire
+                        .iter()
+                        .zip(take_wire)
+                        .all(|(actual, expected)| *actual == expected)
+            })
+    }) && pickup_counts_valid;
+    let expected_final = swept_units.map(|swept| ammo_start - launches.len() as i64 + swept);
+    let count_matches_launches = expected_final == Some(ammo_final);
+    let pickup_limit = case != Case::R1 || pickups.len() <= 4;
+    let valid = !launches.is_empty()
+        && count_matches_launches
+        && pickup_limit
+        && pickup_after_kill
+        && pickup_plan_valid
+        && dart_count_per_launch;
+    json!({
+        "ammo_obj_id": ammo_id,
+        "ammo_alias": ammo_alias,
+        "start_count": ammo_start,
+        "launches": launches.len(),
+        "pickup_actions": pickups,
+        "pickup_count": pickups.len(),
+        "pickup_limit_valid": pickup_limit,
+        "pickup_stack_counts": pickup_counts,
+        "swept_units": swept_units,
+        "all_pickups_after_kill": pickup_after_kill,
+        "one_row_pickup_plans": pickup_plan_valid,
+        "final_count": ammo_final,
+        "expected_final_count": expected_final,
+        "count_matches_launches_and_sweeps": count_matches_launches,
+        "dart_count_per_launch": dart_count_per_launch,
+        "dart_count_steps": dart_count_steps,
+        "valid": valid,
+    })
+}
+
+fn ranged_wrong_ammo_ready(capture: &CombatCapture) -> bool {
+    let Some(report) = report_with_end(capture, "Aborted(PrepFailed(Ammo))") else {
+        return false;
+    };
+    // `combat_proof::status_value` stores `ScriptStatus.failure` with `Debug`.
+    let blocked_reason = "ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }";
+    let quester_blocked = capture.statuses.iter().any(|status| {
+        status["phase"] == json!("Blocked") && status["failure"].as_str() == Some(blocked_reason)
+    });
+    let no_attack = !capture.actions.iter().any(is_npc_attack);
+    let probes = ranged_probes(capture).collect::<Vec<_>>();
+    let no_projectile = !probes.is_empty()
+        && probes.iter().all(|probe| {
+            probe["projectiles"]
+                .as_array()
+                .is_some_and(|projectiles| projectiles.is_empty())
+        });
+    report["fields"]["combat_end"] == json!("Aborted(PrepFailed(Ammo))")
+        && quester_blocked
+        && no_attack
+        && no_projectile
+}
+
+fn ranged_ready(case: Case, capture: &CombatCapture) -> bool {
+    if case == Case::R2 {
+        return ranged_wrong_ammo_ready(capture);
+    }
+    let Some(report) = report_with_end(capture, "Killed") else {
+        return false;
+    };
+    let Some(spawned_index) = ranged_spawned_index(capture) else {
+        return false;
+    };
+    let timing = ranged_timing_receipt(case, capture);
+    let ammo = ranged_ammo_receipt(case, capture, report);
+    let attacks = capture
+        .actions
+        .iter()
+        .filter(|action| is_npc_attack(action))
+        .collect::<Vec<_>>();
+    let attacks_target_spawn = !attacks.is_empty()
+        && attacks.iter().all(|action| {
+            action["request"]["name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("Khazard Warlord"))
+                && action["request"]["index"].as_i64() == Some(spawned_index)
+                && action_wire_valid(action)
+        });
+    let launches_match_report =
+        integer(report, "combat_swings") == Some(ranged_launches(capture).len() as i64);
+    let plans = batch_plans(capture);
+    report["fields"]["combat_engaged_index"].as_i64() == Some(spawned_index)
+        && report["fields"]["combat_engaged_npc_type"] == json!(WARLORD_NPC_ID)
+        && every_killed_report_has_corpse(capture)
+        && attacks_target_spawn
+        && launches_match_report
+        && ranged_style_prep_ok(case, capture)
+        && timing["flight_valid"] == json!(true)
+        && timing["cadence_valid"] == json!(true)
+        && timing["impact_valid"] == json!(true)
+        && timing["distance_valid"] == json!(true)
+        && ammo["valid"] == json!(true)
+        && protection_timing_ok(capture)
+        && m2_restoration_runs_ok(capture, report)
+        && report_multi_op_count_matches(capture, report)
+        && native_interactions_wire_valid(capture)
+        && batch_plan_contract(capture, &plans)
+        && no_attack_after_report(capture, report)
+        && !capture
+            .statuses
+            .iter()
+            .any(|status| status["fields"]["combat_end"] == json!("Died"))
+        && has_real_attack_packet(capture)
+}
+fn ranged_receipt(case: Case, capture: &CombatCapture) -> Value {
+    let selected = ranged_selected_event(capture)
+        .cloned()
+        .unwrap_or(Value::Null);
+    let fixture = ranged_spawn_event(capture).cloned().unwrap_or(Value::Null);
+    if case == Case::R2 {
+        let local_projectiles = ranged_probes(capture)
+            .flat_map(|probe| probe["projectiles"].as_array().into_iter().flatten())
+            .filter(|projectile| projectile["local_launch"] == true)
+            .count();
+        return json!({
+            "selected_facts": selected,
+            "spawn": fixture,
+            "exact_ammo_abort": ranged_wrong_ammo_ready(capture),
+            "attack_requests": capture.actions.iter().filter(|action| is_npc_attack(action)).count(),
+            "local_projectiles": local_projectiles,
+            "blocked_statuses": capture.statuses.iter().filter(|status| {
+                status["phase"] == json!("Blocked")
+            }).collect::<Vec<_>>(),
+        });
+    }
+    let timing = ranged_timing_receipt(case, capture);
+    let report = report_with_end(capture, "Killed");
+    let ammo = report.map_or_else(
+        || json!({"valid": false, "error": "Killed report missing"}),
+        |report| ranged_ammo_receipt(case, capture, report),
+    );
+    let plans = batch_plans(capture);
+    json!({
+        "selected_facts": selected,
+        "spawn": fixture,
+        "outcome": report.map(|report| report["fields"]["combat_end"].clone()),
+        "style_prep_valid": ranged_style_prep_ok(case, capture),
+        "style_timing": ranged_style_timing(capture),
+        "launch_timing": timing,
+        "ammo_sweep": ammo,
+        "protect_before_first_onset_plus_two": protection_timing_ok(capture),
+        "restoration_runs": report.is_some_and(|report| m2_restoration_runs_ok(capture, report)),
+        "batch_plan_contract": batch_plan_contract(capture, &plans),
+        "corpse_for_every_kill": every_killed_report_has_corpse(capture),
+        "ready": ranged_ready(case, capture),
+    })
 }
 
 fn stop_fight_raise(capture: &CombatCapture) -> Option<&Value> {
@@ -2402,6 +3736,31 @@ fn attack_is_mismatch_or_stale(
     if mismatch {
         return true;
     }
+    if let Some(selected) = ranged_selected_event(capture) {
+        let Some(tick) = action["snapshot_tick"].as_i64() else {
+            return false;
+        };
+        let stale_after = if selected["case"] == json!("R3") {
+            3
+        } else {
+            4
+        };
+        let last_launch = ranged_launches(capture)
+            .iter()
+            .filter_map(|launch| launch["snapshot_tick"].as_i64())
+            .filter(|launch| *launch < tick)
+            .max();
+        let last_attack = capture
+            .actions
+            .iter()
+            .filter(|candidate| is_npc_attack(candidate))
+            .filter_map(|candidate| candidate["snapshot_tick"].as_i64())
+            .filter(|previous| *previous < tick)
+            .max();
+        return last_launch
+            .or(last_attack)
+            .is_some_and(|previous| tick - previous >= stale_after);
+    }
     let Some(tick) = action["tick"].as_i64() else {
         return false;
     };
@@ -3070,19 +4429,39 @@ fn run_case(case: Case) {
     let quests = Arc::new(
         QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog"),
     );
-    let stand = case
-        .stand(
-            template
-                .world()
-                .as_deref()
-                .expect("selected navigation world"),
-        )
+    let world = template.world();
+    let world_ref = world.as_deref().expect("selected navigation world");
+    let placement = case.is_ranged().then(|| {
+        ranged_placement(case, world_ref).expect("choose collision-backed ranged placement")
+    });
+    let stand = placement
+        .as_ref()
+        .map(|placement| placement.spawn)
+        .or_else(|| case.stand(world_ref).ok())
         .expect("choose collision-backed combat fixture stand");
     let path_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../script/paths/289");
     let source_path = path_root.join(case.path_relative());
     let source = std::fs::read(&source_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
-    let path = compile_path(&source, &selected, &quests)
+    let compile_source = if let Some(placement) = placement.as_ref() {
+        let mut fixture: Value =
+            serde_json::from_slice(&source).expect("parse ranged combat fixture");
+        let step = &mut fixture["roles"][0]["sequences"][0]["steps"][0];
+        step["args"]["tactic"]["style"] = json!("ranged");
+        step["args"]["stand"]["tile"] =
+            json!([placement.stand.x, placement.stand.z, placement.stand.level]);
+        step["args"]["area"]["box"] = json!([
+            placement.spawn.x - 12,
+            placement.spawn.z - 12,
+            placement.spawn.x + 12,
+            placement.spawn.z + 12,
+            placement.spawn.level
+        ]);
+        serde_json::to_vec(&fixture).expect("serialize runtime ranged combat fixture")
+    } else {
+        source
+    };
+    let path = compile_path(&compile_source, &selected, &quests)
         .unwrap_or_else(|error| panic!("compile {}: {error:?}", source_path.display()));
 
     let names = super::mint_live_names(1);
@@ -3107,6 +4486,11 @@ fn run_case(case: Case) {
                 })
             })
             .collect();
+        if case.is_ranged() {
+            proof
+                .random_events
+                .push(ranged_selected_facts_event(case, &selected));
+        }
     }
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
     let mut writer = EvidenceWriter {
@@ -3121,7 +4505,7 @@ fn run_case(case: Case) {
         flushed: false,
     };
 
-    let scenario = scenario_for(case, stand, Arc::clone(&capture));
+    let scenario = scenario_for(case, stand, placement, Arc::clone(&capture));
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -3138,6 +4522,7 @@ fn run_case(case: Case) {
         path,
         capture: Arc::clone(&capture),
         started: false,
+        ranged_probe_signature: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = Arc::clone(&writer.frame);
@@ -3196,6 +4581,22 @@ fn run_case(case: Case) {
         {
             terminal_error = Some(reason);
             writer.outcome = "INVALID".to_owned();
+            break;
+        }
+        if matches!(case, Case::R1 | Case::R3)
+            && report_with_end(&capture_snapshot, "Killed")
+                .and_then(|report| integer(report, "combat_evidence_tick"))
+                .is_some_and(|done_tick| {
+                    capture_snapshot
+                        .frames
+                        .last()
+                        .and_then(|frame| frame["tick"].as_i64())
+                        .is_some_and(|tick| tick >= done_tick + 3)
+                })
+            && !ranged_ready(case, &capture_snapshot)
+        {
+            terminal_error = Some("completed ranged fight failed receipt predicates".to_owned());
+            writer.outcome = "FAIL".to_owned();
             break;
         }
         if matches!(case, Case::M2 | Case::M3 | Case::M6)
@@ -3317,7 +4718,8 @@ fn run_case(case: Case) {
         );
     }
     match writer.outcome.as_str() {
-        "PASS" | "INVALID" | "NOT_STAGED" => {}
+        "PASS" => {}
+        "INVALID" | "NOT_STAGED" if !case.is_ranged() => {}
         other => panic!("{} live proof {other}: {:?}", case.key(), writer.error),
     }
 }
@@ -3368,6 +4770,24 @@ fn live_lifecycle_followups_stop_clears_only_combat_raised_protect() {
 #[ignore = "requires LIVE=1 and the isolated local R289 engine with cooked karambwan"]
 fn live_combat_m6_natural_warlord_combo_eat() {
     run_case(Case::M6);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_ENGINE_DIR, the selected local R289 nav pack, and LIVE_EVIDENCE_DIR"]
+fn live_combat_r1_ranged_rapid() {
+    run_case(Case::R1);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_ENGINE_DIR, the selected local R289 nav pack, and LIVE_EVIDENCE_DIR"]
+fn live_combat_r2_ranged_wrong_ammo() {
+    run_case(Case::R2);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_ENGINE_DIR, the selected local R289 nav pack, and LIVE_EVIDENCE_DIR"]
+fn live_combat_r3_ranged_thrown() {
+    run_case(Case::R3);
 }
 
 #[test]
@@ -3898,4 +5318,216 @@ fn parked_owner_zero_hp_is_not_hidden_by_missing_death_status() {
     capture.frames[0]["snapshot_tick"] = json!(30);
     capture.frames[0]["stats"][0]["base"] = json!(0);
     assert!(!capture_has_death(&capture));
+}
+#[test]
+fn ranged_darts_decrease_once_per_observed_projectile() {
+    let mut capture = CombatCapture::default();
+    capture.frames.extend([
+        json!({"snapshot_tick": 10, "inventory": [{"id": 806, "count": 200}], "equipment": []}),
+        json!({"snapshot_tick": 11, "inventory": [{"id": 806, "count": 199}], "equipment": []}),
+        json!({"snapshot_tick": 12, "inventory": [{"id": 806, "count": 199}], "equipment": []}),
+        json!({"snapshot_tick": 13, "inventory": [{"id": 806, "count": 198}], "equipment": []}),
+    ]);
+    let launches = vec![
+        json!({"launch_tick": 11, "snapshot_tick": 11}),
+        json!({"launch_tick": 13, "snapshot_tick": 13}),
+    ];
+    let steps = ranged_dart_count_steps(&capture, 806, &launches);
+    assert_eq!(steps.len(), launches.len());
+    assert!(steps.iter().all(|step| step["valid"] == json!(true)));
+
+    capture.frames[3]["inventory"][0]["count"] = json!(199);
+    let steps = ranged_dart_count_steps(&capture, 806, &launches);
+    assert_eq!(steps[1]["decrement"], json!(0));
+    assert_eq!(steps[1]["valid"], json!(false));
+}
+
+#[test]
+fn ranged_ammo_sweep_counts_targeted_ground_stack_units() {
+    let action = json!({
+        "request": {"x": 2638, "z": 3224, "level": 0},
+        "snapshot": {"ground_items": [
+            {"id": 882, "count": 3, "tile": {"x": 2638, "z": 3224, "level": 0}},
+            {"id": 883, "count": 7, "tile": {"x": 2638, "z": 3224, "level": 0}},
+            {"id": 882, "count": 5, "tile": {"x": 2639, "z": 3224, "level": 0}},
+        ]},
+    });
+    assert_eq!(ranged_pickup_count(&action, 882), Some(3));
+    assert_eq!(ranged_pickup_count(&action, 883), Some(7));
+    assert_eq!(ranged_pickup_count(&action, 884), None);
+}
+
+#[test]
+fn ranged_wrong_ammo_requires_a_blocked_abort_and_no_projectile() {
+    let mut capture = CombatCapture::default();
+    capture.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": "ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }",
+    }));
+    capture.statuses.push(json!({
+        "fields": {"combat_end": "Aborted(PrepFailed(Ammo))"},
+    }));
+    capture.random_events.push(json!({
+        "kind": "RangedProbe",
+        "projectiles": [],
+    }));
+    assert!(ranged_wrong_ammo_ready(&capture));
+    capture.statuses[0]["failure"] =
+        json!("\"extra: combat aborted; caller must handle the failure\"");
+    assert!(!ranged_wrong_ammo_ready(&capture));
+    capture.statuses[0]["failure"] = json!("ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }");
+    assert!(ranged_wrong_ammo_ready(&capture));
+
+    capture.actions.push(json!({
+        "kind": "interaction",
+        "request": {"op": "npc", "action": "Attack"},
+    }));
+    assert!(!ranged_wrong_ammo_ready(&capture));
+    capture.actions.clear();
+    capture.random_events[0]["projectiles"] = json!([{"local_launch": false}]);
+    assert!(!ranged_wrong_ammo_ready(&capture));
+}
+
+#[test]
+fn ranged_scenario_arrives_before_spawn_and_leaves_the_firing_stand_last() {
+    let spawn = WorldTile {
+        x: 2457,
+        z: 3302,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 2452,
+        z: 3302,
+        level: 0,
+    };
+    let scenario = scenario_for(
+        Case::R2,
+        spawn,
+        Some(RangedPlacement { spawn, stand }),
+        Arc::new(Mutex::new(CombatCapture::default())),
+    );
+    let position = |name| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| step.name == name)
+            .unwrap()
+    };
+    assert!(
+        position("stand at the quest start")
+            < position("spawn a local Khazard Warlord before Start")
+    );
+    assert!(
+        position("spawn a local Khazard Warlord before Start")
+            < position("teleport exactly five tiles from the new Warlord")
+    );
+    assert_eq!(ranged_aliases(Case::R2).1, "bolt");
+}
+
+#[test]
+fn ranged_preflight_reads_the_real_local_player_tile_shape() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let facts = selected_ranged_facts(Case::R2, &selected).unwrap();
+    let spawn = WorldTile {
+        x: 2500,
+        z: 3200,
+        level: 0,
+    };
+    let stand = WorldTile { x: 2505, ..spawn };
+    let mut capture = CombatCapture::default();
+    capture.random_events.push(json!({
+        "kind": "RangedNpcAdd", "spawn_tile": tile_value(spawn),
+        "stand_tile": tile_value(stand), "spawned_index": 42, "tele_observed": true
+    }));
+    let mut baseline = json!({
+        "ingame": true, "scene_state": 2,
+        "tile": [stand.x, stand.z, stand.level],
+        "local_player": {"tile": tile_value(stand)},
+        "nearby_npcs": [{"index": 42, "type": WARLORD_NPC_ID,
+            "tile": {"x": spawn.x + 1, "z": spawn.z, "level": 0}}],
+        "stats": [
+            {"name": "ranged", "base": 70, "effective": 70},
+            {"name": "defence", "base": 40, "effective": 40},
+            {"name": "hitpoints", "base": 40, "effective": 40},
+            {"name": "prayer", "base": 43, "effective": 43}
+        ],
+        "inventory": [
+            {"id": facts.weapon_id, "count": 1},
+            {"id": facts.ammo_id, "count": 50},
+            {"id": PRAYER_POTION_4_ID, "count": 1}
+        ]
+    });
+    assert_eq!(
+        ranged_start_preflight(Case::R2, &baseline, &selected, &capture),
+        None
+    );
+    baseline["local_player"]["tile"] = Value::Null;
+    assert!(ranged_start_preflight(Case::R2, &baseline, &selected, &capture).is_some());
+}
+
+#[test]
+fn ranged_stale_attack_oracle_uses_snapshot_clock_and_selected_rate() {
+    for (case, threshold) in [("R1", 4), ("R3", 3)] {
+        let mut capture = CombatCapture::default();
+        capture.random_events.push(json!({
+            "kind": "RangedSelectedFacts", "case": case
+        }));
+        capture.actions.push(json!({
+            "kind": "interaction", "request": {"op": "npc", "action": "Attack"},
+            "tick": 1017, "snapshot_tick": 1000
+        }));
+        let mut action = json!({
+            "tick": 1017 + threshold, "snapshot_tick": 1000 + threshold,
+            "snapshot": {"local_player": {"target": {"kind": "Npc", "index": 42}}}
+        });
+        assert!(attack_is_mismatch_or_stale(&capture, &action, 42));
+        action["snapshot_tick"] = json!(999 + threshold);
+        assert!(!attack_is_mismatch_or_stale(&capture, &action, 42));
+    }
+}
+
+#[test]
+fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
+    use client::io::ClientProt289;
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let facts = selected_ranged_facts(Case::R3, &selected).unwrap();
+    assert_eq!(facts.weapon_id, facts.ammo_id);
+    let mut capture = CombatCapture::default();
+    capture.random_events.extend([
+        ranged_selected_facts_event(Case::R3, &selected),
+        json!({"kind": "RangedProbe", "tick": 12, "mode_varp": 1,
+            "combat_root_id": facts.tab_root_id,
+            "combat_style_buttons": [{"component_id": facts.rapid.button, "mode": 1}]}),
+    ]);
+    capture.actions.extend([
+        json!({"kind": "interaction", "sequence": 1, "snapshot_tick": 10, "tick": 30,
+            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::OPHELD1.id],
+            "request": {"op": "wear", "name": ranged_aliases(Case::R3).0},
+            "snapshot": {"inventory": [{"actions": ["Wield"]}]}}),
+        json!({"kind": "interaction", "sequence": 2, "snapshot_tick": 12, "tick": 32,
+            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+            "request": {"op": "if-button", "component_id": facts.rapid.button}}),
+        json!({"kind": "interaction", "sequence": 3, "snapshot_tick": 13, "tick": 33,
+            "request": {"op": "npc", "action": "Attack"}}),
+    ]);
+    capture.observations.extend([
+        json!({"native_tick_edge": true, "snapshot_tick": 11, "host_tick": 31,
+            "equipment": [], "combat_root_id": facts.tab_root_id}),
+        json!({"native_tick_edge": false, "snapshot_tick": 11, "host_tick": 31,
+            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+        json!({"native_tick_edge": true, "snapshot_tick": 12, "host_tick": 32,
+            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+    ]);
+    assert!(ranged_style_prep_ok(Case::R3, &capture));
+    assert_eq!(ranged_style_timing(&capture)["wear_to_style_ticks"], 2);
+    capture.actions[1]["snapshot_tick"] = json!(11);
+    capture.actions[1]["tick"] = json!(31);
+    assert!(!ranged_style_prep_ok(Case::R3, &capture));
+    capture.actions[1]["snapshot_tick"] = json!(13);
+    capture.actions[1]["tick"] = json!(33);
+    assert!(!ranged_style_prep_ok(Case::R3, &capture));
+    capture.actions[1]["snapshot_tick"] = json!(12);
+    capture.actions[1]["tick"] = json!(32);
+    capture.observations[2]["combat_root_id"] = json!(-1);
+    assert!(!ranged_style_prep_ok(Case::R3, &capture));
 }

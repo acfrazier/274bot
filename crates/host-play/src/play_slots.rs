@@ -1526,6 +1526,7 @@ fn spawn_slot_thread(
                                     *script_tick,
                                     &nav_snapshot,
                                     exclusive,
+                                    tick_edge,
                                 );
                                 if let Some(status) = script_slot(&slot_scripts, name)
                                     .and_then(|slot| slot.lock().ok()?.native_status())
