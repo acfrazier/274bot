@@ -938,6 +938,79 @@ fn policy_s2_pause_does_not_retain_displaced_ownership() {
 }
 
 #[test]
+fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
+    let mut world = World::new(0);
+    let raised = world
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .unwrap()
+        .clone();
+    world.stats[5].effective = 43;
+    world.stats[5].base = 43;
+    world.prepare_policy_s2_combat();
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    begin_policy_s2_combat(&mut script, &world, &mut ledger);
+    drive(&mut script, &world, &mut ledger, 1)
+        .0
+        .expect("Combat prayer raise");
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            action.effect,
+            HostEffect::Interaction(InteractReq::IfButton { component_id })
+                if component_id == raised.button_com
+        )
+    }));
+    accept_outbox(&mut ledger, 1);
+    world.set_prayer(raised.varp, true);
+    world.prepare_policy_s2_combat();
+    drive(&mut script, &world, &mut ledger, 2)
+        .0
+        .expect("observe the accepted Combat raise");
+    accept_outbox(&mut ledger, 2);
+    assert!(
+        script.hygiene_owned.contains(raised.varp),
+        "the death must settle an actual cached Combat obligation"
+    );
+
+    // Real death turns prayers off. The chat latch cancels the live action
+    // before any future cleanup can mistake a respawned user's raise for it.
+    world.set_hitpoints(0);
+    world.set_prayer(raised.varp, false);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(1, "Oh dear, you are dead!")]);
+    world.held = true;
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, 3);
+    assert_eq!(flow.expect("death tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty());
+    assert!(!live_owner(&ledger), "death revokes the Combat owner");
+
+    world.set_hitpoints(40);
+    world.set_prayer(raised.varp, true);
+    script.interrupt(Interrupt::Pause);
+    world.held = false;
+    for tick in 4..=5 {
+        drive(&mut script, &world, &mut ledger, tick)
+            .0
+            .expect("post-respawn Pause tick");
+        assert!(
+            !ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.iter().any(|action| {
+                    matches!(
+                        action.effect,
+                        HostEffect::Interaction(InteractReq::IfButton { component_id })
+                            if component_id == raised.button_com
+                    )
+                })
+            }),
+            "Pause must not click off the prayer the user raised after respawn"
+        );
+    }
+    assert!(world.prayer_is_on(raised.varp));
+}
+
+#[test]
 fn allocation_counts_by_tick_class() {
     let mut world = World::new(0);
     let mut script = script(&world, false);

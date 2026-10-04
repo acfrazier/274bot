@@ -623,6 +623,8 @@ cancelled fight or Pause and clear only those prayers before continuing.
 Scoped cleanup waits for missing owned prayer rows rather than treating them
 as off. Accepted dispatches are included even when cancellation occurs before
 Combat's next poll.
+Sherlock retires that obligation when death clears prayers, so a later Pause
+does not turn off prayers the user activates after respawn.
 Quester recipe substeps retain that obligation when a combat child completes,
 and finish scoped cleanup before settling or starting the next recipe child.
 Cancellation revokes the fight's action authority and emits no compensating
