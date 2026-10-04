@@ -518,6 +518,7 @@ mod tests {
             attackrange: 0,
             huntrange: 0,
             vislevel: 0,
+            headicon: None,
             hitpoints: 0,
             damagetype: None,
             dragonfire,
