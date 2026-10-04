@@ -129,13 +129,7 @@ impl HuntAntifire {
                     let text = line.text.as_bytes();
                     drank |= text
                         .get(..9)
-                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"you drink"))
-                        && (text
-                            .windows(8)
-                            .any(|part| part.eq_ignore_ascii_case(b"antifire"))
-                            || text
-                                .windows(9)
-                                .any(|part| part.eq_ignore_ascii_case(b"anti-fire")));
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"you drink"));
                 }
             }
             if let Some(seq) = lines.iter().map(|line| line.seq).max() {
@@ -2553,7 +2547,7 @@ mod tests {
             }])
             .chat_lines(vec![observed::ChatLine {
                 seq: 1,
-                text: "You drink some of your antifire potion.".into(),
+                text: "You drink some of your dragon potion.".into(),
             }]);
         });
         assert!(observed::with(|scene| state.observe(scene, &tables, 11)));
@@ -2590,6 +2584,37 @@ mod tests {
         assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
         observed::post(11, |post| {
             post.inv(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
+    }
+
+    #[test]
+    fn hunt_antifire_ignores_another_potion_consume_chat() {
+        seed_protect_observation();
+        let tables = hunt_combat_tables().unwrap();
+        let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
+            .unwrap()
+            .id;
+        let mut state = HuntAntifire::default();
+        observed::post(10, |post| {
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
+        observed::post(11, |post| {
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![observed::ChatLine {
+                seq: 1,
+                text: "You drink some of your prayer potion.".into(),
+            }]);
         });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
     }
