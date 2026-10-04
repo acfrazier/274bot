@@ -9,7 +9,8 @@ use serde_json::Value;
 pub struct ParameterOptions {
     pub values: Vec<String>,
     pub labels: Vec<String>,
-    selectable: Vec<bool>,
+    /// Number of trailing display-only values that are not picker choices.
+    pub preserved: usize,
     aliases: Vec<(String, String)>,
     case_insensitive: bool,
 }
@@ -52,29 +53,39 @@ impl ParameterOptions {
             .map(String::as_str)
             .unwrap_or(value)
     }
+    /// Values eligible for scalar picker controls. Preserved entries remain
+    /// in `values` for display and array removal, but never appear here.
+    pub fn selectable(&self) -> &[String] {
+        &self.values[..self.values.len().saturating_sub(self.preserved)]
+    }
+
+    /// Match one option's label or value with an ASCII case-insensitive
+    /// substring query. This is allocation-free for use while drawing lists.
+    pub fn matches_query(&self, index: usize, query: &str) -> bool {
+        let Some(value) = self.values.get(index) else {
+            return false;
+        };
+        let label = self.labels.get(index).map_or(value.as_str(), String::as_str);
+        ascii_contains_case_insensitive(value, query)
+            || ascii_contains_case_insensitive(label, query)
+    }
+
     /// Return the next selectable value, wrapping and skipping refused rows.
     pub fn next_selectable(&self, value: &str) -> Option<&str> {
-        let len = self.values.len();
-        if len == 0 {
+        let values = self.selectable();
+        if values.is_empty() {
             return None;
         }
-        let current = self
-            .values
+        let current = values
             .iter()
             .position(|option| option.as_str() == self.canonical_option(value));
-        for distance in 1..=len {
-            let index = current.map_or(distance - 1, |current| (current + distance) % len);
-            if self.selectable.get(index).copied().unwrap_or(true) {
-                return Some(self.values[index].as_str());
-            }
-        }
-        None
+        let index = current.map_or(0, |current| (current + 1) % values.len());
+        Some(values[index].as_str())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.selectable().is_empty()
     }
-
     pub fn normalize_value(&self, value: &Value) -> Value {
         match value {
             Value::String(value) => Value::String(self.value_for(value)),
@@ -91,6 +102,38 @@ impl ParameterOptions {
         }
     }
 }
+
+fn ascii_contains_case_insensitive(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn move_unselectable_to_preserved(
+    options: &mut ParameterOptions,
+    mut is_selectable: impl FnMut(&str) -> bool,
+) {
+    let mut end = options.selectable().len();
+    let initial = end;
+    let mut index = 0;
+    while index < end {
+        if is_selectable(&options.values[index]) {
+            index += 1;
+        } else {
+            let value = options.values.remove(index);
+            let label = options.labels.remove(index);
+            options.values.push(value);
+            options.labels.push(label);
+            end -= 1;
+        }
+    }
+    options.preserved += initial - end;
+}
+
 
 /// Resolve a schema row once for both front ends. The renderers only choose
 /// among these rows; aliases normalize only after an explicit user pick.
@@ -109,27 +152,27 @@ pub fn resolve_parameter_options(
     if options.labels.len() != options.values.len() {
         options.labels.clone_from(&options.values);
     }
-    options.selectable.resize(options.values.len(), true);
 
     let source = def.options_from.as_deref().unwrap_or_default();
     options.case_insensitive = source == "gatherer-food" || source.starts_with("gather:");
-    if let (Some(skill), Some(data)) = (source.strip_prefix("gather:"), game_data) {
-        for (value, selectable) in options.values.iter().zip(&mut options.selectable) {
-            if let Some(row) = data
-                .gather_resources_for(skill)
-                .find(|row| row.key.as_str() == value)
-            {
-                *selectable = row.selectable;
-            }
-        }
-    }
-    if let Some(skill) = source.strip_prefix("gather:") {
+    if source == "gather:sites" {
         if let Some(data) = game_data {
-            for row in data.gather_resources_for(skill) {
-                for alias in &row.aliases {
-                    if !alias.eq_ignore_ascii_case(&row.key) {
-                        options.aliases.push((alias.clone(), row.key.clone()));
-                    }
+            resolve_gather_site_options(def, bag, data, &mut options);
+        } else {
+            preserve_unknown_values(def, bag, &mut options);
+        }
+        return options;
+    }
+
+    if let (Some(skill), Some(data)) = (source.strip_prefix("gather:"), game_data) {
+        move_unselectable_to_preserved(&mut options, |value| {
+            data.gather_option(skill, value)
+                .is_none_or(|row| row.selectable)
+        });
+        for row in data.gather_resources_for(skill) {
+            for alias in &row.aliases {
+                if !alias.eq_ignore_ascii_case(&row.key) {
+                    options.aliases.push((alias.clone(), row.key.clone()));
                 }
             }
         }
@@ -159,7 +202,7 @@ pub fn resolve_parameter_options(
         let priority = setting_values(def, bag);
         options.values.clear();
         options.labels.clear();
-        options.selectable.clear();
+        options.preserved = 0;
         for id in &ids {
             if options.values.iter().any(|existing| existing == id) {
                 continue;
@@ -182,7 +225,6 @@ pub fn resolve_parameter_options(
                 );
             options.values.push(id.clone());
             options.labels.push(label);
-            options.selectable.push(true);
         }
         options.aliases.clear();
         preserve_unknown_values(def, bag, &mut options);
@@ -194,6 +236,85 @@ pub fn resolve_parameter_options(
     }
     options
 }
+
+fn resolve_gather_site_options(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, Value>,
+    data: &api::game_data::SelectedGameData,
+    options: &mut ParameterOptions,
+) {
+    let schema = script::gatherer::settings::schema();
+    let skill = bag
+        .get("skill")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            schema
+                .iter()
+                .find(|field| field.id == "skill")
+                .and_then(|field| field.default.as_deref())
+        })
+        .unwrap_or("Woodcutting");
+    let (resource_skill, resource_field) = if skill.eq_ignore_ascii_case("woodcutting") {
+        (Some("woodcutting"), Some("woodcuttingResources"))
+    } else if skill.eq_ignore_ascii_case("mining") {
+        (Some("mining"), Some("miningResources"))
+    } else if skill.eq_ignore_ascii_case("fishing") {
+        (Some("fishing"), Some("fishingMethod"))
+    } else {
+        (None, None)
+    };
+
+    let mut selected_keys = Vec::new();
+    if let (Some(resource_skill), Some(resource_field)) = (resource_skill, resource_field) {
+        if let Some(resource_def) = schema.iter().find(|field| field.id == resource_field) {
+            for value in setting_values(resource_def, bag) {
+                if let Some(option) = data.gather_option(resource_skill, &value) {
+                    if !selected_keys.contains(&option.key.as_str()) {
+                        selected_keys.push(option.key.as_str());
+                    }
+                }
+            }
+        }
+        for site in data.gather_sites_for(resource_skill) {
+            if site
+                .keys
+                .iter()
+                .any(|key| selected_keys.contains(&key.key.as_str()))
+            {
+                options.values.push(site.id.clone());
+                options.labels.push(site.label.clone());
+            }
+        }
+    }
+
+    for value in setting_values(def, bag) {
+        if value.is_empty()
+            || options
+                .selectable()
+                .iter()
+                .any(|candidate| options.matches_option(&value, candidate))
+        {
+            continue;
+        }
+        let label = if let Some(site) =
+            resource_skill.and_then(|resource_skill| data.gather_site(resource_skill, &value))
+        {
+            format!("{} — not for the selected resources", site.label)
+        } else if let Some(site) = data
+            .gather_sites()
+            .iter()
+            .find(|site| site.id.eq_ignore_ascii_case(&value))
+        {
+            format!("{} — not a {skill} site", site.label)
+        } else {
+            format!("Unknown: {value}")
+        };
+        options.values.push(value);
+        options.labels.push(label);
+        options.preserved += 1;
+    }
+}
+
 
 fn preserve_unknown_values(
     def: &script::SettingDef,
@@ -208,7 +329,7 @@ fn preserve_unknown_values(
         if !options.values.iter().any(|option| option == resolved) {
             options.values.push(value.clone());
             options.labels.push(format!("Unknown: {value}"));
-            options.selectable.push(false);
+            options.preserved += 1;
         }
     }
 }
@@ -862,6 +983,22 @@ mod tests {
             serde_json::json!(["removed-resource", "Normal"]),
         );
         let options = resolve_parameter_options(&resources, &bag, &loadouts, Some(data.as_ref()));
+        assert_eq!(options.preserved, 1);
+        assert_eq!(
+            options.values.len(),
+            options.selectable().len() + options.preserved
+        );
+        assert_eq!(options.values.len(), options.labels.len());
+        let removed = options
+            .values
+            .iter()
+            .position(|value| value == "removed-resource")
+            .unwrap();
+        assert!(!options
+            .selectable()
+            .iter()
+            .any(|value| value == "removed-resource"));
+        assert!(options.matches_query(removed, "REMOVED-RESOURCE"));
         assert!(options.values.contains(&"removed-resource".to_string()));
         assert_eq!(
             options.label_for("removed-resource"),
@@ -970,6 +1107,128 @@ mod tests {
             parse_parameter_text(&radius, "20", &[]),
             Ok(serde_json::json!(20))
         );
+    }
+
+    #[test]
+    fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "site-options-{}.json",
+            std::process::id()
+        )));
+        let site = script::gatherer::settings::schema()
+            .iter()
+            .find(|field| field.id == "site")
+            .expect("the Gatherer Site field uses shared options");
+        let mut bag = serde_json::Map::new();
+        let bagless = resolve_parameter_options(site, &bag, &loadouts, None);
+        assert!(bagless.is_empty(), "script options remain empty without facts");
+
+        let woodcutting = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(
+            woodcutting
+                .selectable()
+                .iter()
+                .any(|id| id == "woodcutting.draynor"),
+            "schema defaults select the normal-tree Draynor site"
+        );
+
+        bag.insert("skill".into(), serde_json::json!("Mining"));
+        let mining = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(
+            mining
+                .selectable()
+                .iter()
+                .any(|id| id == "mining.varrock_east.se"),
+            "the copper/tin schema defaults admit Varrock East"
+        );
+        assert!(mining
+            .selectable()
+            .iter()
+            .all(|id| data.gather_site("mining", id).is_some()));
+
+        bag.insert("skill".into(), serde_json::json!("Fishing"));
+        bag.insert(
+            "fishingMethod".into(),
+            serde_json::json!("fishing.loc_2027.op1"),
+        );
+        let alias = data
+            .gather_option("fishing", "fishing.loc_2027.op1")
+            .expect("legacy dispatch id is a fishing alias");
+        let expected = data
+            .gather_sites_for("fishing")
+            .filter(|site| site.keys.iter().any(|key| key.key == alias.key))
+            .map(|site| site.id.clone())
+            .collect::<Vec<_>>();
+        let fishing = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert_eq!(fishing.selectable(), expected.as_slice());
+        assert!(
+            bag.get("fishingMethod")
+                .is_some_and(|value| value == "fishing.loc_2027.op1"),
+            "resolving the alias does not rewrite the saved method"
+        );
+    }
+
+    #[test]
+    fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "site-invalid-{}.json",
+            std::process::id()
+        )));
+        let site = script::gatherer::settings::schema()
+            .iter()
+            .find(|field| field.id == "site")
+            .expect("the Gatherer Site field uses shared options");
+        let mut bag = serde_json::Map::new();
+        bag.insert("skill".into(), serde_json::json!("Mining"));
+        bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
+        bag.insert(
+            "site".into(),
+            serde_json::json!("mining.varrock_east.se"),
+        );
+
+        let options = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(options.is_empty(), "no surface site offers rune stones");
+        assert_eq!(options.preserved, 1);
+        assert_eq!(
+            options.values.len(),
+            options.selectable().len() + options.preserved
+        );
+        assert_eq!(options.values.len(), options.labels.len());
+        assert!(options.selectable().is_empty());
+        assert!(options
+            .label_for("mining.varrock_east.se")
+            .ends_with("not for the selected resources"));
+
+        bag.insert(
+            "miningResources".into(),
+            serde_json::json!(["copper"]),
+        );
+        bag.insert(
+            "site".into(),
+            serde_json::json!("mining.barbarian_village.e"),
+        );
+        let choices = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(!choices.is_empty());
+        assert!(choices
+            .selectable()
+            .iter()
+            .all(|id| id != "mining.barbarian_village.e"));
+        assert!(parse_parameter_text(site, "mining.barbarian_village.e", choices.selectable())
+            .is_err());
+
+        bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
+        bag.insert("site".into(), serde_json::json!("fishing.catherby"));
+        let wrong_skill = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(wrong_skill
+            .label_for("fishing.catherby")
+            .ends_with("not a Mining site"));
+
+        bag.insert("site".into(), serde_json::json!("removed-site"));
+        let unknown = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert_eq!(unknown.label_for("removed-site"), "Unknown: removed-site");
+        assert!(unknown.is_empty());
     }
 
     #[test]
