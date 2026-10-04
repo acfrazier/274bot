@@ -970,6 +970,12 @@ impl Scene {
         }
     }
 
+    /// The post that last logged out (0 = none): a family that captured a
+    /// different mark has seen its login session end.
+    pub fn login_mark(&self) -> u64 {
+        self.logout_seq
+    }
+
     /// The last posted tick. `None` before the first post of a session.
     pub fn tick(&self) -> Option<u64> {
         self.tick
