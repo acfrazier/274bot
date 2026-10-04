@@ -777,9 +777,7 @@ impl FollowRun {
         let hop_dialog_started = hop.npc_recovery.dialog_started;
         let arrived_arm: Evidence<'static> = if edge.takeoff.is_some() {
             arrived(edge.to, 0)
-        } else if edge.kind == TransportKind::Door
-            && edge.dir.is_some()
-        {
+        } else if edge.kind == TransportKind::Door && edge.dir.is_some() {
             Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
                 let Some(here) = now.world_tile() else {
                     return false;

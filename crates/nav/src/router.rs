@@ -2350,7 +2350,9 @@ impl<'a> ReverseClosure<'a> {
         if self.use_teleports
             && graph.teleports.iter().any(|edge| {
                 self.seen.contains(&edge.to)
-                    && edge.takeoff.is_none_or(|takeoff| self.seen.contains(&takeoff))
+                    && edge
+                        .takeoff
+                        .is_none_or(|takeoff| self.seen.contains(&takeoff))
                     && proof_edge_allowed(state, edge, self.relax, self.inventory_can_grow)
             })
         {
@@ -2878,6 +2880,7 @@ fn search_kernel_budget<B: Budget>(
                     continue;
                 }
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
+                    continue;
                 }
                 if !wildy_step_ok(graph, cur, edge.to, allow_wilderness)
                     || !TransportGraph::teleport_legal_at_level(wildy_level, edge)
