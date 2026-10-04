@@ -1183,7 +1183,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         loc_id: None,
         radius: 1,
         arrival: nav::arrival::ArrivalKind::Reach,
-        options: crate::FindOptions::default(),
+        options: crate::native::WalkOptions::default(),
         required_after: evidence,
         evidence: None,
         cross: Vec::new().into_boxed_slice(),

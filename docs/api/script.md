@@ -582,10 +582,18 @@ the host's shared `nav::router::find` and the slot pump's
 `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walks correlate
-host outcomes with their run, action and request owners. Authored Path `walk`
-steps may opt into hold-mode protection with `guard: "protect"` and name the
-protected-zone exemptions in `cross`; a nonempty `cross` without that guard is
-rejected during compilation.
+host outcomes with their run, action and request owners. Inherited walk options
+resolve against the captured global and per-script permissions; either may
+allow the walk, while a walk-local `false` forbids it even when a global or
+per-script setting allows it. Native script settings default off and use
+`allow_teleports`, `allow_wilderness` and `allow_danger_zones` (Gatherer
+exposes camelCase ids). Path `walk` steps accept the same three optional
+booleans, so omitted bits inherit and `true` opts in for only that step. Native
+script walking never exposes bank fetch.
+
+Path `cross` names danger-zone exemptions for that walk; it is independent of
+`guard: "protect"`, which controls hold-mode protection. A named crossing may
+be used with or without that guard.
 
 The guard holds the selected protection prayer without attacking, eating or
 flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces

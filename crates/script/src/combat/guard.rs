@@ -572,7 +572,7 @@ mod tests {
                 loc_id: None,
                 radius: 1,
                 arrival: nav::arrival::ArrivalKind::Reach,
-                options: crate::FindOptions::default(),
+                options: crate::native::WalkOptions::default(),
                 required_after: dummy_stamp(0),
                 evidence: None,
                 cross: Box::default(),

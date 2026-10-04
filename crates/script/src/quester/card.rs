@@ -39,6 +39,12 @@ struct QuesterSettings {
     gang: Option<String>,
     #[serde(default = "crate::native::death::default_max_deaths")]
     max_deaths: u8,
+    #[serde(default, rename = "allow_teleports")]
+    _allow_teleports: bool,
+    #[serde(default, rename = "allow_wilderness")]
+    _allow_wilderness: bool,
+    #[serde(default, rename = "allow_danger_zones")]
+    _allow_danger_zones: bool,
 }
 
 static RELEASE_INDEX: LazyLock<ReleaseIndex> =
@@ -100,6 +106,21 @@ fn settings_schema() -> &'static [SettingDef] {
                 &["phoenix", "blackarm"],
             ),
             max_deaths,
+            walk_permission_setting(
+                "allow_teleports",
+                "Allow teleports",
+                "Allow this script to use teleports when the global setting is off.",
+            ),
+            walk_permission_setting(
+                "allow_wilderness",
+                "Allow wilderness",
+                "Allow this script to route through wilderness when the global setting is off.",
+            ),
+            walk_permission_setting(
+                "allow_danger_zones",
+                "Allow danger zones",
+                "Allow this script to route through danger zones when the global setting is off.",
+            ),
         ]
     });
     &SETTINGS
@@ -130,6 +151,12 @@ fn setting(
         help: Some(help.into()),
         item_option_spec: None,
     }
+}
+
+fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
+    let mut definition = setting(id, "boolean", "false", label, help, &[]);
+    definition.group = Some("Walk permissions".into());
+    definition
 }
 
 fn released(index: &ReleaseIndex, id: &str) -> bool {
@@ -369,6 +396,9 @@ mod tests {
                 "partner_account",
                 "gang",
                 "max_deaths",
+                "allow_teleports",
+                "allow_wilderness",
+                "allow_danger_zones",
             ]
         );
         assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
@@ -391,6 +421,9 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(defaults.max_deaths, 2);
+        assert!(!defaults._allow_teleports);
+        assert!(!defaults._allow_wilderness);
+        assert!(!defaults._allow_danger_zones);
         assert_eq!(CARD.schema_version, 3);
 
         let max_deaths = settings_schema()
@@ -423,5 +456,39 @@ mod tests {
                 "out-of-range max_deaths {cap} must be rejected"
             );
         }
+    }
+}
+#[cfg(test)]
+mod walk_permission_settings_tests {
+    use super::*;
+
+    #[test]
+    fn walk_permission_settings_roundtrip_with_legacy_defaults_and_schema_v3() {
+        assert_eq!(CARD.schema_version, 3);
+        let ids = ["allow_teleports", "allow_wilderness", "allow_danger_zones"];
+        for id in ids {
+            let definition = settings_schema()
+                .iter()
+                .find(|setting| setting.id == id)
+                .unwrap();
+            assert_eq!(definition.ty, "boolean");
+            assert_eq!(definition.default.as_deref(), Some("false"));
+            assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
+        }
+
+        let mut bag = SettingsBag::new();
+        bag.insert("allow_teleports".into(), serde_json::json!(true));
+        bag.insert("allow_wilderness".into(), serde_json::json!(false));
+        bag.insert("allow_danger_zones".into(), serde_json::json!(true));
+        let restored: SettingsBag =
+            serde_json::from_value(serde_json::to_value(&bag).unwrap()).unwrap();
+        assert_eq!(restored, bag);
+        let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+            restored.iter().map(|(key, value)| (key.as_str(), value)),
+        ))
+        .unwrap();
+        assert!(settings._allow_teleports);
+        assert!(!settings._allow_wilderness);
+        assert!(settings._allow_danger_zones);
     }
 }
