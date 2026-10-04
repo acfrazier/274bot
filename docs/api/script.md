@@ -166,6 +166,13 @@ Arrav journal determines existing membership; an unjoined account must explicitl
 choose its irreversible gang. Conflicting or ambiguous membership blocks before
 either account joins. A completed quest does not enlist a partner.
 
+Gang proofs belong to the current ready run, selected content and world. Losing
+readiness or changing world clears the cached proof; the same run rereads its own
+Arrav journal before continuing without inventing another peer admission.
+Saved profile names remain exact vault identities. In-game counterpart matching
+uses the client's account ID, which treats case, spaces and underscores consistently.
+Two saved names for the same in-game account cannot form a pair.
+
 Each handoff reserves a finite reciprocal phase and dispatches only the actor's
 own role action. Trades check the configured counterpart and exact unnoted offers
 on both offer and confirmation screens; acceptance clicks do not prove success.
@@ -173,6 +180,11 @@ Both inventories must prove the transfer. Stop, Pause, removal, session loss or 
 failed role revokes both phase-owned action authorities before queued work drains.
 The peer blocks rather than being stopped or automatically restarted; explicitly
 Start both accounts again after inspecting server-side items and quest progress.
+Transfer recovery checks bounded native backpack receipts from the matching active
+reciprocal roles. A missing local shield half is not collected again when its
+counterpart already holds that half or the resulting certificates. Missing,
+stale or mismatched peer evidence remains unknown; it is never treated as an
+empty backpack or replaced with a saved session counter.
 
 A paired waiter suspends only its own gameplay-wedge clock. The actor's gameplay
 watchdog and both scheduler watchdogs remain live. New observed gameplay can

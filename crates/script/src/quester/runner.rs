@@ -1021,7 +1021,6 @@ impl Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
-        self.pair_admitted = false;
         self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
@@ -1280,7 +1279,13 @@ impl Quester {
     fn valid_progress(&self, tick: &NativeTick<'_>, progress: &QuestProgress, after: api::quest_progress::EvidenceStamp) -> bool {
         progress.quest == self.path.id && progress.binding == self.path.progress.binding
             && progress.role == self.path.role && progress.pin.as_ref() == tick.cx.pin()
-            && progress.evidence.meets(after) && tick.cx.evidence().meets(progress.evidence)
+            && progress.evidence.meets(after) && progress.evidence != after
+            && tick.cx.evidence().meets(progress.evidence)
+            && match &progress.stage {
+                Knowledge::Known(stage) => self.path.progress.stage_keys.contains(stage)
+                    && (progress.complete != Truth::True || stage == &self.path.progress.colour_complete),
+                Knowledge::Unknown(_) | Knowledge::Partial { .. } => progress.complete != Truth::True,
+            }
             && progress.flags.iter().all(|flag| self.path.progress.flags.iter().any(|rule| rule.flag == flag.flag))
     }
 
@@ -1291,6 +1296,7 @@ impl Quester {
                 let mut cx = StepContext {
                     tick, quests: &self.quests, progress: self.progress_slice(),
                     required_after: after, bank: &self.bank, banks: &self.banks,
+                    choices: &self.choices,
                 };
                 self.path.progress_reader.as_ref().unwrap().plan.begin(&mut cx)
             };
@@ -1309,6 +1315,7 @@ impl Quester {
             let mut cx = StepContext {
                 tick, quests: &self.quests, progress: self.progress_slice(),
                 required_after: after, bank: &self.bank, banks: &self.banks,
+                choices: &self.choices,
             };
             reader.poll(&mut cx)
         };
@@ -1333,7 +1340,14 @@ impl Quester {
     }
 
     fn admit_pair(&mut self, tick: &mut NativeTick<'_>) -> bool {
-        if self.path.partner.is_none() || self.pair_admitted { return true; }
+        if self.path.partner.is_none() { return true; }
+        let result = tick.pairs.ok_or_else(|| ActionError::Unavailable(Arc::from("partner capability is not installed in this Play")))
+            .and_then(|port| port.settings(tick.cx.run()).map_err(super::pair::PairError::action));
+        if let Err(error) = result {
+            self.record_failure(error);
+            self.parked = true;
+            return false;
+        }
         if tick.pairs.is_some_and(|port| port.gang(tick.cx.run()).is_err()) {
             match self.gang_reader.poll(tick, &self.quests) {
                 Poll::Pending => return false,
@@ -1341,12 +1355,14 @@ impl Quester {
                 Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; return false; }
             }
         }
+        if self.pair_admitted { return true; }
         if self.pair_admission.is_none() {
             let result = super::families::partner::admission(&self.path).and_then(|plan| {
                 let after = tick.cx.evidence();
                 let mut cx = StepContext {
                     tick, quests: &self.quests, progress: self.progress_slice(),
                     required_after: after, bank: &self.bank, banks: &self.banks,
+                    choices: &self.choices,
                 };
                 plan.begin(&mut cx)
             });
@@ -1362,6 +1378,7 @@ impl Quester {
             let mut cx = StepContext {
                 tick, quests: &self.quests, progress: self.progress_slice(),
                 required_after: after, bank: &self.bank, banks: &self.banks,
+                choices: &self.choices,
             };
             run.poll(&mut cx)
         };
@@ -1435,11 +1452,19 @@ impl Quester {
 }
 
 impl Script for Quester {
+    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
+        let declaration = self.path.partner.as_ref()?;
+        Some(super::pair::PairBinding {
+            path: &self.path.id, protocol: &declaration.protocol,
+            digest: &self.path.digest, role: self.path.role.as_ref()?,
+        })
+    }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.pair_admitted = false;
             self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
@@ -1620,15 +1645,12 @@ impl Script for Quester {
         }
         if self.settling {
             let truth = {
-                let pred = PredicateContext {
-                    cx: &tick.cx,
-                    quests: &self.quests,
-                    progress: self.progress_slice(),
-                    required_after: tick.cx.evidence(),
-                    chat_since: self.chat_since,
-                    outcome: self.last_outcome.as_ref(),
-                    bank: &self.bank,
-                };
+                let pred = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: tick.cx.evidence(),
+                chat_since: self.chat_since,
+                outcome: self.last_outcome.as_ref(),
+                bank: &self.bank, };
                 self.current_step()
                     .map(|step| step.settle.evaluate(&pred))
                     .unwrap_or(Truth::False)
@@ -1668,15 +1690,12 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Continue);
             }
             let selected = {
-                let pred = PredicateContext {
-                    cx: &tick.cx,
-                    quests: &self.quests,
-                    progress: self.progress_slice(),
-                    required_after: tick.cx.evidence(),
-                    chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
-                    bank: &self.bank,
-                };
+                let pred = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: tick.cx.evidence(),
+                chat_since: super::families::reach::last_chat_seq(&tick.cx),
+                outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
+                bank: &self.bank, };
                 match select(&self.path, self.seq_index, &pred) {
                     SelectionDecision::Selected(sel) => {
                         Ok(Some((sel.index, sel.step.advances, sel.prelude)))
@@ -1900,7 +1919,9 @@ impl Script for Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
-        self.pair_admitted = false;
+        if matches!(event, Interrupt::Pause | Interrupt::SessionEnded) {
+            self.pair_admitted = false;
+        }
         self.gang_reader.cancel();
         self.watchdog = Watchdog::default();
         self.dirty = true;
@@ -1950,7 +1971,6 @@ impl Script for Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
-        self.pair_admitted = false;
         self.gang_reader.cancel();
         // Dropping these guards revokes their native owners before the host can dispatch them.
         self.capture_prayer_cleanup();
@@ -2363,6 +2383,9 @@ impl Script for QueuedQuester {
             partner: self.queue.partner_account.clone(),
             gang: self.queue.gang,
         })
+    }
+    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
+        self.active.as_ref().and_then(|active| active.pair_binding())
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.run != tick.cx.run() {

@@ -22,6 +22,76 @@ struct Entry {
     lease: Option<u64>,
     cancelled: bool,
     gang: Option<(Knowledge<Option<Gang>>, EvidenceStamp)>,
+    ready_after: EvidenceStamp,
+    identity: Option<u64>,
+    binding: Option<Binding>,
+    inventory: Option<ItemReceipt>,
+}
+impl Entry {
+    fn effective_gang(&self) -> Result<Gang, PairError> {
+        let settings = self.registration.settings.as_ref().ok_or(PairError::PartnerNotInPlay)?;
+        match self.gang.as_ref() {
+            Some((Knowledge::Known(Some(gang)), evidence)) if evidence.meets(self.ready_after) => {
+                if settings.gang.is_some_and(|declared| declared != *gang) { return Err(PairError::WrongGang); }
+                Ok(*gang)
+            }
+            Some((Knowledge::Known(None), evidence)) if evidence.meets(self.ready_after) => {
+                settings.gang.ok_or(PairError::WrongGang)
+            }
+            _ => Err(PairError::UnknownGang),
+        }
+    }
+}
+struct Binding {
+    path: api::selected::FactKey,
+    protocol: api::selected::FactKey,
+    digest: [u8; 32],
+    role: api::selected::FactKey,
+}
+impl Binding {
+    fn matches(&self, current: PairBinding<'_>) -> bool {
+        &self.path == current.path && &self.protocol == current.protocol
+            && &self.digest == current.digest && &self.role == current.role
+    }
+    fn matches_request(&self, request: &PairItemRequest, role: &api::selected::FactKey) -> bool {
+        self.path == request.path && self.protocol == request.protocol
+            && self.digest == request.digest && &self.role == role
+    }
+    fn matches_plan(&self, plan: &CompiledPairPlan, role: &api::selected::FactKey) -> bool {
+        self.path == plan.path && self.protocol == plan.protocol
+            && self.digest == plan.digest && &self.role == role
+    }
+}
+impl From<PairBinding<'_>> for Binding {
+    fn from(current: PairBinding<'_>) -> Self {
+        Self {
+            path: current.path.clone(), protocol: current.protocol.clone(),
+            digest: *current.digest, role: current.role.clone(),
+        }
+    }
+}
+struct ItemReceipt {
+    slots: [(i32, i32); 28],
+    evidence: EvidenceStamp,
+}
+impl ItemReceipt {
+    fn capture(observed: api::snapshot::Observed<&[api::snapshot::ItemView]>) -> Option<Self> {
+        if observed.value.len() > 28 { return None; }
+        let mut slots = [(-1, 0); 28];
+        for item in observed.value {
+            let slot = usize::try_from(item.slot).ok()?;
+            if slot >= slots.len() || slots[slot].0 >= 0 || item.def.id < 0 || item.count <= 0
+                || item.container != api::snapshot::ItemContainer::Inventory {
+                return None;
+            }
+            slots[slot] = (item.def.id, if item.def.noted { 0 } else { item.count });
+        }
+        Some(Self { slots, evidence: observed.stamp })
+    }
+    fn count(&self, obj: i32) -> i32 {
+        self.slots.iter().filter(|(id, _)| *id == obj)
+            .fold(0i32, |total, (_, count)| total.saturating_add(*count))
+    }
 }
 struct Joined {
     role: usize,
@@ -106,6 +176,7 @@ impl QuestPairCoordinator {
         Arc::new_cyclic(|weak| Seat {
             coordinator: Arc::clone(self),
             account: AccountKey(Arc::from(account)),
+            identity: api::snapshot::player_account_id(account),
             world: Mutex::new(World { host: Arc::from(host), port }),
             shared: weak.clone(),
         })
@@ -139,6 +210,12 @@ impl QuestPairCoordinator {
                 .ok_or(PairError::Stale)?;
             if entry.cancelled { return Err(PairError::Cancelled); }
             if !entry.registration.ready { return Err(PairError::NotReady); }
+            if let Some(joined) = &lease.joined[lease.side(run)?] {
+                let binding = entry.binding.as_ref().ok_or(PairError::NotReady)?;
+                if !binding.matches_plan(&lease.plan, &lease.plan.roles[joined.role].id) {
+                    return Err(PairError::Stale);
+                }
+            }
         }
         Ok(())
     }
@@ -154,7 +231,11 @@ impl QuestPairCoordinator {
     }
     fn begin_at(&self, account: &AccountKey, request: PairRequest, now: Instant) -> Result<PairToken, PairError> {
         let mut state = self.state.lock().unwrap();
-        if account == &request.partner { return Err(PairError::SelfPartner); }
+        let own_identity = api::snapshot::player_account_id(&account.0);
+        if account == &request.partner
+            || own_identity.is_some_and(|id| api::snapshot::player_account_id(&request.partner.0) == Some(id)) {
+            return Err(PairError::SelfPartner);
+        }
         if !state.profiles.contains(account) || !state.profiles.contains(&request.partner) {
             return Err(PairError::UnknownAccount);
         }
@@ -165,7 +246,7 @@ impl QuestPairCoordinator {
         }
         if own.cancelled || peer.cancelled { return Err(PairError::Cancelled); }
         if !own.registration.ready || !peer.registration.ready { return Err(PairError::NotReady); }
-        if !own.registration.evidence.meets(request.evidence) { return Err(PairError::Stale); }
+        if own.registration.evidence != request.evidence { return Err(PairError::Stale); }
         let settings = own.registration.settings.as_ref().ok_or(PairError::PartnerNotInPlay)?;
         let peer_settings = peer.registration.settings.as_ref().ok_or(PairError::PartnerNotInPlay)?;
         if settings.partner.as_ref() != Some(&request.partner) || peer_settings.partner.as_ref() != Some(account) {
@@ -180,16 +261,11 @@ impl QuestPairCoordinator {
                 if owned == reported && evidence.run == request.caller => {}
             _ => return Err(PairError::UnknownGang),
         }
-        let gang = match request.observed_gang {
-            Knowledge::Known(Some(observed)) => {
-                if settings.gang.is_some_and(|declared| declared != observed) { return Err(PairError::WrongGang); }
-                observed
-            }
-            Knowledge::Known(None) => settings.gang.ok_or(PairError::WrongGang)?,
-            Knowledge::Unknown(_) | Knowledge::Partial { .. } => return Err(PairError::UnknownGang),
-        };
+        let gang = own.effective_gang()?;
         let role = request.plan.roles.iter().position(|role| role.gang == gang && role.id == request.caller_role)
             .ok_or(PairError::WrongGang)?;
+        let binding = own.binding.as_ref().ok_or(PairError::NotReady)?;
+        if !binding.matches_plan(&request.plan, &request.caller_role) { return Err(PairError::Stale); }
         let peer_run = peer.registration.run;
         let existing = own.lease.or(peer.lease);
         if own.lease.is_some() && peer.lease.is_some() && own.lease != peer.lease { return Err(PairError::Busy); }
@@ -267,6 +343,7 @@ impl QuestPairCoordinator {
 struct Seat {
     coordinator: Arc<QuestPairCoordinator>,
     account: AccountKey,
+    identity: Option<u64>,
     world: Mutex<World>,
     shared: std::sync::Weak<Seat>,
 }
@@ -283,29 +360,56 @@ impl QuestPairPort for Seat {
     fn shared(&self) -> Arc<dyn QuestPairPort> {
         self.shared.upgrade().expect("live pair seat")
     }
-    fn observe(&self, registration: PairRegistration) {
+    fn observe(&self, registration: PairRegistration, frame: PairFrame<'_>) {
         let world = self.world.lock().unwrap().clone();
         let mut state = self.coordinator.state.lock().unwrap();
         if registration.evidence.run != registration.run { return; }
         if !state.profiles.contains(&self.account) { return; }
         if let Some(old) = state.entries.get(&self.account) {
+            if old.registration.run == registration.run && !registration.evidence.meets(old.registration.evidence) {
+                return;
+            }
             let changed = old.registration.run != registration.run || old.registration.pin != registration.pin
-                || old.registration.settings != registration.settings || old.world != world || !registration.ready;
+                || old.registration.settings != registration.settings || old.world != world || !registration.ready
+                || old.binding.as_ref().is_some_and(|prior| !frame.binding.is_some_and(|current| prior.matches(current)));
             if changed {
                 if let Some(id) = old.lease { QuestPairCoordinator::cancel_locked(&mut state, id); }
-            } else if !registration.evidence.meets(old.registration.evidence) { return; }
+            }
         }
-        let old = state.entries.remove(&self.account);
+        let mut old = state.entries.remove(&self.account);
+        let prior_binding = old.as_mut().and_then(|old| old.binding.take());
+        let binding = frame.binding.map(|current| {
+            prior_binding.filter(|prior| prior.matches(current))
+                .unwrap_or_else(|| Binding::from(current))
+        });
+        let inventory = frame.inventory.filter(|observed| {
+            registration.ready && binding.is_some() && observed.stamp == registration.evidence
+        }).and_then(ItemReceipt::capture);
+        let mut ready_after = registration.evidence;
         let (lease, cancelled, gang) = old
             .filter(|old| old.registration.run == registration.run && old.registration.pin == registration.pin)
-            .map_or((None, false, None), |old| (old.lease, old.cancelled, old.gang));
-        state.entries.insert(self.account.clone(), Entry { world, registration, lease, cancelled, gang });
+            .map_or((None, false, None), |old| {
+                let same_ready_epoch = old.world == world && old.registration.ready && registration.ready;
+                let gang = if same_ready_epoch {
+                    ready_after = old.ready_after;
+                    old.gang
+                } else { None };
+                (old.lease, old.cancelled, gang)
+            });
+        state.entries.insert(self.account.clone(), Entry {
+            world, registration, lease, cancelled, gang, ready_after,
+            identity: self.identity, binding, inventory,
+        });
     }
     fn invalidate(&self, run: RunKey) {
         let mut state = self.coordinator.state.lock().unwrap();
         let Some(entry) = state.entries.get(&self.account).filter(|entry| entry.registration.run == run) else { return; };
         if let Some(id) = entry.lease { QuestPairCoordinator::cancel_locked(&mut state, id); }
-        if let Some(entry) = state.entries.get_mut(&self.account) { entry.registration.ready = false; }
+        if let Some(entry) = state.entries.get_mut(&self.account) {
+            entry.registration.ready = false;
+            entry.gang = None;
+            entry.inventory = None;
+        }
     }
     fn busy(&self) -> bool {
         self.coordinator.state.lock().unwrap().entries.get(&self.account).is_some_and(|entry| entry.lease.is_some())
@@ -322,6 +426,8 @@ impl QuestPairPort for Seat {
         let state = self.coordinator.state.lock().unwrap();
         let entry = state.entries.get(&self.account).ok_or(PairError::NotReady)?;
         if entry.registration.run != caller { return Err(PairError::Stale); }
+        if entry.cancelled { return Err(PairError::Cancelled); }
+        if !entry.registration.ready { return Err(PairError::NotReady); }
         entry.registration.settings.clone().ok_or(PairError::PartnerNotInPlay)
     }
     fn observe_gang(&self, read: &api::quest_progress::JournalRead) -> Result<Knowledge<Option<Gang>>, PairError> {
@@ -329,8 +435,10 @@ impl QuestPairPort for Seat {
         self.actor(&state, read.closed.run)?;
         let entry = state.entries.get_mut(&self.account).unwrap();
         if read.quest.0.as_ref() != "blackarmgang" || read.pin != entry.registration.pin
-            || !read.closed.meets(read.acquired) || !entry.registration.evidence.meets(read.closed)
-            || !entry.registration.ready {
+            || !read.acquired.meets(entry.ready_after) || !read.closed.meets(read.acquired)
+            || read.closed == read.acquired || !entry.registration.evidence.meets(read.closed)
+            || entry.gang.as_ref().is_some_and(|(_, prior)| !read.closed.meets(*prior) || read.closed == *prior)
+            || !entry.registration.ready || entry.cancelled {
             return Err(PairError::Stale);
         }
         let evidence = script::quester::gang::resolve(read);
@@ -341,7 +449,41 @@ impl QuestPairPort for Seat {
     fn gang(&self, caller: RunKey) -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError> {
         let state = self.coordinator.state.lock().unwrap();
         self.actor(&state, caller)?;
-        state.entries.get(&self.account).unwrap().gang.clone().ok_or(PairError::UnknownGang)
+        let entry = state.entries.get(&self.account).unwrap();
+        if entry.cancelled { return Err(PairError::Cancelled); }
+        if !entry.registration.ready { return Err(PairError::NotReady); }
+        entry.gang.clone().ok_or(PairError::UnknownGang)
+    }
+    fn partner_item_count(&self, caller: EvidenceStamp, request: &PairItemRequest) -> Result<i32, PairError> {
+        let state = self.coordinator.state.lock().unwrap();
+        self.actor(&state, caller.run)?;
+        if !matches!(request.path.0.as_ref(), "blackarmgang" | "hero") { return Err(PairError::Stale); }
+        if !state.profiles.contains(&self.account) { return Err(PairError::UnknownAccount); }
+        let own = state.entries.get(&self.account).unwrap();
+        if own.registration.evidence != caller { return Err(PairError::Stale); }
+        let settings = own.registration.settings.as_ref().ok_or(PairError::PartnerNotInPlay)?;
+        let partner = settings.partner.as_ref().ok_or(PairError::MissingPartner)?;
+        if !state.profiles.contains(partner) { return Err(PairError::UnknownAccount); }
+        let peer = state.entries.get(partner).ok_or(PairError::PartnerNotInPlay)?;
+        if own.registration.run == peer.registration.run
+            || own.identity.is_some_and(|id| peer.identity == Some(id)) { return Err(PairError::SelfPartner); }
+        if own.cancelled || peer.cancelled { return Err(PairError::Cancelled); }
+        if !own.registration.ready || !peer.registration.ready { return Err(PairError::NotReady); }
+        let peer_settings = peer.registration.settings.as_ref().ok_or(PairError::PartnerNotInPlay)?;
+        if peer_settings.partner.as_ref() != Some(&self.account) { return Err(PairError::MissingPartner); }
+        if own.world != peer.world { return Err(PairError::DifferentWorld); }
+        if own.registration.pin != peer.registration.pin { return Err(PairError::WrongPin); }
+        if !own.binding.as_ref().is_some_and(|binding| binding.matches_request(request, &request.own.id))
+            || !peer.binding.as_ref().is_some_and(|binding| binding.matches_request(request, &request.peer.id)) {
+            return Err(PairError::Stale);
+        }
+        if request.own.gang == request.peer.gang || own.effective_gang()? != request.own.gang
+            || peer.effective_gang()? != request.peer.gang { return Err(PairError::WrongGang); }
+        let inventory = peer.inventory.as_ref().ok_or(PairError::NotReady)?;
+        if inventory.evidence != peer.registration.evidence || !inventory.evidence.meets(peer.ready_after) {
+            return Err(PairError::Stale);
+        }
+        Ok(inventory.count(request.obj))
     }
     fn waiting(&self, caller: RunKey) -> bool {
         let state = self.coordinator.state.lock().unwrap();
@@ -349,7 +491,8 @@ impl QuestPairPort for Seat {
         let Some(lease) = state.entries.get(&self.account).and_then(|entry| entry.lease)
             .and_then(|id| state.leases.get(&id)) else { return false; };
         let Ok(side) = lease.side(caller) else { return false; };
-        !lease.complete() && (lease.joined.iter().any(Option::is_none) || lease.receipts[side].is_some())
+        lease.joined[side].is_some() && !lease.complete()
+            && (lease.joined.iter().any(Option::is_none) || lease.receipts[side].is_some())
     }
     fn token(&self, caller: RunKey, phase: &api::selected::FactKey) -> Result<PairToken, PairError> {
         let state = self.coordinator.state.lock().unwrap();
@@ -433,6 +576,12 @@ impl QuestPairPort for Seat {
         let side = lease.side(actor)?;
         if lease.joined.iter().any(Option::is_none) { return Err(PairError::NotReady); }
         if confirm && lease.offer.iter().any(Option::is_none) { return Err(PairError::NotReady); }
+        let before = lease.joined[side].as_ref().unwrap().evidence;
+        if !evidence.meets(before) || evidence == before { return Err(PairError::Stale); }
+        if confirm {
+            let offered = lease.offer[side].unwrap();
+            if !evidence.meets(offered) || evidence == offered { return Err(PairError::Stale); }
+        }
         let screen = if confirm { &mut lease.confirm } else { &mut lease.offer };
         if screen[side].is_some_and(|before| !evidence.meets(before)) { return Err(PairError::Stale); }
         screen[side] = Some(evidence);
@@ -468,9 +617,16 @@ mod tests {
         api::game_data::for_revision(ClientRevision::R289).unwrap().selected_pin().unwrap()
     }
     fn register(port: &dyn QuestPairPort, run: RunKey, partner: &str, gang: Gang, tick: u64) {
+        let plan = plan(false);
+        let role = plan.roles.iter().find(|role| role.gang == gang).unwrap();
         port.observe(PairRegistration {
             run, pin: pin(), settings: Some(PairSettings { partner: Some(AccountKey(Arc::from(partner))), gang: Some(gang) }),
             ready: true, evidence: stamp(run, tick),
+        }, PairFrame {
+            binding: Some(PairBinding {
+                path: &plan.path, protocol: &plan.protocol, digest: &plan.digest, role: &role.id,
+            }),
+            inventory: None,
         });
     }
     fn read(run: RunKey) -> JournalRead {
@@ -515,6 +671,8 @@ mod tests {
         core.remember("alice"); core.remember("bob");
         let seats = [core.seat("alice", "127.0.0.1", 44594), core.seat("bob", "127.0.0.1", 44594)];
         let runs = [RunKey { slot: 1, run: 1, session: 1 }, RunKey { slot: 2, run: 1, session: 1 }];
+        register(seats[0].as_ref(), runs[0], "bob", Gang::Phoenix, 1);
+        register(seats[1].as_ref(), runs[1], "alice", Gang::BlackArm, 1);
         register(seats[0].as_ref(), runs[0], "bob", Gang::Phoenix, 2);
         register(seats[1].as_ref(), runs[1], "alice", Gang::BlackArm, 2);
         for side in 0..2 {
@@ -522,6 +680,170 @@ mod tests {
         }
         Pair { core, seats, runs }
     }
+
+    fn held(obj: i32, count: i32, slot: i32) -> api::snapshot::ItemView {
+        api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: obj, name: None, stackable: false, members: false, base_value: 0,
+                noted: false, certificate_link: -1, certificate_template: -1,
+            },
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot, count, actions: Vec::new(), component_id: -1,
+        }
+    }
+
+    fn publish_items(pair: &Pair, side: usize, query: &PairItemRequest, tick: u64, items: Vec<api::snapshot::ItemView>) {
+        let run = pair.runs[side];
+        let role = if side == 0 { &query.peer } else { &query.own };
+        let partner = if side == 0 { "bob" } else { "alice" };
+        let evidence = stamp(run, tick);
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(tick as i32);
+        snapshot.seed_inventory(items, 28);
+        pair.seats[side].observe(PairRegistration {
+            run, pin: pin(), settings: Some(PairSettings {
+                partner: Some(AccountKey(Arc::from(partner))), gang: Some(role.gang),
+            }), ready: true, evidence,
+        }, PairFrame {
+            binding: Some(PairBinding {
+                path: &query.path, protocol: &query.protocol, digest: &query.digest, role: &role.id,
+            }),
+            inventory: api::snapshot::SnapshotView::new(Some(&snapshot), evidence).inventory(),
+        });
+    }
+
+    fn item_query() -> PairItemRequest {
+        let plan = plan(false);
+        PairItemRequest {
+            path: plan.path.clone(), protocol: plan.protocol.clone(), digest: plan.digest,
+            own: plan.roles[1].clone(), peer: plan.roles[0].clone(), obj: 700,
+        }
+    }
+
+    #[test]
+    fn partner_holdings_require_current_native_receipts_and_matching_active_roles() {
+        let pair = pair();
+        let mut query = item_query();
+        let caller = stamp(pair.runs[1], 3);
+        assert_eq!(pair.seats[1].partner_item_count(stamp(pair.runs[1], 2), &query), Err(PairError::NotReady));
+        publish_items(&pair, 0, &query, 3, vec![held(query.obj, 1, 0), held(query.obj, 1, 1)]);
+        publish_items(&pair, 1, &query, 3, vec![]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Ok(2));
+        assert_eq!(pair.seats[1].partner_item_count(stamp(pair.runs[1], 2), &query), Err(PairError::Stale));
+        query.digest = [9; 32];
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Err(PairError::Stale));
+        query.digest = [1; 32];
+        let mut noted = held(query.obj, 10, 0);
+        noted.def.noted = true;
+        publish_items(&pair, 0, &query, 4, vec![noted]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Ok(0));
+        publish_items(&pair, 0, &query, 5, vec![held(query.obj, 1, 0), held(query.obj, 1, 0)]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Err(PairError::NotReady));
+        publish_items(&pair, 0, &query, 6, vec![]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Ok(0));
+        pair.seats[0].invalidate(pair.runs[0]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Err(PairError::NotReady));
+    }
+
+    #[test]
+    fn partner_holdings_reject_stale_future_foreign_and_mismatched_sequence_receipts() {
+        let pair = pair();
+        let query = item_query();
+        let caller = stamp(pair.runs[1], 3);
+        publish_items(&pair, 0, &query, 3, vec![held(query.obj, 1, 0)]);
+        publish_items(&pair, 1, &query, 3, vec![]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Ok(1));
+        let run = pair.runs[0];
+        let receipts = [
+            stamp(run, 2),
+            stamp(run, 99),
+            stamp(pair.runs[1], 6),
+            EvidenceStamp { run, tick: 7, sequence: 99 },
+        ];
+        for (index, observed) in receipts.into_iter().enumerate() {
+            let evidence = stamp(run, 4 + index as u64);
+            let mut snapshot = api::snapshot::GameSnapshot::new();
+            snapshot.seed_ingame(evidence.tick as i32);
+            snapshot.seed_inventory(vec![held(query.obj, 1, 0)], 28);
+            pair.seats[0].observe(PairRegistration {
+                run, pin: pin(), ready: true, evidence,
+                settings: Some(PairSettings {
+                    partner: Some(AccountKey(Arc::from("bob"))), gang: Some(query.peer.gang),
+                }),
+            }, PairFrame {
+                binding: Some(PairBinding {
+                    path: &query.path, protocol: &query.protocol, digest: &query.digest,
+                    role: &query.peer.id,
+                }),
+                inventory: api::snapshot::SnapshotView::new(Some(&snapshot), observed).inventory(),
+            });
+            assert_eq!(pair.seats[1].partner_item_count(caller, &query), Err(PairError::NotReady));
+        }
+        publish_items(&pair, 0, &query, 8, vec![held(query.obj, 1, 0)]);
+        assert_eq!(pair.seats[1].partner_item_count(caller, &query), Ok(1));
+    }
+
+    #[test]
+    fn active_pair_binding_change_revokes_the_reserved_phase() {
+        let pair = pair();
+        let query = item_query();
+        publish_items(&pair, 0, &query, 2, vec![]);
+        publish_items(&pair, 1, &query, 2, vec![]);
+        let plan = plan(true);
+        let token = pair.seats[0].begin(request(pair.runs[0], "bob", 0, &plan)).unwrap();
+        let mut changed = item_query();
+        changed.digest = [8; 32];
+        publish_items(&pair, 0, &changed, 3, vec![]);
+        assert!(matches!(pair.seats[1].poll(&token, pair.runs[1]), Poll::Ready(Err(PairError::Cancelled))));
+    }
+
+    #[test]
+    fn world_and_ready_boundaries_require_a_new_owned_gang_transaction() {
+        for boundary in 0..3 {
+            let pair = pair();
+            let port = pair.seats[0].as_ref();
+            let run = pair.runs[0];
+            match boundary {
+                0 => port.invalidate(run),
+                1 => port.world_changed("127.0.0.1", 45594),
+                _ => port.observe(PairRegistration {
+                    run, pin: pin(), settings: Some(PairSettings {
+                        partner: Some(AccountKey(Arc::from("bob"))), gang: Some(Gang::Phoenix),
+                    }), ready: false, evidence: stamp(run, 3),
+                }, PairFrame::default()),
+            }
+            assert!(matches!(port.gang(run), Err(PairError::NotReady)));
+            register(port, run, "bob", Gang::Phoenix, 3);
+            assert!(matches!(port.gang(run), Err(PairError::UnknownGang)));
+            register(port, run, "bob", Gang::Phoenix, 2);
+            assert!(matches!(port.observe_gang(&read(run)), Err(PairError::Stale)));
+            register(port, run, "bob", Gang::Phoenix, 4);
+            let mut delayed = read(run);
+            delayed.closed = stamp(run, 4);
+            assert!(matches!(port.observe_gang(&delayed), Err(PairError::Stale)),
+                "a callback acquired before this ready epoch cannot restore its old proof");
+            delayed.acquired = stamp(run, 3);
+            assert!(matches!(port.observe_gang(&delayed), Ok(Knowledge::Known(None))));
+            assert!(matches!(port.observe_gang(&delayed), Err(PairError::Stale)));
+            register(port, run, "bob", Gang::Phoenix, 5);
+            let (gang, evidence) = port.gang(run).unwrap();
+            assert!(matches!(gang, Knowledge::Known(None)));
+            assert_eq!(evidence, stamp(run, 4));
+        }
+    }
+
+    #[test]
+    fn saved_profile_aliases_of_one_native_account_cannot_partner() {
+        let core = Arc::new(QuestPairCoordinator::default());
+        core.set_accounts(["alice_1", "Alice 1"]);
+        let seat = core.seat("alice_1", "127.0.0.1", 44594);
+        let run = RunKey { slot: 1, run: 1, session: 1 };
+        let plan = plan(false);
+        assert_eq!(seat.begin(request(run, "Alice 1", 0, &plan)), Err(PairError::SelfPartner));
+        assert!(core.state.lock().unwrap().leases.is_empty());
+    }
+
     #[test]
     fn reciprocal_owned_admission_never_dispatches_before_both_join() {
         let pair = pair();
@@ -638,5 +960,126 @@ mod tests {
         pair.core.state.lock().unwrap().leases.get_mut(&token.id).unwrap().deadline = Instant::now();
         assert_eq!(pair.seats[0].report(&token, receipt(pair.runs[0], id, 3)), Err(PairError::BarrierExpired));
         assert!(matches!(pair.seats[1].poll(&token, pair.runs[1]), Poll::Ready(Err(PairError::Cancelled))));
+    }
+
+    #[test]
+    fn remote_cancel_and_roster_removal_fence_native_outbox_while_actor_slot_is_locked() {
+        use script::native::{ActionContext, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure, ScriptFlow};
+
+        struct Queued;
+        impl NativeMachine for Queued {
+            type Args = ();
+            type Output = ();
+            fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                cx.emit(script::shim::InteractReq::CloseModal)?;
+                Ok(Self)
+            }
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+            fn cancel(&mut self) {}
+        }
+        struct Actor {
+            core: Arc<QuestPairCoordinator>,
+            peer: Arc<dyn QuestPairPort>,
+            remove: bool,
+            handle: Option<ActionHandle<Queued>>,
+            binding: Arc<CompiledPairPlan>,
+        }
+        impl Script for Actor {
+            fn pair_settings(&self) -> Option<PairSettings> {
+                Some(PairSettings { partner: Some(AccountKey(Arc::from("bob"))), gang: Some(Gang::Phoenix) })
+            }
+            fn pair_binding(&self) -> Option<PairBinding<'_>> {
+                Some(PairBinding {
+                    path: &self.binding.path, protocol: &self.binding.protocol,
+                    digest: &self.binding.digest, role: &self.binding.roles[0].id,
+                })
+            }
+            fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+                if tick.cx.evidence().tick == 1 { return Ok(ScriptFlow::Continue); }
+                let own = tick.cx.run();
+                let peer = RunKey { slot: own.slot + 1, run: own.run, session: own.session };
+                let port = tick.pairs.unwrap();
+                register(self.peer.as_ref(), peer, "alice", Gang::BlackArm, 1);
+                register(self.peer.as_ref(), peer, "alice", Gang::BlackArm, 2);
+                port.observe_gang(&read(own)).unwrap();
+                self.peer.observe_gang(&read(peer)).unwrap();
+                let plan = plan(true);
+                let token = port.begin(request(own, "bob", 0, &plan)).unwrap();
+                self.peer.begin(request(peer, "alice", 1, &plan)).unwrap();
+                let handle = tick.actions.begin::<Queued>((), &mut tick.cx).unwrap();
+                port.register_action(&token, own, handle.revoker()).unwrap();
+                self.handle = Some(handle);
+                let core = Arc::clone(&self.core);
+                let remote = Arc::clone(&self.peer);
+                let remove = self.remove;
+                std::thread::spawn(move || {
+                    if remove { core.set_accounts(["alice"]); } else { remote.invalidate(peer); }
+                }).join().unwrap();
+                Ok(ScriptFlow::Continue)
+            }
+        }
+        for remove in [false, true] {
+            let core = Arc::new(QuestPairCoordinator::default());
+            core.set_accounts(["alice", "bob"]);
+            let own = core.seat("alice", "127.0.0.1", 44594);
+            let peer = core.seat("bob", "127.0.0.1", 44594);
+            let slot = Arc::new(Mutex::new(script::SlotScript::new()));
+            let mut slot = slot.lock().unwrap();
+            slot.bind_quest_pairs(own);
+            slot.start_test_script(Box::new(Actor { core, peer, remove, handle: None, binding: plan(true) }), None).unwrap();
+            let mut snapshot = api::snapshot::GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            let mut driver = crate::tests::nav_client();
+            let mut cx = script::ScriptCtx {
+                driver: &mut driver, tick: 2, here: Some((0, 0, 0)),
+                walk: None, walk_with: None, inv: None, snapshot: Some(&snapshot),
+                obj_names: None, compiled: script::CompiledTick::default(),
+            };
+            cx.tick = 1;
+            slot.on_game_tick(&mut cx);
+            cx.tick = 2;
+            slot.on_game_tick(&mut cx);
+            assert_eq!(slot.state(), script::RunState::Running, "no local Stop or slot cleanup");
+            assert!(!slot.has_native_actions(), "the remote owner must revoke the queued authority");
+            assert!(slot.take_native_action().is_none(), "the final host fence must not drain cancelled input");
+        }
+    }
+
+    #[test]
+    fn reservation_pauses_only_the_joined_waiter_not_the_approaching_actor() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0].begin(request(pair.runs[0], "bob", 0, &plan)).unwrap();
+        assert!(pair.seats[0].waiting(pair.runs[0]));
+        assert!(!pair.seats[1].waiting(pair.runs[1]), "the peer is still running its own quest action");
+        pair.seats[1].begin(request(pair.runs[1], "alice", 1, &plan)).unwrap();
+        assert!(!pair.seats[0].waiting(pair.runs[0]) && !pair.seats[1].waiting(pair.runs[1]));
+        let id = command(pair.seats[0].as_ref(), &token, pair.runs[0]);
+        register(pair.seats[0].as_ref(), pair.runs[0], "bob", Gang::Phoenix, 3);
+        pair.seats[0].report(&token, receipt(pair.runs[0], id, 3)).unwrap();
+        assert!(pair.seats[0].waiting(pair.runs[0]));
+        assert!(!pair.seats[1].waiting(pair.runs[1]), "its own admitted action watchdog remains live");
+    }
+
+    #[test]
+    fn exact_trade_barriers_require_both_owned_fresh_screens() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0].begin(request(pair.runs[0], "bob", 0, &plan)).unwrap();
+        pair.seats[1].begin(request(pair.runs[1], "alice", 1, &plan)).unwrap();
+        assert_eq!(pair.seats[0].trade_ready(&token, pair.runs[0], false, stamp(pair.runs[0], 2)), Err(PairError::Stale));
+        register(pair.seats[0].as_ref(), pair.runs[0], "bob", Gang::Phoenix, 3);
+        register(pair.seats[1].as_ref(), pair.runs[1], "alice", Gang::BlackArm, 3);
+        assert!(!pair.seats[0].trade_ready(&token, pair.runs[0], false, stamp(pair.runs[0], 3)).unwrap());
+        assert_eq!(pair.seats[1].trade_ready(&token, pair.runs[1], false, stamp(pair.runs[0], 3)), Err(PairError::Stale));
+        assert_eq!(pair.seats[1].trade_ready(&token, pair.runs[1], false, stamp(pair.runs[1], 4)), Err(PairError::Stale));
+        assert!(pair.seats[1].trade_ready(&token, pair.runs[1], false, stamp(pair.runs[1], 3)).unwrap());
+        assert_eq!(pair.seats[0].trade_ready(&token, pair.runs[0], true, stamp(pair.runs[0], 3)), Err(PairError::Stale));
+        register(pair.seats[0].as_ref(), pair.runs[0], "bob", Gang::Phoenix, 4);
+        assert!(!pair.seats[0].trade_ready(&token, pair.runs[0], true, stamp(pair.runs[0], 4)).unwrap());
+        register(pair.seats[1].as_ref(), pair.runs[1], "alice", Gang::BlackArm, 4);
+        assert!(pair.seats[1].trade_ready(&token, pair.runs[1], true, stamp(pair.runs[1], 4)).unwrap());
     }
 }

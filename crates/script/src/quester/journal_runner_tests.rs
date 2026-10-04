@@ -2117,3 +2117,63 @@ fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
     }
     panic!("the native Provisioner scan must expose a cached BankReceipt");
 }
+
+#[test]
+fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
+    let (script, snapshot) = fixture(false);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let after = api::quest_progress::EvidenceStamp {
+            run: tick.cx.run(), tick: 4, sequence: 4,
+        };
+        let progress = resolve_colour(
+            &script.path, QuestListStatus::NotStarted, tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        );
+        assert!(script.valid_progress(tick, &progress, after));
+        let mut bad = progress.clone();
+        bad.evidence = after;
+        assert!(!script.valid_progress(tick, &bad, after), "same-frame cached progress is not a new owned read");
+        bad.evidence = api::quest_progress::EvidenceStamp { tick: 6, sequence: 6, ..after };
+        assert!(!script.valid_progress(tick, &bad, after), "future receipts cannot be consumed");
+        bad = progress.clone();
+        bad.evidence.run.session += 1;
+        assert!(!script.valid_progress(tick, &bad, after), "foreign session");
+        bad = progress.clone();
+        bad.binding = FactKey::new("card:other");
+        assert!(!script.valid_progress(tick, &bad, after), "foreign binding");
+        bad = progress.clone();
+        bad.role = Some(FactKey::new("other"));
+        assert!(!script.valid_progress(tick, &bad, after), "foreign role");
+        bad = progress.clone();
+        bad.stage = Knowledge::Known(FactKey::new("unbound"));
+        assert!(!script.valid_progress(tick, &bad, after), "undeclared stage");
+        bad = progress.clone();
+        bad.complete = Truth::True;
+        assert!(!script.valid_progress(tick, &bad, after), "completion must name the terminal stage");
+        bad = progress.clone();
+        bad.flags = Arc::from([api::quest_progress::ProgressFlag {
+            flag: FactKey::new("undeclared"), truth: Truth::True, count: None,
+        }]);
+        assert!(!script.valid_progress(tick, &bad, after), "undeclared flag");
+    });
+}
+
+#[test]
+fn ordinary_recovery_keeps_completed_admission_but_pause_and_new_run_do_not() {
+    let (mut script, snapshot) = fixture(false);
+    script.pair_admitted = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| script.cancel_step(tick));
+    assert!(script.pair_admitted, "ordinary death/prayer cleanup does not invent a second peer barrier");
+    script.interrupt(Interrupt::Hold(true));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Hold(false));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Pause);
+    assert!(!script.pair_admitted);
+    script.pair_admitted = true;
+    script.run.session += 1;
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(!script.pair_admitted, "a different run/session must acquire a fresh reciprocal admission");
+}

@@ -404,6 +404,11 @@ impl GameSnapshot {
         self.scene = scene;
     }
 
+    /// Offline fixture observation of the decoded player's absolute world tile.
+    pub fn seed_tile(&mut self, tile: WorldTile) {
+        self.tile = Some((tile.x, tile.z, tile.level));
+    }
+
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;

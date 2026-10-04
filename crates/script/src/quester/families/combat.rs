@@ -1194,15 +1194,12 @@ impl CombatRun {
         cx: &StepContext<'_, '_>,
     ) -> Truth {
         let chat_since = reach::last_chat_seq(&cx.tick.cx);
-        let context = PredicateContext {
-            cx: &cx.tick.cx,
-            quests: cx.quests,
-            progress: cx.progress,
-            required_after: cx.required_after,
-            chat_since,
-            outcome: self.last_outcome.as_ref(),
-            bank: cx.bank,
-        };
+        let context = PredicateContext { cx: &cx.tick.cx, pairs: cx.tick.pairs, quests: cx.quests,
+        progress: cx.progress,
+        required_after: cx.required_after,
+        chat_since,
+        outcome: self.last_outcome.as_ref(),
+        bank: cx.bank, };
         predicate.evaluate(&context)
     }
 

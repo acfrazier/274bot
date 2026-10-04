@@ -449,7 +449,11 @@ pub fn resolve_journal(
         quest: path.id.clone(),
         stage,
         complete,
-        signals: Arc::from(Vec::<api::selected::SignalRange>::new()),
+        signals: if path.id.0.as_ref() == "blackarmgang" {
+            super::gang::resolve_normalized(&path.id, &journal.text).signals
+        } else {
+            Arc::from([])
+        },
         flags: resolve_flags(&path.progress.flags, &journal),
         evidence,
         binding: path.progress.binding.clone(),

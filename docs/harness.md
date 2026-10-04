@@ -31,6 +31,19 @@ the decoded `PathDocument`, its selected `QuestIdentityRow` and
 `SelectedGameData`, a stage key, an optional loadout, extra carried items,
 and the starting tile. Each stage needs a `progress.rules` varp hint;
 missing or contradictory hints fail rather than becoming stage zero.
+
+Paired quests use `quester_role_stage(request, gang, stage_varp, seed_vars)`.
+It selects an explicitly authored Phoenix or Black Arm role, seeds that role's
+real content variable, and keeps prerequisite variables in pre-Start setup.
+`run_pair(PairCell { roles, mode })` prepares both accounts before either Start,
+adds reciprocal account settings, and starts each account's own Quester. Role 0
+is Phoenix; role 1 is Black Arm. Restart cells explicitly Stop and restart both
+accounts; an ordinary paired step never starts or stops the other account.
+Miniquests use `miniquest_stage(MiniquestStage { ... })`, with explicit content
+variable seeds and a proof predicate instead of an invented quest-tab identity.
+Their terminal proof also requires the Path's owned progress reader to publish
+completion; a closed card or successful click alone is not completion.
+
 `FixtureLoadout::Path(name)` seeds that Path's actual kit.
 `FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
 operator's starting gear. Gear never raises the profile to make it wearable:

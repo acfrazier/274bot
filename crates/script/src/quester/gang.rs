@@ -27,10 +27,12 @@ fn signal(name: &str, min: i32, max: Option<i32>) -> SignalRange {
 }
 
 pub fn resolve(read: &JournalRead) -> GangEvidence {
-    if read.quest.0.as_ref() != "blackarmgang" {
-        return unknown();
-    }
     let text = super::progress::normalize_journal(&read.lines);
+    resolve_normalized(&read.quest, &text)
+}
+
+pub(crate) fn resolve_normalized(quest: &FactKey, text: &str) -> GangEvidence {
+    if quest.0.as_ref() != "blackarmgang" { return unknown(); }
     let phoenix = text.contains("allowed me to join the phoenix gang");
     let blackarm = text.contains("allowed me to join the black arm gang");
     let signals: Arc<[SignalRange]> = match (phoenix, blackarm) {

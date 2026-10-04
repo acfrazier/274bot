@@ -231,6 +231,7 @@ pub struct PredicateContext<'a, 'frame> {
     pub required_after: EvidenceStamp,
     pub chat_since: i32,
     pub outcome: Option<&'a StepOutcome>,
+    pub pairs: Option<&'a dyn super::pair::QuestPairPort>,
     pub bank: &'a super::bank_memo::BankMemo,
 }
 pub struct StepContext<'a, 'frame> {

@@ -312,6 +312,10 @@ pub trait Script: Send {
     fn pair_settings(&self) -> Option<crate::quester::pair::PairSettings> {
         None
     }
+    /// Paired Path currently active; no binding while queued, unpaired or finished.
+    fn pair_binding(&self) -> Option<crate::quester::pair::PairBinding<'_>> {
+        None
+    }
     fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure>;
     fn configure(&mut self, _next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
         Err(ConfigError::new(
