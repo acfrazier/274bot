@@ -147,7 +147,7 @@ impl Family for Autocast {
             spell: args.spell,
             arm: Arm::new(spell_com),
         };
-        match arm.arm.poll(obs, &controls, false) {
+        match arm.arm.poll(obs, controls, false) {
             ArmStep::Emit(request, wait_ms) => {
                 cx.clock().arm(wait_ms);
                 cx.emit(request);
@@ -171,7 +171,7 @@ impl Family for Autocast {
             return Step::Done(ArmOutcome::of(Reason::MissingControls, &self.spell));
         };
         let obs = observed::with(|scene| ArmObservation::from_scene(scene, controls.magic_varp));
-        match self.arm.poll(obs, &controls, cx.clock().bound_reached()) {
+        match self.arm.poll(obs, controls, cx.clock().bound_reached()) {
             ArmStep::Emit(request, wait_ms) => {
                 cx.clock().arm(wait_ms);
                 cx.emit(request);
