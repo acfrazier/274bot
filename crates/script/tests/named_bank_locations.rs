@@ -395,6 +395,8 @@ export default class T extends LoopingBot {{
         snapshot.chat_options = &[];
         snapshot.bank_open = true;
         snapshot.bank_generation = 1;
+        // The host raises the bank-side root with the bank modal.
+        native.side_modal_id = Some(700);
         tick(&snapshot, native);
         assert_eq!(
             iso.probe("[__ok,__after]").unwrap(),

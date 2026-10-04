@@ -252,3 +252,63 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
     assert_eq!(gatherer.target.as_ref().unwrap().tile, target.tile);
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 }
+
+#[test]
+fn unloaded_loc_approach_preserves_reach_and_loc_identity() {
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let plan = gatherer.target.clone().unwrap();
+    let EntityId::Loc(id) = plan.entity else {
+        panic!("the fixture selects a content-derived tree");
+    };
+    gatherer.cancel_active();
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: plan.clone(),
+                class: PlacementClass::Unloaded,
+            },
+            tick,
+        );
+    });
+    let crate::native::HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect
+    else {
+        panic!("an unloaded loc needs a navigation approach");
+    };
+    assert_eq!(request.arrival, ArrivalKind::Reach);
+    assert_eq!(request.loc_id, Some(id));
+    assert_eq!(request.target, plan.tile);
+}
+
+#[test]
+fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let mut plan = gatherer.target.clone().unwrap();
+    plan.entity = EntityId::Npc(309);
+    plan.npc_index = -1;
+    gatherer.cancel_active();
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan,
+                class: PlacementClass::Unloaded,
+            },
+            tick,
+        );
+    });
+    let crate::native::HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect
+    else {
+        panic!("an unloaded NPC needs an observation walk");
+    };
+    assert_eq!(request.arrival, ArrivalKind::Area);
+    assert_eq!(request.loc_id, None);
+}

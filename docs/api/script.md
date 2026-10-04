@@ -12,9 +12,9 @@ WalkTo is **host nav** (panel picker / TUI map), not a script card.
 While the host guardian holds a trapped random (Maze, Mime, Strange box) the
 native run is frozen. The guardian gives one Maze visit 1,000 game ticks (twice
 the content's 500-tick reward clock); after that, and for the Maze or Mime
-square with random events off, the square is inert and an unheld native run
-standing on it fails with `random-trapped` and takes the terminal Blocked Stop
-described below instead of staying `Working` there.
+square with random events off, the square is inert and any unheld running
+script (native or Load) standing on it fails with `random-trapped` and takes
+the terminal Blocked Stop described below instead of continuing there.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -175,11 +175,17 @@ lethal damage must not turn an active Quester dialogue into a living-player
 combat interruption. A new death message cancels the current clue without
 counting it as solved, even while held or after HP has already been restored.
 Posted compatibility arguments cannot manufacture a death observation.
+Sherlock retains its consumed death-chat watermark across watchdog recreation,
+so a death received in that gap suppresses new clue work once rather than
+being discarded as the recreated card's initial chat baseline. Operator
+Stop/Start discards that retained watermark and begins a fresh baseline.
 
 Running Load cards can exempt explicitly named random events through their
 cached `ignoredRandoms()` list. The event is still published, but the guardian
 does not act or hold for that event. Unlisted events and inactive cards retain
-host guardian handling; this is not a general-purpose decline hook.
+host guardian handling; this is not a general-purpose decline hook. Ignoring
+Maze or Mime declines the guardian's solve/hold, not the slot's terminal
+`random-trapped` protection if the script is left unheld on the trap square.
 
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
@@ -371,6 +377,12 @@ free tile and radius entry, including underground locations that have no named
 surface site. Banking with `Nearest` picks the nearest routable eligible bank;
 Return uses a resource/observation-stand Area arrival at radius 1, even when
 the bank is inside the configured gathering radius.
+Unloaded loc resources retain loc-aware Reach arrival and their `loc_id`,
+including the refresh to the live loc's operable stands when it loads. Only
+unloaded fishing NPC observation stands use Area arrival; live NPC operations
+own their own approach. Large fishing movement envelopes remain eligible for
+Return and observation beyond the first eight cells. The eight-approach
+budget still bounds unsuccessful surveys; exhausting it is not absence proof.
 Gas, ents and whirlpools are identified by generated IDs and trigger reselection
 or a walk away, not another gathering click on the hazard. Pause/Resume preserves
 an unfinished escape walk. A temporary hold defers actions and resumes on release
@@ -720,10 +732,16 @@ as guard-owned, even while the walk is still active.
 Arrival, Stop, Pause, cancellation, owner revocation and manual takeover retire
 the guard but preserve its conditional off-click on the host. An in-flight
 enable or switch has three ticks from successful send admission to be observed
-on; otherwise the host logs and drops the debt without a click. An observed-on
-owned protect receives an off-click, and the debt remains until that protect is
-observed off. If it stays on, the host retries once after three ticks and drops
-the debt after three more ticks if the retry has not been observed off.
+on. If a switch expires while the previous guard-owned style is still observed
+on, cleanup retires that old style instead; a user-owned style is never a
+fallback, and an observed real switch is never reversed. Otherwise the host
+logs and drops the unobserved-enable debt without a click.
+For an already-observed owned protect, the bounded cleanup attempt window
+starts at the first cleanup pump, not the guard's last evaluation before a
+hold. It receives an off-click, and the debt remains until observed off. If
+it stays on, the host retries once after three ticks and drops the debt after
+three more ticks if the retry has not been observed off. Timed drops are
+logged, including unavailable varps and refused off-clicks.
 An already-off protect receives no toggle. Later walks and bank work resume
 after at most the first three-tick window, even while cleanup is watched; a
 new guard cannot raise protection until that old cleanup ends.
@@ -844,6 +862,32 @@ arguments and awaits one completion.
 - **`RecoveryHints`** outlive a watchdog restart: the restarted script's
   `takeAnchor()` returns the anchor the stalled run latched; an unused hint
   clears once the new `onStart` succeeds.
+
+## Bank item ops (compat v1)
+
+`Bank` transfers are Rust families on the shared transfer kernel
+(`crates/script/src/bank/ops.rs`); the shim passes the caller's arguments and
+awaits the frozen return. One transfer runs at a time: a second start while
+`withdraw*`, `withdrawLoad`, `close`, a deposit loop or `withdrawTo` is in
+flight settles false (a deposit loop does nothing).
+
+- **`Bank.deposit(name, op = 'Deposit-1')`** presses that label on the first
+  bank-side row with the name, by id, slot and component, and answers whether
+  it pressed. A row without the label presses nothing; it is never an All.
+- **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
+  each matching row's All op by id and wait up to 4 s for that id to leave
+  the pack. `depositAllExcept(names)` keeps every id whose display name is
+  kept, noted or not. A nameless row is still an item the matcher decides.
+  A posted empty side ends the loop at once; a side root still down is
+  waited on for 1.2 s.
+- **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
+  true once more pack slots are used, the pack is full or that row emptied,
+  within 4 s; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
+- **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
+  Close is true only when the bank is shut, its old side root is released
+  and the bank session generation moved on, within `timeoutMs` (4 s when
+  omitted). A reopened or logged-out session is false.
 
 ## Hard no
 

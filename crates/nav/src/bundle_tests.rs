@@ -216,6 +216,37 @@ fn legacy_v8_stamp_without_manifest_or_input_hashes_is_stale() {
 }
 
 #[test]
+fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
+    // The legacy v8 literal above asserts on the first gate (`format`), so
+    // these stamp-side None/empty checks need a current-format stamp to run.
+    let baked = stamp("gen-1", "274V15", "cache-1", 11);
+    let inputs = baked.inputs.clone();
+
+    let mut no_pois = baked.clone();
+    no_pois.pois_sha256 = None;
+    assert!(no_pois
+        .covers(&expectation(&inputs))
+        .unwrap_err()
+        .contains("navpois"));
+
+    let mut no_manifest = baked.clone();
+    no_manifest.manifest_sha256 = None;
+    no_manifest.manifest_bytes = None;
+    no_manifest.relative_manifest = None;
+    assert!(no_manifest
+        .covers(&expectation(&inputs))
+        .unwrap_err()
+        .contains("manifest"));
+
+    let mut empty_input_hash = baked.clone();
+    empty_input_hash.inputs[0].sha256 = String::new();
+    assert!(empty_input_hash
+        .covers(&expectation(&inputs))
+        .unwrap_err()
+        .contains("changed"));
+}
+
+#[test]
 fn content_digest_detects_same_size_replacement() {
     let root = std::env::temp_dir().join(format!("nav-source-digest-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
@@ -258,13 +289,18 @@ fn content_digest_is_the_same_on_every_platform() {
     std::fs::create_dir_all(root.join("a")).unwrap();
     std::fs::write(root.join("a").join("file"), b"nested").unwrap();
     std::fs::write(root.join("a;"), b"punctuation").unwrap();
+    // `a.x` sorts below `/` after the shared `a` prefix: component order
+    // puts `a/file` first, while a `/`-label String sort puts `a.x` first.
+    // Without this row the pinned digest cannot tell the R4 ordering apart.
+    std::fs::write(root.join("a.x"), b"dot").unwrap();
     let inputs = fingerprints(&root, &[]).unwrap();
+    assert_eq!(inputs.len(), 3);
     let reversed: Vec<_> = inputs.into_iter().rev().collect();
     let digest = source_digest_from_fingerprints(&root, &[], &reversed).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     assert_eq!(
         digest,
-        "06cafeace22eee3935571a9d98be5242cbbfd1d3fe57148e69d79f121549ceeb"
+        "68d57c6c9ae106a260c4c19925a477685a5654e082fb174013e1a5a5ddd67cec"
     );
 }
 
