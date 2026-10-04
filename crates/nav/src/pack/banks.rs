@@ -42,10 +42,14 @@ pub(super) const BANK_BOOTH_CONFIG: &str = "scripts/interface_bank/configs/bank_
 /// length-prefixed name, the `x/z/level` tile i32le, and the access (u8
 /// tag 0 = Booth `op` i32le, 1 = Npc length-prefixed name + `op` i32le +
 /// an optional dialog choice: presence u8 then a length-prefixed string).
-pub(super) fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) {
-    out.extend_from_slice(&(banks.len() as u32).to_le_bytes());
+pub(super) fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) -> Result<(), PackError> {
+    out.extend_from_slice(
+        &u32::try_from(banks.len())
+            .map_err(|_| PackError::BadLength("bank stand count exceeds u32".into()))?
+            .to_le_bytes(),
+    );
     for b in banks {
-        write_name(out, &b.name);
+        write_name(out, &b.name)?;
         for v in [b.tile.x, b.tile.z, b.tile.level] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -56,18 +60,19 @@ pub(super) fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) {
             }
             BankAccess::Npc { name, op, choose } => {
                 out.push(1);
-                write_name(out, name);
+                write_name(out, name)?;
                 out.extend_from_slice(&op.to_le_bytes());
                 match choose {
                     Some(c) => {
                         out.push(1);
-                        write_name(out, c);
+                        write_name(out, c)?;
                     }
                     None => out.push(0),
                 }
             }
         }
     }
+    Ok(())
 }
 
 /// Read the bank stand table written by [`write_bank_stands`].
@@ -110,9 +115,14 @@ pub(super) fn read_bank_stands<R: PackRead>(r: &mut R) -> Result<Vec<BankStand>,
 }
 
 /// A length-prefixed UTF-8 string (the bank stand name fields).
-pub(super) fn write_name(out: &mut Vec<u8>, s: &str) {
-    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+pub(super) fn write_name(out: &mut Vec<u8>, s: &str) -> Result<(), PackError> {
+    out.extend_from_slice(
+        &u32::try_from(s.len())
+            .map_err(|_| PackError::BadLength("bank stand name length exceeds u32".into()))?
+            .to_le_bytes(),
+    );
     out.extend_from_slice(s.as_bytes());
+    Ok(())
 }
 
 /// Read a length-prefixed UTF-8 string (see [`write_name`]).

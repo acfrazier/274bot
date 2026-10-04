@@ -136,12 +136,14 @@ fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities()
         &open_collision,
         &crate::transport::TransportGraph::default(),
         &[],
-    );
+    )
+    .unwrap();
     let moved_pack = crate::pack::encode(
         &moved_collision,
         &crate::transport::TransportGraph::default(),
         &[],
-    );
+    )
+    .unwrap();
     assert_eq!(
         open_pack, moved_pack,
         "nonblocking loc move keeps pack equal"

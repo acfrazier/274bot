@@ -213,7 +213,7 @@ fn load_pack_keeps_stale_v5_wire_as_bad_version() {
     // A leftover v5 (pre-v6) `274V` pack is not a 274N grid pack:
     // load must surface BadVersion(5) so the operator rebakes, not
     // fall into the grid decoder and come out as a confusing BadMagic.
-    let plane = vec![0u32; 4];
+    let plane = vec![0u32; 16];
     let (walk, blocked) = crate::collision::pack_walk(&plane);
     let collision = WorldCollision {
         origin: tile(0, 0, 0),
@@ -223,7 +223,7 @@ fn load_pack_keeps_stale_v5_wire_as_bad_version() {
         blocked,
         flags: None,
     };
-    let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
     bytes[4] = 5;
     let dir = std::env::temp_dir().join(format!(
         "274bot-navworld-v5-{}-{}",
@@ -262,7 +262,7 @@ fn from_bytes_decodes_v8_and_legacy_grid_without_a_path() {
         blocked,
         flags: None,
     };
-    let v8 = encode(&collision, &TransportGraph::default(), &[]);
+    let v8 = encode(&collision, &TransportGraph::default(), &[]).unwrap();
     let packed = NavWorld::from_bytes(&v8).expect("v8 bytes decode");
     assert_eq!(packed.collision.width, 2);
     assert!(!packed.collision.walkable(tile(0, 0, 0)));
@@ -326,7 +326,7 @@ fn load_pack_path_round_trips_a_world() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("fixture.navpack");
-    std::fs::write(&path, encode(&collision, &graph, &[])).unwrap();
+    std::fs::write(&path, encode(&collision, &graph, &[]).unwrap()).unwrap();
     let w = NavWorld::load_pack(&path).expect("pack loads");
     assert_eq!(w.collision.origin, tile(0, 0, 0));
     assert_eq!(w.collision.walk, collision.walk);
@@ -394,7 +394,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("fixture-teles.navpack");
-    std::fs::write(&path, encode(&collision, &graph, &[])).unwrap();
+    std::fs::write(&path, encode(&collision, &graph, &[]).unwrap()).unwrap();
     let w = NavWorld::load_pack(&path).expect("pack loads");
     assert_eq!(w.graph.teleports, graph.teleports);
     assert!(w.graph.edges.is_empty());
@@ -417,7 +417,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
 
 #[test]
 fn load_pack_round_trips_bank_stands() {
-    // The v8 pack stores the bank stand table; NavWorld::banks exposes
+    // The v15 pack stores the bank stand table; NavWorld::banks exposes
     // it to the Banking session.
     let mut plane = vec![0u32; 4];
     plane[0] = BLOCKED;
@@ -449,7 +449,7 @@ fn load_pack_round_trips_bank_stands() {
     let path = dir.join("fixture-banks.navpack");
     std::fs::write(
         &path,
-        encode(&collision, &TransportGraph::default(), &banks),
+        encode(&collision, &TransportGraph::default(), &banks).unwrap(),
     )
     .unwrap();
     let w = NavWorld::load_pack(&path).expect("pack loads");

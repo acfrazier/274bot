@@ -23695,12 +23695,12 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
 /// Compare every admitted and rejected candidate, including directed walls
 /// and detours whose distance alone cannot decide the dequeue-rank budget.
 #[test]
-fn real_v13_batched_arrival_matches_every_forward_predicate() {
+fn real_v15_batched_arrival_matches_every_forward_predicate() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v13 pack");
+    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v15 pack");
     let tile = |x, z, level| WorldTile { x, z, level };
     let cases = [
         (tile(3017, 3170, 0), 12),
@@ -23775,16 +23775,16 @@ fn real_v13_batched_arrival_matches_every_forward_predicate() {
 }
 
 /// NAV-ARRIVAL-1: the real Return route and the native snapshot must agree.
-/// Set NAV_ARRIVAL_PACK to a v13 pack; its raw flags sidecar supplies the
+/// Set NAV_ARRIVAL_PACK to a v15 pack; its raw flags sidecar supplies the
 /// endpoint scene without connecting to the game engine.
 #[test]
-fn real_v13_return_radius_endpoint_is_native_arrival() {
+fn real_v15_return_radius_endpoint_is_native_arrival() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
     let path = std::path::PathBuf::from(path);
-    let mut world = NavWorld::load_pack(&path).expect("real v13 pack");
+    let mut world = NavWorld::load_pack(&path).expect("real v15 pack");
     let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
         .expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);

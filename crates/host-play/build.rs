@@ -36,8 +36,9 @@
 use std::path::{Path, PathBuf};
 
 use nav::bake::{
-    config_jag_for, content_inputs, generator_identity, pois_generator_identity,
-    verify_cache_manifest, BakeRequest, GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
+    config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
+    pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
+    GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
 use nav::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
@@ -45,7 +46,6 @@ use nav::bundle::{
 };
 use nav::manifest::CacheManifest;
 use nav::pack::FORMAT_ID;
-
 /// Environment inputs, all re-checked by cargo before this script is skipped.
 const ENV_KEYS: [&str; 7] = [
     "BOT_NAV_BUILD",
@@ -160,32 +160,52 @@ fn main() {
         println!("cargo:rerun-if-changed={}", archive.display());
     }
 
-    // The expensive cache identity: verified once, stamped with the artifacts.
+    // Capture source and cache files once. Their hashes drive source/cache
+    // identities and the final whole-input stability check.
     let supplied_manifest = std::env::var_os("BOT_CACHE_MANIFEST").map(PathBuf::from);
+    if let Some(path) = &supplied_manifest {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    let mut explicit: Vec<PathBuf> = vec![config_jag.clone()];
+    explicit.extend(archives.iter().cloned());
+    let explicit_refs: Vec<&Path> = explicit.iter().map(PathBuf::as_path).collect();
+    let input_fingerprints = match fingerprints(&content_dir, &explicit_refs) {
+        Ok(rows) => rows,
+        Err(e) => fail(&e),
+    };
+    let captured_manifest = match nav::bundle::cache_manifest_from_fingerprints(
+        revision,
+        &cache_dir,
+        &input_fingerprints,
+    ) {
+        Ok(manifest) => manifest,
+        Err(e) => fail(&e),
+    };
     let (manifest_source, manifest) = match &supplied_manifest {
         Some(path) => {
-            println!("cargo:rerun-if-changed={}", path.display());
-            let manifest = match verify_cache_manifest(revision, &cache_dir, path, &config_jag) {
+            let manifest = match verify_cache_manifest_from_fingerprints(
+                revision,
+                &cache_dir,
+                path,
+                &config_jag,
+                &input_fingerprints,
+            ) {
                 Ok(manifest) => manifest,
                 Err(e) => fail(&format!("navigation cache manifest: {e}")),
             };
             (Some(path.clone()), manifest)
         }
         None => {
-            let captured = match CacheManifest::capture(revision, &cache_dir) {
-                Ok(captured) => captured,
-                Err(e) => fail(&format!("navigation cache identity: {e}")),
-            };
             let known =
                 read_known_identities(&manifest_dir.join("src/known-cache-identities.json"));
-            if !known.contains(&captured) {
+            if !known.contains(&captured_manifest) {
                 fail(&format!(
                     "cache revision is unverified at {}; supply BOT_CACHE_MANIFEST for the \
                      prepared server/cache pairing (the runtime applies the same rule)",
                     cache_dir.display()
                 ));
             }
-            (None, captured)
+            (None, captured_manifest)
         }
     };
     let cache_id = manifest.identity();
@@ -201,17 +221,24 @@ fn main() {
                     "unpack"
                 })
         });
-    let content_id = nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root).unwrap_or_else(|e| fail(&format!("decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot")));
-    let source_sha256 =
-        nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e));
-
-    let mut explicit: Vec<PathBuf> = vec![config_jag.clone()];
-    explicit.extend(archives.iter().cloned());
-    let explicit_refs: Vec<&Path> = explicit.iter().map(PathBuf::as_path).collect();
-    let input_fingerprints = match fingerprints(&content_dir, &explicit_refs) {
-        Ok(rows) => rows,
-        Err(e) => fail(&e),
-    };
+    let content_id = decoded_identity_from_snapshot(
+        revision,
+        &cache_dir,
+        &snapshot_root,
+        &input_fingerprints,
+        &manifest,
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
+        ))
+    });
+    let source_sha256 = nav::bundle::source_digest_from_fingerprints(
+        &content_dir,
+        &[&config_jag],
+        &input_fingerprints,
+    )
+    .unwrap_or_else(|e| fail(&e));
 
     let resource_override = std::env::var_os("BOT_NAV_RESOURCE_DIR").map(PathBuf::from);
     let resource_root = match resource_root_for_build(&out_dir, resource_override.as_deref()) {
@@ -224,6 +251,7 @@ fn main() {
     let reach_path = resource_root.join(&layout.relative_reach);
     let canlight_path = resource_root.join(&layout.relative_canlight);
     let pois_path = resource_root.join(&layout.relative_pois);
+    let manifest_path = resource_root.join(&layout.relative_manifest);
     let stamp_path = resource_root.join(&layout.relative_stamp);
     // Staged artifacts are watched so that a later build notices one that was
     // deleted or replaced (cargo treats a missing watched path as changed),
@@ -234,11 +262,17 @@ fn main() {
         &reach_path,
         &canlight_path,
         &pois_path,
+        &manifest_path,
         &stamp_path,
     ] {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
+    let staged_pack_sha256 = nav::manifest::hash_file(&pack_path).ok();
+    let staged_flags_sha256 = nav::manifest::hash_file(&flags_path).ok();
+    let staged_reach_sha256 = nav::manifest::hash_file(&reach_path).ok();
+    let staged_canlight_sha256 = nav::manifest::hash_file(&canlight_path).ok();
+    let staged_manifest_sha256 = nav::manifest::hash_file(&manifest_path).ok();
     let staged_pois_sha256 = nav::manifest::hash_file(&pois_path).ok();
     let expectation = StampExpectation {
         revision,
@@ -247,9 +281,15 @@ fn main() {
         cache_id: &cache_id,
         inputs: &input_fingerprints,
         staged_pack_bytes: file_len(&pack_path),
+        staged_pack_sha256: staged_pack_sha256.as_deref(),
         staged_flags_bytes: file_len(&flags_path),
+        staged_flags_sha256: staged_flags_sha256.as_deref(),
         staged_reach_bytes: file_len(&reach_path),
+        staged_reach_sha256: staged_reach_sha256.as_deref(),
         staged_canlight_bytes: file_len(&canlight_path),
+        staged_canlight_sha256: staged_canlight_sha256.as_deref(),
+        staged_manifest_bytes: file_len(&manifest_path),
+        staged_manifest_sha256: staged_manifest_sha256.as_deref(),
         staged_pois_bytes: file_len(&pois_path),
         staged_pois_sha256: staged_pois_sha256.as_deref(),
         pois_generator: &pois_generator,
@@ -306,14 +346,32 @@ fn main() {
         ),
     };
 
-    if source_sha256
-        != nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e))
-        || content_id
-            != nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root)
-                .unwrap_or_else(|e| fail(&e))
-        || manifest != CacheManifest::capture(revision, &cache_dir).unwrap_or_else(|e| fail(&e))
-    {
+    let final_inputs = match fingerprints(&content_dir, &explicit_refs) {
+        Ok(rows) => rows,
+        Err(e) => fail(&e),
+    };
+    let final_manifest =
+        match nav::bundle::cache_manifest_from_fingerprints(revision, &cache_dir, &final_inputs) {
+            Ok(manifest) => manifest,
+            Err(e) => fail(&e),
+        };
+    if input_fingerprints != final_inputs || manifest != final_manifest {
         fail("cache/content inputs changed during navigation preparation");
+    }
+    let final_content_id = decoded_identity_from_snapshot(
+        revision,
+        &cache_dir,
+        &snapshot_root,
+        &final_inputs,
+        &final_manifest,
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "decoded navigation cache changed during navigation preparation: {e}"
+        ))
+    });
+    if content_id != final_content_id {
+        fail("decoded navigation content changed during navigation preparation");
     }
     let rows = publish(&out_dir, checked_in, vec![row]);
     println!("cargo:rustc-env=BOT_NAV_BUNDLED={revision}");
@@ -353,6 +411,7 @@ fn bake_and_stage(
         config_jag,
         cache: Some(cache),
         require_all_door_configs: true,
+        input_fingerprints: Some(input_fingerprints),
         content_id: Some(content_id),
     })?;
     for note in &baked.notes {
@@ -387,6 +446,7 @@ fn bake_and_stage(
         &resource_root.join(&layout.relative_manifest),
         &nav_manifest_bytes,
     )?;
+    let manifest_sha256 = nav::manifest::hash_bytes(&nav_manifest_bytes);
 
     let flags_sha256 = manifest
         .flags_sha256
@@ -421,14 +481,17 @@ fn bake_and_stage(
         flags_bytes: baked.flags.len() as u64,
         reach_bytes: baked.reach.len() as u64,
         canlight_bytes: baked.canlight.len() as u64,
-        pois_sha256: Some(pois_sha256.clone()),
-        pois_bytes: Some(pois.len() as u64),
-        relative_pois: Some(layout.relative_pois.clone()),
-        pois_generator: Some(pois_generator.to_string()),
+        manifest_sha256: Some(manifest_sha256),
+        manifest_bytes: Some(nav_manifest_bytes.len() as u64),
         relative_pack: layout.relative_pack.clone(),
         relative_flags: layout.relative_flags.clone(),
         relative_reach: layout.relative_reach.clone(),
         relative_canlight: layout.relative_canlight.clone(),
+        relative_manifest: Some(layout.relative_manifest.clone()),
+        pois_sha256: Some(pois_sha256.clone()),
+        pois_bytes: Some(pois.len() as u64),
+        relative_pois: Some(layout.relative_pois.clone()),
+        pois_generator: Some(pois_generator.to_string()),
         inputs: input_fingerprints.to_vec(),
     };
     let stamp_bytes =

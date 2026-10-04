@@ -8,6 +8,7 @@
 //! checks and the explicit external overrides (`--nav-pack` / `NAV_PACK`).
 //! Cache and world stay shared across clients.
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -38,14 +39,17 @@ pub struct NavIdentityRow {
     pub relative_path: String,
 }
 
-/// One canonical input file's machine-local identity: size plus modification
-/// time. Content hashing stays at bake time; warm builds compare these.
+/// One canonical input file's machine-local identity. Content hashes are
+/// captured with the metadata so a single snapshot drives source/cache
+/// identities and later staleness checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputFingerprint {
     pub path: String,
     pub bytes: u64,
     pub modified_nanos: u64,
+    #[serde(default)]
+    pub sha256: String,
 }
 
 impl InputFingerprint {
@@ -58,10 +62,12 @@ impl InputFingerprint {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|age| age.as_nanos() as u64)
             .unwrap_or(0);
+        let sha256 = crate::manifest::hash_file(path)?;
         Ok(Self {
             path: path.to_string_lossy().into_owned(),
             bytes: metadata.len(),
             modified_nanos,
+            sha256,
         })
     }
 }
@@ -80,6 +86,8 @@ pub fn fingerprints(root: &Path, files: &[&Path]) -> Result<Vec<InputFingerprint
         }
         paths.push((*file).to_path_buf());
     }
+    paths.sort();
+    paths.dedup();
     let mut rows = paths
         .iter()
         .map(|path| InputFingerprint::of(path))
@@ -89,34 +97,89 @@ pub fn fingerprints(root: &Path, files: &[&Path]) -> Result<Vec<InputFingerprint
     Ok(rows)
 }
 
+/// Content-address the conservative baker input closure using an existing
+/// fingerprint snapshot. Paths are relative to the content root; VCS
+/// metadata is not a baker input. Explicit inputs are labelled by argument
+/// position so provenance is machine-independent.
+pub fn source_digest_from_fingerprints(
+    root: &Path,
+    files: &[&Path],
+    inputs: &[InputFingerprint],
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"274NAVSOURCE01");
+    let mut source_inputs = Vec::new();
+    for input in inputs {
+        let path = Path::new(&input.path);
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        // Preserve path-component order while hashing a platform-neutral
+        // `/`-joined label.
+        let mut label = String::new();
+        for component in relative.components() {
+            if !label.is_empty() {
+                label.push('/');
+            }
+            label.push_str(&component.as_os_str().to_string_lossy());
+        }
+        source_inputs.push((relative, label, input));
+    }
+    source_inputs.sort_unstable_by(|(left_path, _, left), (right_path, _, right)| {
+        left_path
+            .components()
+            .cmp(right_path.components())
+            .then_with(|| left.sha256.cmp(&right.sha256))
+    });
+    for (_, label, input) in source_inputs {
+        digest.update((label.len() as u64).to_be_bytes());
+        digest.update(label.as_bytes());
+        digest.update(input.sha256.as_bytes());
+    }
+    for (index, path) in files.iter().enumerate() {
+        let input = fingerprint_for_path(inputs, path)?;
+        digest.update((index as u64).to_be_bytes());
+        digest.update(input.sha256.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+/// Find one row in the path-sorted snapshot produced by [`fingerprints`].
+pub fn fingerprint_for_path<'a>(
+    inputs: &'a [InputFingerprint],
+    path: &Path,
+) -> Result<&'a InputFingerprint, String> {
+    let label = path.to_string_lossy();
+    inputs
+        .binary_search_by(|input| input.path.as_str().cmp(label.as_ref()))
+        .ok()
+        .map(|index| &inputs[index])
+        .ok_or_else(|| format!("source input {} was not fingerprinted", path.display()))
+}
+
+/// Reconstruct the selected cache identity from an already captured input
+/// snapshot instead of hashing the same archive set a second time.
+pub fn cache_manifest_from_fingerprints(
+    revision: u16,
+    cache_dir: &Path,
+    inputs: &[InputFingerprint],
+) -> Result<crate::manifest::CacheManifest, String> {
+    let mut archives = BTreeMap::new();
+    for name in crate::manifest::CacheManifest::ARCHIVES {
+        let path = cache_dir.join(name);
+        let input = fingerprint_for_path(inputs, &path)?;
+        archives.insert(name.to_string(), input.sha256.clone());
+    }
+    Ok(crate::manifest::CacheManifest { revision, archives })
+}
+
 /// Content-address the conservative baker input closure. Paths are relative
 /// to the content root; VCS metadata is not a baker input. Explicit inputs
 /// are labelled by argument position so provenance is machine-independent.
 pub fn source_digest(root: &Path, files: &[&Path]) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    let mut paths = Vec::new();
-    collect_files(root, &mut paths)?;
-    paths.sort();
-    let mut digest = Sha256::new();
-    digest.update(b"274NAVSOURCE01");
-    for path in paths {
-        // `/`-joined on every platform: a Windows label must not differ.
-        let label = path
-            .strip_prefix(root)
-            .map_err(|e| e.to_string())?
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        digest.update((label.len() as u64).to_be_bytes());
-        digest.update(label.as_bytes());
-        digest.update(crate::manifest::hash_file(&path)?.as_bytes());
-    }
-    for (index, path) in files.iter().enumerate() {
-        digest.update((index as u64).to_be_bytes());
-        digest.update(crate::manifest::hash_file(path)?.as_bytes());
-    }
-    Ok(format!("{:x}", digest.finalize()))
+    let inputs = fingerprints(root, files)?;
+    source_digest_from_fingerprints(root, files, &inputs)
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -373,10 +436,16 @@ pub struct BakeStamp {
     pub flags_bytes: u64,
     pub reach_bytes: u64,
     pub canlight_bytes: u64,
+    #[serde(default)]
+    pub manifest_sha256: Option<String>,
+    #[serde(default)]
+    pub manifest_bytes: Option<u64>,
     pub relative_pack: String,
     pub relative_flags: String,
     pub relative_reach: String,
     pub relative_canlight: String,
+    #[serde(default)]
+    pub relative_manifest: Option<String>,
     #[serde(default)]
     pub pois_sha256: Option<String>,
     #[serde(default)]
@@ -397,9 +466,15 @@ pub struct StampExpectation<'a> {
     pub cache_id: &'a str,
     pub inputs: &'a [InputFingerprint],
     pub staged_pack_bytes: Option<u64>,
+    pub staged_pack_sha256: Option<&'a str>,
     pub staged_flags_bytes: Option<u64>,
+    pub staged_flags_sha256: Option<&'a str>,
     pub staged_reach_bytes: Option<u64>,
+    pub staged_reach_sha256: Option<&'a str>,
     pub staged_canlight_bytes: Option<u64>,
+    pub staged_canlight_sha256: Option<&'a str>,
+    pub staged_manifest_bytes: Option<u64>,
+    pub staged_manifest_sha256: Option<&'a str>,
     pub staged_pois_bytes: Option<u64>,
     pub staged_pois_sha256: Option<&'a str>,
     pub pois_generator: &'a str,
@@ -472,6 +547,29 @@ impl BakeStamp {
             }
             Some(_) => {}
         }
+        check_staged_digest("pack", &self.nav_sha256, expected.staged_pack_sha256)?;
+        check_staged_digest("flags", &self.flags_sha256, expected.staged_flags_sha256)?;
+        check_staged_digest("reach", &self.reach_sha256, expected.staged_reach_sha256)?;
+        check_staged_digest(
+            "canlight",
+            &self.canlight_sha256,
+            expected.staged_canlight_sha256,
+        )?;
+        let manifest_sha256 = self.manifest_sha256.as_deref().unwrap_or_default();
+        check_staged_digest("manifest", manifest_sha256, expected.staged_manifest_sha256)?;
+        match (self.manifest_bytes, expected.staged_manifest_bytes) {
+            (None, _) => return Err("staged navigation manifest is missing".into()),
+            (_, None) => return Err("staged navigation manifest is missing".into()),
+            (Some(stamped), Some(actual)) if stamped != actual => {
+                return Err(format!(
+                    "staged navigation manifest is {actual} bytes, stamped {stamped}"
+                ))
+            }
+            (Some(_), Some(_)) => {}
+        }
+        if self.relative_manifest.is_none() {
+            return Err("staged navigation manifest path is missing from the stamp".into());
+        }
         if self.pois_sha256.is_none() {
             return Err("staged navpois is missing".into());
         }
@@ -520,6 +618,15 @@ impl BakeStamp {
         }
         Ok(())
     }
+}
+fn check_staged_digest(name: &str, stamped: &str, actual: Option<&str>) -> Result<(), String> {
+    let Some(actual) = actual else {
+        return Err(format!("staged {name} is missing"));
+    };
+    if stamped != actual {
+        return Err(format!("staged {name} digest does not match the stamp"));
+    }
+    Ok(())
 }
 
 /// Merge the identity rows a build generated with the checked-in rows a
