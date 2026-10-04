@@ -343,5 +343,13 @@
     "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
     "runtime": "crates/script/src/shim/shop.js:34",
     "declaration": "player(): { name: string | null; count: number; slot: number }[];"
+  },
+  {
+    "id": "script-loadout-setting-resolution",
+    "module": "api/loadout/loadoutSetting.js",
+    "selector": "selectedLoadout",
+    "reason": "The shared script-setting resolver keeps blank-first semantics, accepts only a unique trimmed case-insensitive fallback, and refuses invalid settings before use.",
+    "runtime": "crates/script/src/shim/loadout_setting.js:10",
+    "declaration": "export function selectedLoadout(bag: SettingsBag): Loadout;"
   }
 ]

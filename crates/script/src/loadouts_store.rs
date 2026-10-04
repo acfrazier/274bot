@@ -675,18 +675,108 @@ fn resolve_item_option_spec(
     ResolvedSettingOptions { values, labels }
 }
 
-/// Exact case-sensitive loadout selection shared by compat and native consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadoutResolutionError {
+    NoLoadouts {
+        requested: String,
+    },
+    Unknown {
+        requested: String,
+        available: Vec<String>,
+    },
+    Ambiguous {
+        requested: String,
+        matching: Vec<String>,
+        available: Vec<String>,
+    },
+}
+
+impl std::fmt::Display for LoadoutResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoLoadouts { requested } => write!(
+                f,
+                "The saved loadout setting {requested:?} cannot select a loadout because no loadouts exist. Available loadouts: []"
+            ),
+            Self::Unknown {
+                requested,
+                available,
+            } => write!(
+                f,
+                "The saved loadout setting {requested:?} does not match a loadout. Available loadouts: {available:?}"
+            ),
+            Self::Ambiguous {
+                requested,
+                matching,
+                available,
+            } => write!(
+                f,
+                "The saved loadout setting {requested:?} is ambiguous after trimming and ignoring ASCII case. Matching loadouts: {matching:?}. Available loadouts: {available:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LoadoutResolutionError {}
+
+/// Resolve the saved script setting without changing exact Quester Path lookup.
+/// Exact names win; blank uses the first row; other names need one unique
+/// trimmed, ASCII case-insensitive match.
+pub fn resolve_script_loadout<'a>(
+    rows: &'a [Loadout],
+    wanted: &str,
+) -> Result<&'a Loadout, LoadoutResolutionError> {
+    if let Some(row) = rows.iter().find(|row| row.name == wanted) {
+        return Ok(row);
+    }
+    let trimmed = wanted.trim();
+    if trimmed.is_empty() {
+        return rows
+            .first()
+            .ok_or_else(|| LoadoutResolutionError::NoLoadouts {
+                requested: wanted.to_string(),
+            });
+    }
+    let mut matching = rows
+        .iter()
+        .filter(|row| row.name.trim().eq_ignore_ascii_case(trimmed));
+    let Some(row) = matching.next() else {
+        return Err(LoadoutResolutionError::Unknown {
+            requested: wanted.to_string(),
+            available: rows.iter().map(|row| row.name.clone()).collect(),
+        });
+    };
+    if matching.next().is_some() {
+        return Err(LoadoutResolutionError::Ambiguous {
+            requested: wanted.to_string(),
+            matching: rows
+                .iter()
+                .filter(|row| row.name.trim().eq_ignore_ascii_case(trimmed))
+                .map(|row| row.name.clone())
+                .collect(),
+            available: rows.iter().map(|row| row.name.clone()).collect(),
+        });
+    }
+    Ok(row)
+}
+
+/// Resolve a configured `loadout` field; scripts without that setting are not
+/// made dependent on operator loadouts.
+pub fn resolve_script_loadout_setting<'a>(
+    rows: &'a [Loadout],
+    wanted: Option<&str>,
+) -> Result<Option<&'a Loadout>, LoadoutResolutionError> {
+    wanted
+        .map(|wanted| resolve_script_loadout(rows, wanted))
+        .transpose()
+}
+
+/// Exact case-sensitive lookup for Quester Path loadout names.
 pub(crate) fn select_loadout<'a>(
     rows: impl IntoIterator<Item = &'a Loadout>,
     wanted: &str,
 ) -> Option<&'a Loadout> {
     rows.into_iter().find(|row| row.name == wanted)
-}
-
-/// The exact loadout a compat script's `loadout` setting names.
-/// Its serialized shape (`{ name, worn, carry, unassigned? }`) is unchanged.
-pub fn selected_compat_loadout<'a>(rows: &'a [Loadout], wanted: &str) -> Option<&'a Loadout> {
-    select_loadout(rows, wanted)
 }
 
 /// Hat-first worn names, then unassigned, after trim and empty filter.
@@ -1601,19 +1691,59 @@ mod tests {
 mod compatibility_tests {
     use super::*;
     #[test]
-    fn selected_loadout_requires_an_exact_name() {
+    fn saved_script_loadout_uses_default_and_unique_case_insensitive_match() {
         let rows = vec![
             Loadout::new("First")
                 .with_carry("Coins", 1)
                 .with_carry("Lobster", 1),
             Loadout::new("Second").with_carry("Shark", 1),
         ];
-        let pick = |wanted: &str| selected_compat_loadout(&rows, wanted).map(|r| r.name.as_str());
-        assert_eq!(pick("Second"), Some("Second"));
-        assert!(pick(" SECOND ").is_none());
-        assert!(pick("missing").is_none());
-        assert!(pick("").is_none());
-        assert!(selected_compat_loadout(&[], "").is_none());
+        assert_eq!(resolve_script_loadout(&rows, "").unwrap().name, "First");
+        assert_eq!(
+            resolve_script_loadout(&rows, " SECOND ").unwrap().name,
+            "Second"
+        );
+        assert_eq!(
+            resolve_script_loadout(&rows, "Second").unwrap().name,
+            "Second"
+        );
+        assert!(select_loadout(&rows, " SECOND ").is_none());
+    }
+
+    #[test]
+    fn saved_script_loadout_refuses_ambiguous_and_unknown_names_with_available_rows() {
+        let rows = vec![
+            Loadout::new("First"),
+            Loadout::new("Second"),
+            Loadout::new("SECOND"),
+        ];
+        assert_eq!(
+            resolve_script_loadout(&rows, "Second").unwrap().name,
+            "Second"
+        );
+        let ambiguous = resolve_script_loadout(&rows, " second ")
+            .expect_err("two case-insensitive matches must refuse");
+        let message = ambiguous.to_string();
+        assert!(message.contains("\" second \""), "{message}");
+        assert!(message.contains("ambiguous"), "{message}");
+        assert!(message.contains("Second"), "{message}");
+        assert!(message.contains("SECOND"), "{message}");
+        assert!(message.contains("First"), "{message}");
+
+        let unknown =
+            resolve_script_loadout(&rows[..2], "missing").expect_err("unknown name must refuse");
+        let message = unknown.to_string();
+        assert!(message.contains("\"missing\""), "{message}");
+        assert!(message.contains("First"), "{message}");
+        assert!(message.contains("Second"), "{message}");
+    }
+
+    #[test]
+    fn blank_script_loadout_refuses_when_no_loadouts_exist() {
+        let error = resolve_script_loadout(&[], "").expect_err("there is no first loadout");
+        let message = error.to_string();
+        assert!(message.contains("\"\""), "{message}");
+        assert!(message.contains("Available loadouts: []"), "{message}");
     }
 
     #[test]

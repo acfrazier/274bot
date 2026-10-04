@@ -294,6 +294,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut bag = serde_json::Map::new();
     bag.insert("banking".into(), serde_json::json!("None"));
+    iso.post_loadouts(&[script::Loadout::new("First")]);
     iso.post_settings_bag(&bag);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
@@ -303,7 +304,7 @@ export default class T extends LoopingBot {
         "Thiever Start helpers must not throw not impl: {logs:?}"
     );
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe["food"], "", "no loadout → scriptFood fallback");
+    assert_eq!(probe["food"], "", "empty first loadout uses the fallback");
     assert_eq!(probe["auto"], false, "banking None is not Auto");
     assert_eq!(probe["steal"], true, "HP above minEatHp can steal");
     assert_eq!(probe["match"], false, "empty food keyword matches nothing");
