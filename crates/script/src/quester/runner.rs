@@ -80,6 +80,11 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
+    custom_reader: Option<Box<dyn StepRun>>,
+    custom_read_after: Option<api::quest_progress::EvidenceStamp>,
+    pair_admission: Option<Box<dyn StepRun>>,
+    pair_admitted: bool,
+    gang_reader: super::gang::GangRead,
     bank: BankMemo,
     last_read: Option<Arc<JournalRead>>,
     journal_text: Option<Arc<str>>,
@@ -389,6 +394,11 @@ impl Quester {
             stage: None,
             progress: None,
             journal: None,
+            custom_reader: None,
+            custom_read_after: None,
+            pair_admission: None,
+            pair_admitted: false,
+            gang_reader: super::gang::GangRead::default(),
             bank: BankMemo::default(),
             last_read: None,
             journal_text: None,
@@ -1008,6 +1018,11 @@ impl Quester {
         self.last_outcome = None;
         self.published_bank_receipt = None;
         self.journal = None;
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.pair_admitted = false;
+        self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
         self.settling = false;
@@ -1089,6 +1104,9 @@ impl Quester {
     }
 
     fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
+        if self.path.progress_reader.is_some() {
+            return self.read_custom_stage(tick, retarget);
+        }
         let progress = if let Some(handle) = self.journal.as_ref() {
             match tick.actions.poll(handle, &mut tick.cx) {
                 Poll::Pending => return false,
@@ -1121,6 +1139,15 @@ impl Quester {
                 }
                 Poll::Ready(Ok(read)) => {
                     self.journal = None;
+                    if self.path.id.0.as_ref() == "blackarmgang" {
+                        if let Some(port) = tick.pairs {
+                            if let Err(error) = port.observe_gang(&read) {
+                                self.record_failure(error.action());
+                                self.parked = true;
+                                return false;
+                            }
+                        }
+                    }
                     let progress = resolve_journal(&self.path, &read, self.progress.as_deref());
                     self.journal_text = Some(Arc::from(
                         read.lines
@@ -1199,6 +1226,10 @@ impl Quester {
                 Arc::new(tick.cx.pin().clone()),
             )
         };
+        self.adopt_progress(tick, Arc::new(progress), retarget)
+    }
+
+    fn adopt_progress(&mut self, tick: &mut NativeTick<'_>, progress: Arc<QuestProgress>, retarget: bool) -> bool {
         let stage = match &progress.stage {
             Knowledge::Known(stage) => Some(stage.clone()),
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
@@ -1206,7 +1237,7 @@ impl Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
-        self.progress = Some(Arc::new(progress));
+        self.progress = Some(progress);
         self.dirty = true;
         let sequence = stage
             .as_ref()
@@ -1244,6 +1275,111 @@ impl Quester {
         self.needs_read = false;
         self.read_requested = false;
         true
+    }
+
+    fn valid_progress(&self, tick: &NativeTick<'_>, progress: &QuestProgress, after: api::quest_progress::EvidenceStamp) -> bool {
+        progress.quest == self.path.id && progress.binding == self.path.progress.binding
+            && progress.role == self.path.role && progress.pin.as_ref() == tick.cx.pin()
+            && progress.evidence.meets(after) && tick.cx.evidence().meets(progress.evidence)
+            && progress.flags.iter().all(|flag| self.path.progress.flags.iter().any(|rule| rule.flag == flag.flag))
+    }
+
+    fn read_custom_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
+        if self.custom_reader.is_none() {
+            let result = {
+                let after = tick.cx.evidence();
+                let mut cx = StepContext {
+                    tick, quests: &self.quests, progress: self.progress_slice(),
+                    required_after: after, bank: &self.bank, banks: &self.banks,
+                };
+                self.path.progress_reader.as_ref().unwrap().plan.begin(&mut cx)
+            };
+            match result {
+                Ok(reader) => {
+                    self.custom_reader = Some(reader);
+                    self.custom_read_after = Some(tick.cx.evidence());
+                }
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => return false,
+                Err(error) => { self.record_failure(error); self.parked = true; return false; }
+            }
+        }
+        let mut reader = self.custom_reader.take().unwrap();
+        let result = {
+            let after = self.custom_read_after.unwrap();
+            let mut cx = StepContext {
+                tick, quests: &self.quests, progress: self.progress_slice(),
+                required_after: after, bank: &self.bank, banks: &self.banks,
+            };
+            reader.poll(&mut cx)
+        };
+        match result {
+            Poll::Pending => { self.custom_reader = Some(reader); false }
+            Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; false }
+            Poll::Ready(Ok(outcome)) => {
+                let after = self.custom_read_after.take().unwrap();
+                let Some(progress) = outcome.progress else {
+                    self.record_failure(ActionError::Blocked(Arc::from("progress reader returned no owned progress")));
+                    self.parked = true;
+                    return false;
+                };
+                if outcome.evidence != progress.evidence || !self.valid_progress(tick, &progress, after) {
+                    self.record_failure(ActionError::Stale);
+                    self.parked = true;
+                    return false;
+                }
+                self.adopt_progress(tick, progress, retarget)
+            }
+        }
+    }
+
+    fn admit_pair(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        if self.path.partner.is_none() || self.pair_admitted { return true; }
+        if tick.pairs.is_some_and(|port| port.gang(tick.cx.run()).is_err()) {
+            match self.gang_reader.poll(tick, &self.quests) {
+                Poll::Pending => return false,
+                Poll::Ready(Ok(_)) => {}
+                Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; return false; }
+            }
+        }
+        if self.pair_admission.is_none() {
+            let result = super::families::partner::admission(&self.path).and_then(|plan| {
+                let after = tick.cx.evidence();
+                let mut cx = StepContext {
+                    tick, quests: &self.quests, progress: self.progress_slice(),
+                    required_after: after, bank: &self.bank, banks: &self.banks,
+                };
+                plan.begin(&mut cx)
+            });
+            match result {
+                Ok(run) => self.pair_admission = Some(run),
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => return false,
+                Err(error) => { self.record_failure(error); self.parked = true; return false; }
+            }
+        }
+        let mut run = self.pair_admission.take().unwrap();
+        let result = {
+            let after = tick.cx.evidence();
+            let mut cx = StepContext {
+                tick, quests: &self.quests, progress: self.progress_slice(),
+                required_after: after, bank: &self.bank, banks: &self.banks,
+            };
+            run.poll(&mut cx)
+        };
+        match result {
+            Poll::Pending => {
+                self.pair_admission = Some(run);
+                self.waiting = Some(("Partner admission", Arc::clone(&self.path.id.0)));
+                self.dirty = true;
+                false
+            }
+            Poll::Ready(Ok(_)) => {
+                self.pair_admitted = true;
+                self.waiting = None;
+                self.dirty = true;
+                true
+            }
+            Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; false }
+        }
     }
 
     fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
@@ -1478,6 +1614,10 @@ impl Script for Quester {
         {
             return Ok(self.finish_quest(tick));
         }
+        if !self.admit_pair(tick) {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
         if self.settling {
             let truth = {
                 let pred = PredicateContext {
@@ -1672,6 +1812,14 @@ impl Script for Quester {
                 }
             }
             Poll::Ready(Ok(outcome)) => {
+                if let Some(progress) = &outcome.progress {
+                    if !self.valid_progress(tick, progress, outcome.evidence) {
+                        self.record_step_failure(ActionError::Stale, tick);
+                        self.step = None;
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    self.adopt_progress(tick, Arc::clone(progress), false);
+                }
                 if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
                     self.active_loadout = Some(loadout);
                 }
@@ -1749,6 +1897,11 @@ impl Script for Quester {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.pair_admitted = false;
+        self.gang_reader.cancel();
         self.watchdog = Watchdog::default();
         self.dirty = true;
         match event {
@@ -1794,6 +1947,11 @@ impl Script for Quester {
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         self.watchdog = Watchdog::default();
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.pair_admitted = false;
+        self.gang_reader.cancel();
         // Dropping these guards revokes their native owners before the host can dispatch them.
         self.capture_prayer_cleanup();
         self.step = None;
@@ -1820,6 +1978,11 @@ impl Script for Quester {
     }
 
     fn on_stop(&mut self, _reason: StopReason) {
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.pair_admitted = false;
+        self.gang_reader.cancel();
         self.step = None;
         self.provisioner.cancel();
         self.journal = None;
@@ -1863,6 +2026,8 @@ pub struct QueuedQuester {
     active: Option<Box<Quester>>,
     active_index: Option<usize>,
     preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
+    gang_reader: super::gang::GangRead,
+    pair_selection: Option<(usize, super::pair::Gang)>,
     completed: u16,
     deaths: u16,
     max_deaths: u8,
@@ -1904,6 +2069,8 @@ impl QueuedQuester {
             active: None,
             active_index: None,
             preparing: None,
+            gang_reader: super::gang::GangRead::default(),
+            pair_selection: None,
             completed: 0,
             deaths: 0,
             max_deaths,
@@ -2160,12 +2327,48 @@ impl QueuedQuester {
         }
         self.refresh_fields();
     }
+    fn prepare_pair_role(&mut self, index: usize, tick: &mut NativeTick<'_>) -> Poll<Result<super::pair::Gang, ActionError>> {
+        if let Some((selected, gang)) = self.pair_selection {
+            if selected == index { return Poll::Ready(Ok(gang)); }
+        }
+        match self.gang_reader.poll(tick, &self.quests) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(observed)) => {
+                let gang = match observed {
+                    Knowledge::Known(Some(gang)) => {
+                        if self.queue.gang.is_some_and(|declared| declared != gang) {
+                            return Poll::Ready(Err(super::pair::PairError::WrongGang.action()));
+                        }
+                        gang
+                    }
+                    Knowledge::Known(None) => {
+                        let Some(gang) = self.queue.gang else {
+                            return Poll::Ready(Err(ActionError::Blocked(Arc::from("choose an irreversible gang explicitly for this unjoined account"))));
+                        };
+                        gang
+                    }
+                    _ => return Poll::Ready(Err(super::pair::PairError::UnknownGang.action())),
+                };
+                self.pair_selection = Some((index, gang));
+                Poll::Ready(Ok(gang))
+            }
+        }
+    }
 }
 
 impl Script for QueuedQuester {
+    fn pair_settings(&self) -> Option<super::pair::PairSettings> {
+        Some(super::pair::PairSettings {
+            partner: self.queue.partner_account.clone(),
+            gang: self.queue.gang,
+        })
+    }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.run != tick.cx.run() {
             self.run = tick.cx.run();
+            self.gang_reader.cancel();
+            self.pair_selection = None;
             self.queue.refresh_blocked();
             self.quest_status_since = None;
             self.refresh_fields();
@@ -2278,6 +2481,21 @@ impl Script for QueuedQuester {
             return Ok(ScriptFlow::Continue);
         }
         if let Some(index) = self.queue.next_candidate() {
+            let paired = super::card::is_pair_path(self.queue.id(index).unwrap());
+            let gang = if paired {
+                match self.prepare_pair_role(index, tick) {
+                    Poll::Pending => {
+                        self.publish(tick.output, NativePhase::Waiting);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Poll::Ready(Ok(gang)) => Some(gang),
+                    Poll::Ready(Err(error)) => {
+                        self.queue.mark_blocked(index, Arc::from(format!("partner admission: {error:?}")));
+                        self.refresh_fields();
+                        return Ok(ScriptFlow::Continue);
+                    }
+                }
+            } else { None };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
@@ -2285,7 +2503,7 @@ impl Script for QueuedQuester {
             let worker = api::selected::FamilyPreparation::run(move |_| {
                 let bytes = super::card::released_path(&id)
                     .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
-                super::compile::compile_path(bytes, &selected, &quests).map_err(|error| {
+                super::compile::compile_path_for_gang(bytes, &selected, &quests, gang).map_err(|error| {
                     let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
                     Arc::from(match &error.step {
                         Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
@@ -2319,18 +2537,24 @@ impl Script for QueuedQuester {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         if let Some(active) = self.active.as_mut() {
             active.interrupt(event);
         }
     }
 
     fn on_stop(&mut self, reason: StopReason) {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         if let Some(active) = self.active.as_mut() {
             active.on_stop(reason);
         }
     }
 
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         self.active
             .as_mut()
             .map_or(RandomClaim::Host, |active| active.on_random(event))

@@ -2,6 +2,7 @@
 
 pub mod combat;
 pub mod dialogue;
+pub mod partner;
 pub mod progress_predicates;
 pub mod reach;
 pub mod s2;
@@ -69,6 +70,7 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             setting::compile_setting
         ),
         super::compile::step!("combat", 1, Explicit, combat::CombatArgs, combat::compile),
+        super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
     ];
     HANDLERS
 }

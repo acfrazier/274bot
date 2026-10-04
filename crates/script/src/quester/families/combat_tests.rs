@@ -93,6 +93,8 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
     let path = FactKey::new("combat_walk_policy");
     let cx = CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -386,6 +388,8 @@ fn fixture_compile_context<'a>(
 ) -> CompileContext<'a> {
     CompileContext {
         path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress,
         selected: data,
         quests,

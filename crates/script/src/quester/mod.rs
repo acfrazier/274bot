@@ -6,6 +6,7 @@ pub mod compile;
 pub mod eligibility;
 pub mod families;
 pub mod handlers;
+pub mod gang;
 pub mod loadouts;
 mod nav_coverage;
 pub mod pair;

@@ -96,7 +96,11 @@ pub(crate) fn compile_progress(
     // Identity catalogs know the expected binding. Keep the compiler useful
     // for synthetic/cache fixtures whose deliberately changed path id is not
     // present in the identity roster.
-    if let Ok(facts) = quests.quest(document.id.0.as_ref()) {
+    if document.kind == super::path::PathKind::Miniquest {
+        if role.role.is_some() || role.progress_binding.0.as_ref() != format!("card:{}", document.id.0) {
+            return Err(super::compile::CompileError::code("miniquest-progress-binding"));
+        }
+    } else if let Ok(facts) = quests.quest(document.id.0.as_ref()) {
         if let Knowledge::Known(expected) = &facts.progress_binding {
             if expected != &role.progress_binding {
                 return Err(super::compile::CompileError::code("progress-binding"));
@@ -644,6 +648,9 @@ mod tests {
         CompiledPath {
             id: FactKey::new("synthetic"),
             role: None,
+            kind: crate::quester::path::PathKind::Quest,
+            partner: None,
+            progress_reader: None,
             display_name: Arc::from("Synthetic"),
             tested_stats: None,
             digest: [0; 32],

@@ -232,6 +232,15 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Current trade roots, counterpart and posted offer/confirmation containers.
+    pub fn trade(&self) -> Option<Observed<&super::TradeView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.trade(),
+            stamp: self.stamp,
+        })
+    }
+
     /// Products and quantity buttons posted by the chat make menu.
     pub fn make_products(&self) -> Option<Observed<&[super::MakeProductView]>> {
         let snapshot = self.ingame()?;
@@ -579,6 +588,28 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn trade_view_is_borrowed_and_unready_outside_a_session() {
+        let stamp = EvidenceStamp {
+            run: RunKey { slot: 2, run: 3, session: 4 },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::new();
+        assert!(SnapshotView::new(Some(&snapshot), stamp).trade().is_none());
+        snapshot.seed_ingame(2);
+        snapshot.seed_trade(super::super::TradeView {
+            offer_open: true,
+            partner: Some("configured peer".into()),
+            accept_component_id: 3420,
+            ..Default::default()
+        });
+        let observed = SnapshotView::new(Some(&snapshot), stamp).trade().unwrap();
+        assert!(std::ptr::eq(observed.value, snapshot.trade()));
+        assert_eq!(observed.stamp, stamp);
+        assert_eq!(observed.value.partner.as_deref(), Some("configured peer"));
+    }
 
     #[test]
     fn dialogue_page_fingerprint_tracks_all_texts_and_option_component_text_pairs() {

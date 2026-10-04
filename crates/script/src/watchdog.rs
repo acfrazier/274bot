@@ -98,6 +98,7 @@ pub struct ProgressWatchdog {
     state: WatchdogState,
     last_scheduler: Option<Instant>,
     last_gameplay: Option<Instant>,
+    pair_wait_since: Option<Instant>,
     last_recovery: Option<Instant>,
     last_tile: Option<Tile>,
     last_xp: Vec<i32>,
@@ -125,6 +126,7 @@ impl ProgressWatchdog {
             state: WatchdogState::Idle,
             last_scheduler: None,
             last_gameplay: None,
+            pair_wait_since: None,
             last_recovery: None,
             last_tile: None,
             last_xp: Vec::new(),
@@ -167,7 +169,7 @@ impl ProgressWatchdog {
         }
         Some(ScriptProgress {
             running_for: now.saturating_duration_since(run.started),
-            idle_for: (self.state != WatchdogState::Idle && !self.frozen)
+            idle_for: (self.state != WatchdogState::Idle && !self.frozen && self.pair_wait_since.is_none())
                 .then(|| self.gameplay_elapsed(now)),
             gained,
         })
@@ -249,6 +251,7 @@ impl ProgressWatchdog {
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
         self.last_gameplay = Some(now);
+        self.pair_wait_since = None;
         self.progress = Some(Box::new(RunProgress {
             started: now,
             baseline: [0; SKILL_SLOTS],
@@ -271,6 +274,7 @@ impl ProgressWatchdog {
         self.state = WatchdogState::Armed;
         self.last_scheduler = Some(now);
         self.last_gameplay = Some(now);
+        self.pair_wait_since = None;
         self.last_tile = None;
         self.last_xp.clear();
         self.wait_inflight = 0;
@@ -294,6 +298,7 @@ impl ProgressWatchdog {
             _ => WatchdogState::Armed,
         };
         self.wait_inflight = 0;
+        self.pair_wait_since = None;
         self.warned = false;
         if self.state != WatchdogState::Idle {
             self.restamp(now);
@@ -355,6 +360,10 @@ impl ProgressWatchdog {
             return;
         }
         self.last_gameplay = Some(now);
+    }
+
+    pub(crate) fn gameplay_stamp(&self) -> Option<Instant> {
+        self.last_gameplay
     }
 
     pub fn stamp_note_progress(&mut self, now: Instant) {
@@ -473,6 +482,19 @@ impl ProgressWatchdog {
     }
 
     pub fn observe(&mut self, now: Instant, running: bool) -> WatchdogAction {
+        self.observe_with_pair_wait(now, running, false)
+    }
+
+    /// Only the admitted waiter's gameplay clock is suspended. Scheduler
+    /// failure and the peer's active-action watchdog remain fully live.
+    pub fn observe_with_pair_wait(&mut self, now: Instant, running: bool, waiting: bool) -> WatchdogAction {
+        if waiting {
+            self.pair_wait_since.get_or_insert(now);
+        } else if let Some(since) = self.pair_wait_since.take() {
+            if let Some(last) = self.last_gameplay.as_mut() {
+                *last += now.saturating_duration_since(since.max(*last));
+            }
+        }
         if self.state == WatchdogState::Idle || self.frozen || !running {
             return WatchdogAction::None;
         }
@@ -493,7 +515,7 @@ impl ProgressWatchdog {
         }
         match self.state {
             WatchdogState::Armed => {
-                if self.gameplay_elapsed(now) >= WEDGE && self.cooldown_ok(now) {
+                if !waiting && self.gameplay_elapsed(now) >= WEDGE && self.cooldown_ok(now) {
                     self.state = WatchdogState::SamplingAnchor;
                     return WatchdogAction::RequestAnchor;
                 }
@@ -1278,5 +1300,34 @@ mod tests {
             Some(Duration::from_secs(5)),
             "Resume restarts the clock"
         );
+    }
+    #[test]
+    fn pair_wait_suspends_only_the_waiters_gameplay_wedge_clock() {
+        let t = t0();
+        let mut waiting = ProgressWatchdog::new();
+        let mut acting = ProgressWatchdog::new();
+        waiting.arm_fresh(t);
+        acting.arm_fresh(t);
+        waiting.stamp_scheduler(t + Duration::from_secs(1));
+        assert_eq!(waiting.observe_with_pair_wait(t + Duration::from_secs(1), true, true), WatchdogAction::None);
+        let later = t + WEDGE * 2;
+        waiting.stamp_scheduler(later);
+        acting.stamp_scheduler(later);
+        assert_eq!(waiting.observe_with_pair_wait(later, true, true), WatchdogAction::None);
+        assert_eq!(waiting.progress(later).unwrap().idle_for, None);
+        assert_eq!(acting.observe(later, true), WatchdogAction::RequestAnchor);
+        waiting.stamp_scheduler(later + Duration::from_secs(1));
+        assert_eq!(waiting.observe_with_pair_wait(later + Duration::from_secs(1), true, false), WatchdogAction::None);
+        assert!(waiting.progress(later + Duration::from_secs(1)).unwrap().idle_for.unwrap() < WEDGE);
+    }
+
+    #[test]
+    fn pair_wait_never_hides_a_dead_scheduler() {
+        let t = t0();
+        let mut waiting = ProgressWatchdog::new();
+        waiting.arm_fresh(t);
+        waiting.observe_with_pair_wait(t, true, true);
+        assert!(matches!(waiting.observe_with_pair_wait(t + HARD_STALL, true, true),
+            WatchdogAction::Restart { reason: RestartReason::Stall }));
     }
 }

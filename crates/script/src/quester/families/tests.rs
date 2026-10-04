@@ -999,6 +999,8 @@ fn path_bank_context<'a>(
 ) -> CompileContext<'a> {
     CompileContext {
         path: base.path,
+        kind: base.kind,
+        pair: base.pair,
         progress: base.progress,
         selected: base.selected,
         quests: base.quests,
@@ -1476,6 +1478,8 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let recipes = Default::default();
     let compile = CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -2227,6 +2231,8 @@ fn compile_context_test_with_keep<R>(
     let progress = test_progress();
     f(&CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,

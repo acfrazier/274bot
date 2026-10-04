@@ -418,6 +418,11 @@ impl GameSnapshot {
         self.inventory_size = size;
     }
 
+    /// Offline fixture observation of a trade page; production uses decoded widgets.
+    pub fn seed_trade(&mut self, trade: TradeView) {
+        self.trade = trade;
+    }
+
     /// Offline fixture observation of a bank modal and its two containers.
     /// `None` means the bank table is unread, not loaded empty stock.
     /// An open fixture bank raises a side root as the real opening does

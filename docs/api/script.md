@@ -134,8 +134,8 @@ scripts end their live step at either boundary.
 Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 `quests` selects quest IDs (an empty list selects all released Paths);
 `order_override` prioritizes selected IDs and `skip` excludes IDs. `partner_account`
-and `gang` are per-account settings, not bulk-copy settings; partner quest
-execution remains separate from this release slice.
+and `gang` are per-account settings, not bulk-copy settings. Partner selection uses
+configured vault identities, including saved accounts not currently loaded.
 
 A roster row can be unavailable on this server: it carries `name` and an
 end-user `unavailable` reason instead of being released (it may keep its
@@ -158,6 +158,32 @@ two deaths can recover, and the third stops Quester as blocked with a
 maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
+
+Shield of Arrav and Hero's Quest require two accounts explicitly running their
+own Quester in the same Play, with reciprocal partner settings and opposite
+effective gangs. A separate panel or TUI process is not the same Play. The owned
+Arrav journal determines existing membership; an unjoined account must explicitly
+choose its irreversible gang. Conflicting or ambiguous membership blocks before
+either account joins. A completed quest does not enlist a partner.
+
+Each handoff reserves a finite reciprocal phase and dispatches only the actor's
+own role action. Trades check the configured counterpart and exact unnoted offers
+on both offer and confirmation screens; acceptance clicks do not prove success.
+Both inventories must prove the transfer. Stop, Pause, removal, session loss or a
+failed role revokes both phase-owned action authorities before queued work drains.
+The peer blocks rather than being stopped or automatically restarted; explicitly
+Start both accounts again after inspecting server-side items and quest progress.
+
+A paired waiter suspends only its own gameplay-wedge clock. The actor's gameplay
+watchdog and both scheduler watchdogs remain live. New observed gameplay can
+extend a phase's ten-minute inactivity bound, never its sixty-minute total bound.
+Polls and duplicate receipts cannot extend either deadline.
+
+Miniquest Paths use an owned typed progress reader instead of inventing a quest-tab
+row. The reader runs initially and after advancing steps, and only matching fresh
+run, selected-pin, binding and role evidence is accepted. Nearest-first sequences
+choose the closest uncompleted authored anchor; unknown guards still block selection.
+
 
 Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
 recreation and reconnect preserve its death count, consumed chat watermark,

@@ -20,30 +20,45 @@ pub fn select<'a>(
     sequence: usize,
     cx: &PredicateContext<'_, '_>,
 ) -> SelectionDecision<'a> {
-    for (prelude, steps) in [
-        (true, path.prelude.as_slice()),
-        (
-            false,
-            path.sequences
-                .get(sequence)
-                .map_or(&[], |seq| seq.steps.as_slice()),
-        ),
-    ] {
-        for (index, step) in steps.iter().enumerate() {
-            match step.skip_if.evaluate(cx) {
-                Truth::True => {}
-                Truth::Unknown => return SelectionDecision::Unknown,
-                Truth::False => {
-                    return SelectionDecision::Selected(Selection {
-                        step,
-                        index,
-                        prelude,
-                    })
+    for (index, step) in path.prelude.iter().enumerate() {
+        match step.skip_if.evaluate(cx) {
+            Truth::True => {}
+            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::False => {
+                return SelectionDecision::Selected(Selection { step, index, prelude: true });
+            }
+        }
+    }
+    let Some(sequence) = path.sequences.get(sequence) else {
+        return SelectionDecision::Exhausted;
+    };
+    let nearest = sequence.order == super::path::SequenceOrder::Nearest;
+    let here = nearest.then(|| cx.cx.snapshot().here()).flatten();
+    let mut chosen = None;
+    let mut best = (i64::MAX, i32::MAX);
+    for (index, step) in sequence.steps.iter().enumerate() {
+        match step.skip_if.evaluate(cx) {
+            Truth::True => {}
+            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::False => {
+                let candidate = Selection { step, index, prelude: false };
+                if !nearest {
+                    return SelectionDecision::Selected(candidate);
+                }
+                let (Some(here), Some(anchor)) = (here.as_ref(), step.plan.anchor()) else {
+                    return SelectionDecision::Unknown;
+                };
+                let distance = (i64::from(here.value.x) - i64::from(anchor.x)).abs()
+                    .max((i64::from(here.value.z) - i64::from(anchor.z)).abs());
+                let score = (distance, (here.value.level - anchor.level).abs());
+                if score < best {
+                    best = score;
+                    chosen = Some(candidate);
                 }
             }
         }
     }
-    SelectionDecision::Exhausted
+    chosen.map_or(SelectionDecision::Exhausted, SelectionDecision::Selected)
 }
 
 pub fn sequence_for_stage(path: &CompiledPath, stage: &str) -> Option<usize> {
