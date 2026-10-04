@@ -1465,6 +1465,60 @@ assert.deepEqual(questStarts.rows, [{
 }]);
 assert.doesNotThrow(() => extractQuestIdentityFacts(questRoot, 274));
 
+const constantJournalRoot = questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] += '[priest]\ny=6\ntext=The Restless Ghost\n';
+    files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:priest, %prieststart, ^priest_complete);\n';
+    files['scripts/general/configs/quest.constant'] += '^priest_complete = 5\n^priest_questpoints = 1\n';
+    files['pack/varp.pack'] += '107=prieststart\n';
+    files['scripts/quests/quest_priest/scripts/priest_journal.rs2'] = `[if_button,questlist:priest]
+def_string $x;
+def_string $quest_title = "The Restless Ghost";
+if (%prieststart = 0) {
+    $x = "Speak to Father Aereck.";
+    ~quest_journal($quest_title, $x);
+    return;
+}
+~quest_journal($quest_title, "Quest complete.");
+`;
+    files['scripts/quests/quest_cook/scripts/cook_journal.rs2'] = `[if_button,questlist:cook]
+~quest_journal("Cook's Assistant", "Speak to the Cook.");
+`;
+});
+for (const revision of [274, 289]) {
+    const rows = extractQuestIdentityFacts(constantJournalRoot, revision).rows;
+    assert.equal(rows.find((row) => row.id === 'priest')?.journal_title, 'The Restless Ghost');
+    assert.equal(rows.find((row) => row.id === 'priest')?.journal_script, 'scripts/quests/quest_priest/scripts/priest_journal.rs2');
+    assert.equal(rows.find((row) => row.id === 'cook')?.journal_title, "Cook's Assistant");
+}
+fs.rmSync(constantJournalRoot, { recursive: true, force: true });
+
+for (const body of [
+    `[proc,unrelated]
+def_string $title = "Not Cook's Assistant";
+[if_button,questlist:cook]
+~quest_journal($title, "");
+`,
+    `[if_button,questlist:cook]
+def_string $title = ~runtime_title;
+~quest_journal($title, "");
+`,
+    `[if_button,questlist:cook]
+def_string $title = "Cook's Assistant";
+if (%cookquest = 2) {
+    $title = "A different title";
+}
+~quest_journal($title, "");
+`,
+]) {
+    const root = questFixture((files) => {
+        files['scripts/quests/quest_cook/scripts/cook_journal.rs2'] = body;
+    });
+    const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+    assert.equal(row?.journal_title, null, 'nonconstant or foreign-script bindings stay unknown');
+    assert.equal(row?.journal_script, null);
+    fs.rmSync(root, { recursive: true, force: true });
+}
+
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/scripts/quests.rs2']; }), 274), /quests\.rs2/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.constant']; }), 274), /quest\.constant/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/player/interfaces/questlist.if']; }), 274), /questlist\.if/);
@@ -1519,6 +1573,26 @@ const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
 const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
 assertQuestRows(pinQuest274);
 assertQuestRows(pinQuest289);
+const constantJournalTitles = [
+    ['priest', 'The Restless Ghost'],
+    ['itwatchtower', 'Watch Tower'],
+    ['itexam', 'The Dig Site'],
+    ['hero', "Heroes' Quest"],
+    ['zombiequeen', 'Shilo Village'],
+    ['ikov', 'Temple of Ikov'],
+    ['desertrescue', 'Tourist Trap'],
+    ['upass', 'Underground Pass'],
+] as const;
+for (const facts of [pinQuest274, pinQuest289]) {
+    for (const [id, title] of constantJournalTitles) {
+        const row = facts.rows.find((entry) => entry.id === id);
+        assert.equal(row?.journal_title, title, `pinned local-constant journal title: ${id}`);
+        assert.equal(row?.journal_script?.endsWith('_journal.rs2'), true, `pinned local-constant journal script: ${id}`);
+    }
+    assert.equal(facts.rows.find((row) => row.id === 'barcrawl')?.journal_title, null, 'miniquest without a journal remains unknown');
+}
+assert.equal(pinQuest289.rows.find((row) => row.id === 'misc')?.journal_title, 'Throne of Miscellania');
+assert.equal(pinQuest289.rows.find((row) => row.id === 'hauntedmine')?.journal_title, null, 'stub without a journal remains unknown');
 assert.equal(pinQuest289.rows.length, 69);
 assert.equal(pinQuest274.rows.some((row) => row.id === 'routequest'), false);
 assert.equal(pinQuest274.coverage.length, 1);

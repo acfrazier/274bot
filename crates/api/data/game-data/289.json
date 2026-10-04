@@ -96626,8 +96626,8 @@
         },
         "members": false,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "The Restless Ghost",
+        "journal_script": "scripts/quests/quest_priest/scripts/priest_journal.rs2"
       },
       {
         "id": "gobdip",
@@ -96878,8 +96878,8 @@
         },
         "members": false,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Watch Tower",
+        "journal_script": "scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2"
       },
       {
         "id": "ball",
@@ -96962,8 +96962,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "The Dig Site",
+        "journal_script": "scripts/quests/quest_itexam/scripts/itexam_journal.rs2"
       },
       {
         "id": "chompybird",
@@ -97151,8 +97151,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Heroes' Quest",
+        "journal_script": "scripts/quests/quest_hero/scripts/hero_journal.rs2"
       },
       {
         "id": "junglepotion",
@@ -97361,8 +97361,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Shilo Village",
+        "journal_script": "scripts/quests/quest_zombiequeen/scripts/zombiequeen_journal.rs2"
       },
       {
         "id": "ikov",
@@ -97382,8 +97382,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Temple of Ikov",
+        "journal_script": "scripts/quests/quest_ikov/scripts/ikov_journal.rs2"
       },
       {
         "id": "desertrescue",
@@ -97403,8 +97403,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Tourist Trap",
+        "journal_script": "scripts/quests/quest_desertrescue/scripts/desertrescue_journal.rs2"
       },
       {
         "id": "tree",
@@ -97466,8 +97466,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Underground Pass",
+        "journal_script": "scripts/quests/quest_upass/scripts/upass_journal.rs2"
       },
       {
         "id": "dragon",
@@ -97697,8 +97697,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Throne of Miscellania",
+        "journal_script": "scripts/quests/quest_misc/scripts/misc_journal.rs2"
       },
       {
         "id": "viking",

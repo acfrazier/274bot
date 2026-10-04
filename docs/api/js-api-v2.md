@@ -486,6 +486,13 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Quest journal
 
+The generated selected quest catalog records `journal_title` and
+`journal_script` from the corresponding `[if_button,questlist:...]` script.
+Titles may be literal strings or locally initialized constant strings passed
+to `~quest_journal`; local bindings never cross script blocks. A title without
+constant source evidence, or a row without a journal, remains `null` rather
+than being inferred from the quest-list display name.
+
 `questJournalBegin({ name })` is a synchronous `HelperResult<{ token }>` and
 `await questJournalRun({ token })` is the token's one machine await. Begin
 selects the first posted journal row whose name matches after trim and ASCII
