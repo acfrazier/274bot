@@ -188,26 +188,37 @@ fn nav_sample(play: &Play, account: &str, combat: Option<i32>) -> Option<(u64, V
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account)?;
     let (target, radius, teles, wild, fetch, zones) = bot.requested_route?;
-    let active_zone_tiles = bot.route.as_ref().and_then(|route| {
+    let zone_tiles = bot.route.as_ref().and_then(|route| {
         let world = play.world.as_ref()?;
         let table = world.graph.zones.as_ref()?;
         let filter = nav::zones::ZoneFilter::new(table, combat, &[], &nav::zones::ZoneExempt::NONE);
+        let endpoint_zones: Vec<_> = table.at(ORIGIN).chain(table.at(route.dest)).collect();
         Some(
             route
                 .legs
                 .iter()
-                .map(|leg| match leg {
-                    nav::router::Leg::Walk { tiles } => tiles
-                        .iter()
-                        .filter(|&&tile| filter.blocks(&world.graph.wilderness, tile))
-                        .count(),
-                    nav::router::Leg::Transport { edge } => {
-                        usize::from(filter.blocks(&world.graph.wilderness, edge.to))
-                    }
+                .flat_map(|leg| match leg {
+                    nav::router::Leg::Walk { tiles } => tiles.as_slice(),
+                    nav::router::Leg::Transport { edge } => std::slice::from_ref(&edge.to),
                 })
-                .sum::<usize>(),
+                .fold((0usize, 0usize), |(active, transit), &tile| {
+                    let mut active_tile = false;
+                    let mut transit_tile = false;
+                    for index in filter.blocking_at(&world.graph.wilderness, tile) {
+                        active_tile = true;
+                        transit_tile |= !endpoint_zones.contains(&index);
+                    }
+                    (
+                        active + usize::from(active_tile),
+                        transit + usize::from(transit_tile),
+                    )
+                }),
         )
     });
+    let (active_zone_tiles, transit_zone_tiles) = zone_tiles
+        .map_or((None, None), |(active, transit)| {
+            (Some(active), Some(transit))
+        });
     let legs = bot.route.as_ref().map(|route| route.legs.iter().map(|leg| match leg {
         nav::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
         nav::router::Leg::Transport { edge } => json!({"kind": format!("{:?}", edge.kind), "at": edge.at, "to": edge.to, "option": edge.option, "ticks": edge.ticks}),
@@ -221,6 +232,7 @@ fn nav_sample(play: &Play, account: &str, combat: Option<i32>) -> Option<(u64, V
             "all_danger_zones": zones.is_all(), "bank_budget_active": bot.bank_fetch.is_some(),
             "guard_active": bot.walk_guard.is_some(), "route": legs,
             "combat_level": combat, "active_zone_tiles": active_zone_tiles,
+            "transit_zone_tiles": transit_zone_tiles,
         }),
     ))
 }
@@ -447,14 +459,14 @@ fn live_quester_walk_optins() {
         Cell::Danger => {
             admissions.iter().all(|rows| {
                 rows.iter()
-                    .any(|sample| !sample["route"].is_null() && sample["active_zone_tiles"] == 0)
+                    .any(|sample| !sample["route"].is_null() && sample["transit_zone_tiles"] == 0)
             }) && admissions[0].iter().all(|sample| {
-                sample["active_zone_tiles"].is_null() || sample["active_zone_tiles"] == 0
+                sample["transit_zone_tiles"].is_null() || sample["transit_zone_tiles"] == 0
             })
         }
         Cell::DangerNoSafe => {
             admissions[0].iter().any(|sample| {
-                sample["active_zone_tiles"]
+                sample["transit_zone_tiles"]
                     .as_u64()
                     .is_some_and(|count| count > 0)
             }) && admissions[1].iter().all(|sample| sample["route"].is_null())

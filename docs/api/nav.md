@@ -414,14 +414,15 @@ missing-supply diagnostics invert that same rule across the remaining route.
 
 Danger-zone permission is scoped to the route. Every search first applies
 the zone filter without named or all-zone grants. If that pass finds a route,
-it wins even when a granted crossing would be cheaper. Only a `NoPath` or
-`BudgetExhausted` result enables the second pass, which applies the requested
-named or all-zone grants and destination-completion permission. Hard transport,
-item, skill, quest and wilderness gates remain unchanged.
-Safety also outranks preferred-versus-fallback target priority. If any acceptable
-target routes safely, preferred targets win within that safe set, followed by
-safe fallback targets. Only when neither class yields a safe route may the
-exempt pass run; preferred targets then win within the exempt set.
+it wins even when a granted crossing would be cheaper. A `NoPath` or
+`BudgetExhausted` result next enables destination completion without a grant.
+Only if that also fails may the requested named or all-zone grants permit
+unrelated danger-zone transit. Hard transport, item, skill, quest and
+wilderness gates remain unchanged.
+Safety also outranks preferred-versus-fallback target priority. Within each
+stage, preferred targets win, followed by fallback targets: first safe routes,
+then no-grant destination completions, then granted routes. An acceptable
+fallback in an earlier stage beats a preferred target in a later stage.
 An origin may move continuously within and escape its active zones, but
 cannot re-enter them without a grant. Without a whole-walk grant, completion
 may enter and move within an active zone containing its selected goal but
