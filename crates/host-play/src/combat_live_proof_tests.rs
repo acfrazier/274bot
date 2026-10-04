@@ -788,10 +788,21 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         .expect("Quester stage has a final quest-colour relog step");
     let relog = scenario.steps.remove(relog_index);
     scenario.steps.insert(stand_index, relog);
-    let preparation = preparation_steps(case, stand, Arc::clone(&capture));
+    let preparation = preparation_steps(case);
     scenario
         .steps
         .splice(stand_index + 1..stand_index + 1, preparation);
+    if case.is_magic() {
+        let stand_index = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .expect("Quester stage keeps its settled stand step");
+        scenario.steps.insert(
+            stand_index + 1,
+            magic_spawn_teleport_step(stand, Arc::clone(&capture)),
+        );
+    }
     let start_index = scenario
         .steps
         .iter()
@@ -821,11 +832,7 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
     scenario
 }
 
-fn preparation_steps(
-    case: Case,
-    stand: WorldTile,
-    capture: Arc<Mutex<CombatCapture>>,
-) -> Vec<Step> {
+fn preparation_steps(case: Case) -> Vec<Step> {
     let stats: &[(&'static str, i32, i32)] = match case {
         Case::M1 | Case::M1HandIn => &[
             ("attack", 0, 40),
@@ -918,7 +925,6 @@ fn preparation_steps(
                 ));
             }
             steps.push(wear_step(STAFF_OF_FIRE_ID));
-            steps.push(magic_spawn_teleport_step(stand, capture));
         }
     }
     steps
@@ -5371,12 +5377,41 @@ fn every_magic_cell_waits_for_magic_not_cooking_during_staging() {
         Case::MageManualFallback,
         Case::MageManualNoFallback,
     ] {
-        let steps = preparation_steps(
+        let steps = preparation_steps(case);
+        assert!(matches!(&steps[0].wait.arm, Proof::Stat { id: 6, min: 35 }));
+    }
+}
+
+#[test]
+fn every_magic_spawn_follows_the_settled_stand_and_precedes_start() {
+    for case in [
+        Case::MageAuto,
+        Case::MageManualFallback,
+        Case::MageManualNoFallback,
+    ] {
+        let scenario = scenario_for(
             case,
             IMP_START,
             Arc::new(Mutex::new(CombatCapture::default())),
         );
-        assert!(matches!(&steps[0].wait.arm, Proof::Stat { id: 6, min: 35 }));
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .unwrap();
+        let spawn = scenario
+            .steps
+            .iter()
+            .position(|step| {
+                step.name == "spawn local Khazard Warlord and teleport five tiles east"
+            })
+            .unwrap();
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(stand < spawn && spawn < start);
     }
 }
 
