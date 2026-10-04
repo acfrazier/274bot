@@ -485,6 +485,8 @@ pub fn encode(
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
         write_req_ids(&mut out, &e.worn_all_req);
+        out.push(u8::from(e.members_req));
+        out.extend_from_slice(&e.wildy_cap.unwrap_or(-1).to_le_bytes());
         write_quest_gates(&mut out, e.quest_gates.as_ref());
         write_takeoff(&mut out, e.takeoff);
         write_approach(
