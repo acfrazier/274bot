@@ -2728,19 +2728,25 @@ fn has_corpse(capture: &CombatCapture, report: &Value) -> bool {
         return false;
     };
     let engaged_type = integer(report, "combat_engaged_npc_type");
-    capture.frames.iter().any(|frame| {
-        frame["tick"]
-            .as_i64()
-            .is_some_and(|tick| tick == evidence_tick)
-            && frame["nearby_npcs"].as_array().is_some_and(|npcs| {
-                npcs.iter().any(|npc| {
-                    npc["index"].as_i64() == Some(index)
-                        && npc["health"] == json!(0)
-                        && npc["total_health"].as_i64().is_some_and(|total| total > 0)
-                        && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
-                })
-            })
-    })
+    let begin_tick = integer(report, "combat_ticks")
+        .filter(|ticks| *ticks >= 0)
+        .map_or(evidence_tick, |ticks| evidence_tick.saturating_sub(ticks));
+    // S3 §3.2 step5 latches the kill, then §3.4 WindDown settles prayer-off
+    // before Ready publishes the report. The latest bar in that engagement
+    // must be its exact HP0 corpse; a later revival or type change rejects it.
+    capture.frames.iter().rev()
+        .filter(|frame| frame["tick"].as_i64().is_some_and(|tick| {
+            begin_tick <= tick && tick <= evidence_tick
+        }))
+        .find_map(|frame| {
+            frame["nearby_npcs"].as_array()?.iter()
+                .find(|npc| npc["index"].as_i64() == Some(index))
+        })
+        .is_some_and(|npc| {
+            npc["health"] == json!(0)
+                && npc["total_health"].as_i64().is_some_and(|total| total > 0)
+                && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
+        })
 }
 
 fn every_killed_report_has_corpse(capture: &CombatCapture) -> bool {
@@ -4793,6 +4799,33 @@ fn preemptive_manual_protect_rejects_never_on_and_after_hit_activation() {
         !protection_timing_ok(&capture),
         "activation after the hit at12 is late"
     );
+}
+
+#[test]
+fn latched_corpse_survives_winddown_but_rejects_every_missing_identity_case() {
+    let report = json!({"fields": {
+        "combat_end": "Killed", "combat_evidence_tick": 14, "combat_ticks": 10,
+        "combat_engaged_index": 7, "combat_engaged_npc_type": 477
+    }});
+    let corpse = |tick, index, type_, hp| json!({
+        "tick": tick,
+        "nearby_npcs": [{"index": index, "type": type_, "health": hp, "total_health": 170}]
+    });
+    let mut capture = CombatCapture::default();
+    capture.frames = vec![corpse(11, 7, 477, 0), json!({"tick": 14, "nearby_npcs": []})];
+    assert!(has_corpse(&capture, &report), "latched corpse precedes cleanup completion");
+    capture.frames.insert(1, corpse(12, 7, 477, 1));
+    assert!(!has_corpse(&capture, &report), "revived NPC");
+    capture.frames = vec![corpse(11, 7, 478, 0)];
+    assert!(!has_corpse(&capture, &report), "wrong NPC type");
+    capture.frames = vec![corpse(11, 8, 477, 0)];
+    assert!(!has_corpse(&capture, &report), "wrong NPC index");
+    capture.frames = vec![corpse(3, 7, 477, 0)];
+    assert!(!has_corpse(&capture, &report), "bar before engagement");
+    capture.frames = vec![corpse(15, 7, 477, 0)];
+    assert!(!has_corpse(&capture, &report), "bar after report");
+    capture.frames = vec![corpse(11, 7, 477, 1)];
+    assert!(!has_corpse(&capture, &report), "no HP0 bar");
 }
 
 #[test]
