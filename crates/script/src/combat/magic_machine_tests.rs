@@ -368,8 +368,8 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
                 kind: ActorKind::Player,
                 index: 1,
             }),
-            t1: 300,
-            t2: 345,
+            t1: 351,
+            t2: 396,
         }]);
     let mut marks = [HitmarkView {
         value: 0,
@@ -402,8 +402,8 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
     );
     assert_eq!(spell_source.due_tick, 14);
 
-    // Visual flight is already over; a later melee onset becomes the current
-    // style, and a different actor is now the sole one facing us.
+    // A later melee onset becomes current before the old spell's visual
+    // flight begins. Its future t1 must not outrank that newer evidence.
     scene.players[0].actor.animation = scene.melee_seq();
     scene.players[0].actor.animation_frame = 0;
     scene.players[0].actor.target = None;
@@ -411,16 +411,16 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
     scene.refresh();
     scene.snapshot.seed_hitmarks(HitmarksView {
         marks,
-        loop_cycle: 390,
+        loop_cycle: 330,
     });
     threats.observe(
-        &Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence(13))).unwrap(),
+        &Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence(11))).unwrap(),
         &scene.tables,
-        13,
+        11,
     );
     assert_eq!(
         threats
-            .iter(13)
+            .iter(11)
             .find(|row| row.actor.index == 2)
             .unwrap()
             .style,
@@ -436,6 +436,8 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
         .spotanim_id;
     scene.local.player.actor.spot_animation_stamp = 420;
     scene.refresh();
+    // The projectile has visually expired, but its hit queue is still due.
+    scene.snapshot.seed_projectiles(Vec::new());
     marks[0] = HitmarkView {
         value: 6,
         kind: 1,
