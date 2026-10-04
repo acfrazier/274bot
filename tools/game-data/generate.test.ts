@@ -191,9 +191,22 @@ data=levelrequired,75
 data=maxhit,15
 data=members,true
 data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
 data=anim,^test_magic_seq
 data=staffanim,^test_magic_seq
 data=runesrequired,bloodrune,1,firerune,7,airrune,5
+data=spotanim_target,fire_impact,10
+data=continue_by_autocast,true
+[magic_spell_crumble_test]
+data=spellcom,crumble_button
+data=spell,^test_crumble
+data=levelrequired,39
+data=maxhit,8
+data=members,false
+data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
+data=spotanim_target,crumble_test_impact,5
+data=runesrequired,chaosrune,1,airrune,2,earthrune,2
 data=continue_by_autocast,true
 `);
 fs.writeFileSync(path.join(magic, 'magic_staff.dbrow'), `[magic_staff_fire]
@@ -207,18 +220,27 @@ data=rune,earthrune
 data=staff,staff_of_air
 data=rune,airrune
 `);
+fs.writeFileSync(path.join(pack, 'interface.pack'), '3001=wind_strike_button\n3002=fire_wave_button\n3003=crumble_button\n');
+fs.writeFileSync(path.join(pack, 'spotanim.pack'), '5=spell_target\n6=fire_impact\n7=crumble_test_impact\n85=failedspell_impact\n');
+const autoCastDir = path.join(content, 'scripts/skill_combat/scripts/player');
+fs.mkdirSync(autoCastDir, { recursive: true });
+fs.writeFileSync(path.join(autoCastDir, 'auto_cast.rs2'), `[if_button,staff_spells:ssb0] @set_autocast_spell(^test_spell);\n[if_button,staff_spells:ssb1] @set_autocast_spell(^fire_wave);\n`);
+const magicInterfaces = path.join(content, 'scripts/skill_magic/interfaces');
+fs.mkdirSync(magicInterfaces, { recursive: true });
+fs.writeFileSync(path.join(magicInterfaces, 'magic.if'), `[test_spell]\naction=Wind strike\n[fire_wave]\naction=Fire wave\n[test_crumble]\naction=Crumble test\n`);
 const magicItems = [
     { id: 1, debugname: 'mindrune', name: 'Mind rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 2, debugname: 'airrune', name: 'Air rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 3, debugname: 'firerune', name: 'Fire rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 4, debugname: 'bloodrune', name: 'Blood rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 5, debugname: 'earthrune', name: 'Earth rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 9, debugname: 'chaosrune', name: 'Chaos rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 6, debugname: 'staff_of_fire', name: 'Staff of fire', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 7, debugname: 'lava_battlestaff', name: 'Lava battlestaff', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 8, debugname: 'staff_of_air', name: 'Staff of air', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
 ];
 const magicFacts = extractMagicFacts(content, magicItems);
-assert.equal(magicFacts.spells.length, 2, 'unnamed autocast rows are not SPELL_DB');
+assert.equal(magicFacts.spells.length, 3, 'manual combat spells join the table; rows without a spell button stay out');
 assert.equal(magicFacts.spells[0].name, 'Wind Strike');
 assert.equal(magicFacts.spells[0].ssb, 0);
 assert.deepEqual(magicFacts.spells[0].runes.map((rune) => [rune.name, rune.count]), [['Mind rune', 1], ['Air rune', 1]]);
@@ -234,6 +256,24 @@ assert.equal(magicFacts.spells[1].spellcom, 'fire_wave_button');
 assert.equal(magicFacts.spells[1].maxhit, 15);
 assert.equal(magicFacts.spells[1].members, true);
 assert.equal(magicFacts.spells[1].wornrequired, 'staff_of_fire');
+assert.equal(magicFacts.spells[0].autocast_selectable, true);
+assert.equal(magicFacts.spells[0].component_id, 3001);
+assert.equal(magicFacts.spells[0].source_row, 'magic_spell_wind_strike');
+assert.equal(magicFacts.spells[1].autocast_selectable, true);
+assert.equal(magicFacts.spells[1].component_id, 3002);
+assert.equal(magicFacts.spells[0].impact_spotanim, 5);
+assert.equal(magicFacts.spells[1].impact_spotanim, 6);
+const crumble = magicFacts.spells.find((spell) => spell.source_row === 'magic_spell_crumble_test')!;
+assert.equal(crumble.name, 'Crumble test');
+assert.equal(crumble.autocast_selectable, false, 'the staff chooser excludes manual-only spells');
+assert.equal(crumble.ssb, -1);
+assert.equal(crumble.component_id, 3003);
+assert.equal(crumble.maxhit, 8);
+assert.equal(crumble.members, false);
+assert.deepEqual(crumble.runes.map((rune) => [rune.name, rune.count]), [['Chaos rune', 1], ['Air rune', 2], ['Earth rune', 2]]);
+assert.equal(crumble.worn_reqmessage, 'You need a fire staff.');
+assert.equal(crumble.impact_spotanim, 7);
+assert.equal(magicFacts.failed_spell_impact, 85, 'the miss splash is one selected scalar, not per-spell data');
 const npcSource = path.join(content, 'scripts/npc/config/combat.npc');
 const npcScriptDir = path.join(content, 'scripts/npc/scripts');
 fs.mkdirSync(path.dirname(npcSource), { recursive: true });
@@ -247,6 +287,7 @@ fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
     '1=arrow_launch', '2=arrow_travel', '3=spell_origin', '4=spell_projectile',
     '5=spell_target', '6=failedspell_impact', '7=firebreath_attack',
     '8=fireblast_travel', '9=fireblast_impact',
+    '10=fire_impact', '11=crumble_test_impact',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n');
 fs.writeFileSync(npcSource, `[test_npc]

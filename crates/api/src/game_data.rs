@@ -360,11 +360,19 @@ pub struct SpellRune {
     pub count: i32,
 }
 
-/// Named autocast combat spell from the selected cache.
+/// Named combat spell from the selected cache: the 16 autocast-selectable staff
+/// chooser spells plus manual-only damage spells (Crumble Undead, Iban Blast,
+/// god strikes). `ssb` is the staff_spells grid index for selectable spells and
+/// -1 otherwise; `component_id` is the manual magic-tab widget for UseWidgetOn.
+/// `impact_spotanim` is the selected `spotanim_target` cache id, -1 when unknown;
+/// the shared miss splash stays in the style facts, never here.
 #[derive(Debug, Deserialize)]
 pub struct SpellFact {
     pub name: String,
+    pub source_row: String,
     pub ssb: i32,
+    pub component_id: i32,
+    pub autocast_selectable: bool,
     pub level: i32,
     pub continue_by_autocast: bool,
     #[serde(default)]
@@ -375,6 +383,9 @@ pub struct SpellFact {
     pub members: bool,
     #[serde(default)]
     pub wornrequired: Option<String>,
+    #[serde(default)]
+    pub worn_reqmessage: Option<String>,
+    pub impact_spotanim: i32,
     pub runes: Vec<SpellRune>,
 }
 
@@ -1214,6 +1225,8 @@ pub struct SelectedGameData {
     #[serde(default)]
     staves: Vec<StaffFact>,
     #[serde(default)]
+    failed_spell_impact: Option<i32>,
+    #[serde(default)]
     autocast: Option<AutocastControls>,
     #[serde(default)]
     duel: Option<DuelControls>,
@@ -1758,6 +1771,14 @@ impl SelectedGameData {
         &self.staves
     }
 
+    /// Selected `failedspell_impact` cache id for the shared miss splash.
+    /// `None` when the selected cache does not publish it. Per-spell
+    /// `impact_spotanim` never carries it (stays -1 there) so the probe can
+    /// tell splash from success without a style-fact join.
+    pub fn failed_spell_impact(&self) -> Option<i32> {
+        self.failed_spell_impact
+    }
+
     /// Packed choose/grid/toggle identities from the selected cache.
     pub fn autocast_controls(&self) -> Option<&AutocastControls> {
         self.autocast
@@ -2081,7 +2102,8 @@ impl SelectedGameData {
         )
     }
 
-    /// Staff-spell grid component for a known autocast spell, otherwise -1.
+    /// Staff-spell grid component for a known autocast-selectable spell, otherwise -1.
+    /// Manual-only spells resolve through their own `component_id`, never this grid.
     /// Posted selected-cache `spell_grid_base` wins over the frozen 1830 audit.
     pub fn spell_button_com(&self, spell_name: &str) -> i32 {
         let base = self
@@ -2090,6 +2112,7 @@ impl SelectedGameData {
             .map(|controls| controls.spell_grid_base)
             .unwrap_or(STAFF_SPELLS_COM0);
         self.spell(spell_name)
+            .filter(|spell| spell.autocast_selectable)
             .map(|spell| base + spell.ssb)
             .unwrap_or(-1)
     }
