@@ -1589,6 +1589,30 @@ impl Script for Quester {
         };
         match poll {
             Poll::Pending => {
+                if let Some(outcome) = self
+                    .step
+                    .as_ref()
+                    .and_then(|step| step.in_flight_outcome())
+                    .filter(|outcome| {
+                        self.last_outcome
+                            .as_ref()
+                            .is_none_or(|seen| seen.evidence != outcome.evidence)
+                    })
+                {
+                    if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
+                        receipt
+                            .as_any()
+                            .downcast_ref::<crate::native_bank::BankReceipt>()
+                    }) {
+                        self.bank.update(receipt);
+                        self.last_outcome = Some(StepOutcome {
+                            progress: outcome.progress.clone(),
+                            evidence: outcome.evidence,
+                            receipt: outcome.receipt.clone(),
+                        });
+                        self.dirty = true;
+                    }
+                }
                 if self
                     .step
                     .as_ref()

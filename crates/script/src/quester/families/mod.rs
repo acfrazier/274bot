@@ -2190,6 +2190,7 @@ impl StepPlan for AcquirePlan {
         Ok(Box::new(AcquireRun {
             steps: Arc::clone(&self.steps),
             current: None,
+            child_outcome: None,
             index: 0,
             chat_since: 0,
             settling: false,
@@ -2205,6 +2206,7 @@ impl StepPlan for AcquirePlan {
 struct AcquireRun {
     steps: Arc<[CompiledAcquireStep]>,
     current: Option<Box<dyn StepRun>>,
+    child_outcome: Option<StepOutcome>,
     index: usize,
     chat_since: i32,
     settling: bool,
@@ -2250,90 +2252,90 @@ impl AcquireRun {
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        loop {
-            match self.poll_prayer_cleanup(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => {}
-            }
-            if self.waiting_for_read {
+        match self.poll_prayer_cleanup(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {}
+        }
+        if self.waiting_for_read {
+            return Poll::Pending;
+        }
+        if self.settling {
+            let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
+                cx: &cx.tick.cx,
+                quests: cx.quests,
+                progress: cx.progress,
+                required_after: cx.required_after,
+                chat_since: self.chat_since,
+                outcome: self.child_outcome.as_ref(),
+                bank: cx.bank,
+            });
+            if truth != Truth::True {
+                if cx.tick.cx.active_now() >= self.settle_deadline {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "acquire settle timeout",
+                    ))));
+                }
                 return Poll::Pending;
             }
-            if self.settling {
-                let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
+            self.settling = false;
+            self.index += 1;
+        }
+        if self.current.is_none() {
+            while self.index < self.steps.len() {
+                let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
                     quests: cx.quests,
                     progress: cx.progress,
                     required_after: cx.required_after,
-                    chat_since: self.chat_since,
+                    chat_since: reach::last_chat_seq(&cx.tick.cx),
                     outcome: None,
                     bank: cx.bank,
                 });
-                if truth != Truth::True {
-                    if cx.tick.cx.active_now() >= self.settle_deadline {
+                if skip == Truth::Unknown {
+                    let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
+                    if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "acquire settle timeout",
+                            "acquire skip predicate evidence unavailable",
                         ))));
                     }
                     return Poll::Pending;
                 }
-                self.settling = false;
-                self.index += 1;
+                self.selection_since = None;
+                if skip == Truth::True {
+                    self.index += 1;
+                    continue;
+                }
+                self.chat_since = reach::last_chat_seq(&cx.tick.cx);
+                let run = self.steps[self.index].plan.begin(cx)?;
+                self.current = Some(run);
+                self.child_outcome = None;
+                break;
             }
             if self.current.is_none() {
-                while self.index < self.steps.len() {
-                    let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
-                        cx: &cx.tick.cx,
-                        quests: cx.quests,
-                        progress: cx.progress,
-                        required_after: cx.required_after,
-                        chat_since: reach::last_chat_seq(&cx.tick.cx),
-                        outcome: None,
-                        bank: cx.bank,
-                    });
-                    if skip == Truth::Unknown {
-                        let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
-                        if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16)
-                        {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "acquire skip predicate evidence unavailable",
-                            ))));
-                        }
-                        return Poll::Pending;
-                    }
-                    self.selection_since = None;
-                    if skip == Truth::True {
-                        self.index += 1;
-                        continue;
-                    }
-                    self.chat_since = reach::last_chat_seq(&cx.tick.cx);
-                    let run = self.steps[self.index].plan.begin(cx)?;
-                    self.current = Some(run);
-                    break;
-                }
-                if self.current.is_none() {
-                    return Poll::Ready(Ok(StepOutcome {
-                        progress: None,
-                        evidence: cx.tick.cx.evidence(),
-                        receipt: None,
-                    }));
-                }
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                }));
             }
-            match self.current.as_mut().unwrap().poll(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => {
-                    self.prayer_cleanup_owned
-                        .merge(self.current.as_ref().unwrap().prayer_cleanup());
-                    self.current = None;
-                    self.settling = true;
-                    self.settle_deadline =
-                        cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
-                    if self.steps[self.index].advances {
-                        self.waiting_for_read = true;
-                        return Poll::Pending;
-                    }
+        }
+        match self.current.as_mut().unwrap().poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(outcome)) => {
+                self.prayer_cleanup_owned
+                    .merge(self.current.as_ref().unwrap().prayer_cleanup());
+                self.current = None;
+                self.child_outcome = Some(outcome);
+                self.settling = true;
+                self.settle_deadline =
+                    cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
+                if self.steps[self.index].advances {
+                    self.waiting_for_read = true;
                 }
+                // Publish the child receipt before evaluating settle/next-child facts.
+                Poll::Pending
             }
         }
     }
@@ -2361,7 +2363,10 @@ impl StepRun for AcquireRun {
         self.current.as_ref()?.waiting_for()
     }
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
-        self.current.as_ref()?.in_flight_outcome()
+        self.current
+            .as_ref()
+            .and_then(|run| run.in_flight_outcome())
+            .or(self.child_outcome.as_ref())
     }
 }
 
