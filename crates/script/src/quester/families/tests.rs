@@ -1230,6 +1230,58 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
     ));
 }
 #[test]
+fn use_on_item_target_emits_inventory_kind() {
+    compile_context_test(|cx| {
+        let source_id = resolve_obj(cx, "shears").unwrap();
+        let target_id = resolve_obj(cx, "wool").unwrap();
+        let source = ItemView {
+            def: def(source_id, "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let target = ItemView {
+            def: def(target_id, "Wool"),
+            slot: 7,
+            ..source.clone()
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![source, target], 28);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears",
+                "target": {"item": "wool"},
+                "settle_ms": 20_000,
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                source_item_id: Some(source),
+                source_item_slot: Some(3),
+                target_item_id: Some(target),
+                target_item_slot: Some(7),
+                ..
+            } if kind == "inv" && *source == source_id && *target == target_id
+        ));
+    });
+}
+
+#[test]
 fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::empty();
