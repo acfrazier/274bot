@@ -315,7 +315,10 @@ the normal talk outcome; `expect_combat` does not fabricate a fight.
 A `combat` step may declare `cross: ["danger-zone-id"]` and
 `guard: "protect"`, with the same meaning as the `walk` arguments.
 The combat step's return-to-stand and abort walks retain these permissions.
-A non-empty `cross` requires `guard: "protect"`; other guard modes are rejected.
+The crossing scope and protection mode are independent.
+Crossing permissions do not enable protection.
+Protection does not grant crossing permissions.
+Omitted, null, or empty `guard` means no protection. Other guard modes are rejected.
 Omission keeps the existing empty crossing scope and unprotected walk.
 An earlier `walk` step does not grant permissions to the combat step.
 
