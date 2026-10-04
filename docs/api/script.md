@@ -210,6 +210,11 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Completed bank scans inside nested acquisition recipes update the runner's
+bank knowledge before the parent recipe evaluates its next child or settlement
+predicate. An observed empty bank is known zero stock; missing bank evidence
+remains unknown.
+
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
 the display-name rows consumed by Loadouts; operator overrides remain ordinary
