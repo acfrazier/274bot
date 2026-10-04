@@ -2,14 +2,15 @@
 //! no flick. The host native follow site owns one driver per armed route.
 use super::arbiter;
 use super::frame::Frame;
+use super::policy;
 use super::schedule::{elapsed, reached, InputEffect, OpKind, Schedule};
 use super::select;
-use super::tables::{CombatTables, PotionKind, PrayerRole, StyleWhere};
-use super::threats::{StyleObs, ThreatSet};
+use super::tables::{CombatTables, PotionKind, PrayerRole};
+use super::threats::ThreatSet;
 use crate::native::WalkRequest;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
-use api::snapshot::{ActorKind, SnapshotView};
+use api::snapshot::SnapshotView;
 use std::sync::{Arc, LazyLock};
 
 const LOWEST_PROTECT: i32 = 37;
@@ -123,42 +124,6 @@ fn kind_bit(kind: GuardProtect) -> u8 {
         GuardProtect::Missiles => 2,
         GuardProtect::Melee => 4,
     }
-}
-
-/// Use the projectile's own style when one is on us. Do not treat every
-/// projectile as Missiles: a magic shot must stay Magic, and an unclassified
-/// shot does not override the shared selector.
-fn classified_incoming_protect<'a>(
-    frame: &Frame<'_>,
-    tables: &'a CombatTables,
-) -> Option<&'a PrayerFact> {
-    let me = frame.me();
-    let mut chosen: Option<&PrayerFact> = None;
-    for projectile in frame.projectiles {
-        if !projectile
-            .target
-            .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
-        {
-            continue;
-        }
-        let Some(style) = tables
-            .style_spotanim(projectile.spotanim)
-            .filter(|row| row.where_ == StyleWhere::Projectile)
-            .map(|row| select::style_from_mask(row.style))
-            .filter(|style| *style != StyleObs::Unknown)
-        else {
-            continue;
-        };
-        let Some(fact) = select::protect_fact(tables, style) else {
-            continue;
-        };
-        match chosen {
-            Some(previous) if previous.varp != fact.varp => return None,
-            Some(_) => {}
-            None => chosen = Some(fact),
-        }
-    }
-    chosen
 }
 
 impl WalkGuard {
@@ -315,9 +280,8 @@ impl WalkGuard {
         let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
         self.observe_protect(&frame);
         self.settle_drink(&frame, tick, points);
-        let wanted = classified_incoming_protect(&frame, &self.tables).or_else(|| {
-            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
-        })?;
+        let wanted =
+            policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
         let kind = protect_kind(&self.tables, wanted)?;
         if points == 0
             && !self.schedule.pending(OpKind::Drink)
@@ -382,8 +346,7 @@ impl WalkGuard {
         hp: i32,
         hp_max: i32,
     ) -> Option<GuardOp> {
-        let floor = super::machine::prayer_floor(base);
-        if points > floor {
+        if !policy::prayer_sip_due(points, base) {
             return None;
         }
         self.drink(frame, tick, hp, hp_max, true)
@@ -1016,6 +979,24 @@ mod tests {
     }
 
     #[test]
+    fn prayer_sip_uses_the_shared_c5_floor() {
+        for (points, due) in [(27, false), (26, true), (9, true), (8, true)] {
+            let mut scene = Scene::new(43);
+            scene.stats[5].effective = points;
+            scene.add_prayer_potion();
+            scene.launch_arrow();
+            scene.set_missiles(true);
+            let mut guard = scene.begin().unwrap();
+            let op = guard.tick(&scene.view_at(10));
+            assert_eq!(
+                matches!(&op, Some(GuardOp::Drink { .. })),
+                due,
+                "Prayer points {points}, got {op:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_prayer_dose_locks_the_follow_for_two_ticks() {
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
@@ -1262,6 +1243,56 @@ mod tests {
                 component: missiles.button_com
             }),
             "an incoming projectile must not override the selected style with Missiles"
+        );
+    }
+
+    #[test]
+    fn dragonfire_and_magic_projectiles_agree_on_the_same_protection_varp() {
+        let mut scene = Scene::new(43);
+        // R289 classifies dragonfire at the attacker, not on a projectile.
+        // Extend only this test's classification fixture to exercise the
+        // representable incoming Dragonfire + Magic agreement; prayer and
+        // NPC facts still come from the selected revision.
+        let mut facts: serde_json::Value =
+            serde_json::from_str(include_str!("../../../api/data/game-data/289.json")).unwrap();
+        let dragonfire = facts["style_spotanims"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["style"] == 8)
+            .expect("selected dragonfire classification");
+        dragonfire["where"] = serde_json::json!("projectile");
+        let dragonfire = i32::try_from(dragonfire["spotanim_id"].as_i64().unwrap()).unwrap();
+        scene.tables =
+            CombatTables::build(Arc::new(serde_json::from_value(facts).unwrap())).unwrap();
+        let cow = scene.tables.selected().npc_by_config("cow").unwrap().id;
+        scene.npcs[0].r#type = Some(cow as usize);
+        scene.npcs[0].in_combat = true;
+        scene.npcs[0].target = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        });
+        scene.projectiles = [88, dragonfire]
+            .map(|spotanim| ProjectileView {
+                spotanim,
+                level: 0,
+                src: tile(2800, 3300),
+                target: Some(ActorTargetView {
+                    kind: ActorKind::Player,
+                    index: 1,
+                }),
+                t1: 0,
+                t2: 30,
+            })
+            .to_vec();
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+        assert_eq!(
+            guard.tick(&scene.view()),
+            Some(GuardOp::IfButton {
+                component: scene.magic().button_com,
+            }),
+            "the incoming volley agrees on Magic, despite the cow's Melee fact"
         );
     }
 

@@ -201,25 +201,25 @@ inclusive arrival requirement.
 
 Use the isolated worktree's nav pack and retained cache snapshot. The host
 connects through builder ports `45594/2080`, forwarded to the local engine's
-`44594/1080` endpoints. Both the test's generated HOME and launcher HOME are
-under the R2 evidence directory:
+`44594/1080` endpoints. Set `LIVE_EVIDENCE_DIR` to the R2 evidence directory;
+both the test's generated HOME and launcher HOME are under it:
 
 ```sh
-WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+WT=/path/to/walk-guard-lifecycle
 ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
+EVIDENCE=$LIVE_EVIDENCE_DIR
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 mkdir -p "$EVIDENCE/launcher-home"
 cd "$WT"
 export CARGO_HOME RUSTUP_HOME
-HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR="$EVIDENCE" \
 BOT_LIVE_NAME_PREFIX=wg \
 BOT_ENGINE_DIR="$ENGINE_DIR" \
 WORLD_ENGINE_DIR="$ENGINE_DIR" \
 BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
 WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+BOT_COMBAT_CACHE_SNAPSHOT=/path/to/retained-cache-snapshot \
 cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_protected_crossing -- --exact --ignored --nocapture --test-threads=1
 ```
 
@@ -229,41 +229,44 @@ and before arrival. It requires every prayer to turn off within four ticks of
 Stop and remain off for three more observed ticks:
 
 ```sh
-WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+WT=/path/to/walk-guard-lifecycle
 ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
+EVIDENCE=$LIVE_EVIDENCE_DIR
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 mkdir -p "$EVIDENCE/launcher-home"
 cd "$WT"
 export CARGO_HOME RUSTUP_HOME
-HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR="$EVIDENCE" \
 BOT_LIVE_NAME_PREFIX=wg \
 BOT_ENGINE_DIR="$ENGINE_DIR" \
 WORLD_ENGINE_DIR="$ENGINE_DIR" \
 BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
 WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+BOT_COMBAT_CACHE_SNAPSHOT=/path/to/retained-cache-snapshot \
 cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_stop_mid_crossing -- --exact --ignored --nocapture --test-threads=1
 ```
 
 Both modes save a real final scene PNG with a matching JSON/Core record in an
-R2 per-run capture folder under `WALK-GUARD-LIFECYCLE-1/r2`; inspect that image
+R2 per-run capture folder under `$LIVE_EVIDENCE_DIR`; inspect that image
 alongside the receipt before accepting the live proof. The final receipt's
 `tile` is normalized to `local_player.tile`. The explicit navigation pack
 must have its matching `.navpack.json`, `.navreach`, `.navflags`,
 `.navcanlight`, and `.navpois` files beside it.
 
 The ignored offline replay applies the same gate to the retained bad receipt
-`wgkiu3hcw6` and passing receipts `wg9l6smxhw` and
-`REVIEW-WALK-GUARD-OPUS/W1-wgefe0xaj8_0`. Legacy receipts without per-tick
+`W1-wgkiu3hcw6_0-receipt.json` and passing receipts `W1-wg9l6smxhw_0-receipt.json`
+and `W1-wgefe0xaj8_0-receipt.json`, all read from `$LIVE_EVIDENCE_DIR`. The
+replay skips with a message when the directory is unset or a receipt is
+absent. Legacy receipts without per-tick
 rows use their guard-click pre-click prayer varps, recorded protect/off
 observations, and holds between clicks; the replay output marks that their
 crossing frames and three post-off ticks were not directly recorded. It does
 not fabricate per-tick rows. The replay table is written to
-`WALK-GUARD-LIFECYCLE-1/r2/W1-lifecycle-replay.json`:
+`$LIVE_EVIDENCE_DIR/W1-lifecycle-replay.json`:
 
 ```sh
+LIVE_EVIDENCE_DIR=/path/to/w1-evidence \
 cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts -- --exact --ignored --nocapture
 ```
 

@@ -1136,7 +1136,7 @@ impl ScriptWalkArm {
                             .is_none()
                             .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
                     });
-                let route_detail = if authority.is_some()
+                let mut route_detail = if authority.is_some()
                     && matches!(&outcome, &RouteOutcome::NoPath)
                 {
                     let context = format!(
@@ -1188,6 +1188,23 @@ impl ScriptWalkArm {
                     continue;
                 }
                 let missing = request.missing_carry(&outcome);
+                if !missing.is_empty() {
+                    let empty_state = WorldState::empty();
+                    let state = request.state.as_ref().unwrap_or(&empty_state);
+                    if let Some(detail) = crate::walk_map::route_supply_shortfall_detail(
+                        &request.world,
+                        state,
+                        missing.iter().map(|row| (row.id, row.count)),
+                    ) {
+                        let supply_detail =
+                            crate::walk_map::ActionError::InsufficientItems { detail }.to_string();
+                        route_detail = Some(match route_detail.take() {
+                            Some(nav_detail) => format!("{supply_detail}; {nav_detail}"),
+                            None => supply_detail,
+                        });
+                    }
+                }
+
                 // Only a route this publish installs carries its evidence; a
                 // newer request's NoPath leaves the followed route's own.
                 if bot.route_generation == request.generation
