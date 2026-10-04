@@ -21,6 +21,8 @@ use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIf
 mod context;
 pub use context::ReadContext;
 
+/// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
+const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
 /// Maximum number of local-target projectiles retained in a snapshot.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
@@ -413,6 +415,9 @@ impl GameSnapshot {
 
     /// Offline fixture observation of a bank modal and its two containers.
     /// `None` means the bank table is unread, not loaded empty stock.
+    /// An open fixture bank raises a side root as the real opening does
+    /// (one main+side packet after the side inventory), so `side` reads as
+    /// posted; [`Self::seed_side_modal`] models a side root still down.
     pub fn seed_bank_observation(
         &mut self,
         component_id: i32,
@@ -433,6 +438,18 @@ impl GameSnapshot {
         self.bank_last_inv_generation = generation;
         self.bank = rows.unwrap_or_default();
         self.bank_side = side;
+        self.modals.side = if component_id < 0 {
+            -1
+        } else if self.modals.side < 0 {
+            FIXTURE_BANK_SIDE_ROOT
+        } else {
+            self.modals.side
+        };
+    }
+
+    /// Offline fixture seed for the side modal root alone (`-1` none).
+    pub fn seed_side_modal(&mut self, root: i32) {
+        self.modals.side = root;
     }
 
     pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {

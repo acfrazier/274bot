@@ -6153,14 +6153,35 @@ fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known(
     iso.join();
 }
 
-// Hop 4 — Bank.setNoteMode queues set-note-mode when bank open + Note button posted.
+/// Post `snap` at ticks `1..=ticks`, run each game tick, and collect every
+/// interact the isolate sent.
+fn run_ticks(
+    iso: &LoadIsolate,
+    snap: &mut script::isolate_fb::SnapshotInput<'_>,
+    ticks: u64,
+) -> Vec<script::shim::InteractReq> {
+    let mut sent = Vec::new();
+    for tick in 1..=ticks {
+        snap.tick = tick;
+        post_snapshot_input(iso, snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("1 + 1");
+        sent.extend(iso.drain_interacts());
+    }
+    sent
+}
+
+// Frozen `Bank.setNoteMode(on): Promise<void>` on an open bank: one
+// set-note-mode verb, then it resolves `undefined` after a tick.
 #[test]
-fn isolate_bank_set_note_mode_queues_op_when_bank_open_with_note_button() {
+fn isolate_bank_set_note_mode_queues_op_when_bank_open() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
-        globalThis.__rs_ok = await Bank.setNoteMode(true);
+        if (globalThis.__rs_ok !== undefined) return;
+        globalThis.__rs_ok = false;
+        globalThis.__rs_ok = (await Bank.setNoteMode(true)) === undefined;
     }
 }
 "#;
@@ -6170,81 +6191,64 @@ export default class T extends LoopingBot {
     snap.bank_loaded = true;
     snap.bank_note_on = 602;
     snap.bank_note_off = 603;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    let ok = iso.probe("__rs_ok").unwrap();
-    assert_eq!(ok, true, "setNoteMode resolves after the tick");
     assert_eq!(
-        iso.drain_interacts(),
+        run_ticks(&iso, &mut snap, 4),
         vec![script::shim::InteractReq::SetNoteMode { on: true }],
-        "setNoteMode(true) queues set-note-mode, not a silent success"
+        "setNoteMode(true) queues one set-note-mode, not a silent success"
+    );
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        true,
+        "setNoteMode resolves void after a tick"
     );
     iso.join();
 }
 
+// Frozen `setNoteMode` never throws: a closed bank is a void no-op with no
+// verb, and an open bank presses the live Note/Item pair even when this
+// snapshot carries no control ids (the host maps or refuses the press).
 #[test]
-fn isolate_bank_set_note_mode_throws_when_bank_closed_or_no_note_button() {
-    let closed_src = r#"
+fn isolate_bank_set_note_mode_never_throws() {
+    let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
+        if (globalThis.__probe !== undefined) return;
+        globalThis.__probe = 'pending';
         try {
-            await Bank.setNoteMode(true);
-            globalThis.__probe = 'ok';
+            const value = await Bank.setNoteMode(true);
+            globalThis.__probe = value === undefined ? 'void' : String(value);
         } catch (e) {
             globalThis.__probe = String(e.message || e);
         }
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(closed_src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.bank_open = false;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
     assert!(
-        value.as_str().is_some_and(|s| s.contains("not impl")),
-        "bank closed must throw not impl, not queue: {value:?}"
-    );
-    assert!(
-        iso.drain_interacts().is_empty(),
+        run_ticks(&iso, &mut snap, 3).is_empty(),
         "bank closed must not queue set-note-mode"
+    );
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        "void",
+        "a closed bank resolves void"
     );
     iso.join();
 
-    let no_btn_src = r#"
-import { Bank } from '../../api/bank/Bank.js';
-export default class T extends LoopingBot {
-    async loop() {
-        try {
-            await Bank.setNoteMode(true);
-            globalThis.__probe = 'ok';
-        } catch (e) {
-            globalThis.__probe = String(e.message || e);
-        }
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(no_btn_src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_note_on = -1;
     snap.bank_note_off = -1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert!(
-        value.as_str().is_some_and(|s| s.contains("not impl")),
-        "no Note button must throw not impl: {value:?}"
+    assert_eq!(
+        run_ticks(&iso, &mut snap, 4),
+        vec![script::shim::InteractReq::SetNoteMode { on: true }]
     );
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "no Note button must not queue set-note-mode"
-    );
+    assert_eq!(iso.probe("__probe").unwrap(), "void", "no throw");
     iso.join();
 }
 

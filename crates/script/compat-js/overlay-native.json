@@ -63,7 +63,7 @@
     "selector": "Bank.openNearestWorld",
     "add": true,
     "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-    "runtime": "crates/script/src/shim/bank.js:152",
+    "runtime": "crates/script/src/shim/bank.js:144",
     "declaration": "openNearestWorld(): Promise<boolean>;"
   },
   {

@@ -293,3 +293,40 @@ fn older_snapshot_without_chat_page_fingerprint_reads_as_default() {
     );
     assert_eq!(snapshot.chat_page_fingerprint(), 0);
 }
+
+/// A buffer from before slot 284 carries no side root: it reads absent
+/// (`-1`), so an open bank's side is never mistaken for a posted pack.
+#[test]
+fn older_snapshot_without_side_modal_id_reads_absent() {
+    let mut b = flatbuffers::FlatBufferBuilder::new();
+    let root = {
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(1);
+        snapshot.add_bank_open(true);
+        snapshot.add_chat_page_fingerprint(7);
+        snapshot.finish()
+    };
+    b.finish(root, None);
+
+    let snapshot = decode_snapshot(b.finished_data()).expect("older snapshot verifies");
+    assert!(!snapshot.has_side_modal_id());
+    assert_eq!(snapshot.side_modal_id(), -1);
+    crate::observed::on_reset();
+    crate::observed::apply(&snapshot);
+    let posted = crate::observed::with(|scene| {
+        let session = scene.since_login();
+        crate::bank::ops::side_observation(
+            session.bank_open().unwrap_or(false),
+            session.side_modal_id().unwrap_or(-1),
+            session.bank_side().map(Vec::as_slice).unwrap_or_default(),
+        )
+        .is_some()
+    });
+    crate::observed::on_reset();
+    assert!(!posted, "an old buffer's side is not posted");
+    assert_eq!(
+        Snapshot::VT_SIDE_MODAL_ID,
+        Snapshot::VT_CHAT_PAGE_FINGERPRINT + 2,
+        "appended after the last deployed slot"
+    );
+}

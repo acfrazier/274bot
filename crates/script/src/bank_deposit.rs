@@ -9,16 +9,13 @@
 //! host result. No match, a nameless match, a failed deposit or 32 rounds
 //! end the loop.
 
+use crate::bank::ops::{DEPOSIT_VIEW_MS, MAX_DEPOSITS};
 use crate::bank_op::{self, Awaiting, BankView, Op, Sent};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Text};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Frozen wait for the side backpack to post.
-pub const DEPOSIT_VIEW_MS: u64 = 1_200;
-/// Frozen `for (let guard = 0; guard < 32; guard++)`.
-const ROUNDS: u32 = 32;
 const VIEW_NOT_READY: &str = "deposit view not ready — waiting for the side backpack";
 
 /// Which backpack rows a deposit takes.
@@ -54,7 +51,7 @@ pub(crate) struct Deposit {
     /// The caller's `log` hook, if it passed one.
     log: Option<usize>,
     common_casket_id: Option<i32>,
-    round: u32,
+    round: u8,
     phase: Phase,
 }
 
@@ -75,7 +72,7 @@ impl Deposit {
         loop {
             match &mut self.phase {
                 Phase::Scan => {
-                    if self.round >= ROUNDS {
+                    if self.round >= MAX_DEPOSITS {
                         return Step::Done(());
                     }
                     let rows = side_rows();
@@ -171,7 +168,7 @@ impl Deposit {
                         Sent::Settled(_) => return Step::Done(()),
                     }
                 }
-                Phase::Await(waiting) => match waiting.poll(&BankView::now()) {
+                Phase::Await(waiting) => match waiting.poll(&BankView::now(), cx) {
                     None => return Step::Wait,
                     Some(false) => return Step::Done(()),
                     Some(true) => {

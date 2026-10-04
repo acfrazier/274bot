@@ -1479,7 +1479,7 @@ fn teller_evidence_dir(account: &str) -> PathBuf {
     root.join(format!("gatherer_mage_teller_{account}_utc-{epoch}Z"))
 }
 
-fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
+pub(super) fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);

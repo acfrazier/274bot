@@ -552,6 +552,12 @@ table Snapshot {
   // Unlike chat_text, unrelated chat-ring messages cannot change this page.
   // Omitted deltas retain the last scalar; zero clears an unavailable snapshot.
   chat_page_fingerprint: ulong = 0;
+  // Slot 284: `client.side_modal_id` (`modals().side`), -1 none. Grouped with
+  // main_modal_id/chat_modal_id in meaning only. With bank_open it tells a
+  // posted (possibly empty) bank_side from one not posted yet; never infer
+  // that from the vector length. Written on the keyframe and whenever it
+  // changes; an omitted delta keeps the last root; old buffers read -1.
+  side_modal_id: int = -1;
 }
 
 table Collision {
