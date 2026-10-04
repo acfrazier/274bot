@@ -224,9 +224,10 @@ pub(super) fn wire_runtime(
         .register_function(
             "__rs2b0t_selected_loadout",
             |args: &[serde_json::Value]| {
-                Ok(super::loadout_v8::selected_compat(
+                super::loadout_v8::selected_compat(
                     args.first().and_then(|v| v.as_str()).unwrap_or(""),
-                ))
+                )
+                .map_err(rustyscript::Error::Runtime)
             },
         )
         .map_err(|e| format!("register loadout: {e}"))?;

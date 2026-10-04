@@ -1,12 +1,26 @@
 use super::*;
+use std::hash::{Hash, Hasher};
 /// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
 /// loc/ground-item/player families are positioned by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldTile {
     pub x: i32,
     pub z: i32,
     pub level: i32,
+}
+
+impl Hash for WorldTile {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Preserve the derived hash's native scalar bytes in one write.
+        // Tile membership and transport lookups otherwise stream three fields.
+        let mut bytes = [0; 12];
+        bytes[..4].copy_from_slice(&self.x.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&self.z.to_ne_bytes());
+        bytes[8..].copy_from_slice(&self.level.to_ne_bytes());
+        state.write(&bytes);
+    }
 }
 
 /// A tile relative to the scene origin (`level` is implicit in the world
@@ -593,4 +607,87 @@ pub struct MapFlagView {
 pub struct HintTileView {
     pub x: i32,
     pub z: i32,
+}
+
+#[cfg(test)]
+mod world_tile_hash_tests {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Hash)]
+    struct ScalarTile {
+        x: i32,
+        z: i32,
+        level: i32,
+    }
+
+    #[derive(Default)]
+    struct Writes {
+        count: usize,
+        len: usize,
+        bytes: [u8; 12],
+    }
+
+    impl Hasher for Writes {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.count += 1;
+            self.bytes[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+            self.len += bytes.len();
+        }
+    }
+
+    fn sip_hash(value: &impl Hash) -> u64 {
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut state);
+        state.finish()
+    }
+
+    #[test]
+    fn world_tile_hashes_original_signed_scalar_identity_in_one_write() {
+        for tile in [
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            WorldTile {
+                x: i32::MIN,
+                z: i32::MAX,
+                level: -1,
+            },
+            WorldTile {
+                x: i32::MAX,
+                z: i32::MIN,
+                level: i32::MIN,
+            },
+            WorldTile {
+                x: -1,
+                z: 65_536,
+                level: i32::MAX,
+            },
+            WorldTile {
+                x: 65_536,
+                z: -1,
+                level: 3,
+            },
+        ] {
+            let original = ScalarTile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            };
+            let mut actual = Writes::default();
+            tile.hash(&mut actual);
+            let mut scalar = Writes::default();
+            original.hash(&mut scalar);
+            assert_eq!((actual.count, actual.len), (1, 12));
+            assert_eq!((scalar.count, scalar.len), (3, 12));
+            assert_eq!(actual.bytes, scalar.bytes);
+            assert_eq!(sip_hash(&tile), sip_hash(&original));
+            assert_eq!(std::mem::size_of::<WorldTile>(), 12);
+        }
+    }
 }

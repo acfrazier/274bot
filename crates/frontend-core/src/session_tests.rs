@@ -67,6 +67,22 @@ fn empty_play() -> Play {
     )
 }
 
+#[test]
+fn walk_globals_publish_before_start_and_to_the_current_play() {
+    let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
+    let granted = host_play::WalkGlobals {
+        allow_teleports: true,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        allow_danger_zones: true,
+    };
+    session.set_walk_globals(granted);
+    session.start(vault_with("walk-globals", &[]), empty_play());
+    assert_eq!(session.play().unwrap().walk_globals(), granted);
+    session.set_walk_globals(host_play::WalkGlobals::default());
+    assert_eq!(session.play().unwrap().walk_globals(), Default::default());
+}
+
 fn vault_path(test: &str) -> std::path::PathBuf {
     std::env::temp_dir()
         .join(format!(

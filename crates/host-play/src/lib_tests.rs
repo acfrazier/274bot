@@ -6258,6 +6258,100 @@ fn script_start_handle_explicit_loadouts_starts() {
 }
 
 #[test]
+fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let start = play.script_start_handle();
+    let rows = [
+        script::Loadout::new("First"),
+        script::Loadout::new("Second"),
+    ];
+    for wanted in ["", " SECOND "] {
+        let mut bag = serde_json::Map::new();
+        bag.insert("loadout".into(), serde_json::json!(wanted));
+        start
+            .start_load_with_loadouts(
+                "alice",
+                "export function tick() {}".into(),
+                script::LoadShape::NativeTick,
+                Some(bag),
+                vec![],
+                &rows,
+            )
+            .unwrap_or_else(|error| panic!("loadout {wanted:?} should start: {error}"));
+        wait_script_state(&play, "alice", script::RunState::Running);
+        play.script_stop("alice");
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+
+    let ambiguous_rows = [
+        script::Loadout::new("First"),
+        script::Loadout::new("Second"),
+        script::Loadout::new("SECOND"),
+    ];
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!(" second "));
+    let ambiguous = start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            Some(bag.clone()),
+            vec![],
+            &ambiguous_rows,
+        )
+        .expect_err("ambiguous case-insensitive selection must refuse at load")
+        .to_string();
+    assert!(ambiguous.contains("\" second \""), "{ambiguous}");
+    assert!(ambiguous.contains("Second"), "{ambiguous}");
+    assert!(ambiguous.contains("SECOND"), "{ambiguous}");
+    assert!(ambiguous.contains("First"), "{ambiguous}");
+
+    bag.insert("loadout".into(), serde_json::json!("missing"));
+    let unknown = start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            Some(bag),
+            vec![],
+            &ambiguous_rows,
+        )
+        .expect_err("unknown selection must refuse at load")
+        .to_string();
+    assert!(unknown.contains("\"missing\""), "{unknown}");
+    assert!(unknown.contains("First"), "{unknown}");
+    assert!(unknown.contains("Second"), "{unknown}");
+    assert!(unknown.contains("SECOND"), "{unknown}");
+
+    let saved = format!("__i2_missing_loadout_{}__", std::process::id());
+    let mut native_bag = serde_json::Map::new();
+    native_bag.insert("loadout".into(), serde_json::json!(saved));
+    let native_error = start
+        .start_compiled("alice", script::CompiledId("Sherlock"), native_bag)
+        .expect_err("native Start must refuse an unknown saved loadout")
+        .to_string();
+    assert!(native_error.contains("loadout setting"), "{native_error}");
+    assert!(native_error.contains(&saved), "{native_error}");
+    assert!(
+        native_error.contains("Available loadouts"),
+        "{native_error}"
+    );
+}
+
+#[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");
     let mut play = run_with_io(
@@ -22365,7 +22459,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
-                                options: script::FindOptions::default(),
+                                options: script::native::WalkOptions::default(),
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),

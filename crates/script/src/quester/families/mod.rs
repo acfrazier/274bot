@@ -14,7 +14,7 @@ use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions, WalkReceipt};
 use crate::shim::InteractReq;
 use api::selected::Truth;
 use api::snapshot::{ChatLineView, QuestListStatus};
@@ -23,6 +23,10 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct NoArgs {}
 pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
 /// One UseOn attempt inside an `until` loop. A silent miss must not consume
 /// the whole step `settle_ms` (240s for Sheep Shearer). Successful shear is
@@ -44,203 +48,203 @@ fn walk_step_evidence(
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
-    &[
-        super::compile::StepHandler {
-            kind: "walk",
-            version: 1,
-            compile: compile_walk,
-        },
-        super::compile::StepHandler {
-            kind: "talk",
-            version: 1,
-            compile: compile_talk,
-        },
-        super::compile::StepHandler {
-            kind: "interact",
-            version: 1,
-            compile: compile_interact,
-        },
-        super::compile::StepHandler {
-            kind: "use_on",
-            version: 1,
-            compile: compile_use_on,
-        },
-        super::compile::StepHandler {
-            kind: "acquire",
-            version: 1,
-            compile: compile_acquire,
-        },
-        super::compile::StepHandler {
-            kind: "wait",
-            version: 1,
-            compile: compile_wait,
-        },
-        super::compile::StepHandler {
-            kind: "bank",
-            version: 1,
-            compile: s2::compile_bank,
-        },
-        super::compile::StepHandler {
-            kind: "buy",
-            version: 1,
-            compile: s2::compile_buy,
-        },
-        super::compile::StepHandler {
-            kind: "make",
-            version: 1,
-            compile: s2::compile_make,
-        },
-        super::compile::StepHandler {
-            kind: "equip",
-            version: 1,
-            compile: s2::compile_equip,
-        },
-        super::compile::StepHandler {
-            kind: "unequip",
-            version: 1,
-            compile: s2::compile_unequip,
-        },
-        super::compile::StepHandler {
-            kind: "loadout",
-            version: 1,
-            compile: s2::compile_loadout,
-        },
-        super::compile::StepHandler {
-            kind: "combat",
-            version: 1,
-            compile: combat::compile,
-        },
-    ]
+    static HANDLERS: &[super::compile::StepHandler] = &[
+        super::compile::step!("walk", 1, Default, WalkArgs, compile_walk),
+        super::compile::step!("talk", 1, Explicit, TalkArgs, compile_talk),
+        super::compile::step!("interact", 1, Explicit, InteractArgs, compile_interact),
+        super::compile::step!("use_on", 1, Explicit, UseOnArgs, compile_use_on),
+        super::compile::step!("acquire", 1, Default, AcquireArgs, compile_acquire),
+        super::compile::step!("wait", 1, Default, WaitArgs, compile_wait),
+        super::compile::step!("bank", 1, Default, s2::BankArgs, s2::compile_bank),
+        super::compile::step!("buy", 1, Default, s2::BuyArgs, s2::compile_buy),
+        super::compile::step!("make", 1, Explicit, s2::MakeArgs, s2::compile_make),
+        super::compile::step!("equip", 1, Default, s2::EquipArgs, s2::compile_equip),
+        super::compile::step!("unequip", 1, Default, s2::EquipArgs, s2::compile_unequip),
+        super::compile::step!("loadout", 1, Default, s2::LoadoutArgs, s2::compile_loadout),
+        super::compile::step!("combat", 1, Explicit, combat::CombatArgs, combat::compile),
+    ];
+    HANDLERS
 }
 
 pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
-    &[
-        super::compile::PredicateHandler {
-            kind: "has_item",
-            version: 1,
-            compile: compile_has_item,
-        },
-        super::compile::PredicateHandler {
-            kind: "near",
-            version: 1,
-            compile: compile_near,
-        },
-        super::compile::PredicateHandler {
-            kind: "message",
-            version: 1,
-            compile: compile_message,
-        },
-        super::compile::PredicateHandler {
-            kind: "message_state",
-            version: 1,
-            compile: compile_message_state,
-        },
-        super::compile::PredicateHandler {
-            kind: "quest_colour",
-            version: 1,
-            compile: compile_quest_colour,
-        },
-        super::compile::PredicateHandler {
-            kind: "in_combat",
-            version: 1,
-            compile: compile_in_combat,
-        },
-        super::compile::PredicateHandler {
-            kind: "npc_present",
-            version: 1,
-            compile: compile_npc_present,
-        },
-        super::compile::PredicateHandler {
-            kind: "loc_present",
-            version: 1,
-            compile: compile_loc_present,
-        },
-        super::compile::PredicateHandler {
-            kind: "ground_item_near",
-            version: 1,
-            compile: compile_ground_item_near,
-        },
-        super::compile::PredicateHandler {
-            kind: "modal_open",
-            version: 1,
-            compile: compile_modal_open,
-        },
-        super::compile::PredicateHandler {
-            kind: "item_count_at_least",
-            version: 1,
-            compile: compile_item_count_at_least,
-        },
-        super::compile::PredicateHandler {
-            kind: "worn",
-            version: 1,
-            compile: compile_worn,
-        },
-        super::compile::PredicateHandler {
-            kind: "on_level",
-            version: 1,
-            compile: compile_on_level,
-        },
-        super::compile::PredicateHandler {
-            kind: "in_area",
-            version: 1,
-            compile: compile_in_area,
-        },
-        super::compile::PredicateHandler {
-            kind: "npc_absent",
-            version: 1,
-            compile: compile_npc_absent,
-        },
-        super::compile::PredicateHandler {
-            kind: "skill_at_least",
-            version: 1,
-            compile: compile_skill_at_least,
-        },
-        super::compile::PredicateHandler {
-            kind: "hp_fraction_below",
-            version: 1,
-            compile: compile_hp_fraction_below,
-        },
-        super::compile::PredicateHandler {
-            kind: "prayer_points_at_least",
-            version: 1,
-            compile: compile_prayer_points,
-        },
-        super::compile::PredicateHandler {
-            kind: "combat_end",
-            version: 1,
-            compile: combat::compile_end_predicate,
-        },
-        super::compile::PredicateHandler {
-            kind: "stage_in",
-            version: 1,
-            compile: progress_predicates::compile_stage_in,
-        },
-        super::compile::PredicateHandler {
-            kind: "flag",
-            version: 1,
-            compile: progress_predicates::compile_flag,
-        },
-        super::compile::PredicateHandler {
-            kind: "bank_known",
-            version: 1,
-            compile: s2::compile_bank_known,
-        },
-        super::compile::PredicateHandler {
-            kind: "bank_has",
-            version: 1,
-            compile: s2::compile_bank_has,
-        },
-        super::compile::PredicateHandler {
-            kind: "loadout_ready",
-            version: 1,
-            compile: s2::compile_loadout_ready,
-        },
-        super::compile::PredicateHandler {
-            kind: "equipment_only",
-            version: 1,
-            compile: s2::compile_equipment_only,
-        },
-    ]
+    static HANDLERS: &[super::compile::PredicateHandler] = &[
+        super::compile::fact!(
+            "has_item",
+            1,
+            super::compile::ProgressRead::None,
+            ObjArg,
+            compile_has_item
+        ),
+        super::compile::fact!(
+            "near",
+            1,
+            super::compile::ProgressRead::None,
+            NearArg,
+            compile_near
+        ),
+        super::compile::fact!(
+            "message",
+            1,
+            super::compile::ProgressRead::None,
+            MessageArg,
+            compile_message
+        ),
+        super::compile::fact!(
+            "message_state",
+            1,
+            super::compile::ProgressRead::None,
+            MessageStateArg,
+            compile_message_state
+        ),
+        super::compile::fact!(
+            "quest_colour",
+            1,
+            super::compile::ProgressRead::Colour,
+            ColourArg,
+            compile_quest_colour
+        ),
+        super::compile::fact!(
+            "in_combat",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_in_combat
+        ),
+        super::compile::fact!(
+            "npc_present",
+            1,
+            super::compile::ProgressRead::None,
+            NpcArg,
+            compile_npc_present
+        ),
+        super::compile::fact!(
+            "loc_present",
+            1,
+            super::compile::ProgressRead::None,
+            LocArg,
+            compile_loc_present
+        ),
+        super::compile::fact!(
+            "ground_item_near",
+            1,
+            super::compile::ProgressRead::None,
+            GroundArg,
+            compile_ground_item_near
+        ),
+        super::compile::fact!(
+            "modal_open",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_modal_open
+        ),
+        super::compile::fact!(
+            "item_count_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            CountArg,
+            compile_item_count_at_least
+        ),
+        super::compile::fact!(
+            "worn",
+            1,
+            super::compile::ProgressRead::None,
+            ObjArg,
+            compile_worn
+        ),
+        super::compile::fact!(
+            "on_level",
+            1,
+            super::compile::ProgressRead::None,
+            LevelArg,
+            compile_on_level
+        ),
+        super::compile::fact!(
+            "in_area",
+            1,
+            super::compile::ProgressRead::None,
+            AreaArg,
+            compile_in_area
+        ),
+        super::compile::fact!(
+            "npc_absent",
+            1,
+            super::compile::ProgressRead::None,
+            NpcArg,
+            compile_npc_absent
+        ),
+        super::compile::fact!(
+            "skill_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            SkillArg,
+            compile_skill_at_least
+        ),
+        super::compile::fact!(
+            "hp_fraction_below",
+            1,
+            super::compile::ProgressRead::None,
+            FractionArg,
+            compile_hp_fraction_below
+        ),
+        super::compile::fact!(
+            "prayer_points_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            LevelArg,
+            compile_prayer_points
+        ),
+        super::compile::fact!(
+            "combat_end",
+            1,
+            super::compile::ProgressRead::None,
+            combat::CombatEndArgs,
+            combat::compile_end_predicate
+        ),
+        super::compile::fact!(
+            "stage_in",
+            1,
+            super::compile::ProgressRead::Journal,
+            progress_predicates::StageInArgs,
+            progress_predicates::compile_stage_in
+        ),
+        super::compile::fact!(
+            "flag",
+            1,
+            super::compile::ProgressRead::Journal,
+            progress_predicates::FlagArgs,
+            progress_predicates::compile_flag
+        ),
+        super::compile::fact!(
+            "bank_known",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            s2::compile_bank_known
+        ),
+        super::compile::fact!(
+            "bank_has",
+            1,
+            super::compile::ProgressRead::None,
+            s2::BankHasArgs,
+            s2::compile_bank_has
+        ),
+        super::compile::fact!(
+            "loadout_ready",
+            1,
+            super::compile::ProgressRead::None,
+            s2::LoadoutArgs,
+            s2::compile_loadout_ready
+        ),
+        super::compile::fact!(
+            "equipment_only",
+            1,
+            super::compile::ProgressRead::None,
+            s2::EquipmentOnlyArgs,
+            s2::compile_equipment_only
+        ),
+    ];
+    HANDLERS
 }
 
 pub fn compile_predicate(
@@ -262,8 +266,7 @@ pub fn compile_predicate(
             version,
             args,
         } => {
-            let handler = predicate_handlers()
-                .iter()
+            let handler = super::compile::predicate_handlers()
                 .find(|handler| handler.kind == kind && handler.version == *version)
                 .ok_or_else(|| CompileError::code("unknown-predicate"))?;
             (handler.compile)(args, cx)
@@ -310,35 +313,35 @@ fn resolve_obj(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError
     cx.selected
         .item_by_alias(alias)
         .map(|item| item.id)
-        .ok_or_else(|| CompileError::code("unresolved-obj"))
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))
 }
 
 fn resolve_npc(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError> {
     cx.selected
         .npc_by_config(alias)
         .map(|row| row.id)
-        .ok_or_else(|| CompileError::code("unresolved-npc"))
+        .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(alias))
 }
 
 fn resolve_loc(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError> {
     cx.selected
         .loc_by_config(alias)
         .map(|row| row.id)
-        .ok_or_else(|| CompileError::code("unresolved-loc"))
+        .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(alias))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ObjArg {
+    /// Symbolic object config name resolved in selected game data.
     obj: String,
 }
 
 fn compile_has_item(
-    args: &serde_json::Value,
+    arg: ObjArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ObjArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(HasItem {
         id: resolve_obj(cx, &arg.obj)?,
     }))
@@ -360,19 +363,21 @@ impl PredicatePlan for HasItem {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct NearArg {
+    /// Observed target tile as x, z, level.
     tile: [i32; 3],
+    /// Maximum distance in tiles.
     radius: i32,
 }
 
 fn compile_near(
-    args: &serde_json::Value,
+    arg: NearArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NearArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    validate_tile_coordinates(arg.tile)?;
     Ok(Arc::new(Near {
         tile: WorldTile {
             x: arg.tile[0],
@@ -396,18 +401,18 @@ impl PredicatePlan for Near {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MessageArg {
+    /// Case-insensitive chat substrings; any one match is true.
     any: Vec<String>,
 }
 
 fn compile_message(
-    args: &serde_json::Value,
+    arg: MessageArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: MessageArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if arg.any.iter().any(|needle| needle.trim().is_empty()) {
         return Err(CompileError::code("invalid-args"));
     }
@@ -453,18 +458,19 @@ fn contains_any(line: &ChatLineView, needles: &[String]) -> bool {
 /// A recoverable observed state, unlike `message`'s post-step settle event.
 /// The newest matching event in the available chat history wins; a clearing
 /// event prevents a previous successful operation from being replayed forever.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MessageStateArg {
+    /// Events which set the observed state.
     set: Vec<String>,
+    /// Events which clear the observed state.
     clear: Vec<String>,
 }
 fn compile_message_state(
-    args: &serde_json::Value,
+    arg: MessageStateArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: MessageStateArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if arg
         .set
         .iter()
@@ -508,28 +514,37 @@ impl PredicatePlan for MessageState {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ColourArg {
+    /// Symbolic quest config name.
     quest: String,
-    is: String,
+    /// Desired tab colour state.
+    is: ColourIs,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+enum ColourIs {
+    NotStarted,
+    InProgress,
+    Complete,
 }
 
 fn compile_quest_colour(
-    args: &serde_json::Value,
+    arg: ColourArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ColourArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let facts = cx
         .quests
         .quest(&arg.quest)
         .map_err(|_| CompileError::code("unresolved-quest"))?;
-    let want = match arg.is.as_str() {
-        "not_started" => QuestListStatus::NotStarted,
-        "in_progress" => QuestListStatus::InProgress,
-        "complete" => QuestListStatus::Complete,
-        _ => return Err(CompileError::code("invalid-args")),
+    let want = match arg.is {
+        ColourIs::NotStarted => QuestListStatus::NotStarted,
+        ColourIs::InProgress => QuestListStatus::InProgress,
+        ColourIs::Complete => QuestListStatus::Complete,
     };
     Ok(Arc::new(QuestColour {
         display: Arc::clone(&facts.display),
@@ -559,12 +574,9 @@ impl PredicatePlan for QuestColour {
 }
 
 fn compile_in_combat(
-    args: &serde_json::Value,
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(InCombat))
 }
 struct InCombat;
@@ -577,32 +589,37 @@ impl PredicatePlan for InCombat {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct NpcArg {
+    /// Symbolic NPC config name.
     npc: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct LocArg {
+    /// Symbolic location config name.
     loc: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct GroundArg {
+    /// Symbolic ground-item object config name.
     obj: String,
+    /// Maximum distance in tiles; omitted uses 12.
     #[serde(default)]
     radius: Option<i32>,
 }
 
 fn compile_npc_present(
-    args: &serde_json::Value,
+    arg: NpcArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NpcArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(NpcPresent {
         id: resolve_npc(cx, &arg.npc)?,
     }))
@@ -624,19 +641,20 @@ impl PredicatePlan for NpcPresent {
 }
 
 fn compile_npc_absent(
-    args: &serde_json::Value,
+    arg: NpcArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let present = compile_npc_present(args, cx)?;
-    Ok(Arc::new(NotPlan { inner: present }))
+    Ok(Arc::new(NotPlan {
+        inner: Arc::new(NpcPresent {
+            id: resolve_npc(cx, &arg.npc)?,
+        }),
+    }))
 }
 
 fn compile_loc_present(
-    args: &serde_json::Value,
+    arg: LocArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: LocArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let id = resolve_loc(cx, &arg.loc)?;
     Ok(Arc::new(LocPresent { id }))
 }
@@ -653,11 +671,9 @@ impl PredicatePlan for LocPresent {
 }
 
 fn compile_ground_item_near(
-    args: &serde_json::Value,
+    arg: GroundArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: GroundArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(GroundNear {
         id: resolve_obj(cx, &arg.obj)?,
         radius: arg.radius.unwrap_or(12),
@@ -682,12 +698,9 @@ impl PredicatePlan for GroundNear {
 }
 
 fn compile_modal_open(
-    args: &serde_json::Value,
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(ModalOpen))
 }
 struct ModalOpen;
@@ -700,20 +713,21 @@ impl PredicatePlan for ModalOpen {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct CountArg {
+    /// Symbolic object config name counted in the inventory.
     obj: String,
+    /// Required quantity; omitted uses 1. A progress quantity reads the latest journal count.
     #[serde(default)]
     qty: Option<s2::QuantityDocument>,
 }
 
 fn compile_item_count_at_least(
-    args: &serde_json::Value,
+    arg: CountArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: CountArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(CountAtLeast {
         id: resolve_obj(cx, &arg.obj)?,
         qty: s2::compile_quantity(arg.qty.unwrap_or(s2::QuantityDocument::Fixed(1)), cx)?,
@@ -744,11 +758,9 @@ impl PredicatePlan for CountAtLeast {
 }
 
 fn compile_worn(
-    args: &serde_json::Value,
+    arg: ObjArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ObjArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(Worn {
         id: resolve_obj(cx, &arg.obj)?,
     }))
@@ -765,18 +777,18 @@ impl PredicatePlan for Worn {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct LevelArg {
+    /// Skill or floor level to test.
     level: i32,
 }
 
 fn compile_on_level(
-    args: &serde_json::Value,
+    arg: LevelArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: LevelArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(OnLevel { level: arg.level }))
 }
 struct OnLevel {
@@ -791,18 +803,18 @@ impl PredicatePlan for OnLevel {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AreaArg {
+    /// Named Path area whose boxes are tested.
     area: String,
 }
 
 fn compile_in_area(
-    args: &serde_json::Value,
+    arg: AreaArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: AreaArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let boxes = cx
         .areas
         .get(&arg.area)
@@ -826,19 +838,20 @@ impl PredicatePlan for InArea {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct SkillArg {
+    /// Case-insensitive skill name.
     skill: String,
+    /// Minimum base level required.
     level: i32,
 }
 
 fn compile_skill_at_least(
-    args: &serde_json::Value,
+    arg: SkillArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: SkillArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(SkillAtLeast {
         skill: Arc::from(arg.skill),
         level: arg.level,
@@ -859,18 +872,18 @@ impl PredicatePlan for SkillAtLeast {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct FractionArg {
+    /// Threshold fraction of current hitpoints divided by base hitpoints.
     below: f32,
 }
 
 fn compile_hp_fraction_below(
-    args: &serde_json::Value,
+    arg: FractionArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: FractionArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(HpBelow { below: arg.below }))
 }
 struct HpBelow {
@@ -898,11 +911,9 @@ impl PredicatePlan for HpBelow {
 }
 
 fn compile_prayer_points(
-    args: &serde_json::Value,
+    arg: LevelArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: SkillArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(SkillAtLeast {
         skill: Arc::from("prayer"),
         level: arg.level,
@@ -921,6 +932,10 @@ pub(super) fn validate_tile(tile: [i32; 3], source: &str) -> Result<(), CompileE
     if source.trim().is_empty() {
         return Err(CompileError::code("tile-source-required"));
     }
+    validate_tile_coordinates(tile)
+}
+
+fn validate_tile_coordinates(tile: [i32; 3]) -> Result<(), CompileError> {
     if !(0..=16383).contains(&tile[0])
         || !(0..=16383).contains(&tile[1])
         || !(0..=3).contains(&tile[2])
@@ -969,26 +984,53 @@ fn name_matches(cx: &CompileContext<'_>, name: &str, op: &str) -> usize {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct WalkArgs {
+    /// Destination tile as x, z, level.
     tile: [i32; 3],
+    /// Source citation for this authored destination.
     #[serde(default)]
     source: String,
+    /// Navigation radius in tiles; 0 means 1.
     #[serde(default)]
     radius: u16,
+    /// Named danger zones this movement may cross.
     #[serde(default)]
     cross: Vec<String>,
+    /// Optional protected movement mode; currently `protect`.
     #[serde(default)]
     guard: Option<String>,
+    /// Override inherited teleport permission for this movement.
+    #[serde(default)]
+    allow_teleports: Option<bool>,
+    /// Override inherited Wilderness permission for this movement.
+    #[serde(default)]
+    allow_wilderness: Option<bool>,
+    /// Override inherited danger-zone permission for this movement.
+    #[serde(default)]
+    allow_danger_zones: Option<bool>,
+}
+
+impl WalkArgs {
+    fn options(&self) -> WalkOptions {
+        WalkOptions {
+            allow_teleports: self.allow_teleports.into(),
+            allow_wilderness: self.allow_wilderness.into(),
+            allow_danger_zones: self.allow_danger_zones.into(),
+        }
+    }
 }
 
 fn compile_walk(
-    args: &serde_json::Value,
+    arg: WalkArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: WalkArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    Ok(Arc::new(parse_walk_plan(arg)?))
+}
+
+fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     let protect = match arg.guard.as_deref() {
         None | Some("") => false,
         Some("protect") => true,
@@ -998,31 +1040,31 @@ fn compile_walk(
             );
         }
     };
-    if !arg.cross.is_empty() && !protect {
-        return Err(CompileError::code("invalid-args")
-            .with_detail("walk: cross needs protected walk (combat slice)"));
-    }
     validate_tile(arg.tile, &arg.source)?;
-    Ok(Arc::new(WalkPlan {
+    let options = arg.options();
+    let cross = arg
+        .cross
+        .into_iter()
+        .map(Arc::from)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Ok(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
             z: arg.tile[1],
             level: arg.tile[2],
         },
         radius: arg.radius.max(1),
-        cross: arg
-            .cross
-            .into_iter()
-            .map(Arc::from)
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
+        options,
+        cross,
         protect,
-    }))
+    })
 }
 
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
+    options: WalkOptions,
     cross: Box<[Arc<str>]>,
     protect: bool,
 }
@@ -1030,6 +1072,7 @@ impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
         request.cross = self.cross.clone();
+        request.options = self.options;
         request.protect = self.protect;
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         Ok(Box::new(WalkRun {
@@ -1072,33 +1115,45 @@ impl StepRun for WalkRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AnchorArg {
+    /// Authored destination tile as x, z, level.
     tile: [i32; 3],
+    /// Source citation for the authored destination; required by compilation.
     #[serde(default)]
     source: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TalkArgs {
+    /// Symbolic NPC config name to speak with.
     npc: String,
+    /// Optional authored approach anchor and source citation.
     #[serde(default)]
     anchor: Option<AnchorArg>,
+    /// Maximum NPC interaction distance; 0 or omitted means 1 tile.
     #[serde(default)]
     leash: u16,
+    /// Text fragments to prefer, checked in the given order.
     #[serde(default)]
     prefer: Vec<String>,
+    /// Optional 1-based dialogue option index.
     #[serde(default)]
     choose: Option<i32>,
+    /// Expected NPC opponent when dialogue deliberately hands control to combat.
     #[serde(default)]
     expect_combat: Option<ExpectedCombatArgs>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ExpectedCombatArgs {
+    /// Symbolic NPC config name that must be the observed combat opponent.
     npc: String,
 }
 
@@ -1114,18 +1169,13 @@ impl super::compile::FamilyReceipt for TalkReceipt {
     }
 }
 
-fn compile_talk(
-    args: &serde_json::Value,
-    cx: &CompileContext<'_>,
-) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: TalkArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+fn compile_talk(arg: TalkArgs, cx: &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError> {
     let id = resolve_npc(cx, &arg.npc)?;
     let display = cx
         .selected
         .npc_by_config(&arg.npc)
         .and_then(|row| row.display.as_deref())
-        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+        .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(arg.npc.as_str()))?;
     let tile = anchor_tile(arg.anchor.as_ref())?;
     offered(&cx.selected.npc_by_config(&arg.npc).unwrap().ops, "Talk-to")?;
     let expect_combat = arg
@@ -1287,40 +1337,51 @@ fn expected_combat_target(
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct InteractTarget {
+    /// Ground-item config name; exactly one target selector is required.
     #[serde(default)]
     ground: Option<String>,
+    /// Location config name; exactly one target selector is required.
     #[serde(default)]
     loc: Option<String>,
+    /// NPC config name; exactly one target selector is required.
     #[serde(default)]
     npc: Option<String>,
+    /// Display-name location selector; exactly one target selector is required.
     #[serde(default)]
     name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct InteractArgs {
+    /// Target selector; exactly one target field is required.
     target: InteractTarget,
+    /// Interaction option offered by the selected target.
     op: String,
+    /// Optional authored approach anchor and source citation.
     #[serde(default)]
     anchor: Option<AnchorArg>,
+    /// Maximum interaction distance; 0 or omitted means 1 tile.
     #[serde(default)]
     radius: i32,
+    /// Wait for a temporarily missing target instead of failing immediately.
     #[serde(default)]
     wait_if_missing: bool,
+    /// Optional settle-window override in milliseconds; must be at least 1.
     #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     settle_ms: Option<u64>,
 }
 
 fn compile_interact(
-    args: &serde_json::Value,
+    arg: InteractArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: InteractArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if [
         arg.target.ground.is_some(),
         arg.target.loc.is_some(),
@@ -1345,7 +1406,7 @@ fn compile_interact(
         let item = cx
             .selected
             .item_by_alias(&ground)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(ground.as_str()))?;
         let name = item.name.clone().unwrap_or(ground);
         reach::ReachKind::Ground {
             id: item.id,
@@ -1365,7 +1426,7 @@ fn compile_interact(
             .selected
             .npc_by_config(&npc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
         reach::ReachKind::Npc {
             id,
             name: Arc::from(display),
@@ -1562,49 +1623,64 @@ impl StepRun for InteractRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct UseOnTarget {
+    /// Symbolic NPC config name; exactly one target selector is required.
     #[serde(default)]
     npc: Option<String>,
+    /// Symbolic location config name; exactly one target selector is required.
     #[serde(default)]
     loc: Option<String>,
+    /// Symbolic item config name; exactly one target selector is required.
     #[serde(default)]
     item: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct UseOnUntil {
+    /// Symbolic item config name whose count ends repetition.
     obj: String,
+    /// Fixed or journal-count-backed quantity to reach.
     qty: s2::QuantityDocument,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct UseOnArgs {
+    /// Symbolic item config name used on the target.
     item: String,
+    /// NPC, location, or item target; exactly one is required.
     target: UseOnTarget,
+    /// Optional authored approach anchor and source citation.
     #[serde(default)]
     anchor: Option<AnchorArg>,
+    /// Maximum interaction distance; 0 or omitted means 1 tile.
     #[serde(default)]
     radius: i32,
+    /// Optional symbolic product item expected from the action.
     #[serde(default)]
     product: Option<String>,
+    /// Optional settle-window override in milliseconds; must be at least 1.
     #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     settle_ms: Option<u64>,
+    /// Optional repeated-use goal, measured by an item count.
     #[serde(default)]
     until: Option<UseOnUntil>,
+    /// Optional predicate that can end the repeated use-on attempt.
     #[serde(default)]
     no_product: Option<PredicateDocument>,
 }
 
 fn compile_use_on(
-    args: &serde_json::Value,
+    arg: UseOnArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: UseOnArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if [
         arg.target.npc.is_some(),
         arg.target.loc.is_some(),
@@ -1623,14 +1699,14 @@ fn compile_use_on(
         .selected
         .item_by_alias(&arg.item)
         .and_then(|row| row.name.as_deref())
-        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(arg.item.as_str()))?;
     let (kind, target_id, target_name) = if let Some(npc) = &arg.target.npc {
         let id = resolve_npc(cx, npc)?;
         let name = cx
             .selected
             .npc_by_config(npc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
         ("npc", id, Arc::<str>::from(name))
     } else if let Some(loc) = &arg.target.loc {
         let id = resolve_loc(cx, loc)?;
@@ -1638,7 +1714,7 @@ fn compile_use_on(
             .selected
             .loc_by_config(loc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-loc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(loc.as_str()))?;
         ("loc", id, Arc::<str>::from(name))
     } else if let Some(item) = &arg.target.item {
         let id = resolve_obj(cx, item)?;
@@ -1646,7 +1722,7 @@ fn compile_use_on(
             .selected
             .item_by_alias(item)
             .and_then(|row| row.name.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(item.as_str()))?;
         ("item", id, Arc::<str>::from(name))
     } else {
         return Err(CompileError::code("invalid-args"));
@@ -2063,28 +2139,33 @@ impl crate::native::NativeMachine for UseOnAction {
     fn cancel(&mut self) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AcquireArgs {
+    /// Name of a recipe in the quest header's `acquire` table.
     recipe: String,
 }
 
 fn compile_acquire(
-    args: &serde_json::Value,
-    _cx: &CompileContext<'_>,
+    arg: AcquireArgs,
+    cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: AcquireArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let steps = cx
+        .recipes
+        .get(&arg.recipe)
+        .cloned()
+        .ok_or_else(|| CompileError::code("unresolved-recipe"))?;
     Ok(Arc::new(AcquirePlan {
         recipe: Arc::from(arg.recipe),
-        steps: Vec::new(),
+        steps,
     }))
 }
 
 /// Filled by the compiler with the recipe's compiled steps.
 pub struct AcquirePlan {
     pub recipe: Arc<str>,
-    pub steps: Vec<CompiledAcquireStep>,
+    pub steps: Arc<[CompiledAcquireStep]>,
 }
 
 #[derive(Clone)]
@@ -2099,7 +2180,7 @@ impl Default for AcquirePlan {
     fn default() -> Self {
         Self {
             recipe: Arc::from(""),
-            steps: Vec::new(),
+            steps: Arc::from([]),
         }
     }
 }
@@ -2107,7 +2188,7 @@ impl Default for AcquirePlan {
 impl StepPlan for AcquirePlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(AcquireRun {
-            steps: self.steps.clone(),
+            steps: Arc::clone(&self.steps),
             current: None,
             index: 0,
             chat_since: 0,
@@ -2122,7 +2203,7 @@ impl StepPlan for AcquirePlan {
 }
 
 struct AcquireRun {
-    steps: Vec<CompiledAcquireStep>,
+    steps: Arc<[CompiledAcquireStep]>,
     current: Option<Box<dyn StepRun>>,
     index: usize,
     chat_since: i32,
@@ -2284,19 +2365,18 @@ impl StepRun for AcquireRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct WaitArgs {
+    /// Predicate evaluated against the latest cached evidence.
     until: PredicateDocument,
+    /// Maximum ticks to wait; must be at least 1.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     max_ticks: u64,
 }
 
-fn compile_wait(
-    args: &serde_json::Value,
-    cx: &CompileContext<'_>,
-) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: WaitArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+fn compile_wait(arg: WaitArgs, cx: &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError> {
     if arg.max_ticks == 0 {
         return Err(CompileError::code("invalid-args"));
     }
