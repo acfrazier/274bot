@@ -5,6 +5,7 @@ use super::{
     SideTabView, StatView, VarpView, WorldStateView,
 };
 use crate::quest_progress::EvidenceStamp;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Observed<T> {
@@ -207,10 +208,12 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    /// The bank-side backpack once an open bank has published that container.
+    /// The bank-side backpack once an open bank has raised its side root.
+    /// `None` while the side root is down, even if a leftover list is empty;
+    /// `Some(&[])` is a posted empty pack. Never inferred from list length.
     pub fn bank_side(&self) -> Option<Observed<&[ItemView]>> {
         let snapshot = self.ingame()?;
-        (snapshot.bank_component_id() >= 0).then(|| Observed {
+        (snapshot.bank_component_id() >= 0 && snapshot.modals().side >= 0).then(|| Observed {
             value: snapshot.bank_side(),
             stamp: self.stamp,
         })
@@ -544,6 +547,22 @@ pub struct ChatModalView<'a> {
     pub continue_component_id: i32,
 }
 
+/// Fingerprint the native dialogue page, not the unrelated chat-history ring.
+/// Roots and Continue visibility are acknowledged separately by the driver.
+/// Borrowed content is hashed in modal walk order without copying the page.
+pub fn chat_page_fingerprint<'a, T: Hash>(
+    texts: &[T],
+    options: impl IntoIterator<Item = (i32, &'a str)>,
+) -> u64 {
+    let mut hash = DefaultHasher::new();
+    texts.hash(&mut hash);
+    for (component_id, text) in options {
+        component_id.hash(&mut hash);
+        text.hash(&mut hash);
+    }
+    hash.finish()
+}
+
 /// Local combat observation from the player actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CombatView {
@@ -556,6 +575,38 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn dialogue_page_fingerprint_tracks_all_texts_and_option_component_text_pairs() {
+        let texts = ["First line", "Second line"];
+        let options = [(4883, "Yes"), (4884, "No")];
+        let first = chat_page_fingerprint(&texts, options);
+        assert_eq!(
+            first,
+            chat_page_fingerprint(&texts.map(String::from), options),
+            "owned and borrowed views of the same native page hash identically"
+        );
+        assert_ne!(
+            first,
+            chat_page_fingerprint(&["First line", "Changed"], options)
+        );
+        assert_ne!(
+            first,
+            chat_page_fingerprint(&["Second line", "First line"], options)
+        );
+        assert_ne!(
+            first,
+            chat_page_fingerprint(&texts, [(4885, "Yes"), (4884, "No")])
+        );
+        assert_ne!(
+            first,
+            chat_page_fingerprint(&texts, [(4883, "Maybe"), (4884, "No")])
+        );
+        assert_ne!(
+            first,
+            chat_page_fingerprint(&texts, [(4884, "No"), (4883, "Yes")])
+        );
+    }
 
     #[test]
     fn unavailable_fields_never_look_like_observed_empty_fields() {

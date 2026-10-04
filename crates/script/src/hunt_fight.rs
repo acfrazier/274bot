@@ -25,14 +25,22 @@ pub use walk_spot::{
     walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive,
 };
 
+use crate::combat::{
+    policy,
+    schedule::{elapsed, InputEffect, OpKind, Schedule},
+    tables::{CombatTables, PotionKind},
+    threats::ThreatSet,
+};
 use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
 use crate::machine::Ended;
+use crate::native::ActionError;
 use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
 use crate::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const FIGHT_MS: u64 = 120_000;
@@ -75,6 +83,73 @@ thread_local! {
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
     /// Test seam: a forced line-of-sight answer. Never set from a snapshot.
     static LOS_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+    static ANTIFIRE: RefCell<HuntAntifire> = RefCell::new(HuntAntifire::default());
+}
+fn hunt_combat_tables() -> Result<Arc<CombatTables>, ActionError> {
+    crate::supply_v2::combat_tables()
+}
+
+/// Shared across Hunt Fight/Hold tokens, like the account's potion effect.
+/// A fresh consume message plus an observed selected-antifire dose decrease
+/// confirms a sip; merely owning, dropping or banking a potion does not.
+#[derive(Default)]
+struct HuntAntifire {
+    epoch: u64,
+    last_chat: Option<i32>,
+    doses: Option<i32>,
+    sip: Option<u16>,
+}
+
+impl HuntAntifire {
+    fn observe(&mut self, scene: &Scene, tables: &CombatTables, tick: u16) -> bool {
+        if self.epoch != scene.epoch() || scene.since_login().ingame() != Some(true) {
+            *self = Self {
+                epoch: scene.epoch(),
+                ..Self::default()
+            };
+        }
+        let session = scene.since_login();
+        let doses = session.inv().map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    tables
+                        .potion(PotionKind::Antifire)?
+                        .doses
+                        .iter()
+                        .flatten()
+                        .find(|dose| dose.id == row.id)
+                        .map(|dose| row.count.saturating_mul(i32::from(dose.doses)))
+                })
+                .sum::<i32>()
+        });
+        let mut drank = false;
+        if let Some(lines) = session.chat_lines() {
+            for line in lines {
+                if self.last_chat.is_none_or(|seq| line.seq > seq) {
+                    let text = line.text.as_bytes();
+                    drank |= text
+                        .get(..9)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"you drink"));
+                }
+            }
+            if let Some(seq) = lines.iter().map(|line| line.seq).max() {
+                self.last_chat = Some(self.last_chat.map_or(seq, |old| old.max(seq)));
+            }
+        }
+        if drank && self.doses.zip(doses).is_some_and(|(old, new)| new < old) {
+            self.sip = Some(tick);
+        }
+        if doses.is_some() {
+            self.doses = doses;
+        }
+        self.sip.is_some_and(|sip| elapsed(tick, sip) < 600)
+    }
+}
+
+#[derive(Default)]
+struct PendingProtect {
+    varp: Option<i32>,
+    schedule: Schedule,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -409,6 +484,11 @@ struct FightRuntime {
     skip: HashMap<i32, Instant>,
     seen: HashMap<i32, Sighting>,
     pending_npc: Option<FightNpc>,
+    tables: Option<Arc<CombatTables>>,
+    threats: ThreatSet,
+    pending_protect: PendingProtect,
+    /// The mode's next effect, held while the protect request owns its ack.
+    deferred_effect: Option<Value>,
     idle_then: IdleThen,
     idle_after_sustain: bool,
     wait_until: Option<Instant>,
@@ -446,6 +526,10 @@ impl FightRuntime {
             skip: HashMap::new(),
             seen: HashMap::new(),
             pending_npc: None,
+            tables: None,
+            threats: ThreatSet::default(),
+            pending_protect: PendingProtect::default(),
+            deferred_effect: None,
             idle_then: IdleThen::Continue,
             idle_after_sustain: false,
             wait_until: None,
@@ -460,6 +544,20 @@ impl FightRuntime {
 
     fn now(&self) -> Instant {
         self.clock.now()
+    }
+    fn protect_click(&mut self) -> Result<Option<i32>, ActionError> {
+        if !protect_observed() {
+            return Ok(None);
+        }
+        let tables = match self.tables.as_ref() {
+            Some(tables) => tables,
+            None => self.tables.insert(hunt_combat_tables()?),
+        };
+        Ok(protect_button(
+            &mut self.threats,
+            &mut self.pending_protect,
+            tables,
+        ))
     }
 
     fn apply_freeze(&mut self, paused: bool, held: bool) {
@@ -819,7 +917,100 @@ fn token_of(input: &Value) -> u64 {
         .and_then(|t| t.as_u64().or_else(|| t.as_i64().map(|i| i as u64)))
         .unwrap_or(0)
 }
+fn protect_observed() -> bool {
+    observed::with(|scene| {
+        let session = scene.since_login();
+        session.self_slot().is_some()
+            && session.npcs().is_some()
+            && session.projectiles().is_some()
+            && session.varps().is_some()
+            && session.stats().and_then(|stats| stats.prayer).is_some()
+    })
+}
 
+/// Select protection from borrowed scene pages. The shared three-tick prayer
+/// schedule suppresses pending re-spam and expires a click that did not take.
+fn protect_button(
+    threats: &mut ThreatSet,
+    pending: &mut PendingProtect,
+    tables: &CombatTables,
+) -> Option<i32> {
+    observed::with(|scene| {
+        let session = scene.since_login();
+        let local_slot = session.self_slot()?;
+        let npcs = session.npcs()?;
+        let projectiles = session.projectiles()?;
+        let varps = session.varps()?;
+        let tick = scene.session_tick().unwrap_or_default() as u16;
+        let prayer = session.stats()?.prayer?;
+        if pending
+            .varp
+            .is_some_and(|varp| varps.iter().any(|row| row.index == varp && row.value == 1))
+        {
+            pending.schedule.settle(OpKind::Prayer);
+        } else if pending.schedule.pending(OpKind::Prayer)
+            && pending.schedule.ready(OpKind::Prayer, tick)
+        {
+            pending.schedule.timeout(OpKind::Prayer);
+            pending.varp = None;
+        }
+        let shield = tables
+            .selected()
+            .item_by_alias("antidragonbreathshield")
+            .is_some_and(|shield| {
+                session.equipment().is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row.slot == Some(5) && row.id == shield.id)
+                })
+            });
+        let antifire = ANTIFIRE.with(|state| state.borrow_mut().observe(scene, tables, tick));
+        threats.observe_hunt(
+            npcs.iter().map(|npc| {
+                (
+                    npc.index,
+                    npc.id,
+                    npc.in_combat,
+                    npc.target_kind,
+                    npc.target_index,
+                )
+            }),
+            local_slot,
+            tables,
+            tick,
+        );
+        let local_index = usize::try_from(local_slot).ok()?;
+        let wanted = policy::wanted_protect_hunt(
+            threats,
+            local_index,
+            projectiles.iter().map(|projectile| {
+                (
+                    projectile.spotanim,
+                    projectile
+                        .target_player_index
+                        .and_then(|index| usize::try_from(index).ok()),
+                )
+            }),
+            tables,
+            tick,
+            shield,
+            antifire,
+        )?;
+        if prayer.base < wanted.level
+            || prayer.effective <= 0
+            || varps
+                .iter()
+                .any(|row| row.index == wanted.varp && row.value == 1)
+            || (pending.varp == Some(wanted.varp) && !pending.schedule.ready(OpKind::Prayer, tick))
+        {
+            return None;
+        }
+        pending.varp = Some(wanted.varp);
+        pending
+            .schedule
+            .admitted(OpKind::Prayer, tick, 0, false, InputEffect::PrayerOn);
+        Some(wanted.button_com)
+    })
+}
 fn observation() -> FightObservation {
     observed::with(FightObservation::from_scene)
 }
@@ -1716,6 +1907,7 @@ pub fn on_reset() {
     RETREAT_RUNTIMES.with(|m| m.borrow_mut().clear());
     WALK_RUNTIMES.with(|m| m.borrow_mut().clear());
     LOS_OVERRIDE.with(|slot| slot.set(None));
+    ANTIFIRE.with(|state| *state.borrow_mut() = HuntAntifire::default());
 }
 
 fn alloc_token() -> u64 {
@@ -1737,6 +1929,35 @@ fn begin() -> Value {
 }
 
 fn next_effect(rt: &mut FightRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
+    if rt.clock.frozen() {
+        return rt.emit(json!({ "kind": "wait" }));
+    }
+    // A protect is inserted only after the mode consumed its preceding reply.
+    // Its own queued ack resumes the saved effect, never the mode handler.
+    if let Some(effect) = rt.deferred_effect.take() {
+        return effect;
+    }
+    let effect = next_mode_effect(rt, proj, reply);
+    if matches!(effect["kind"].as_str(), Some("yield" | "aborted" | "wait")) {
+        return effect;
+    }
+    match rt.protect_click() {
+        Ok(Some(component_id)) => {
+            rt.deferred_effect = Some(effect);
+            rt.emit(json!({ "kind": "if-button", "component_id": component_id }))
+        }
+        Ok(None) => effect,
+        Err(error) => {
+            let reason = format!("Hunt protection unavailable: {error:?}");
+            rt.notes.push(json!({ "kind": "log", "message": reason }));
+            let mut effect = rt.aborted(&reason);
+            effect["kind"] = json!("failed");
+            effect
+        }
+    }
+}
+
+fn next_mode_effect(rt: &mut FightRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
     if rt.mode == Mode::Aborted {
         return rt.aborted("aborted");
     }
@@ -2090,4 +2311,311 @@ pub(crate) fn reset(token: u64) {
 pub(crate) fn interrupt_watch(token: u64) {
     FightKind::ensure(token);
     with_runtime(token, FightRuntime::interrupt_watch);
+}
+#[cfg(test)]
+fn seed_protect_observation() -> i32 {
+    crate::supply_v2::configure(Some(
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("R289 combat test data"),
+    ));
+    let tables = hunt_combat_tables().expect("selected Hunt combat tables");
+    let cow_id = tables
+        .selected()
+        .npc_by_config("cow")
+        .expect("R289 cow content")
+        .id;
+    let missiles = tables
+        .prayer(crate::combat::tables::PrayerRole::Protect, 1)
+        .expect("Protect from Missiles");
+    let (button_com, varp) = (missiles.button_com, missiles.varp);
+    observed::replace(1, true, |post| {
+        post.self_slot(1)
+            .npcs(vec![EntityRow {
+                index: 7,
+                id: cow_id,
+                in_combat: true,
+                target_kind: 2,
+                target_index: 1,
+                ..EntityRow::default()
+            }])
+            .projectiles(vec![observed::ProjectileRow {
+                spotanim: 9,
+                target_player_index: Some(1),
+            }])
+            .varps(vec![observed::VarpRow {
+                index: varp,
+                value: 0,
+            }]);
+        post.stats(Skills {
+            prayer: Some(Skill {
+                base: 43,
+                effective: 43,
+                xp: 0,
+            }),
+            ..Skills::default()
+        });
+    });
+    button_com
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fight_consumer_emits_the_native_missiles_if_button() {
+        let button_com = seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        runtime.mode = Mode::Idle;
+        let projection = parse_projection(&json!({}));
+
+        let effect = next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button_com);
+    }
+
+    #[test]
+    fn fight_eating_consumes_its_reply_before_protect_and_routes_the_protect_ack() {
+        let button = seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        runtime.mode = Mode::Eating;
+        let projection = parse_projection(&json!({}));
+
+        let effect = next_effect(&mut runtime, &projection, Some(&json!({ "eatOk": true })));
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button);
+        assert_ne!(
+            runtime.mode,
+            Mode::Eating,
+            "the eat reply must already be handled"
+        );
+        let deferred_kind = runtime.deferred_effect.as_ref().unwrap()["kind"].clone();
+        let resumed = next_effect(&mut runtime, &projection, Some(&json!({ "queued": true })));
+        assert_eq!(resumed["kind"], deferred_kind);
+        assert_ne!(resumed["kind"], "aborted");
+        assert!(runtime.deferred_effect.is_none());
+        assert_ne!(
+            next_effect(&mut runtime, &projection, None)["kind"],
+            "aborted"
+        );
+    }
+
+    #[test]
+    fn fight_failed_eat_reply_is_not_stolen_by_a_concurrent_protect() {
+        seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        runtime.mode = Mode::Eating;
+        let projection = parse_projection(&json!({}));
+        let effect = next_effect(&mut runtime, &projection, Some(&json!({ "eatOk": false })));
+        assert_eq!(effect["kind"], "yield");
+        assert!(runtime.deferred_effect.is_none());
+    }
+
+    #[test]
+    fn hunt_protect_has_the_native_prayer_level_and_points_gate() {
+        let button = seed_protect_observation();
+        let tables = hunt_combat_tables().unwrap();
+        for (base, points, expected) in [(39, 39, None), (43, 0, None), (40, 1, Some(button))] {
+            observed::post(2, |post| {
+                post.stats(Skills {
+                    prayer: Some(Skill {
+                        base,
+                        effective: points,
+                        xp: 0,
+                    }),
+                    ..Skills::default()
+                });
+            });
+            assert_eq!(
+                protect_button(
+                    &mut ThreatSet::default(),
+                    &mut PendingProtect::default(),
+                    &tables
+                ),
+                expected,
+                "base={base}, points={points}"
+            );
+        }
+    }
+
+    #[test]
+    fn hunt_protect_pending_does_not_respam_and_dropped_click_retries_after_three_ticks() {
+        let button = seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        assert_eq!(runtime.protect_click().unwrap(), Some(button));
+        for tick in [1, 2, 3] {
+            observed::post(tick, |_| {});
+            assert_eq!(runtime.protect_click().unwrap(), None, "tick={tick}");
+        }
+        observed::post(4, |_| {});
+        assert_eq!(runtime.protect_click().unwrap(), Some(button));
+        assert_eq!(runtime.protect_click().unwrap(), None);
+    }
+
+    #[test]
+    fn hunt_protect_retries_after_points_return_and_settles_the_observed_varp() {
+        let button = seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        assert_eq!(runtime.protect_click().unwrap(), Some(button));
+        observed::post(4, |post| {
+            post.stats(Skills {
+                prayer: Some(Skill {
+                    base: 43,
+                    effective: 0,
+                    xp: 0,
+                }),
+                ..Skills::default()
+            });
+        });
+        assert_eq!(runtime.protect_click().unwrap(), None);
+        observed::post(5, |post| {
+            post.stats(Skills {
+                prayer: Some(Skill {
+                    base: 43,
+                    effective: 17,
+                    xp: 0,
+                }),
+                ..Skills::default()
+            });
+        });
+        assert_eq!(runtime.protect_click().unwrap(), Some(button));
+        let varp = runtime.pending_protect.varp.unwrap();
+        observed::post(6, |post| {
+            post.varps(vec![observed::VarpRow {
+                index: varp,
+                value: 1,
+            }]);
+        });
+        assert_eq!(runtime.protect_click().unwrap(), None);
+        assert!(!runtime.pending_protect.schedule.pending(OpKind::Prayer));
+    }
+
+    #[test]
+    fn hunt_tables_are_cached_and_build_failure_is_reported() {
+        seed_protect_observation();
+        let first = hunt_combat_tables().unwrap();
+        assert!(Arc::ptr_eq(&first, &hunt_combat_tables().unwrap()));
+        let invalid: api::game_data::SelectedGameData = serde_json::from_value(json!({
+            "schema_version": 4, "revision": 289,
+            "provenance": {
+                "cache_identity": { "cache_id": "test" },
+                "inputs": [], "content_inputs": [], "decoder_sources": []
+            },
+            "items": [], "consumption": [], "pickpocket": [],
+            "style_spotanims": [{ "spotanim_id": 9, "style": 0, "where": "projectile" }]
+        }))
+        .unwrap();
+        crate::supply_v2::configure(Some(Arc::new(invalid)));
+        assert!(hunt_combat_tables().is_err());
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        let effect = next_effect(&mut runtime, &parse_projection(&json!({})), None);
+        assert_eq!(effect["kind"], "failed");
+        assert!(effect["reason"].as_str().unwrap().contains("unsupported"));
+        assert_eq!(effect["notes"][0]["kind"], "log");
+        assert_eq!(effect["notes"][0]["message"], effect["reason"]);
+        seed_protect_observation();
+        assert!(
+            hunt_combat_tables().is_ok(),
+            "reconfigure must clear cached failure"
+        );
+    }
+
+    #[test]
+    fn hunt_antifire_tracks_confirmed_sips_across_tokens_and_expires_like_combat() {
+        seed_protect_observation();
+        let tables = hunt_combat_tables().unwrap();
+        let potion = tables
+            .potion(PotionKind::Antifire)
+            .expect("selected antifire family");
+        let full = potion.doses[3].unwrap();
+        let next = potion.doses[2].unwrap();
+        let mut state = HuntAntifire::default();
+        observed::post(10, |post| {
+            post.inv(vec![ItemRow {
+                id: full.id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
+        observed::post(11, |post| {
+            post.inv(vec![ItemRow {
+                id: next.id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![observed::ChatLine {
+                seq: 1,
+                text: "You drink some of your dragon potion.".into(),
+            }]);
+        });
+        assert!(observed::with(|scene| state.observe(scene, &tables, 11)));
+        assert!(observed::with(|scene| state.observe(scene, &tables, 610)));
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 611)));
+        // The retained consume chat cannot renew the sip when another dose is
+        // dropped/banked, and a scene reset cannot carry the old protection.
+        observed::post(612, |post| {
+            post.inv(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 612)));
+        observed::replace(1, true, |post| {
+            post.inv(vec![]).chat_lines(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 1)));
+    }
+
+    #[test]
+    fn hunt_antifire_dose_drop_without_fresh_consume_chat_is_not_a_sip() {
+        seed_protect_observation();
+        let tables = hunt_combat_tables().unwrap();
+        let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
+            .unwrap()
+            .id;
+        let mut state = HuntAntifire::default();
+        observed::post(10, |post| {
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
+        observed::post(11, |post| {
+            post.inv(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
+    }
+
+    #[test]
+    fn hunt_antifire_ignores_another_potion_consume_chat() {
+        seed_protect_observation();
+        let tables = hunt_combat_tables().unwrap();
+        let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
+            .unwrap()
+            .id;
+        let mut state = HuntAntifire::default();
+        observed::post(10, |post| {
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
+        observed::post(11, |post| {
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![observed::ChatLine {
+                seq: 1,
+                text: "You drink some of your prayer potion.".into(),
+            }]);
+        });
+        assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
+    }
 }

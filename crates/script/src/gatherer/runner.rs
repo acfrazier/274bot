@@ -311,11 +311,7 @@ impl Gatherer {
 
     fn return_to_resources(&mut self, tick: &mut NativeTick<'_>) {
         let Some(area) = self.area else {
-            self.fail(
-                "return-failed",
-                "the resource work area is unavailable",
-                true,
-            );
+            self.fail("return-failed", "the resource work area is unavailable");
             return;
         };
         let snapshot = tick.cx.snapshot();
@@ -337,7 +333,6 @@ impl Gatherer {
             self.fail(
                 "return-failed",
                 "no usable resource observation stand in the work area",
-                true,
             );
             return;
         };
@@ -413,7 +408,6 @@ impl Gatherer {
                                 .get(usize::from(selected.bank_index))
                                 .map_or(self.settings().bank.as_str(), |bank| bank.name)
                         ),
-                        true,
                     );
                     return;
                 };
@@ -460,7 +454,7 @@ impl Gatherer {
                     ) {
                         SupplyPlanResult::Pending => return,
                         SupplyPlanResult::Missing(item) => {
-                            self.fail("supply-missing", format!("supply-missing:{item}"), true);
+                            self.fail("supply-missing", format!("supply-missing:{item}"));
                             return;
                         }
                         SupplyPlanResult::Ready(plan) => {
@@ -498,19 +492,12 @@ impl Gatherer {
         }
     }
 
-    fn fail(&mut self, code: &'static str, message: impl Into<Arc<str>>, retryable: bool) {
+    fn fail(&mut self, code: &'static str, message: impl Into<Arc<str>>) {
         self.failure = Some(ScriptFailure {
             code: Arc::from(code),
             message: message.into(),
-            retryable,
         });
         self.dirty = true;
-    }
-
-    fn clear_failure(&mut self) {
-        if self.failure.take().is_some() {
-            self.dirty = true;
-        }
     }
 
     fn cancel_active(&mut self) {
@@ -566,7 +553,6 @@ impl Gatherer {
             self.fail(
                 "config-identity",
                 "pending Gatherer settings were malformed",
-                false,
             );
             return None;
         };
@@ -624,19 +610,11 @@ impl Gatherer {
                 continue;
             };
             if skill_stat.base < method_level(method, skill_stat.index) {
-                self.fail(
-                    "level-too-low",
-                    format!("level-too-low:{}", method.id.0),
-                    false,
-                );
+                self.fail("level-too-low", format!("level-too-low:{}", method.id.0));
                 return Validation::Pending;
             }
             if !world.value.members && has_members_requirement(method) {
-                self.fail(
-                    "members-world",
-                    "selected method requires a members world",
-                    false,
-                );
+                self.fail("members-world", "selected method requires a members world");
                 return Validation::Pending;
             }
         }
@@ -676,7 +654,6 @@ impl Gatherer {
                     self.fail(
                         "resource-unavailable",
                         "Auto searched 128 tiles without a usable group",
-                        true,
                     );
                     return Validation::Pending;
                 }
@@ -687,7 +664,7 @@ impl Gatherer {
             Ok(area) => area,
             Err(AreaError::NotReady) => return Validation::Pending,
             Err(AreaError::Invalid) => {
-                self.fail("area-invalid", "the configured work area is invalid", false);
+                self.fail("area-invalid", "the configured work area is invalid");
                 return Validation::Pending;
             }
         };
@@ -721,7 +698,6 @@ impl Gatherer {
             self.fail(
                 "area-invalid",
                 "no selected method has an accessible placement in the area",
-                false,
             );
             return Validation::Pending;
         }
@@ -795,15 +771,11 @@ impl Gatherer {
             .iter()
             .find(|row| row.def.id == self.tool.id)
         else {
-            self.fail("tool-missing", "the selected tool left the inventory", true);
+            self.fail("tool-missing", "the selected tool left the inventory");
             return;
         };
         let Some(name) = row.def.name.as_deref() else {
-            self.fail(
-                "tool-missing",
-                "the selected tool has no observed name",
-                true,
-            );
+            self.fail("tool-missing", "the selected tool has no observed name");
             return;
         };
         let Some(action) = row.actions.iter().flatten().find(|action| {
@@ -812,7 +784,6 @@ impl Gatherer {
             self.fail(
                 "tool-unusable",
                 "the selected tool has no observed equip action",
-                false,
             );
             return;
         };
@@ -835,12 +806,7 @@ impl Gatherer {
         if matches!(error, ActionError::Held) {
             return;
         }
-        let retryable = !matches!(error, ActionError::Stale | ActionError::Cancelled);
-        self.fail(
-            "action-error",
-            format!("native action failed: {error:?}"),
-            retryable,
-        );
+        self.fail("action-error", format!("native action failed: {error:?}"));
     }
 
     fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
@@ -867,7 +833,6 @@ impl Gatherer {
             self.fail(
                 "inventory-blocked",
                 "no observed product rows can be dropped",
-                true,
             );
             return;
         }
@@ -1057,7 +1022,6 @@ impl Gatherer {
                 self.fail(
                     "recovery-no-yield",
                     "three gather runs without product and XP",
-                    true,
                 );
             }
         }
@@ -1078,7 +1042,6 @@ impl Gatherer {
                 self.fail(
                     "inventory-blocked",
                     "full inventory has nothing left to drop",
-                    true,
                 );
             }
             DropEnd::Cleared => {
@@ -1092,7 +1055,6 @@ impl Gatherer {
                 self.fail(
                     "inventory-blocked",
                     format!("inventory-blocked: {remaining} product slots remain"),
-                    true,
                 );
             }
         }
@@ -1106,7 +1068,7 @@ impl Gatherer {
         }
         if result.end == WalkEnd::UserInput {
             self.target = None;
-            self.fail("manual-movement", "cancelled by user input", true);
+            self.fail("manual-movement", "cancelled by user input");
             return;
         }
         if result.end != WalkEnd::Arrived {
@@ -1120,7 +1082,6 @@ impl Gatherer {
                     "walk-failed"
                 },
                 walk_failure_message(&result),
-                true,
             );
             return;
         }
@@ -1134,11 +1095,7 @@ impl Gatherer {
             TripStep::Return => {
                 let arrived = self.resource_return_arrived(tick);
                 if !arrived {
-                    self.fail(
-                        "return-failed",
-                        "return receipt did not establish arrival at the resource observation stand",
-                        true,
-                    );
+                    self.fail("return-failed", "return receipt did not establish arrival at the resource observation stand");
                     return;
                 }
                 self.trips = self.trips.saturating_add(1);
@@ -1211,7 +1168,7 @@ impl Gatherer {
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
                     if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
-                        self.fail("return-failed", format!("return-failed:{error:?}"), true);
+                        self.fail("return-failed", format!("return-failed:{error:?}"));
                     } else {
                         self.action_failure(error);
                     }
@@ -1225,7 +1182,7 @@ impl Gatherer {
                         self.needs_validate = true;
                         self.set_event("one operation settled");
                     } else {
-                        self.fail("oneop-failed", "one operation did not settle", true);
+                        self.fail("oneop-failed", "one operation did not settle");
                     }
                 }
                 Poll::Ready(Err(error)) => {
@@ -1243,7 +1200,6 @@ impl Gatherer {
                         self.fail(
                             "bank-unavailable",
                             format!("bank-unavailable:{}", self.settings().bank),
-                            true,
                         );
                     } else {
                         self.selected_bank = Some(selected);
@@ -1256,7 +1212,6 @@ impl Gatherer {
                     self.fail(
                         "bank-unavailable",
                         format!("bank selection failed: {error:?}"),
-                        true,
                     );
                 }
             },
@@ -1268,11 +1223,7 @@ impl Gatherer {
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
-                    self.fail(
-                        "bank-unavailable",
-                        format!("bank open failed: {error:?}"),
-                        true,
-                    );
+                    self.fail("bank-unavailable", format!("bank open failed: {error:?}"));
                 }
             },
             Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -1292,7 +1243,6 @@ impl Gatherer {
                     self.fail(
                         "bank-deposit-failed",
                         format!("bank deposit failed: {error:?}"),
-                        true,
                     );
                 }
             },
@@ -1302,7 +1252,7 @@ impl Gatherer {
                     self.fence.seal();
                     self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
-                        self.fail("supply-missing", format!("supply-missing:{item}"), true);
+                        self.fail("supply-missing", format!("supply-missing:{item}"));
                         return;
                     }
                     self.advance_trip(TripStep::Close);
@@ -1310,18 +1260,13 @@ impl Gatherer {
                 }
                 Poll::Ready(Ok(false)) => {
                     self.fence.seal();
-                    self.fail(
-                        "bank-withdraw-failed",
-                        "supply withdrawal was incomplete",
-                        true,
-                    );
+                    self.fail("bank-withdraw-failed", "supply withdrawal was incomplete");
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
                     self.fail(
                         "bank-withdraw-failed",
                         format!("supply withdrawal failed: {error:?}"),
-                        true,
                     );
                 }
             },
@@ -1503,7 +1448,6 @@ impl Gatherer {
                     self.fail(
                         "resource-unavailable",
                         format!("resource-unavailable: absent: {absent}"),
-                        true,
                     );
                 }
                 Selection::Exhausted { wait_until, absent } => {
@@ -1514,7 +1458,7 @@ impl Gatherer {
                         if self.settings().location.eq_ignore_ascii_case("auto") {
                             self.begin_widen(wait_until, tick);
                         } else {
-                            self.fail("resource-unavailable", "resource-unavailable", true);
+                            self.fail("resource-unavailable", "resource-unavailable");
                         }
                     } else {
                         self.set_event("waiting for a resource");
@@ -1532,7 +1476,6 @@ impl Gatherer {
             self.fail(
                 "widen-limit",
                 "Auto widening limit: tried: 4 (within 128 tiles)",
-                true,
             );
             return;
         }
@@ -1880,36 +1823,6 @@ impl Script for Gatherer {
         Ok(SettingsApply::Applied)
     }
 
-    fn retry(&mut self) -> Result<(), ScriptFailure> {
-        let Some(failure) = self.failure.as_ref() else {
-            return Ok(());
-        };
-        if !failure.retryable {
-            return Err(failure.clone());
-        }
-        let exhausted_search =
-            failure.code.as_ref() == "resource-unavailable" && self.retained.anchor.is_none();
-        if self.settings().location.eq_ignore_ascii_case("auto")
-            && (failure.code.as_ref() == "widen-limit" || exhausted_search)
-        {
-            self.tried_groups = [TriedGroup::default(); 4];
-            self.widen.reset();
-            self.retained.anchor = None;
-            self.area = None;
-        }
-        self.clear_failure();
-        self.respawn_deadline = None;
-        self.respawn_settle = None;
-        self.proving_runs = 0;
-        self.proof_evidence = 0;
-        self.recovery_reprovisions = 0;
-        self.wait_until = None;
-        self.needs_validate = true;
-        self.rebaseline_gameplay = true;
-        self.dirty = true;
-        Ok(())
-    }
-
     fn interrupt(&mut self, event: Interrupt) {
         match event {
             Interrupt::Pause | Interrupt::Hold(true) | Interrupt::SessionEnded => {
@@ -1963,74 +1876,6 @@ mod tests {
         fence.observe(8);
         assert!(fence.reserve(5));
         assert!(!fence.reserve(1));
-    }
-
-    #[test]
-    fn auto_retry_preserves_groups_unless_search_is_exhausted() {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let mut bag = crate::native::SettingsBag::new();
-        bag.insert("location".into(), serde_json::json!("Auto"));
-        let config = api::selected::FamilyPreparation::run(move |families| {
-            crate::slot::prepare_config(
-                families,
-                crate::CompiledId("Gatherer"),
-                1,
-                Arc::new(bag),
-                selected,
-                Arc::default(),
-            )
-        })
-        .unwrap()
-        .join()
-        .unwrap()
-        .unwrap();
-        let anchor = WorldTile {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        };
-        for (code, current_group, reset) in [
-            ("walk-failed", Some(anchor), false),
-            ("inventory-blocked", Some(anchor), false),
-            ("resource-unavailable", Some(anchor), false),
-            ("widen-limit", Some(anchor), true),
-            ("resource-unavailable", None, true),
-        ] {
-            let mut runner = Gatherer::new(
-                RunKey {
-                    slot: 1,
-                    run: 1,
-                    session: 1,
-                },
-                Arc::clone(&config),
-                Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
-                GatherRetained::default(),
-            );
-            runner.retained.anchor = current_group;
-            runner.area = current_group.map(|anchor| WorkArea {
-                mode: super::super::area::AreaMode::Auto,
-                anchor,
-                radius: 12,
-            });
-            assert!(remember_group(&mut runner.tried_groups, anchor, 1, 1000));
-            runner.fail(code, code, true);
-
-            runner.retry().unwrap();
-
-            assert!(runner.failure.is_none(), "{code}");
-            assert!(runner.needs_validate, "{code}");
-            assert_eq!(
-                runner.retained.anchor,
-                if reset { None } else { current_group },
-                "{code}"
-            );
-            assert_eq!(runner.area.is_none(), reset, "{code}");
-            assert_eq!(
-                runner.tried_groups[0].until,
-                if reset { 0 } else { 1000 },
-                "{code}"
-            );
-        }
     }
 
     #[test]
@@ -2204,7 +2049,7 @@ mod tests {
     }
 
     #[test]
-    fn user_input_walk_parks_gatherer_until_retry() {
+    fn user_input_walk_blocks_gatherer_without_rearming() {
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -2259,7 +2104,6 @@ mod tests {
         let failure = gatherer.failure.as_ref().unwrap();
         assert_eq!(failure.code.as_ref(), "manual-movement");
         assert_eq!(failure.message.as_ref(), "cancelled by user input");
-        assert!(failure.retryable);
 
         for tick in 1..=3 {
             assert!(matches!(
@@ -2269,14 +2113,10 @@ mod tests {
                 ScriptFlow::Blocked(failure)
                     if failure.code.as_ref() == "manual-movement"
                         && failure.message.as_ref() == "cancelled by user input"
-                        && failure.retryable
             ));
         }
         assert!(ledger
             .as_ref()
             .is_none_or(|ledger| ledger.outbox.is_empty()));
-
-        gatherer.retry().unwrap();
-        assert!(gatherer.failure.is_none());
     }
 }

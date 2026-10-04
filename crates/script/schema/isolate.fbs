@@ -269,7 +269,7 @@ table ApiGatherOutcome {
   end: ubyte; // 1 stopped, 2 blocked, 3 refused, 4 failed.
   code: string;
   message: string;
-  retryable: bool;
+  retryable: bool (deprecated);
   yielded: uint;
   dropped: uint;
   deposited: uint;
@@ -313,6 +313,13 @@ table ApiProgress {
 
 // Bounded cancellation reason for the retained host walk outcome.
 enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
+
+// One live projectile's combat-classification inputs. Only the spotanim and
+// decoded local-player target are needed by Hunt's borrowed protect frame.
+table CombatProjectile {
+  spotanim: int;
+  target_player_index: int = null;
+}
 
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
@@ -538,6 +545,19 @@ table Snapshot {
   user_move_intent_seq: ulong = 0;
   // Part of the walk_outcome family; replacement with None clears it.
   walk_outcome_cancel_reason: WalkCancelReason = None;
+  // At most 32 live projectiles aimed at the local player, in client order.
+  // Absent in a delta means keep; an empty vector is an observed clear.
+  projectiles: [CombatProjectile];
+  // Host hash of native modal body texts and option component/text pairs.
+  // Unlike chat_text, unrelated chat-ring messages cannot change this page.
+  // Omitted deltas retain the last scalar; zero clears an unavailable snapshot.
+  chat_page_fingerprint: ulong = 0;
+  // Slot 284: `client.side_modal_id` (`modals().side`), -1 none. Grouped with
+  // main_modal_id/chat_modal_id in meaning only. With bank_open it tells a
+  // posted (possibly empty) bank_side from one not posted yet; never infer
+  // that from the vector length. Written on the keyframe and whenever it
+  // changes; an omitted delta keeps the last root; old buffers read -1.
+  side_modal_id: int = -1;
 }
 
 table Collision {

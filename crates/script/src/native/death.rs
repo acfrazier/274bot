@@ -1,6 +1,20 @@
 //! Shared death-message latch and the content-derived normal respawn square.
 use api::snapshot::{SnapshotView, WorldTile};
 
+pub const DEFAULT_MAX_DEATHS: u8 = 2;
+
+pub const fn default_max_deaths() -> u8 {
+    DEFAULT_MAX_DEATHS
+}
+
+/// Whether the current death count has reached its configured cap.
+///
+/// Call before incrementing: a cap of two allows two deaths and blocks the
+/// third; a cap of zero blocks the first death.
+pub fn death_cap_exceeded(deaths: u16, max_deaths: u8) -> bool {
+    deaths >= u16::from(max_deaths)
+}
+
 pub const DEATH_NEEDLE_A: &str = "oh dear";
 pub const DEATH_NEEDLE_B: &str = "you are dead";
 
@@ -57,10 +71,23 @@ impl DeathLatch {
         let Some(lines) = snapshot.chat_lines(0) else {
             return false;
         };
-        let max_seq = lines
-            .value
-            .iter()
-            .map(|line| line.sequence)
+        self.observe_lines(|| {
+            lines
+                .value
+                .iter()
+                .map(|line| (line.sequence, line.text.as_str()))
+        })
+    }
+
+    /// Observe a borrowed chat ring, shared by native and v1 compatibility
+    /// recovery. A lower head reconciles a replacement ring in this pass.
+    pub fn observe_lines<'a, I, F>(&mut self, mut lines: F) -> bool
+    where
+        F: FnMut() -> I,
+        I: Iterator<Item = (i32, &'a str)>,
+    {
+        let max_seq = lines()
+            .map(|(sequence, _)| sequence)
             .max()
             .unwrap_or(self.last_seq);
         if !self.baseline {
@@ -69,20 +96,14 @@ impl DeathLatch {
             return false;
         }
 
-        // A lower head means the client/ring was replaced. Reconcile the new
-        // ring in this same observation rather than waiting for another tick.
         if max_seq < self.last_seq {
             self.last_seq = 0;
         }
         let mut newest = self.last_seq;
         let mut death = false;
-        for line in lines
-            .value
-            .iter()
-            .filter(|line| line.sequence > self.last_seq)
-        {
-            newest = newest.max(line.sequence);
-            death |= is_death_line(&line.text);
+        for (sequence, text) in lines().filter(|(sequence, _)| *sequence > self.last_seq) {
+            newest = newest.max(sequence);
+            death |= is_death_line(text);
         }
         self.last_seq = newest;
         death
@@ -216,6 +237,17 @@ mod tests {
         let mut nondeath = DeathLatch::from_watermark(Some(57));
         assert!(!nondeath.observe(SnapshotView::new(Some(&nondeath_ring), stamp())));
         assert_eq!(nondeath.watermark(), Some(1));
+    }
+
+    #[test]
+    fn death_cap_blocks_on_the_next_death_after_the_limit() {
+        assert_eq!(default_max_deaths(), 2);
+        assert!(!death_cap_exceeded(0, 2));
+        assert!(!death_cap_exceeded(1, 2));
+        assert!(death_cap_exceeded(2, 2));
+        assert!(death_cap_exceeded(0, 0));
+        assert!(!death_cap_exceeded(254, 255));
+        assert!(death_cap_exceeded(255, 255));
     }
 
     #[test]

@@ -25,16 +25,17 @@
 //! fish, resources, NPCs or an incidental-drop gate. Initial level/tool fixtures
 //! precede the progression baseline; proof gains come from the running script.
 //! G4a cells exercise guardian-owned random-event holds and verified death
-//! recovery, including Retry and watchdog recreation; they require the
+//! recovery, including terminal return refusals and watchdog recreation;
+//! they require the
 //! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
 //! Fixture helpers alter locations only; they never inject products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
-//! suffix. Each cell uses an isolated HOME plus absolute `GATHERER_ENGINE_DIR`,
-//! `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT` paths. G3 bank trips default
-//! to proven oak/fishing origins; cost-ranking and real-timeout cells need
-//! explicit origin tiles.
-//! `BOT_CACHE_DIR` selects the read-only copied JAG source; `CLIENT_UNPACK_DIR`
-//! selects its copied unpack root, which retains the complete versioned snapshot.
+//! suffix. Each cell uses an isolated HOME plus absolute paths for
+//! `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`.
+//! G3 bank trips default to proven oak/fishing origins; the first-goal bank
+//! cell uses Draynor's live oak grove east of its bank. It does not seed scene
+//! locations; only the account's bronze axe is bank-seeded for its real
+//! gathering and deposit trip.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -71,6 +72,7 @@ const SWORDFISH_ID: i32 = 371;
 const FEATHERS_ID: i32 = 314;
 const CASKET_ID: i32 = 405;
 const OAK_ID: i32 = 1281;
+const MAPLE_LOG_ID: i32 = 1517;
 const OAK_STUMP_ID: i32 = 1355;
 const OAK_RESPAWN_MAX_TICKS: u32 = 30;
 const AUTO_TREE_IDS: &[i32] = &[1276, 1278];
@@ -111,6 +113,17 @@ const CATHERBY_HARPOON_START: WorldTile = WorldTile {
 const OAK_RESPAWN_START: WorldTile = WorldTile {
     x: 3017,
     z: 3170,
+    level: 0,
+};
+
+const DRAYNOR_OAK_BANK_START: WorldTile = WorldTile {
+    x: 3095,
+    z: 3243,
+    level: 0,
+};
+const SEERS_MAPLE_BANK_START: WorldTile = WorldTile {
+    x: 2727,
+    z: 3501,
     level: 0,
 };
 const OAK_RESPAWN_OTHER: WorldTile = WorldTile {
@@ -234,7 +247,8 @@ impl Cell {
                 "gatherer_wc_bank_unwieldable"
             }
             (Self::Mining, LiveCase::BankCost) => "gatherer_mining_bank_cost_walk_ranked",
-            (Self::Woodcutting, LiveCase::BankCostAirFallback) => "gatherer_bank_cost_t1",
+            (Self::Woodcutting, LiveCase::BankCostFirstGoal) => "gatherer_bank_cost_t1",
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => "gatherer_bank_cost_seers_maple",
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => "gatherer_bank_cost_no_candidate",
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
             (Self::Fishing, LiveCase::FishHarpoonBank) => "gatherer_fish_harpoon_bank",
@@ -247,13 +261,14 @@ impl Cell {
             }
             (Self::Woodcutting, LiveCase::ReconnectReturn) => "gatherer_reconnect_return_live",
             (Self::Woodcutting, LiveCase::RandomEvent) => "gatherer_random",
+            (Self::Woodcutting, LiveCase::MazeRandom) => "gatherer_maze_random",
             (Self::Woodcutting, LiveCase::DeathReturn) => "gatherer_death_return",
             (Self::Woodcutting, LiveCase::DeathRespawnRegion) => {
                 "gatherer_death_return_respawn_region"
             }
             (Self::Woodcutting, LiveCase::DeathNoStock) => "gatherer_death_return_no_stock",
             (Self::Woodcutting, LiveCase::DeathReturnRefused) => {
-                "gatherer_death_return_refused_retry"
+                "gatherer_death_return_refused_stops"
             }
             (Self::Woodcutting, LiveCase::DeathWatchdogPending) => {
                 "gatherer_death_watchdog_pending5"
@@ -273,7 +288,6 @@ impl Cell {
             LiveCase::LocationAuto => "GATHERER_AUTO_START_TILE",
             LiveCase::WoodcuttingBank => "GATHERER_WC_BANK_TILE",
             LiveCase::WoodcuttingBankUnwieldable => "GATHERER_WC_BANK_TILE",
-            LiveCase::BankCostAirFallback => "GATHERER_BANK_T1_TILE",
             LiveCase::BankCostNoCandidate => "GATHERER_BANK_NO_CANDIDATE_TILE",
             LiveCase::FishBait => "GATHERER_FISH_BAIT_TILE",
             LiveCase::FishHarpoonBank => "GATHERER_FISH_HARPOON_TILE",
@@ -283,7 +297,7 @@ impl Cell {
             LiveCase::ReconnectReturn => "GATHERER_RECONNECT_RETURN_TILE",
             LiveCase::GasHazard => "GATHERER_GAS_TILE",
             LiveCase::OakAbsentArea => "GATHERER_WC_ABSENT_TILE",
-            LiveCase::RandomEvent => "GATHERER_WC_TILE",
+            LiveCase::RandomEvent | LiveCase::MazeRandom => "GATHERER_WC_TILE",
             LiveCase::DeathReturn
             | LiveCase::DeathNoStock
             | LiveCase::DeathWatchdogPending
@@ -355,13 +369,14 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
             ) => 15,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 20,
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => 45,
             (Self::Fishing, LiveCase::FishHarpoonBank) => 99,
             (Self::Fishing, LiveCase::FishHarpoonBankAuto) => 76,
             (Self::Mining, LiveCase::BankCost) => 1,
@@ -372,6 +387,7 @@ impl Cell {
 
     const fn products(self, case: LiveCase) -> &'static [i32] {
         match (self, case) {
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => &[MAPLE_LOG_ID],
             (
                 Self::Woodcutting,
                 LiveCase::DeathReturn
@@ -387,7 +403,7 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
@@ -412,6 +428,7 @@ impl Cell {
 
     fn resources(self, case: LiveCase) -> Vec<String> {
         match self {
+            Self::Woodcutting if case == LiveCase::BankCostSeersMaple => vec!["maple".into()],
             Self::Woodcutting => vec![if matches!(
                 case,
                 LiveCase::OakRespawn
@@ -419,7 +436,7 @@ impl Cell {
                     | LiveCase::OakAbsentArea
                     | LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
-                    | LiveCase::BankCostAirFallback
+                    | LiveCase::BankCostFirstGoal
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
@@ -452,6 +469,7 @@ impl Cell {
 
     fn level(self, case: LiveCase) -> i32 {
         let env = match (self, case) {
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => None,
             (Self::Woodcutting, LiveCase::OakRespawn | LiveCase::OakNearEdge) => {
                 Some("GATHERER_OAK_LEVEL")
             }
@@ -469,7 +487,7 @@ impl Cell {
                 LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable,
             ) => Some("GATHERER_WC_BANK_LEVEL"),
             (Self::Mining, LiveCase::BankCost) => Some("GATHERER_BANK_COST_LEVEL"),
-            (Self::Woodcutting, LiveCase::BankCostAirFallback) => Some("GATHERER_BANK_T1_LEVEL"),
+            (Self::Woodcutting, LiveCase::BankCostFirstGoal) => Some("GATHERER_BANK_T1_LEVEL"),
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => {
                 Some("GATHERER_BANK_NO_CANDIDATE_LEVEL")
             }
@@ -509,12 +527,15 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
             ) => std::env::var("GATHERER_WC_BANK_TOOL")
                 .unwrap_or_else(|_| self.default_tool_alias(case).into()),
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => {
+                self.default_tool_alias(case).into()
+            }
             (Self::Woodcutting, LiveCase::CoinRunes | LiveCase::CoinRunesEmpty) => {
                 std::env::var("GATHERER_COIN_TOOL")
                     .unwrap_or_else(|_| self.default_tool_alias(case).into())
@@ -545,11 +566,12 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
             ) => Some("GATHERER_WC_BANK_TOOL_ID"),
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => None,
             (Self::Woodcutting, LiveCase::CoinRunes | LiveCase::CoinRunesEmpty) => {
                 Some("GATHERER_COIN_TOOL_ID")
             }
@@ -623,7 +645,8 @@ impl Cell {
                 LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
                     | LiveCase::BankCost
-                    | LiveCase::BankCostAirFallback
+                    | LiveCase::BankCostFirstGoal
+                    | LiveCase::BankCostSeersMaple
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::FishBait
                     | LiveCase::FishHarpoonBank
@@ -643,7 +666,8 @@ impl Cell {
             LiveCase::WoodcuttingBank
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::BankCost
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
+                | LiveCase::BankCostSeersMaple
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::FishBait
                 | LiveCase::FishHarpoonBank
@@ -664,6 +688,7 @@ impl Cell {
                 "bank".into(),
                 json!(match case {
                     LiveCase::BankCostNoCandidate => "Zanaris",
+                    LiveCase::BankCostSeersMaple => "Seers",
                     LiveCase::FishHarpoonBankAuto => "Catherby",
                     _ => "Nearest",
                 }),
@@ -755,7 +780,8 @@ enum LiveCase {
     WoodcuttingBank,
     WoodcuttingBankUnwieldable,
     BankCost,
-    BankCostAirFallback,
+    BankCostFirstGoal,
+    BankCostSeersMaple,
     BankCostNoCandidate,
     FishBait,
     FishHarpoonBank,
@@ -765,6 +791,7 @@ enum LiveCase {
     PowerToBank,
     PauseResumeOtherPlane,
     ReconnectReturn,
+    MazeRandom,
 }
 
 impl LiveCase {
@@ -779,7 +806,7 @@ impl LiveCase {
             Self::DeathReturn => "death-return",
             Self::DeathRespawnRegion => "death-return-respawn-region",
             Self::DeathNoStock => "death-return-no-stock",
-            Self::DeathReturnRefused => "death-return-refused-retry",
+            Self::DeathReturnRefused => "death-return-refused-stop",
             Self::DeathWatchdogPending => "death-watchdog-pending5",
             Self::DeathWatchdogProving => "death-watchdog-proving",
             Self::FishBaitGate => "fish-bait-gate",
@@ -791,7 +818,8 @@ impl LiveCase {
             Self::WoodcuttingBank => "woodcutting-bank",
             Self::WoodcuttingBankUnwieldable => "woodcutting-bank-unwieldable",
             Self::BankCost => "mining-bank-cost-walk-ranked",
-            Self::BankCostAirFallback => "bank-cost-t1-air-fallback",
+            Self::BankCostFirstGoal => "bank-cost-first-goal-reachable",
+            Self::BankCostSeersMaple => "seers-maple-bank-lifecycle",
             Self::BankCostNoCandidate => "bank-cost-no-candidate",
             Self::FishBait => "fish-bait-bank",
             Self::FishHarpoonBank => "fish-harpoon-bank",
@@ -801,6 +829,7 @@ impl LiveCase {
             Self::PowerToBank => "power-to-bank",
             Self::PauseResumeOtherPlane => "pause-resume-other-plane",
             Self::ReconnectReturn => "reconnect-return",
+            Self::MazeRandom => "maze-random",
         }
     }
 
@@ -849,7 +878,8 @@ impl LiveCase {
             Self::WoodcuttingBank
                 | Self::WoodcuttingBankUnwieldable
                 | Self::BankCost
-                | Self::BankCostAirFallback
+                | Self::BankCostFirstGoal
+                | Self::BankCostSeersMaple
                 | Self::BankCostNoCandidate
                 | Self::PauseResumeOtherPlane
                 | Self::ReconnectReturn
@@ -1418,6 +1448,22 @@ struct Witness {
     random_foreign_not_held: bool,
     random_foreign_yield_baseline: i64,
     random_foreign_xp_baseline: i32,
+    /// `~maze` (the content's `[debugproc,maze]`) went out after the
+    /// first gathered yield.
+    maze_command_sent: bool,
+    /// The subject stood on the Maze square after the command.
+    maze_entered: bool,
+    /// The subject left the Maze square again; yield/xp at that edge.
+    maze_exited: bool,
+    maze_exit_yielded: i64,
+    maze_exit_xp: i32,
+    /// Fresh Gatherer yield and xp after leaving the Maze.
+    maze_resumed: bool,
+    /// The Gatherer blocked while still on the Maze square.
+    maze_blocked_inside: bool,
+    /// After that block, the slot took the terminal Stop: Idle, no
+    /// native run, and a `Failed` lifecycle receipt.
+    maze_stopped: bool,
     random_foreign_fresh_yield: bool,
     death_recovery_command_sent: u32,
     death_command_while_paused: bool,
@@ -1433,9 +1479,7 @@ struct Witness {
     death_first_recovery_post_drop_gathers: Option<u32>,
     death_haul_between: bool,
     death_return_refused: bool,
-    death_retry_teleport_sent: bool,
-    death_retry_requested: bool,
-    death_retry_reentered: bool,
+    death_return_stopped: bool,
     death_watchdog_aged: bool,
     death_watchdog_generation_before: Option<u64>,
     death_watchdog_recreated: bool,
@@ -1745,6 +1789,7 @@ impl GatherSlot {
             self.witness.preflight_build_observed = true;
         }
         self.record_random_event(hold, &observation);
+        self.record_maze(&observation);
         if self.case == LiveCase::DeathReturn
             && self.witness.pause_observed
             && self.witness.death_command_while_paused
@@ -1776,6 +1821,32 @@ impl GatherSlot {
             self.error = Some(error);
         }
     }
+    fn record_maze(&mut self, observation: &Observation) {
+        if self.case != LiveCase::MazeRandom || !self.witness.maze_command_sent {
+            return;
+        }
+        let Some((x, z, level)) = observation.tile else {
+            return;
+        };
+        if api::random::trapped_area(x, z, level) == Some(api::random::RandomKind::Maze) {
+            if !self.witness.maze_entered {
+                println!(
+                    "{}",
+                    json!({"phase": "maze-entered", "tile": [x, z, level], "xp": observation.xp})
+                );
+            }
+            self.witness.maze_entered = true;
+        } else if self.witness.maze_entered && !self.witness.maze_exited {
+            self.witness.maze_exited = true;
+            self.witness.maze_exit_yielded = self.witness.last_status_yielded;
+            self.witness.maze_exit_xp = observation.xp;
+            println!(
+                "{}",
+                json!({"phase": "maze-exited", "tile": [x, z, level], "xp": observation.xp})
+            );
+        }
+    }
+
     fn record_random_event(&mut self, hold: bool, observation: &Observation) {
         if self.case != LiveCase::RandomEvent {
             return;
@@ -3311,6 +3382,16 @@ impl GatherSlot {
                 }
             }
         }
+        if self.case == LiveCase::MazeRandom
+            && self.witness.maze_exited
+            && current_yielded > self.witness.maze_exit_yielded
+            && self
+                .latest
+                .as_ref()
+                .is_some_and(|latest| latest.xp > self.witness.maze_exit_xp)
+        {
+            self.witness.maze_resumed = true;
+        }
         if self.case == LiveCase::RandomEvent {
             if self.witness.random_owned_released
                 && current_yielded > self.witness.random_release_yielded
@@ -3414,14 +3495,6 @@ impl GatherSlot {
                     self.witness.death_first_recovery_post_drop_gathers =
                         Some(self.witness.post_drop_gathers);
                 }
-            }
-            if self.witness.death_retry_requested
-                && status.failure.is_none()
-                && event == "returning after death"
-                && current_deaths == 1
-                && current_recovery_step == 5
-            {
-                self.witness.death_retry_reentered = true;
             }
             if event == "bank selected" {
                 self.witness.bank_selected = true;
@@ -3578,8 +3651,21 @@ impl GatherSlot {
                     code == "resource-unavailable" && message.starts_with("resource-unavailable")
                 }
                 LiveCase::DeathNoStock => code == "supply-missing",
+                LiveCase::MazeRandom => {
+                    let inside = self
+                        .latest
+                        .as_ref()
+                        .and_then(|latest| latest.tile)
+                        .is_some_and(|(x, z, level)| {
+                            api::random::trapped_area(x, z, level)
+                                == Some(api::random::RandomKind::Maze)
+                        });
+                    self.witness.maze_blocked_inside |= code == "random-trapped" && inside;
+                    code == "random-trapped" && inside
+                }
                 LiveCase::DeathReturnRefused => {
-                    self.witness.death_return_refused |= code == "return-failed";
+                    self.witness.death_return_refused |=
+                        code == "return-failed" && message.contains("walk ended with Refused");
                     code == "return-failed"
                 }
                 _ => false,
@@ -3693,6 +3779,17 @@ impl GatherSlot {
 
     fn qualifies(&self) -> Result<(), String> {
         match self.case {
+            LiveCase::MazeRandom => {
+                if maze_random_complete(&self.witness) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} maze proof incomplete: {:?}",
+                        self.name(),
+                        self.witness
+                    ))
+                }
+            }
             LiveCase::RandomEvent
             | LiveCase::DeathReturn
             | LiveCase::DeathRespawnRegion
@@ -4023,24 +4120,28 @@ impl GatherSlot {
                 }
                 Ok(())
             }
-            LiveCase::BankCostAirFallback => {
-                if !self.complete_bank_selection()
-                    || self.selected_bank_kind() != Some("AirFallback")
-                    || !self
-                        .witness
-                        .bank_selection_elapsed
-                        .is_some_and(|elapsed| elapsed >= Duration::from_millis(4_900))
-                    || !self.witness.bank_loaded_observed
-                    || !self.witness.bank_closed_observed
-                    || !self.witness.bank_withdrawal_confirmed
-                    || self.witness.post_bank_yields == 0
+            LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple => {
+                let (expected_bank, resource) = match self.case {
+                    LiveCase::BankCostFirstGoal => ("Draynor", "oak"),
+                    LiveCase::BankCostSeersMaple => ("Seers", "maple"),
+                    _ => unreachable!("real-content bank case"),
+                };
+                if !real_content_bank_lifecycle_complete(
+                    self.case,
+                    &self.witness,
+                    &self.plan,
+                    self.target,
+                    self.baseline_xp(),
+                ) || !self.complete_bank_selection()
+                    || self.selected_bank_name() != Some(expected_bank)
+                    || self.selected_bank_kind() != Some("Reachable")
                     || self
                         .latest
                         .as_ref()
                         .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
-                        "{} did not observe the real five-second bank-selection timeout, select its air fallback, and resume yielding: {:?}",
+                        "{} did not gather real {resource} and complete the reachable {expected_bank} bank, deposit, return, and fresh-yield lifecycle without seeded scene locations: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -4272,6 +4373,7 @@ impl GatherSlot {
             .map(str::trim)
             .filter(|kind| !kind.is_empty())
     }
+
     fn complete_bank_selection(&self) -> bool {
         self.witness.bank_selected
             && self.selected_bank_name().is_some()
@@ -4516,7 +4618,8 @@ fn fixture_plan(
             plan.bank_seed.push(("rune_axe".into(), 1));
         }
         LiveCase::BankCost => plan.bank_seed.push(("bronze_pickaxe".into(), 1)),
-        LiveCase::BankCostAirFallback
+        LiveCase::BankCostFirstGoal
+        | LiveCase::BankCostSeersMaple
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => plan.bank_seed.push(("bronze_axe".into(), 1)),
         LiveCase::DeathReturn => plan.bank_seed.push(("bronze_axe".into(), 3)),
@@ -4546,7 +4649,9 @@ fn fixture_plan(
             .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
     }
     let target = match case {
-        LiveCase::RandomEvent => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
+        LiveCase::RandomEvent | LiveCase::MazeRandom => {
+            fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?
+        }
         LiveCase::DeathReturn
         | LiveCase::DeathNoStock
         | LiveCase::DeathWatchdogPending
@@ -4651,9 +4756,8 @@ fn fixture_plan(
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
         LiveCase::BankCost => world_tile(3016, 9840),
-        LiveCase::BankCostAirFallback => {
-            parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?
-        }
+        LiveCase::BankCostFirstGoal => DRAYNOR_OAK_BANK_START,
+        LiveCase::BankCostSeersMaple => SEERS_MAPLE_BANK_START,
         _ => parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?,
     };
     let task = match case {
@@ -4686,6 +4790,16 @@ fn fixture_plan(
         }
         _ => None,
     };
+    if matches!(
+        case,
+        LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple
+    ) && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
+    {
+        return Err(
+            "real-content bank fixtures must use live scene resources without location seeds"
+                .into(),
+        );
+    }
     Ok((target, plan, task))
 }
 
@@ -4993,54 +5107,58 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     _ => {}
                 }
             }
-            let (spawn_owned_event, trigger_recovery_death, death_command_tile, retry_teleport) =
-                frame_state
-                    .lock()
-                    .ok()
-                    .map(|slot| {
-                        let initial_progress = slot.witness.last_status_yielded > 0
-                            && slot.witness.last_xp > slot.baseline_xp();
-                        let death_command_tile =
-                            slot.latest.as_ref().and_then(|latest| latest.tile);
-                        let death_at_target = death_command_tile
-                            .and_then(|tile| tile_distance(tile, slot.target))
-                            .is_some_and(|distance| distance <= 12);
-                        let trigger_recovery_death = !hold
-                            && slot.case.is_death_recovery()
-                            && death_at_target
-                            && (slot.case != LiveCase::DeathReturn
-                                || slot.witness.death_recovery_command_sent > 0
-                                || slot.witness.pause_observed)
-                            && if slot.case == LiveCase::DeathReturn
-                                && slot.witness.death_recovery_command_sent == 1
-                            {
-                                slot.witness.death_haul_between
-                            } else {
-                                slot.witness.death_recovery_command_sent == 0 && initial_progress
-                            };
-                        let retry_teleport = (!hold
-                            && slot.case == LiveCase::DeathReturnRefused
-                            && slot.witness.death_return_refused
-                            && !slot.witness.death_retry_teleport_sent)
-                            .then_some(WorldTile {
-                                x: slot.target.x.saturating_add(13),
-                                ..slot.target
-                            });
-                        (
-                            !hold
-                                && slot.case == LiveCase::RandomEvent
-                                && initial_progress
-                                && !slot.witness.random_owned_command_sent,
-                            trigger_recovery_death,
-                            death_command_tile,
-                            retry_teleport,
-                        )
-                    })
-                    .unwrap_or((false, false, None, None));
+            let (spawn_owned_event, trigger_recovery_death, death_command_tile) = frame_state
+                .lock()
+                .ok()
+                .map(|slot| {
+                    let initial_progress = slot.witness.last_status_yielded > 0
+                        && slot.witness.last_xp > slot.baseline_xp();
+                    let death_command_tile = slot.latest.as_ref().and_then(|latest| latest.tile);
+                    let death_at_target = death_command_tile
+                        .and_then(|tile| tile_distance(tile, slot.target))
+                        .is_some_and(|distance| distance <= 12);
+                    let trigger_recovery_death = !hold
+                        && slot.case.is_death_recovery()
+                        && death_at_target
+                        && (slot.case != LiveCase::DeathReturn
+                            || slot.witness.death_recovery_command_sent > 0
+                            || slot.witness.pause_observed)
+                        && if slot.case == LiveCase::DeathReturn
+                            && slot.witness.death_recovery_command_sent == 1
+                        {
+                            slot.witness.death_haul_between
+                        } else {
+                            slot.witness.death_recovery_command_sent == 0 && initial_progress
+                        };
+                    (
+                        !hold
+                            && slot.case == LiveCase::RandomEvent
+                            && initial_progress
+                            && !slot.witness.random_owned_command_sent,
+                        trigger_recovery_death,
+                        death_command_tile,
+                    )
+                })
+                .unwrap_or((false, false, None));
             if spawn_owned_event && interact::cheat(client, "~macro_event 4").is_sent() {
                 if let Ok(mut slot) = frame_state.lock() {
                     slot.witness.random_owned_command_sent = true;
                 }
+            }
+            // The content's `[debugproc,maze]`: the natural event's teleport,
+            // reward and briefing, without waiting for the random-event RNG.
+            let send_maze = frame_state.lock().ok().is_some_and(|slot| {
+                !hold
+                    && slot.case == LiveCase::MazeRandom
+                    && slot.witness.last_status_yielded > 0
+                    && slot.witness.last_xp > slot.baseline_xp()
+                    && !slot.witness.maze_command_sent
+            });
+            if send_maze && interact::cheat(client, "~maze").is_sent() {
+                if let Ok(mut slot) = frame_state.lock() {
+                    slot.witness.maze_command_sent = true;
+                }
+                println!("{}", json!({"phase": "maze-command", "command": "~maze"}));
             }
             if trigger_recovery_death && interact::cheat(client, "~death").is_sent() {
                 if let Ok(mut slot) = frame_state.lock() {
@@ -5050,13 +5168,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     slot.witness.death_recovery_command_sent =
                         slot.witness.death_recovery_command_sent.saturating_add(1);
                     slot.witness.death_command_tile = death_command_tile;
-                }
-            }
-            if let Some(tile) = retry_teleport {
-                if send_cheat(client, &interact::tele_args(tile.level, tile.x, tile.z)).is_ok() {
-                    if let Ok(mut slot) = frame_state.lock() {
-                        slot.witness.death_retry_teleport_sent = true;
-                    }
                 }
             }
             let plane_teleport = frame_state.lock().ok().and_then(|slot| {
@@ -5095,7 +5206,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if let Ok(mut handle) = start_handle.lock() {
         *handle = Some(play.script_start_handle());
     }
-    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
+    let mut subject = mint_profile(&account, &password, 1)?;
+    // `GATHERER_MAZE_RANDOM_EVENTS=off`: the operator's random-event toggle
+    // is off, so no guardian solves the Maze and the Gatherer must block
+    // inside it instead of staying frozen.
+    if case == LiveCase::MazeRandom
+        && std::env::var("GATHERER_MAZE_RANDOM_EVENTS").as_deref() == Ok("off")
+    {
+        subject.settings.random_events = false;
+    }
+    play.try_spawn_slot(subject, None, None, None)?;
     if let (Some(helper_account), Some(helper_password)) =
         (helper_account.as_ref(), helper_password.as_ref())
     {
@@ -5107,33 +5227,50 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         )?;
     }
     let settings = cell.settings(case);
-    println!(
-        "{}",
-        json!({
-            "phase": "identity",
-            "cell": cell_name,
-            "live_case": case.name(),
-            "profile": profile.label(),
-            "game_port": profile.client().game_port(),
-            "nav_pack": profile.nav_pack(),
-            "account": account,
-            "fixture_account": helper_account.as_deref(),
-            "target": {"x": target.x, "z": target.z, "level": target.level},
-            "settings": settings,
-            "bank_cost_fixture_intent": (case == LiveCase::BankCost).then(|| json!({
-                "use_mage_bank": BANK_COST_FIXTURE_INTENT.use_mage_bank,
-                "allow_wilderness": BANK_COST_FIXTURE_INTENT.allow_wilderness,
-                "use_zanaris_bank": BANK_COST_FIXTURE_INTENT.use_zanaris_bank,
-                "prerequisite": "selected nav facts expose eligible banks and explicitly disable Zanaris plus Fishing Guild",
-            })),
-            "bank_cost_oracle": (case == LiveCase::BankCost).then(|| json!({
-                "eligible_air_candidates": plan.bank_cost_air_banks,
-                "gate_disabled_candidates": plan.bank_cost_gated_candidates,
-                "air_nearest_is_measured_at": "bank trip due using the observed live tile",
-            })),
-            "driver_trace": "enabled; native-packet account/tick/count lines are the packet witness",
-        })
-    );
+    let mut identity = json!({
+        "phase": "identity",
+        "cell": cell_name,
+        "live_case": case.name(),
+        "profile": profile.label(),
+        "game_port": profile.client().game_port(),
+        "nav_pack": profile.nav_pack(),
+        "account": account,
+        "fixture_account": helper_account.as_deref(),
+        "target": {"x": target.x, "z": target.z, "level": target.level},
+        "settings": settings,
+        "real_content_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+            "resource": "oak",
+            "camp": "Draynor Village east of the bank",
+            "scene_locations_seeded": plan.seed_locs.len(),
+            "fixture_locations_seeded": plan.oak_tiles.len(),
+            "expected_bank": "Draynor",
+            "expected_selection_kind": "Reachable",
+            "five_second_timeout_expected": false,
+        })),
+        "bank_cost_fixture_intent": (case == LiveCase::BankCost).then(|| json!({
+            "use_mage_bank": BANK_COST_FIXTURE_INTENT.use_mage_bank,
+            "allow_wilderness": BANK_COST_FIXTURE_INTENT.allow_wilderness,
+            "use_zanaris_bank": BANK_COST_FIXTURE_INTENT.use_zanaris_bank,
+            "prerequisite": "selected nav facts expose eligible banks and explicitly disable Zanaris plus Fishing Guild",
+        })),
+        "bank_cost_oracle": (case == LiveCase::BankCost).then(|| json!({
+            "eligible_air_candidates": plan.bank_cost_air_banks,
+            "gate_disabled_candidates": plan.bank_cost_gated_candidates,
+            "air_nearest_is_measured_at": "bank trip due using the observed live tile",
+        })),
+        "driver_trace": "enabled; native-packet account/tick/count lines are the packet witness",
+    });
+    if case == LiveCase::BankCostSeersMaple {
+        identity["non_catalog_booth_trip"] = json!({
+            "origin": target,
+            "resource": "maple",
+            "scene_locations_seeded": plan.seed_locs.len(),
+            "oak_tiles_seeded": plan.oak_tiles.len(),
+            "expected_bank": "Seers",
+            "expected_selection_kind": "Reachable",
+        });
+    }
+    println!("{identity}");
     let started_at = Instant::now();
     let mut restart_requested = false;
     let mut death_stop_requested = false;
@@ -5243,28 +5380,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             println!("{}", json!({"phase": "start", "cell": cell_name}));
         }
         let current_run = play.script_native_run(&account);
-        if case == LiveCase::DeathReturnRefused
-            && witness.death_return_refused
-            && witness.death_retry_teleport_sent
-            && !witness.death_retry_requested
-            && state
-                .lock()
-                .map_err(|_| "live state poisoned")?
-                .latest
-                .as_ref()
-                .and_then(|latest| latest.tile)
-                == Some((target.x.saturating_add(13), target.z, target.level))
-        {
-            let Some(run) = current_run else {
-                break Err(format!("{cell_name} lost the blocked run before Retry"));
-            };
-            if let Err(error) = play.script_native_retry(&account, run) {
-                break Err(format!("{cell_name} Retry failed: {error}"));
-            }
-            if let Ok(mut slot) = state.lock() {
-                slot.witness.death_retry_requested = true;
-            }
-        }
         if case == LiveCase::PowerToBank
             && !power_to_bank_edit_requested
             && witness.awaiting_drop
@@ -5564,6 +5679,31 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             if let Err(error) = slot.apply_status(&status) {
                 slot.error = Some(error);
             }
+            if case == LiveCase::DeathReturnRefused && slot.witness.death_return_refused {
+                slot.witness.death_return_stopped |= play.script_state(&account)
+                    == script::RunState::Idle
+                    && play.script_native_run(&account).is_none()
+                    && play
+                        .script_lifecycle_receipt(&account)
+                        .is_some_and(|receipt| {
+                            receipt.state == script::ScriptTerminalState::Failed
+                        });
+            }
+            if case == LiveCase::MazeRandom
+                && slot.witness.maze_blocked_inside
+                && !slot.witness.maze_stopped
+                && play.script_state(&account) == script::RunState::Idle
+                && play.script_native_run(&account).is_none()
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Failed)
+            {
+                slot.witness.maze_stopped = true;
+                println!(
+                    "{}",
+                    json!({"phase": "maze-stopped", "state": "Idle", "receipt": "Failed"})
+                );
+            }
         }
         let (
             witness,
@@ -5681,6 +5821,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.fish_targets.len() >= 2
             }
             LiveCase::FishBaitGate | LiveCase::OakAbsentArea => witness.failure_code.is_some(),
+            LiveCase::MazeRandom => maze_random_complete(&witness),
             LiveCase::OakRespawn => {
                 witness.all_oaks_depleted_at_wait && witness.first_regrown_gather_tick.is_some()
             }
@@ -5713,11 +5854,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.bank_closed_observed
             }
             LiveCase::BankCost => witness.bank_loaded_observed,
-            LiveCase::BankCostAirFallback => {
-                witness.status_trips >= 1
-                    && witness.post_bank_yields >= 1
-                    && witness.bank_closed_observed
-                    && witness.last_status_yielded > 0
+            LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple => {
+                real_content_bank_lifecycle_complete(case, &witness, &plan, target, baseline_xp)
             }
             LiveCase::BankCostNoCandidate => {
                 witness.failure_code.as_deref() == Some("bank-unavailable")
@@ -5882,15 +6020,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "death_xp_after": witness.death_xp_after,
             "death_haul_between": witness.death_haul_between,
             "death_return_refused": witness.death_return_refused,
-            "death_retry_teleport_sent": witness.death_retry_teleport_sent,
-            "death_retry_requested": witness.death_retry_requested,
-            "death_retry_reentered": witness.death_retry_reentered,
+            "death_return_stopped": witness.death_return_stopped,
             "death_watchdog_aged": witness.death_watchdog_aged,
             "death_watchdog_generation_before": witness.death_watchdog_generation_before,
             "death_watchdog_recreated": witness.death_watchdog_recreated,
     });
     receipt["interrupts"] = g4a_receipt;
-    let bank_receipt = json!({
+    let mut bank_receipt = json!({
             "bank": witness.last_status_bank,
             "bank_trips": witness.status_trips,
             "deposited": witness.status_deposited,
@@ -5921,7 +6057,24 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "return_after_reconnect": witness.bank_return_after_reconnect,
             "failure_code": witness.failure_code,
             "failure_message": witness.failure_message,
+            "first_goal_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+                "expected_bank": "Draynor",
+                "expected_selection_kind": "Reachable",
+                "five_second_timeout_expected": false,
+                "selection_elapsed_ms": witness.bank_selection_elapsed.map(|elapsed| elapsed.as_millis()),
+            })),
     });
+    if case == LiveCase::BankCostSeersMaple {
+        bank_receipt["non_catalog_booth_trip"] = json!({
+            "origin": target,
+            "resource": "maple",
+            "expected_bank": "Seers",
+            "expected_selection_kind": "Reachable",
+            "selection_elapsed_ms": witness.bank_selection_elapsed.map(|elapsed| elapsed.as_millis()),
+            "bank_arrivals": witness.bank_arrivals,
+            "return_step_seen": witness.bank_return_step_seen,
+        });
+    }
     receipt["bank_trip"] = bank_receipt;
     receipt["bank_status_sequence"] = json!(witness.bank_status_sequence);
     receipt["failure_sequence"] = json!(witness.failure_sequence);
@@ -5954,6 +6107,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "origin": fixture_plan.bank_cost_origin,
                 "air_nearest": fixture_plan.bank_cost_air_nearest,
                 "gate_disabled_candidates": fixture_plan.bank_cost_gated_candidates,
+            })),
+            "real_content_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+                "origin": target,
+                "resource": "oak",
+                "nearby_live_oak_tiles": witness
+                    .oak_live_tiles
+                    .iter()
+                    .filter(|&&tile| tile_distance(tile, target).is_some_and(|distance| distance <= 12))
+                    .copied()
+                    .collect::<Vec<_>>(),
+                "scene_locations_seeded": fixture_plan.seed_locs.len(),
+                "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
             })),
             "fixture_chop_observed": witness.fixture_chop_observed,
             "seeded_casket": {
@@ -6012,6 +6177,28 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "gas_hazard_xp_after_escape": witness.gas_hazard_xp_after_escape,
             "driver_trace": "host debug enabled; inspect native-packet account/tick/count lines",
     });
+    if case == LiveCase::BankCostSeersMaple {
+        fixture_receipt["non_catalog_booth_trip"] = json!({
+            "origin": target,
+            "resource": "maple",
+            "resource_product_id": MAPLE_LOG_ID,
+            "resource_product_seen": witness.products_seen.contains(&MAPLE_LOG_ID),
+            "expected_bank": "Seers",
+            "expected_selection_kind": "Reachable",
+            "scene_locations_seeded": fixture_plan.seed_locs.len(),
+            "oak_tiles_seeded": fixture_plan.oak_tiles.len(),
+            "bank_arrivals": witness.bank_arrivals,
+            "return_step_seen": witness.bank_return_step_seen,
+            "bank_trips": witness.status_trips,
+            "bank_loaded": witness.bank_loaded_observed,
+            "bank_closed": witness.bank_closed_observed,
+            "deposited": witness.status_deposited,
+            "nonzero_deposit_returns": witness.bank_nonzero_roundtrips,
+            "post_bank_yields": witness.post_bank_yields,
+            "yielded": witness.last_status_yielded,
+            "xp": witness.last_xp,
+        });
+    }
     receipt.as_object_mut().expect("receipt object").append(
         fixture_receipt
             .as_object_mut()
@@ -6368,9 +6555,15 @@ fn gatherer_mining_bank_cost_walk_ranked() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_BANK_T1_TILE where the real picker reaches its five-second timeout, and local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT, and local 289 engine; uses Draynor's actual oak grove and nearby bank"]
 fn gatherer_bank_cost_air_fallback() {
-    run_cell(Cell::Woodcutting, LiveCase::BankCostAirFallback).unwrap();
+    run_cell(Cell::Woodcutting, LiveCase::BankCostFirstGoal).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_NAV_PACK, GATHERER_ENGINE_DIR, GATHERER_CATALOG_ROOT and a local 289 engine; gathers real Seers maples and requires Seers"]
+fn gatherer_bank_non_catalog_seers_maples_lifecycle() {
+    run_cell(Cell::Woodcutting, LiveCase::BankCostSeersMaple).unwrap();
 }
 
 #[test]
@@ -6433,6 +6626,23 @@ fn gatherer_random() {
 }
 
 #[test]
+#[ignore = "requires LIVE=1, GATHERER_WC_TILE, and local 289 engine"]
+fn gatherer_maze_random() {
+    run_cell(Cell::Woodcutting, LiveCase::MazeRandom).unwrap();
+}
+
+/// The Maze teleport was observed, and the Gatherer either resumed
+/// gathering after the host's solver walked it out, or blocked while
+/// still trapped inside and took the terminal Stop — never a held
+/// `Working` run inside the Maze.
+fn maze_random_complete(witness: &Witness) -> bool {
+    witness.maze_command_sent
+        && witness.maze_entered
+        && ((witness.maze_exited && witness.maze_resumed)
+            || (witness.maze_blocked_inside && witness.maze_stopped))
+}
+
+#[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
@@ -6452,7 +6662,7 @@ fn gatherer_death_return_no_stock() {
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
-fn gatherer_death_return_refused_retry() {
+fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
@@ -6519,9 +6729,7 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
         }
         LiveCase::DeathReturnRefused => {
             witness.death_return_refused
-                && witness.death_retry_teleport_sent
-                && witness.death_retry_requested
-                && witness.death_retry_reentered
+                && witness.death_return_stopped
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
         }
@@ -6654,10 +6862,169 @@ fn is_mining_gem(id: i32) -> bool {
     MINE_PRODUCTS.contains(&id) && ![COPPER_ID, TIN_ID, IRON_ID, COAL_ID].contains(&id)
 }
 
+fn real_content_bank_lifecycle_complete(
+    case: LiveCase,
+    witness: &Witness,
+    plan: &FixturePlan,
+    target: WorldTile,
+    baseline_xp: i32,
+) -> bool {
+    let (product_id, bank_prefix) = match case {
+        LiveCase::BankCostFirstGoal => (1521, "Draynor; Reachable;"),
+        LiveCase::BankCostSeersMaple => (MAPLE_LOG_ID, "Seers; Reachable;"),
+        _ => return false,
+    };
+    witness.status_trips >= 1
+        && (case != LiveCase::BankCostSeersMaple
+            || (witness.bank_return_step_seen && witness.bank_arrivals >= 1))
+        && witness.status_deposited > 0
+        && witness.bank_nonzero_roundtrips >= 1
+        && witness.post_bank_yields >= 1
+        && witness.bank_loaded_observed
+        && witness.bank_closed_observed
+        && witness.bank_withdrawal_confirmed
+        && witness.last_status_yielded > 0
+        && witness.products_seen.contains(&product_id)
+        && plan.seed_locs.is_empty()
+        && plan.oak_tiles.is_empty()
+        && (case != LiveCase::BankCostFirstGoal
+            || witness
+                .oak_live_tiles
+                .iter()
+                .any(|&tile| tile_distance(tile, target).is_some_and(|distance| distance <= 12)))
+        && witness
+            .last_status_bank
+            .as_deref()
+            .is_some_and(|bank| bank.starts_with(bank_prefix) && bank.contains("; access:"))
+        && witness.last_xp > baseline_xp
+}
+
 fn power_complete(cell: Cell, witness: &Witness) -> bool {
     witness.cycles >= REQUIRED_CYCLES
         && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
         && (cell != Cell::Mining || witness.dropped_product_ids.contains(&SEEDED_MINING_GEM_ID))
+}
+
+#[test]
+fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
+    let mut witness = Witness {
+        status_trips: 1,
+        bank_arrivals: 1,
+        bank_return_step_seen: true,
+        status_deposited: 1,
+        bank_nonzero_roundtrips: 1,
+        post_bank_yields: 1,
+        bank_loaded_observed: true,
+        bank_closed_observed: true,
+        bank_withdrawal_confirmed: true,
+        last_status_yielded: 1,
+        last_xp: 1,
+        last_status_bank: Some("Seers; Reachable; access:2724,3493".into()),
+        ..Witness::default()
+    };
+    witness.products_seen.insert(MAPLE_LOG_ID);
+    let plan = FixturePlan::default();
+    let target = SEERS_MAPLE_BANK_START;
+
+    assert!(real_content_bank_lifecycle_complete(
+        LiveCase::BankCostSeersMaple,
+        &witness,
+        &plan,
+        target,
+        0,
+    ));
+
+    witness.bank_return_step_seen = false;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &plan,
+            target,
+            0,
+        ),
+        "a deposit-time trip count cannot substitute for the bank return step"
+    );
+    witness.bank_return_step_seen = true;
+
+    witness.last_status_bank = Some("Edgeville; Reachable; access:3094,3490".into());
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &plan,
+            target,
+            0,
+        ),
+        "a different reachable bank cannot satisfy the Seers-only fixture"
+    );
+
+    witness.last_status_bank = Some("Seers; Reachable; access:2724,3493".into());
+    witness.bank_arrivals = 0;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &plan,
+            target,
+            0,
+        ),
+        "a deposit-time trip count cannot substitute for an observed resource-stand return"
+    );
+
+    witness.bank_arrivals = 1;
+    witness.post_bank_yields = 0;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &plan,
+            target,
+            0,
+        ),
+        "returning without a fresh post-bank yield is incomplete"
+    );
+
+    witness.post_bank_yields = 1;
+    witness.products_seen.clear();
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &plan,
+            target,
+            0,
+        ),
+        "a return yield must include a maple-log resource product"
+    );
+
+    witness.products_seen.insert(MAPLE_LOG_ID);
+    let mut seeded_scene = FixturePlan::default();
+    seeded_scene
+        .seed_locs
+        .push(seed(world_tile(1, 1), "oaktree", OAK_ID));
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &seeded_scene,
+            target,
+            0,
+        ),
+        "scene-seeded resources cannot satisfy the real-content fixture"
+    );
+    let mut seeded_oak_tiles = FixturePlan::default();
+    seeded_oak_tiles.oak_tiles.push(world_tile(1, 1));
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostSeersMaple,
+            &witness,
+            &seeded_oak_tiles,
+            target,
+            0,
+        ),
+        "the oak fixture tile list must also remain empty"
+    );
 }
 
 #[test]

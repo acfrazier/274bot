@@ -406,7 +406,9 @@ fn toll_gate_live_refuses_without_coins() {
     let route = Route {
         dest,
         ticks: 1.0,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
     };
     let mut traveller = Traveller::new();
     let mut options = TravelOptions {

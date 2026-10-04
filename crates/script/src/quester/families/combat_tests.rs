@@ -82,6 +82,7 @@ fn fixture_compile_context<'a>(
         quests,
         gathering: None,
         bank: None,
+        bank_required: false,
         bank_items: &[],
         areas,
         loadouts,

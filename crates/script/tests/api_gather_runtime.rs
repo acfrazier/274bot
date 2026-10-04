@@ -410,7 +410,6 @@ fn terminal_envelopes_busy_stale_tokens_repeated_keyframes_and_normal_drop() {
         failure: GatherFailure {
             code: Arc::from("missing-resource"),
             message: Arc::from("selected resource disappeared"),
-            retryable: true,
         },
         counts: counts(),
     };
@@ -418,7 +417,7 @@ fn terminal_envelopes_busy_stale_tokens_repeated_keyframes_and_normal_drop() {
     let blocked_value = serde_json::json!({
         "kind": "done",
         "value": {"end": "blocked", "token": blocked_token,
-            "failure": {"code": "missing-resource", "message": "selected resource disappeared", "retryable": true},
+            "failure": {"code": "missing-resource", "message": "selected resource disappeared"},
             "counts": {"yielded": 17, "dropped": 16, "deposited": 8, "trips": 2, "xp": 1234}}
     });
     assert_eq!(result(&iso, "blocked"), blocked_value);

@@ -773,11 +773,17 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     status.failure = Some(ScriptFailure {
         code: Arc::from("queue-blocked"),
         message: Arc::from("no eligible selected quest; review Script prefs, then Stop/Start"),
-        retryable: true,
     });
     assert_eq!(
         script_status_label(RunState::Running, Some(&status)),
         "blocked"
+    );
+    assert!(script_status_reason(&status)
+        .unwrap()
+        .contains("Stop/Start"));
+    assert_eq!(
+        script_status_label(RunState::Idle, Some(&status)),
+        "stopped (blocked)"
     );
     assert!(script_status_reason(&status)
         .unwrap()

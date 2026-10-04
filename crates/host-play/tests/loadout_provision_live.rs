@@ -13,6 +13,9 @@ use api::interact::{self, Interactions, SendResult};
 use api::snapshot::{GameSnapshot, ItemView, WorldTile};
 use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use scenario::{
+    Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
+};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
@@ -257,7 +260,6 @@ enum Prep {
     TutSkip,
     WaitTutorial,
     Relog,
-    WaitRelog,
     Seed,
     WaitSeed,
     DrainDialogs,
@@ -274,11 +276,15 @@ struct LiveState {
     pump: Pump,
     start_handle: Option<ScriptStartHandle>,
     prep: Prep,
+    relogger: ScenarioRunner,
+    relog_session_before: Option<u64>,
+    relog_offline_seen: bool,
     baseline: Option<Observation>,
     witness: Option<ProvisionWitness>,
     start_error: Option<String>,
     started: bool,
     last_action: Instant,
+    last_hold: bool,
 }
 
 impl LiveState {
@@ -397,7 +403,8 @@ impl LiveState {
 
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let observation = self.publish(client);
-        if hold {
+        self.last_hold = hold;
+        if hold && self.prep != Prep::Relog {
             return;
         }
         if self.started {
@@ -406,7 +413,7 @@ impl LiveState {
             }
             return;
         }
-        if let Err(error) = self.advance_prep(client, &observation) {
+        if let Err(error) = self.advance_prep(client, &observation, hold) {
             self.start_error = Some(error);
         }
     }
@@ -415,6 +422,7 @@ impl LiveState {
         &mut self,
         client: &mut client::client::Client,
         observation: &Observation,
+        hold: bool,
     ) -> Result<(), String> {
         let now = Instant::now();
         match self.prep {
@@ -431,33 +439,61 @@ impl LiveState {
             }
             Prep::WaitTutorial => {
                 if self.chat_has("get tutorial: 1000") {
+                    self.relog_session_before = Some(client.gens.session);
+                    self.relog_offline_seen = false;
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "before-relog",
+                            "observation": observation,
+                            "scene_state": client.scene_state,
+                            "session": client.gens.session,
+                            "hold": hold,
+                            "logout_observed": false,
+                        })
+                    );
                     self.prep = Prep::Relog;
                 }
             }
             Prep::Relog => {
-                println!(
-                    "{}",
-                    json!({"phase": "before-relog", "observation": observation})
-                );
-                let ifaces = Arc::clone(&client.ifaces);
-                if !interact::logout(client, &ifaces) {
-                    return Err("logout iface missing (side icons still tutorial-locked?)".into());
-                }
-                self.last_action = now;
-                self.prep = Prep::WaitRelog;
-            }
-            Prep::WaitRelog => {
-                // Use the shared ScenarioRunner's SideTabAvailable contract:
-                // a Play frame need not arrive during the off-world interval.
-                if observation.ingame
-                    && observation.scene_state == 2
-                    && observation.inventory_tab_available
-                {
+                if !client.ingame && !self.relog_offline_seen {
+                    self.relog_offline_seen = true;
                     println!(
                         "{}",
-                        json!({"phase": "after-relog", "observation": observation})
+                        json!({
+                            "phase": "relog-offline",
+                            "ingame": client.ingame,
+                            "scene_state": client.scene_state,
+                            "session": client.gens.session,
+                            "hold": hold,
+                            "logout_observed": true,
+                        })
                     );
-                    self.prep = Prep::Seed;
+                }
+                self.relogger.tick_with_hold(client, hold);
+                match self.relogger.status() {
+                    RunnerStatus::Passed => {
+                        let session_after = client.gens.session;
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "after-relog",
+                                "observation": observation,
+                                "session_before": self.relog_session_before,
+                                "session_after": session_after,
+                                "session_changed": self
+                                    .relog_session_before
+                                    .is_some_and(|session| session != session_after),
+                                "offline_seen": self.relog_offline_seen,
+                                "hold": hold,
+                            })
+                        );
+                        self.prep = Prep::Seed;
+                    }
+                    RunnerStatus::Failed(error) => {
+                        return Err(format!("tutorial relog failed: {error}"));
+                    }
+                    RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
                 }
             }
             Prep::Seed => {
@@ -564,6 +600,36 @@ fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32) -> 
         tile.2 == target.2 && (tile.0 - target.0).abs().max((tile.1 - target.1).abs()) <= radius
     })
 }
+fn tutorial_relog_runner() -> ScenarioRunner {
+    let side_tab = Proof::SideTabAvailable { index: 3 };
+    let settings = ScenarioSettings {
+        deadline: PREP_DEADLINE,
+        require_mainland_base: false,
+        ..ScenarioSettings::default()
+    };
+
+    ScenarioRunner::with_world(
+        Scenario {
+            name: "loadout_provision_tutorial_relog",
+            seed: Seed {
+                profiles: Vec::new(),
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "clean relog after tutorial skip",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: side_tab,
+                    budget_ticks: 600,
+                },
+            }],
+            proof: side_tab,
+            companions: Vec::new(),
+            settings,
+        },
+        None,
+    )
+}
 
 struct TempRoot(PathBuf);
 
@@ -664,11 +730,15 @@ fn run_cell() -> Result<(), String> {
         pump: Pump::new(),
         start_handle: None,
         prep: Prep::WaitIngame,
+        relogger: tutorial_relog_runner(),
+        relog_session_before: None,
+        relog_offline_seen: false,
         baseline: None,
         witness: None,
         start_error: None,
         started: false,
         last_action: Instant::now(),
+        last_hold: false,
     }));
     let frame_state = Arc::clone(&state);
     let mut play = host_play::run_with_template(
@@ -733,9 +803,13 @@ fn run_cell() -> Result<(), String> {
         if !state.started {
             if Instant::now() >= prep_deadline {
                 break Err(format!(
-                    "preparation timeout; prep={:?}; observation={:?}",
+                    "preparation timeout; prep={:?}; observation={:?}; relog_status={:?}; relog_session_before={:?}; offline_seen={}; hold={}",
                     state.prep,
-                    Observation::from_snapshot(&state.snapshot)
+                    Observation::from_snapshot(&state.snapshot),
+                    state.relogger.status(),
+                    state.relog_session_before,
+                    state.relog_offline_seen,
+                    state.last_hold,
                 ));
             }
         } else if let Some(witness) = state.witness.as_ref() {

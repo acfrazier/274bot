@@ -1989,6 +1989,7 @@ dependencies = [
  "libc",
  "nav",
  "parking_lot",
+ "scenario",
  "script",
  "serde",
  "serde_json",

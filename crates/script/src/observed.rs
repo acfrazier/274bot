@@ -380,6 +380,13 @@ pub struct VarpRow {
     pub index: i32,
     pub value: i32,
 }
+/// One projectile's immutable classification facts, retained from the
+/// verified isolate page for borrowed Hunt protection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectileRow {
+    pub spotanim: i32,
+    pub target_player_index: Option<i32>,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChatLine {
@@ -609,9 +616,14 @@ scene_pages! {
         self_target_kind: i32,
         self_target_index: i32,
         user_move_intent_seq: u64,
+        /// Host-published fingerprint of the current chat-modal page.
+        chat_page_fingerprint: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
+        /// `modals().side` (`-1` none): with `bank_open`, whether
+        /// `bank_side` is a posted pack ([`crate::bank::ops::side_observation`]).
+        side_modal_id: i32,
         chat_open: bool,
         chat_continue: bool,
         count_dialog_open: bool,
@@ -663,8 +675,12 @@ scene_pages! {
         locs: Vec<SceneRow>,
         ground: Vec<SceneRow>,
         players: Vec<SceneRow>,
+        /// Combat-classification inputs retained from the existing snapshot post.
+        projectiles: Vec<ProjectileRow>,
         varps: Vec<VarpRow>,
+        chat_text: Text,
         chat_options: Vec<String>,
+        chat_option_ids: Vec<i32>,
         chat_lines: Vec<ChatLine>,
         make_products: Vec<MakeProduct>,
         bank_approaches: Vec<BankApproach>,
@@ -792,7 +808,6 @@ fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObserv
             failure: GatherFailure {
                 code: page.code().unwrap_or_default().into(),
                 message: message.into(),
-                retryable: page.retryable(),
             },
             counts,
         },
@@ -1025,6 +1040,9 @@ impl Scene {
         if snap.has_user_move_intent_seq() {
             p.user_move_intent_seq(snap.user_move_intent_seq());
         }
+        if snap.has_chat_page_fingerprint() {
+            p.chat_page_fingerprint(snap.chat_page_fingerprint());
+        }
 
         if snap.has_self_target_index() {
             p.self_target_index(snap.self_target_index());
@@ -1037,6 +1055,9 @@ impl Scene {
         }
         if snap.has_chat_modal_id() {
             p.chat_modal_id(snap.chat_modal_id());
+        }
+        if snap.has_side_modal_id() {
+            p.side_modal_id(snap.side_modal_id());
         }
         if snap.has_chat_open() {
             p.chat_open(snap.chat_open());
@@ -1149,6 +1170,17 @@ impl Scene {
         if snap.has_players() {
             p.players(read_places(snap.players(), strings));
         }
+        if let Some(projectiles) = snap.projectiles() {
+            p.projectiles(
+                projectiles
+                    .iter()
+                    .map(|row| ProjectileRow {
+                        spotanim: row.spotanim(),
+                        target_player_index: row.target_player_index(),
+                    })
+                    .collect(),
+            );
+        }
         if snap.has_stats() {
             p.stats(Skills::read(snap.stats()));
         }
@@ -1179,6 +1211,9 @@ impl Scene {
                     .map_or(-1, |row| row.id()),
             );
         }
+        if snap.has_chat_text() {
+            p.chat_text(strings.text(snap.chat_text().unwrap_or_default()));
+        }
         if snap.has_chat_options() {
             // Empty texts stay: the 1-based answer index is the posted slot.
             p.chat_options(
@@ -1186,6 +1221,13 @@ impl Scene {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .map(|row| row.text().unwrap_or_default().to_string())
+                    .collect(),
+            );
+            p.chat_option_ids(
+                snap.chat_options()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| row.com_id())
                     .collect(),
             );
         }

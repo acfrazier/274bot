@@ -5611,6 +5611,8 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -5621,7 +5623,9 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
     let mut arm = WalkArm {
         route: Some(Route {
             dest: stand,
-            legs: vec![Leg::Transport { edge }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge),
+            }],
             ticks: 7.0,
         }),
         bank_fetch: Some(PendingBankFetch {
@@ -7098,6 +7102,209 @@ fn bank_client() -> Client {
     c
 }
 
+/// One R289 server frame, applied the way the slot drain applies it.
+fn dispatch_289(c: &mut Client, opcode: i32, bytes: Vec<u8>) {
+    c.psize = bytes.len() as i32;
+    let mut packet = Packet::new(bytes);
+    packet.set_frame_end(c.psize as usize);
+    c.handle_packet(opcode, &mut packet);
+    assert_eq!(packet.pos, c.psize as usize);
+    assert!(c.ingame, "fixture frame must not T2/logout");
+}
+
+/// An R289 client with the bank's two roots defined but closed: main 600
+/// wrapping withdraw grid 601, side 700 wrapping deposit grid 701 whose
+/// ops have a hole before the bulk op.
+fn bank_client_289() -> Client {
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    c.ingame = true;
+    c.scene_state = 2;
+    for (layer, grid, ops) in [
+        (
+            600,
+            601,
+            [
+                Some("Withdraw-1".into()),
+                Some("Withdraw-5".into()),
+                Some("Withdraw-10".into()),
+                Some("Withdraw-All".into()),
+                Some("Withdraw-X".into()),
+            ],
+        ),
+        (
+            700,
+            701,
+            [
+                Some("Deposit-1".into()),
+                None,
+                Some("Deposit-All".into()),
+                None,
+                None,
+            ],
+        ),
+    ] {
+        c.set_iface(
+            layer,
+            IfType {
+                id: layer as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![grid as i32]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            grid,
+            IfType {
+                id: grid as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_INV,
+                iop: ops,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            grid,
+            IfTypeMut {
+                link_obj_type: Some(vec![0; 28]),
+                link_obj_number: Some(vec![0; 28]),
+                ..Default::default()
+            },
+        );
+    }
+    c
+}
+
+/// P-side through the real packet order and the isolate IPC: the side
+/// inventory arrives before the one main+side packet (a drain may stop in
+/// between), a genuinely empty side posts as `Some(&[])`, and a close or a
+/// main-only reopen is `None` even though the leftover list is empty. The
+/// native accessor and the decoded isolate rows agree, with op positions
+/// (the hole before Deposit-All) preserved.
+#[test]
+fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
+    use client::io::ServerProt289;
+    use script::bank::ops;
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut c = bank_client_289();
+    let mut snap = GameSnapshot::new();
+    let mut last = None;
+    let mut tick = 0;
+    script::observed::on_reset();
+    // One host frame: rebuild, post the IPC delta, apply it in the isolate.
+    // Returns (native side, isolate side) as `None` / row count, plus the
+    // sweep op each representation chooses for the first side row.
+    let mut frame = |c: &Client, snap: &mut GameSnapshot| {
+        snap.rebuild(c);
+        tick += 1;
+        let (bytes, fp) = script_snapshot_fb(
+            last.as_ref(),
+            false,
+            tick,
+            None,
+            true,
+            None,
+            Some(snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        last = Some(fp);
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        script::observed::apply(&view);
+        let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
+            .bank_side()
+            .map(|side| {
+                (
+                    side.value.len(),
+                    side.value.first().and_then(ops::sweep_op),
+                    side.value
+                        .first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            });
+        let isolate = script::observed::with(|scene| {
+            let session = scene.since_login();
+            ops::side_observation(
+                session.bank_open().unwrap_or(false),
+                session.side_modal_id().unwrap_or(-1),
+                session.bank_side().map(Vec::as_slice).unwrap_or_default(),
+            )
+            .map(|side| {
+                (
+                    side.len(),
+                    side.first().and_then(ops::sweep_op),
+                    side.first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            })
+        });
+        (native, isolate)
+    };
+
+    // The side inventory lands first; the drain stops before the modal.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 1, 0, 2, 3],
+    );
+    assert_eq!(frame(&c, &mut snap), (None, None), "no root, no side");
+    // The one main+side packet raises both roots together.
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let click = ops::DepositClick {
+        id: 1,
+        slot: 0,
+        component: 701,
+        operation: 3,
+    };
+    let posted = Some((1, Some(3), Some(click)));
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+    // An unchanged delta keeps the posted root.
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+
+    // Close: both roots drop; the side is not posted, not empty.
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    // A genuinely empty side update, then the modal: posted empty.
+    dispatch_289(&mut c, ServerProt289::UPDATE_INV_FULL, vec![2, 189, 0, 0]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let empty = Some((0, None, None));
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+
+    // Close, then a main-only reopen: a new session whose side root is
+    // still down reads `None` although the leftover list is empty.
+    let before = snap.bank_session_generation();
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN, vec![2, 88]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    assert!(snap.bank_session_generation() > before);
+    assert!(snap.bank_component_id() >= 0, "the main bank is open");
+    assert!(snap.bank_side().is_empty(), "the leftover list is empty");
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+    script::observed::on_reset();
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -7624,6 +7831,17 @@ export default class T extends LoopingBot {
         .expect("withdraw-X isolate starts");
 
     let mut c = bank_fetch_client();
+    // The pack is the explicit posted inventory below: the isolate settles
+    // the whole request from the same rows the host settles each click on.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 28]),
+            link_obj_number: Some(vec![0; 28]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
@@ -11727,6 +11945,8 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -12480,6 +12700,8 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![knife_id],
@@ -12521,14 +12743,14 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
     knife_nav_world_with_target(knife_id, false)
 }
 
-/// Task 8 — the BankBudget session unit: the inventory is full of
-/// junk and the knife is in the **bank snapshot**. The strict
+/// The BankBudget session unit: unrelated backpack items stay carried and
+/// the knife is in the **bank snapshot**. The strict
 /// `find_with` stays fail-closed (no knife worn); the diagnosis
 /// names only the worn knife; the session plans walk → open →
-/// deposit the backpack → withdraw the knife → wear → close; and the
+/// withdraw the knife shortage → close → wear; and the
 /// post-session strict re-find crosses. `find` itself never fetches.
 #[test]
-fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
+fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
     let c = bank_fetch_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
@@ -12599,12 +12821,11 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
                 level: access.level
             },
             nav::bank_fetch::BankStep::Open,
-            nav::bank_fetch::BankStep::DepositAll,
             nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
             nav::bank_fetch::BankStep::Close,
             nav::bank_fetch::BankStep::Wear { id: 2 },
         ],
-        "deposit the junk, withdraw the knife, close, then wear it"
+        "retain the pack, withdraw the knife shortage, close, then wear it"
     );
     let r = find_with(
         &world.collision,
@@ -12681,12 +12902,12 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
 
 /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
 /// on + junk inv + knife in the open bank snapshot must latch a session
-/// on [`ScriptWalkArm::route`] and actually drive Deposit/Withdraw on
+/// on [`ScriptWalkArm::route`] and actually drive Withdraw on
 /// the Driver (not only `plan_bank_fetch` in isolation). Start on the
 /// packed booth's access tile so Walk completes in place; the client's
-/// bank is already open so Open is a no-op; DepositAll + Withdraw must write.
+/// bank is already open so Open is a no-op; Withdraw must write.
 #[test]
-fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
+fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
     let mut c = bank_fetch_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
@@ -12739,7 +12960,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
     }
     assert!(latched, "allow_bank_fetch must latch a BankFetch session");
     let out_before = c.out.pos;
-    // Pump until DepositAll + Withdraw have had a chance to write (Walk
+    // Pump until Withdraw has had a chance to write (Walk
     // and Open complete immediately on this fixture).
     for _ in 0..16 {
         let mut all = navs.lock().unwrap();
@@ -12758,10 +12979,283 @@ fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
     }
     assert!(
         c.out.pos > out_before,
-        "BankBudget execute must drive deposit/withdraw on the Driver (pos {} → {})",
+        "BankBudget execute must drive withdrawal on the Driver (pos {} → {})",
         out_before,
         c.out.pos
     );
+}
+
+#[test]
+fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+    let mut c = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).unwrap();
+        cache.objs[2].name = "Coins".into();
+        cache.objs[2].stackable = true;
+    }
+    let mut inventory_ids = vec![2; 27]; // 27 unstackable, unrelated Bones.
+    inventory_ids.push(3); // Existing Coins stack occupies the final slot.
+    let mut inventory_counts = vec![1; 27];
+    inventory_counts.push(30);
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(inventory_ids.clone()),
+            link_obj_number: Some(inventory_counts.clone()),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        701,
+        IfTypeMut {
+            link_obj_type: Some(inventory_ids),
+            link_obj_number: Some(inventory_counts),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![30, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    assert_eq!(snapshot.inventory().len(), 28);
+    let state = WorldState::from_snapshot(&snapshot);
+    assert_eq!(state.inv.get(&1), Some(&27));
+    assert_eq!(state.inv.get(&2), Some(&30));
+    let mut world = knife_nav_world(2);
+    world.graph.edges[0].worn_req.clear();
+    world.graph.edges[0].consumed_req = vec![(2, 60)];
+    let world = Arc::new(world);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((0, 3, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "compat-full-pack".into(),
+        state: Some(state.clone()),
+        bank: vec![(2, 30)],
+    };
+    // Compat v1 enables fetch on every walk; use that same host boundary.
+    assert!(arm.queue_route(
+        4,
+        4,
+        0,
+        FindOptions {
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        0,
+        false,
+        0
+    ));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if navs
+            .lock()
+            .unwrap()
+            .get("compat-full-pack")
+            .is_some_and(|bot| bot.bank_fetch.is_some())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "compat walk did not install BankBudget"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let expected = VecDeque::from([
+        BankStep::Walk {
+            x: 0,
+            z: 3,
+            level: 0,
+        },
+        BankStep::Open,
+        BankStep::Withdraw { id: 2, count: 30 },
+        BankStep::Close,
+    ]);
+    let mut bots = navs.lock().unwrap();
+    let bot = bots.get_mut("compat-full-pack").unwrap();
+    assert_eq!(bot.bank_fetch.as_ref().unwrap().steps, expected);
+    let before = c.out.pos;
+    for _ in 0..4 {
+        step_bank_fetch_on_bot(&mut c, &snapshot, bot, Some(&world), Some((0, 3, 0)), false);
+    }
+    assert!(c.out.pos > before, "the coin shortage must be withdrawn");
+    assert_eq!(WorldState::from_snapshot(&snapshot).inv, state.inv);
+    let missing = [nav::router::MissingReq::Carry { id: 2, count: 60 }];
+    let post = nav::bank_fetch::plan_bank_fetch(
+        &missing,
+        &state,
+        &[(2, 30)],
+        world.banks(),
+        WorldTile {
+            x: 0,
+            z: 3,
+            level: 0,
+        },
+        &world.collision,
+    )
+    .unwrap()
+    .state;
+    assert_eq!(
+        post.inv.get(&1),
+        Some(&27),
+        "unrelated full-pack contents must remain carried"
+    );
+    assert_eq!(post.inv.get(&2), Some(&60));
+}
+
+#[test]
+fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending() {
+    use nav::bank_fetch::BankStep;
+    let mut client = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut client.cache).unwrap();
+        cache.objs[2].name = "Coins".into();
+        cache.objs[2].stackable = true;
+    }
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let state = WorldState::from_snapshot(&snapshot);
+    let mut world = knife_nav_world(2);
+    world.graph.edges[0].worn_req.clear();
+    world.graph.edges[0].consumed_req = vec![(2, 7)];
+    let origin = WorldTile {
+        x: 0,
+        z: 3,
+        level: 0,
+    };
+    let destination = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let plan = nav::bank_fetch::plan_bank_fetch(
+        &[nav::router::MissingReq::Carry { id: 2, count: 7 }],
+        &state,
+        &[(2, 20)],
+        world.banks(),
+        origin,
+        &world.collision,
+    )
+    .unwrap();
+    assert!(plan.steps.contains(&BankStep::WithdrawX { id: 2 }));
+    assert!(plan
+        .steps
+        .contains(&BankStep::WithdrawXAmount { id: 2, count: 7 }));
+    let final_route = find_with(
+        &world.collision,
+        &world.graph,
+        origin,
+        destination,
+        FindOptions::default(),
+        &plan.state,
+    )
+    .unwrap();
+    let mut bot = NavBot {
+        bank_fetch: Some(PendingBankFetch {
+            steps: plan.steps.into(),
+            dest: destination,
+            opts: FindOptions::default(),
+            final_route,
+            avoid: vec![],
+            progress: Default::default(),
+        }),
+        ..NavBot::default()
+    };
+    let before = client.out.pos;
+    for _ in 0..3 {
+        step_bank_fetch_on_bot(
+            &mut client,
+            &snapshot,
+            &mut bot,
+            Some(&world),
+            Some((0, 3, 0)),
+            false,
+        );
+    }
+    assert!(client.out.pos > before, "Withdraw-X must reach the driver");
+    client.apply_p_countdialog();
+    client.bump_gens(ServerProt::P_COUNTDIALOG);
+    snapshot.rebuild(&client);
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&BankStep::WithdrawXAmount { id: 2, count: 7 })
+    );
+    client.out.pos = 0;
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        count_packet(&client),
+        Some(7),
+        "not the full bank stack of 20"
+    );
+    let sent = client.out.pos;
+    client.dialog_input_open = false;
+    client.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![13, 0]),
+            ..Default::default()
+        },
+    );
+    for received in [0, 6, 7] {
+        for component in [500, 701] {
+            client.set_iface_mut(
+                component,
+                IfTypeMut {
+                    link_obj_type: Some(vec![2, 3]),
+                    link_obj_number: Some(vec![3, received]),
+                    ..Default::default()
+                },
+            );
+        }
+        client.bump_gens(ServerProt::UPDATE_INV_FULL);
+        snapshot.rebuild(&client);
+        step_bank_fetch_on_bot(
+            &mut client,
+            &snapshot,
+            &mut bot,
+            Some(&world),
+            Some((0, 3, 0)),
+            false,
+        );
+        assert_eq!(client.out.pos, sent, "a sent amount must not be repeated");
+        let expected = if received == 7 {
+            BankStep::Close
+        } else {
+            BankStep::WithdrawXAmount { id: 2, count: 7 }
+        };
+        assert_eq!(
+            bot.bank_fetch.as_ref().unwrap().steps.front(),
+            Some(&expected)
+        );
+        assert_eq!(WorldState::from_snapshot(&snapshot).inv.get(&1), Some(&3));
+    }
 }
 
 /// Fix round 2 — BankBudget Walk from off the stand must poll
@@ -13005,10 +13499,10 @@ fn open_bank_at_here_sends_npc_op_for_packed_teller_not_scene_booth() {
     );
 }
 
-/// DepositAll / Wear / Close used to pop after one send even when it
+/// Wear / Close must not pop after one send when it
 /// failed or the snapshot had not changed.
 #[test]
-fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
+fn bank_fetch_wear_close_wait_for_snapshot() {
     use nav::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
@@ -13017,25 +13511,7 @@ fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
     snap.rebuild(&c);
     assert!(!snap.inv().is_empty(), "fixture backpack has junk");
     let route = dummy_fetch_route();
-    let mut bot = NavBot {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::DepositAll, BankStep::Close]),
-            dest: route.dest,
-            opts: FindOptions::default(),
-            final_route: route.clone(),
-            avoid: Vec::new(),
-            progress: Default::default(),
-        }),
-        ..Default::default()
-    };
-    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
-    assert!(
-        matches!(
-            bot.bank_fetch.as_ref().and_then(|p| p.steps.front()),
-            Some(BankStep::DepositAll)
-        ),
-        "DepositAll must wait for an empty backpack, not pop after the send"
-    );
+    let mut bot = NavBot::default();
 
     let mut closed = bank_client();
     closed.main_modal_id = -1;
@@ -13096,7 +13572,7 @@ fn bank_fetch_open_uses_packed_npc_access() {
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Open, BankStep::DepositAll]),
+            steps: VecDeque::from([BankStep::Open, BankStep::Withdraw { id: 2, count: 1 }]),
             dest: route.dest,
             opts: FindOptions::default(),
             final_route: route,
@@ -13211,9 +13687,9 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
     );
 }
 
-/// A closed bank cannot deposit: abort instead of hanging on DepositAll.
+/// A closed bank cannot withdraw: abort instead of hanging on Withdraw.
 #[test]
-fn bank_fetch_deposit_all_aborts_when_bank_closed() {
+fn bank_fetch_withdraw_aborts_when_bank_closed() {
     use nav::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
@@ -13228,7 +13704,7 @@ fn bank_fetch_deposit_all_aborts_when_bank_closed() {
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::DepositAll, BankStep::Close]),
+            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
             dest: route.dest,
             opts: FindOptions::default(),
             final_route: route,
@@ -13240,7 +13716,7 @@ fn bank_fetch_deposit_all_aborts_when_bank_closed() {
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
     assert!(
         bot.bank_fetch.is_none(),
-        "closed bank DepositAll must abort, not hang"
+        "closed bank Withdraw must abort, not hang"
     );
 }
 
@@ -13449,15 +13925,24 @@ fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
 }
 
 /// With no inv tab bound, the backpack shows only in the bank's side
-/// panel while the bank is open. Deposit and withdraw progress read that
-/// panel, so DepositAll sees the pack empty and a Withdraw does not "land"
-/// on the bank's rows.
+/// panel while the bank is open. Withdraw progress reads that panel; the
+/// bank's rows must never count as items that have landed in the backpack.
 #[test]
 fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
     use nav::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
+    // An exact two-item All withdrawal; arbitrary partial amounts use the
+    // separately covered Withdraw-X sequence rather than over-withdrawing.
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![2, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
+        },
+    );
     c.set_iface_mut(
         701,
         IfTypeMut {
@@ -13476,7 +13961,7 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::DepositAll, BankStep::Withdraw { id: 1, count: 2 }]),
+            steps: VecDeque::from([BankStep::Withdraw { id: 1, count: 2 }]),
             dest: route.dest,
             opts: FindOptions::default(),
             final_route: route,
@@ -13490,12 +13975,6 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
             .as_ref()
             .and_then(|p| p.steps.front().cloned())
     };
-    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
-    assert_eq!(
-        front(&bot),
-        Some(BankStep::Withdraw { id: 1, count: 2 }),
-        "the empty pack completes DepositAll"
-    );
     let before = c.out.pos;
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
     assert!(c.out.pos > before, "Withdraw is sent");
@@ -13767,7 +14246,6 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
                 level: access.level
             },
             nav::bank_fetch::BankStep::Open,
-            nav::bank_fetch::BankStep::DepositAll,
             nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
             nav::bank_fetch::BankStep::Close,
             nav::bank_fetch::BankStep::Wear { id: 2 },
@@ -14724,15 +15202,13 @@ fn script_observe_drains_queued_cheat_onto_driver() {
     );
 }
 
-// Task 9b — the posted blob is FlatBuffers (schema:
-// crates/script/schema/isolate.fbs) and carries exactly the fields the
-// shim Game/Inventory/Skills/EventSignal read: inv rows carry resolved
-// obj names (None when the table has none), stats rows the stat
-// index/name/xp/base/effective, bank flags from the snapshot, and
-// hold/ours pass through for EventSignal.pending(). No World clone —
-// only these fields. Round-trips through the script crate's decoder.
+// Task 9b — the posted FlatBuffer (schema: crates/script/schema/isolate.fbs)
+// carries the shim fields plus compact native facts such as projectiles;
+// inv rows carry resolved obj names, stats rows index/name/xp/base/effective,
+// and bank flags plus hold/ours pass through. No World clone — round-trip
+// through the script crate's decoder.
 #[test]
-fn script_snapshot_fb_carries_observed_fields_only() {
+fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     let mut c = prepare_client(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -14751,8 +15227,25 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     c.stat_base_level[7] = 35;
     c.stat_xp[7] = 1300;
     c.bump_gens(ServerProt::UPDATE_STAT);
+    c.self_slot = 1;
+    c.bump_gens(ServerProt::PLAYER_INFO);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    snap.seed_projectiles(vec![api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: 0,
+        src: api::WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: 1,
+        }),
+        t1: 1,
+        t2: 2,
+    }]);
     let mut objs = vec![client::config::ObjType::default(); 2];
     objs[1].id = 1;
     objs[1].name = "Bones".into();
@@ -14778,6 +15271,9 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     let here = view.here().expect("here posted");
     assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
     assert!(view.ingame());
+    let projectile = view.projectiles().expect("native projectile page").get(0);
+    assert_eq!(projectile.spotanim(), 9);
+    assert_eq!(projectile.target_player_index(), Some(1));
     assert!(view.has_inv(), "keyframe carries inv");
     let inv = view.inv().expect("inventory rows");
     assert_eq!(inv.len(), 2);
@@ -16211,6 +16707,112 @@ fn publish_script_snapshot(
         false,
         false,
     )
+}
+#[test]
+fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.chat_text[0] = "Unrelated ring message".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Second line".into()]);
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4883,
+            text: "Yes".into(),
+        }],
+        969,
+    );
+    let expected = api::snapshot::chat_page_fingerprint(
+        snapshot.chat_modal_texts(),
+        snapshot
+            .chat_options()
+            .iter()
+            .map(|option| (option.component_id, option.text.as_str())),
+    );
+    let (keyframe, first) = publish_script_snapshot(None, 1, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&keyframe).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_eq!(view.chat_page_fingerprint(), expected);
+    assert_eq!(view.chat_text(), Some("Unrelated ring message"));
+
+    client.chat_text[0] = "Another ring message".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    snapshot.rebuild(&client);
+    // This client has no interface tree: rebuild refreshes modals from that
+    // empty tree, so repost the fixture's unchanged native modal observation.
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Second line".into()]);
+    let (ring_delta, second) = publish_script_snapshot(Some(&first), 2, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&ring_delta).unwrap();
+    assert_eq!(view.chat_text(), Some("Another ring message"));
+    assert!(!view.has_chat_page_fingerprint());
+    assert_eq!(second.chat_page_fingerprint, first.chat_page_fingerprint);
+
+    // A non-head modal line changes while the ring, root and Continue stay put.
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Changed second line".into()]);
+    let (page_delta, third) = publish_script_snapshot(Some(&second), 3, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&page_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(view.chat_page_fingerprint(), expected);
+    assert!(!view.has_chat_text());
+    assert!(!view.has_chat_modal_id());
+    assert!(!view.has_chat_continue());
+    assert!(!view.has_chat_options());
+
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4884,
+            text: "Yes".into(),
+        }],
+        969,
+    );
+    let (id_delta, fourth) = publish_script_snapshot(Some(&third), 4, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&id_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(fourth.chat_page_fingerprint, third.chat_page_fingerprint);
+
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4884,
+            text: "No".into(),
+        }],
+        969,
+    );
+    let (text_delta, fifth) = publish_script_snapshot(Some(&fourth), 5, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&text_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(fifth.chat_page_fingerprint, fourth.chat_page_fingerprint);
+
+    let (clear, _) = script_snapshot_fb(
+        Some(&fifth),
+        false,
+        6,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script::isolate_fb::decode_snapshot(&clear).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_eq!(view.chat_page_fingerprint(), 0);
 }
 
 fn posted_varp(view: &script::isolate_fb::Snapshot<'_>, index: i32) -> Option<i32> {
@@ -21214,6 +21816,8 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
         open_loc_id: None,
         skill_req: Vec::new(),
         item_req: Vec::new(),
+        consumed_req: Vec::new(),
+        item_returns: Vec::new(),
         quest_req: Vec::new(),
         varp_req: Vec::new(),
         worn_req: Vec::new(),
@@ -21222,7 +21826,9 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
         quest_gates: None,
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge: edge.clone() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
         dest: edge.to,
         ticks: 1.0,
     };
@@ -22004,6 +22610,8 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -22408,6 +23016,8 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -22690,6 +23300,8 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![2],
@@ -22796,6 +23408,8 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
                 open_loc_id: None,
                 skill_req: vec![],
                 item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![worn],
@@ -22834,7 +23448,6 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
                     level: from.level,
                 },
                 BankStep::Open,
-                BankStep::DepositAll,
                 BankStep::Withdraw { id: 3, count: 1 },
                 BankStep::Close,
                 BankStep::Wear { id: 3 },
@@ -22906,7 +23519,9 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(995, 1)],
+        item_req: vec![],
+        consumed_req: vec![(995, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![3],
@@ -23246,8 +23861,9 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
     assert_eq!(bot.walk_outcome_radius, 12);
 }
 
-/// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
-/// shape every dest of the multi-location glory group shares. The
+/// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub):
+/// spends one charge and returns its content-declared next-stage object.
+/// The shape every dest of the multi-location glory group shares. The
 /// `to` names the landing (default Edgeville, `switch_int($choice)`
 /// case 1); the group's sibling edges share `loc_id` + option and
 /// differ only in `to`, exactly as the bake emits them.
@@ -23271,7 +23887,9 @@ fn glory_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(1712, 1)],
+        item_req: vec![],
+        consumed_req: vec![(1712, 1)],
+        item_returns: vec![(1711, 1)],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -23441,7 +24059,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         .or_default()
         .route = Some(Route {
         legs: vec![Leg::Transport {
-            edge: glory[1].clone(),
+            edge: Box::new(glory[1].clone()),
         }],
         dest: karamja,
         ticks: 2.0,
@@ -23487,7 +24105,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
 }
 
 /// A 5×5 world walled between x=1 and x=2, crossed only by a 10-coin
-/// toll door (the `toll_edges` shape: loc 2882, `item_req` coins 10).
+/// toll door (the `toll_edges` shape: loc 2882, `consumed_req` coins 10).
 fn toll_nav_world() -> NavWorld {
     let mut flags = vec![0u32; 25];
     for z in 0..5 {
@@ -23513,7 +24131,9 @@ fn toll_nav_world() -> NavWorld {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(995, 10)],
+        item_req: vec![],
+        consumed_req: vec![(995, 10)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -23599,7 +24219,7 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
     assert!(
         route.legs.iter().any(|l| matches!(
             l,
-            nav::router::Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+            nav::router::Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
         )),
         "the route must cross the toll"
     );
@@ -24167,21 +24787,32 @@ mod read_journal_tests {
     use super::*;
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
 
-    struct ParkedRead {
+    struct PendingRead {
         requested: bool,
         panic_on_read: bool,
+        terminal_block: bool,
     }
 
-    impl Script for ParkedRead {
-        fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+    impl Script for PendingRead {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
             if self.requested {
                 Ok(ScriptFlow::Complete)
-            } else {
+            } else if self.terminal_block {
                 Ok(ScriptFlow::Blocked(ScriptFailure {
                     code: "journal-no-match".into(),
                     message: "no journal rule matched".into(),
-                    retryable: true,
                 }))
+            } else {
+                tick.output.status(script::native::ScriptStatus {
+                    run: tick.cx.run(),
+                    card: script::CompiledId("test"),
+                    phase: script::native::NativePhase::Waiting,
+                    active_settings: 1,
+                    pending_settings: None,
+                    fields: Arc::from([]),
+                    failure: None,
+                });
+                Ok(ScriptFlow::Continue)
             }
         }
 
@@ -24192,7 +24823,7 @@ mod read_journal_tests {
         }
     }
 
-    fn play(panic_on_read: bool) -> (Play, ScriptSlot) {
+    fn play(panic_on_read: bool, terminal_block: bool) -> (Play, ScriptSlot) {
         let play = crate::run_with_io(
             &crate::PlayOptions {
                 host: "127.0.0.1".into(),
@@ -24210,9 +24841,10 @@ mod read_journal_tests {
         slot.lock()
             .unwrap()
             .start_test_script(
-                Box::new(ParkedRead {
+                Box::new(PendingRead {
                     requested: false,
                     panic_on_read,
+                    terminal_block,
                 }),
                 None,
             )
@@ -24236,12 +24868,12 @@ mod read_journal_tests {
     }
 
     #[test]
-    fn host_read_journal_restarts_blocked_dispatch_and_finishes_the_read() {
-        let (play, slot) = play(false);
+    fn host_read_journal_dispatches_a_live_wait_and_finishes_the_read() {
+        let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
             slot.lock().unwrap().native_status().unwrap().phase,
-            script::native::NativePhase::Blocked
+            script::native::NativePhase::Waiting
         );
         play.script_native_read_journal("alice", run).unwrap();
         assert_eq!(
@@ -24259,7 +24891,7 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_refuses_every_stale_run_key_dimension() {
-        let (play, slot) = play(false);
+        let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         for stale in [
             api::selected::RunKey {
@@ -24281,13 +24913,13 @@ mod read_journal_tests {
             );
             assert_eq!(
                 slot.lock().unwrap().native_status().unwrap().phase,
-                script::native::NativePhase::Blocked
+                script::native::NativePhase::Waiting
             );
         }
         tick(&slot, 2);
         assert_eq!(
             slot.lock().unwrap().native_status().unwrap().phase,
-            script::native::NativePhase::Blocked
+            script::native::NativePhase::Waiting
         );
         play.script_native_read_journal("alice", run).unwrap();
         tick(&slot, 3);
@@ -24295,8 +24927,29 @@ mod read_journal_tests {
     }
 
     #[test]
+    fn host_read_journal_cannot_restart_a_terminal_blocked_run() {
+        let (play, slot) = play(false, true);
+        let status = slot.lock().unwrap().native_status().unwrap();
+        assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
+        assert!(slot.lock().unwrap().native_run().is_none());
+        assert_eq!(status.phase, script::native::NativePhase::Blocked);
+        assert_eq!(
+            status.failure.as_ref().unwrap().code.as_ref(),
+            "journal-no-match"
+        );
+        assert_eq!(
+            play.script_native_read_journal("alice", status.run),
+            Err("stale native run".into())
+        );
+        tick(&slot, 2);
+        let slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Idle);
+        assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
+    }
+
+    #[test]
     fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
-        let (play, slot) = play(true);
+        let (play, slot) = play(true, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
             play.script_native_read_journal("alice", run),

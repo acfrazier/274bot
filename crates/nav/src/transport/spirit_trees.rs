@@ -134,6 +134,8 @@ pub(super) fn spirit_tree_edges(
                         open_loc_id: None,
                         skill_req: vec![],
                         item_req: vec![],
+                        consumed_req: vec![],
+                        item_returns: vec![],
                         quest_req: vec![],
                         varp_req: varp_req.clone(),
                         worn_req: vec![],

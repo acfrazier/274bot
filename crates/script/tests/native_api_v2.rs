@@ -13,6 +13,8 @@ use script::load::{
 use script::shim::InteractReq;
 use script::{ScriptSource, SlotScript, WatchdogAction};
 
+mod common;
+
 fn temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "274bot-script-native-api-v2-{}",
@@ -1051,6 +1053,55 @@ fn v2_fight_run_settles_once_and_rejects_with_a_hook_throw() {
         iso.probe("globalThis.__missing").unwrap(),
         serde_json::json!({ "kind": "refused", "reason": "unknown token" })
     );
+    iso.join();
+}
+
+#[test]
+fn v2_hunt_protection_failure_rejects_await_without_a_log_hook() {
+    let src = format!(
+        r#"
+export const apiVersion = 2;
+{HUNT_SITE}
+let started = false;
+export async function tick(api) {{
+  if (started) return;
+  started = true;
+  globalThis.__failures = [];
+  for (const [begin, run] of [[api.fightBegin, api.fightRun], [api.holdBegin, api.holdRun]]) {{
+    const token = begin(site).value.token;
+    try {{
+      await run({{ token }}, {{}});
+      globalThis.__failures.push(null);
+    }} catch (error) {{
+      globalThis.__failures.push(String(error && error.message));
+    }}
+  }}
+}}
+"#
+    );
+    // No selected content is configured, but the protect observation pages
+    // are present: failure must reach the await, even without an optional log.
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+    let mut input = common::ingame_snapshot();
+    let native = NativeFactsInput {
+        projectiles: Some(&[]),
+        ..NativeFactsInput::default()
+    };
+    for tick in 1..=3 {
+        input.tick = tick;
+        iso.post_snapshot(encode_snapshot_with_native(&input, native));
+        iso.on_game_tick(tick);
+    }
+    let failures = iso.probe("globalThis.__failures").unwrap();
+    let failures = failures.as_array().expect("awaited Hunt failures");
+    assert_eq!(failures.len(), 2);
+    for failure in failures {
+        assert!(failure
+            .as_str()
+            .unwrap()
+            .contains("Hunt protection unavailable"));
+        assert!(failure.as_str().unwrap().contains("game data unavailable"));
+    }
     iso.join();
 }
 
