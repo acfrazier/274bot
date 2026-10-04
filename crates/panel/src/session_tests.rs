@@ -2644,6 +2644,58 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
     assert!(!session.ui.nav.allow_danger_zones);
 }
 
+#[test]
+fn walk_permissions_projection_reads_only_after_peer_write() {
+    let dir = TestDir::new("walk-permissions-peer-refresh");
+    let path = dir.join("panel-ui.json");
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowTeleports,
+        Some(false),
+    )
+    .unwrap();
+
+    let mut stamp = super::walk_permissions_file_stamp_at(&path);
+    let initial = frontend_core::WalkGlobalsView::read_at(&path);
+    assert!(!initial.globals.allow_teleports);
+
+    let reads = std::cell::Cell::new(0);
+    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    });
+    assert!(unchanged.is_none());
+    assert_eq!(reads.get(), 0, "unchanged preferences must not be read");
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowTeleports,
+        Some(true),
+    )
+    .unwrap();
+    host_play::persist_panel_ui_value_at(
+        &path,
+        "peer_marker",
+        serde_json::json!("written by the other frontend"),
+    )
+    .unwrap();
+
+    let reloaded = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    })
+    .expect("a peer write changes the shared preferences stamp");
+    assert!(reloaded.globals.allow_teleports);
+    assert_eq!(reads.get(), 1);
+
+    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    });
+    assert!(unchanged.is_none());
+    assert_eq!(reads.get(), 1, "the reloaded file stays cached");
+}
+
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);

@@ -525,8 +525,6 @@ impl TuiSession {
         }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
-        #[cfg(not(test))]
-        core.set_walk_globals_store(host_play::panel_ui_path());
         let pause_manual_walk = frontend_core::nav_preference_at(
             &host_play::panel_ui_path(),
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
