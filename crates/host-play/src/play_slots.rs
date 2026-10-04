@@ -511,7 +511,7 @@ pub(super) fn reset_slot_session_work(
     }
     match held {
         Some(carry) => hold_script_nav(navs, name, carry),
-        None => reset_script_nav(navs, name),
+        None => reset_script_nav(navs, name, None),
     }
     // Prayer varps are temporary: relog starts all-off. Do not carry a toggle
     // from the old session into the new one, even if its route is held.

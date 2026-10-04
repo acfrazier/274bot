@@ -1,6 +1,20 @@
 //! Shared death-message latch and the content-derived normal respawn square.
 use api::snapshot::{SnapshotView, WorldTile};
 
+pub const DEFAULT_MAX_DEATHS: u8 = 2;
+
+pub const fn default_max_deaths() -> u8 {
+    DEFAULT_MAX_DEATHS
+}
+
+/// Whether the current death count has reached its configured cap.
+///
+/// Call before incrementing: a cap of two allows two deaths and blocks the
+/// third; a cap of zero blocks the first death.
+pub fn death_cap_exceeded(deaths: u16, max_deaths: u8) -> bool {
+    deaths >= u16::from(max_deaths)
+}
+
 pub const DEATH_NEEDLE_A: &str = "oh dear";
 pub const DEATH_NEEDLE_B: &str = "you are dead";
 
@@ -223,6 +237,17 @@ mod tests {
         let mut nondeath = DeathLatch::from_watermark(Some(57));
         assert!(!nondeath.observe(SnapshotView::new(Some(&nondeath_ring), stamp())));
         assert_eq!(nondeath.watermark(), Some(1));
+    }
+
+    #[test]
+    fn death_cap_blocks_on_the_next_death_after_the_limit() {
+        assert_eq!(default_max_deaths(), 2);
+        assert!(!death_cap_exceeded(0, 2));
+        assert!(!death_cap_exceeded(1, 2));
+        assert!(death_cap_exceeded(2, 2));
+        assert!(death_cap_exceeded(0, 0));
+        assert!(!death_cap_exceeded(254, 255));
+        assert!(death_cap_exceeded(255, 255));
     }
 
     #[test]

@@ -938,7 +938,6 @@ fn render_gather_session(out: &mut String) {
     out.push_str("export interface GatherFailure {\n");
     out.push_str("  code: string;\n");
     out.push_str("  message: string;\n");
-    out.push_str("  retryable: boolean;\n");
     out.push_str("}\n\n");
     out.push_str("export interface GatherCounts {\n");
     out.push_str("  yielded: number;\n");

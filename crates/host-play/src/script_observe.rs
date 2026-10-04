@@ -18,8 +18,8 @@ use script::{ScriptCtx, SlotScript};
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_observed_bank_op,
     dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
-    resumed_walk, route_inspect, script_slot, take_carried_walk, with_script_snapshot_input_shorts,
-    NavBot, PostedWalkOutcome, ScriptWall,
+    reset_script_nav, resumed_walk, route_inspect, script_slot, take_carried_walk,
+    with_script_snapshot_input_shorts, NavBot, PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -390,18 +390,22 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
-        // A script that stopped itself or died leaves no owner for its walk:
-        // stop the follow, as operator Stop does.
-        if matches!(
+        let terminal_slot = matches!(
             slot.state(),
             script::RunState::Idle | script::RunState::Error
-        ) && navs
-            .lock()
-            .unwrap()
-            .get(name)
-            .is_some_and(NavBot::script_walk_armed)
-        {
-            abort_script_walk(navs, name);
+        );
+        if terminal_slot {
+            if let Some(generation) = slot.terminal_lifecycle_generation() {
+                reset_script_nav(navs, name, Some(generation));
+            } else if navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(NavBot::script_walk_armed)
+            {
+                // Legacy self-stops without a terminal receipt can only own a walk.
+                abort_script_walk(navs, name);
+            }
         }
         slot.on_is_up(up);
         // Compiled clue machine: apply the owed abort and this frame's

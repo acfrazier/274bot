@@ -260,18 +260,6 @@ impl NativeOutput for Output {
         self.applied = Some(revision);
     }
 }
-fn clear_blocked_status(output: &mut Output) {
-    let Some(previous) = output.status.as_deref() else {
-        return;
-    };
-    if previous.phase != NativePhase::Blocked {
-        return;
-    }
-    let mut status = previous.clone();
-    status.phase = NativePhase::Waiting;
-    status.failure = None;
-    output.status(status);
-}
 
 /// One frame's native authority/evidence for compiled runs and API reads.
 pub(super) fn frame_context<'a>(
@@ -390,7 +378,6 @@ impl CompiledRun {
             Err(payload) => Err(ScriptFailure {
                 code: "panic".into(),
                 message: format!("script panic: {}", panic_message(&payload)).into(),
-                retryable: false,
             }),
         }
     }
@@ -586,6 +573,7 @@ impl SlotScript {
         )?;
         self.control_generation = generation;
         self.preparing = Some(Box::new(job));
+        self.terminal_native_status = None;
         self.want_run = true;
         self.start_pending = true;
         self.start_outcome = None;
@@ -660,7 +648,6 @@ impl SlotScript {
                 self.fail_compiled(ScriptFailure {
                     code: "restart-worker".into(),
                     message: message.clone().into(),
-                    retryable: false,
                 });
                 return Err(message);
             }
@@ -705,6 +692,7 @@ impl SlotScript {
         self.compiled = Some(Box::new(run));
         self.last_error = None;
         self.lifecycle_receipt = None;
+        self.terminal_native_status = None;
         self.ticks = 0;
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = 0;
@@ -747,7 +735,7 @@ impl SlotScript {
             .and_then(|run| run.output.status.clone());
         #[cfg(feature = "load")]
         let status = status.or_else(|| self.api_status());
-        status
+        status.or_else(|| self.terminal_native_status.clone())
     }
 
     pub fn native_settings_revision(&self) -> Option<u64> {
@@ -822,7 +810,6 @@ impl SlotScript {
                 self.fail_compiled(ScriptFailure {
                     code: error.code.clone(),
                     message: error.message.clone(),
-                    retryable: false,
                 });
                 CompiledDelivery::Rejected(error)
             }
@@ -837,7 +824,6 @@ impl SlotScript {
             self.fail_compiled(ScriptFailure {
                 code: "interrupt-panic".into(),
                 message: panic_message(&payload).into(),
-                retryable: false,
             });
         }
     }
@@ -873,46 +859,9 @@ impl SlotScript {
         self.watchdog.cancel_clear();
     }
 
-    pub fn retry_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
-        let refused = || ScriptFailure {
-            code: "retry-refused".into(),
-            message: "stale or non-retryable run".into(),
-            retryable: false,
-        };
-        let run = self
-            .compiled
-            .as_mut()
-            .filter(|run| run.run == target)
-            .ok_or_else(refused)?;
-        if !run.output.status.as_ref().is_some_and(|status| {
-            status.phase == NativePhase::Blocked
-                && status
-                    .failure
-                    .as_ref()
-                    .is_some_and(|failure| failure.retryable)
-        }) {
-            return Err(refused());
-        }
-        match catch_unwind(AssertUnwindSafe(|| run.script.retry())) {
-            Ok(result) => result?,
-            Err(payload) => {
-                let failure = ScriptFailure {
-                    code: "retry-panic".into(),
-                    message: panic_message(&payload).into(),
-                    retryable: false,
-                };
-                self.fail_compiled(failure.clone());
-                return Err(failure);
-            }
-        }
-        clear_blocked_status(&mut run.output);
-        Ok(())
-    }
-
     /// Same run/session fence as other native controls. A successful request
-    /// reopens Blocked dispatch so the script's retry-with-read can run.
-    /// Working requests remain boundary-latched; this command itself never
-    /// interrupts an owned dialogue or emits a game verb.
+    /// asks the active script for one fresh journal read at its next safe
+    /// boundary; it never revives a terminal run or clears its status.
     pub fn read_journal_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
         let run = self
             .compiled
@@ -921,19 +870,16 @@ impl SlotScript {
             .ok_or_else(|| ScriptFailure {
                 code: "read-journal-refused".into(),
                 message: "stale native run".into(),
-                retryable: false,
             })?;
         match catch_unwind(AssertUnwindSafe(|| run.script.read_journal())) {
             Ok(result) => {
                 result?;
-                clear_blocked_status(&mut run.output);
                 Ok(())
             }
             Err(payload) => {
                 let failure = ScriptFailure {
                     code: "read-journal-panic".into(),
                     message: panic_message(&payload).into(),
-                    retryable: false,
                 };
                 self.fail_compiled(failure.clone());
                 Err(failure)
