@@ -116,18 +116,18 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
     assert!(!automatic.request.fallback_spells);
     args["spells"] = serde_json::json!([]);
     assert_eq!(
-        compile(&args, &cx).err().unwrap().code,
+        compile(&args, &cx).err().unwrap().code.as_ref(),
         "invalid-combat-spells"
     );
     args["spells"] = serde_json::json!(["not_a_selected_spell"]);
     assert_eq!(
-        compile(&args, &cx).err().unwrap().code,
+        compile(&args, &cx).err().unwrap().code.as_ref(),
         "unresolved-combat-spell"
     );
     args["spells"] = serde_json::json!(["fire_bolt"]);
     args["tactic"]["style"] = serde_json::json!("melee");
     assert_eq!(
-        compile(&args, &cx).err().unwrap().code,
+        compile(&args, &cx).err().unwrap().code.as_ref(),
         "unsupported-combat-spells"
     );
 }
