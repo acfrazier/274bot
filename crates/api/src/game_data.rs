@@ -365,7 +365,7 @@ pub struct SpellRune {
 /// god strikes). `ssb` is the staff_spells grid index for selectable spells and
 /// -1 otherwise; `component_id` is the manual magic-tab widget for UseWidgetOn.
 /// `impact_spotanim` is the selected `spotanim_target` cache id, -1 when unknown;
-/// the shared miss splash stays in the style facts, never here.
+/// the shared miss splash is a separate `failed_spell_impact` scalar, never a per-spell impact.
 #[derive(Debug, Deserialize)]
 pub struct SpellFact {
     pub name: String,
@@ -1776,8 +1776,8 @@ impl SelectedGameData {
 
     /// Selected `failedspell_impact` cache id for the shared miss splash.
     /// `None` when the selected cache does not publish it. Per-spell
-    /// `impact_spotanim` never carries it (stays -1 there) so the probe can
-    /// tell splash from success without a style-fact join.
+    /// `impact_spotanim` excludes this shared splash, so consumers can distinguish
+    /// failed casts from successful spell impacts without a style-fact join.
     pub fn failed_spell_impact(&self) -> Option<i32> {
         self.failed_spell_impact
     }
