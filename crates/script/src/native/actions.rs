@@ -348,6 +348,7 @@ fn validate_batch(
             return Err(batch_shape_error());
         }
         let (cost, terminal) = match request {
+            InteractReq::SideTab { tab: 0 } if len == 1 => (0, true),
             InteractReq::IfButton { .. }
             | InteractReq::Wear { .. }
             | InteractReq::SetRetaliate { .. } => (1, false),
@@ -872,6 +873,7 @@ mod tests {
     #[test]
     fn batch_accepts_each_native_combat_interaction_variant() {
         let requests = [
+            InteractReq::SideTab { tab: 0 },
             InteractReq::IfButton { component_id: 900 },
             eat_request("Shrimp"),
             drink_request(),
@@ -913,6 +915,42 @@ mod tests {
                 assert_eq!(owner.batch_free(), 4);
             });
         }
+    }
+
+    #[test]
+    fn autocast_side_tab_is_one_serial_zero_wire_event_batch() {
+        let revision = api::selected::ClientRevision::R289;
+        assert_eq!(
+            validate_batch(&one_row(InteractReq::SideTab { tab: 0 }), revision),
+            Ok(1)
+        );
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            for rows in [
+                [
+                    Some(InteractReq::SideTab { tab: 0 }),
+                    Some(InteractReq::IfButton { component_id: 353 }),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some(InteractReq::IfButton { component_id: 353 }),
+                    Some(InteractReq::SideTab { tab: 0 }),
+                    None,
+                    None,
+                    None,
+                ],
+                one_row(InteractReq::SideTab { tab: 1 }),
+            ] {
+                assert_shape_refusal(cx, &owner, rows);
+            }
+            cx.emit_batch(one_row(InteractReq::SideTab { tab: 0 }))
+                .unwrap();
+            assert_eq!(cx.emit(npc_attack()), Err(ActionError::BudgetExhausted));
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
     }
 
     #[test]
