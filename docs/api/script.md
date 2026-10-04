@@ -220,7 +220,6 @@ binds dependencies first and compiles each recipe once, independent of its
 declaration order. A chain can contain at most 32 recipes. A cycle returns
 `recipe-cycle` with the cycle's recipe names. A missing dependency remains
 `unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
-
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
 not change that ranking. A bank must have usable packed or declared access.
