@@ -400,13 +400,67 @@ fn projectiles_rebuild_only_local_targets_and_reuse_capacity() {
 }
 
 #[test]
+fn projectiles_include_local_launches_after_incoming_threats() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.self_slot = 4;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    let outgoing = |target| {
+        ClientProj::new(
+            900,
+            0,
+            20 * 128 + 64,
+            0,
+            12 * 128 + 64,
+            7,
+            12,
+            0,
+            0,
+            target,
+            0,
+        )
+    };
+    client.projectiles.push(outgoing(8));
+    client.projectiles.push(outgoing(0));
+    client
+        .projectiles
+        .push(ClientProj::new(901, 0, 64, 0, 64, 8, 13, 0, 0, -5, 0));
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let rows = snapshot.projectiles();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].spotanim, 901);
+    assert_eq!(
+        rows[1].target,
+        Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7
+        })
+    );
+    assert_eq!((rows[1].t1, rows[1].t2), (7, 12));
+}
+
+#[test]
 fn projectiles_cap_counts_only_local_player_targets() {
     let mut client = client_with_npc();
     client.ingame = true;
     client.self_slot = 4;
     client.local_player = Some(ClientPlayer::at(20, 12));
-    let projectile =
-        |spotanim, target| ClientProj::new(spotanim, 0, 64, 0, 64, 1, 2, 0, 0, target, 0);
+    let projectile = |spotanim, target| {
+        ClientProj::new(
+            spotanim,
+            0,
+            20 * 128 + 64,
+            0,
+            12 * 128 + 64,
+            1,
+            2,
+            0,
+            0,
+            target,
+            0,
+        )
+    };
 
     for index in 0..MAX_PROJECTILES_PER_SNAPSHOT + 5 {
         client.projectiles.push(projectile(800, -2));

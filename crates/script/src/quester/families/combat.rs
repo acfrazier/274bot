@@ -216,6 +216,7 @@ pub(super) fn compile(
         tactic: Tactic::Open,
         style: Style::Melee,
         melee_mode: args.melee_mode,
+        ranged_style: Default::default(),
         kit,
         spells: None,
         stand,

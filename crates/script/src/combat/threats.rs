@@ -992,6 +992,19 @@ impl ThreatSet {
         if style == StyleObs::Unknown {
             return;
         }
+        match self.due_source(tick) {
+            DueAttribution::Unique(actor) => {
+                if let Some(index) = self.ensure_actor(actor, frame, tables, tick) {
+                    Self::record_impact(&mut self.rows[index], tick);
+                }
+                return;
+            }
+            DueAttribution::Ambiguous => {
+                self.mark_unknown(tick);
+                return;
+            }
+            DueAttribution::None => {}
+        }
         let Some(actor) = sole_facing(frame) else {
             self.mark_unknown(tick);
             return;
@@ -1554,6 +1567,39 @@ mod tests {
     }
 
     #[test]
+    fn due_projectile_actor_wins_over_current_facing_actor_for_late_hit() {
+        let mut threats = ThreatSet::default();
+        let launcher = actor(ActorKind::Npc, 1);
+        let current_facing = actor(ActorKind::Player, 2);
+        let mut launched = Threat::new(launcher, 10, StyleObs::Ranged, 4, Some(7), 10);
+        launched.add_due(12, ProjectileFamily::NpcRanged);
+        threats.rows[0] = launched;
+        threats.rows[1] = Threat::new(current_facing, 11, StyleObs::Melee, 4, Some(3), 12);
+
+        // The projectile visual is no longer needed: its queued impact still
+        // identifies its launcher, even if a different actor now faces us.
+        assert_eq!(threats.due_source(12), DueAttribution::Unique(launcher));
+        ThreatSet::record_impact(&mut threats.rows[0], 12);
+        assert!(threats.rows[0].has_event());
+        assert!(!threats.rows[1].has_event());
+    }
+
+    #[test]
+    fn distinct_projectiles_due_together_make_numeric_hit_unattributed() {
+        let mut threats = ThreatSet::default();
+        let first = actor(ActorKind::Npc, 1);
+        let second = actor(ActorKind::Player, 2);
+        let mut npc_shot = Threat::new(first, 10, StyleObs::Ranged, 4, Some(7), 10);
+        npc_shot.add_due(12, ProjectileFamily::NpcRanged);
+        threats.rows[0] = npc_shot;
+        let mut player_shot = Threat::new(second, 20, StyleObs::Ranged, 5, None, 10);
+        player_shot.add_due(12, ProjectileFamily::PlayerRanged);
+        threats.rows[1] = player_shot;
+
+        assert_eq!(threats.due_source(12), DueAttribution::Ambiguous);
+    }
+
+    #[test]
     fn reused_actor_slots_discard_old_attack_evidence() {
         let mut threats = ThreatSet::default();
         let actor = actor(ActorKind::Npc, 4);
@@ -1652,6 +1698,67 @@ mod tests {
         assert_eq!(row.history_len(), 1);
         assert_eq!(row.recent_position(StyleObs::Magic), Some(0));
         assert_eq!(row.next_decision(), 45);
+    }
+
+    #[test]
+    fn late_impact_does_not_rewind_newer_style_chronology() {
+        let mut row = Threat::new(
+            actor(ActorKind::Npc, 3),
+            30,
+            StyleObs::Unknown,
+            4,
+            Some(8),
+            40,
+        );
+        ThreatSet::record_event(
+            &mut row,
+            StyleObs::Magic,
+            PRIORITY_PROJECTILE,
+            41,
+            1_230,
+            Some(41),
+        );
+        let history_len = row.history_len();
+        let newer_position = row.recent_position(StyleObs::Magic);
+        let decision = row.next_decision();
+
+        ThreatSet::record_impact(&mut row, 42);
+
+        assert_eq!(row.style, StyleObs::Magic);
+        assert_eq!(row.history_len(), history_len);
+        assert_eq!(row.recent_position(StyleObs::Magic), newer_position);
+        assert_eq!(row.next_decision(), decision);
+    }
+
+    #[test]
+    fn ranged_projectile_due_ticks_include_family_delay_and_flight() {
+        let zero_flight = projectile(1_000, 1_000);
+        assert_eq!(
+            projectile_due_tick(&zero_flight, ProjectileFamily::NpcRanged, 50, 1_000),
+            Some(51)
+        );
+        assert_eq!(
+            projectile_due_tick(&zero_flight, ProjectileFamily::PlayerRanged, 50, 1_000),
+            Some(51)
+        );
+        assert_eq!(
+            projectile_due_tick(&zero_flight, ProjectileFamily::PlayerThrown, 50, 1_000),
+            Some(51)
+        );
+
+        let flight = projectile(1_000, 1_019);
+        assert_eq!(
+            projectile_due_tick(&flight, ProjectileFamily::NpcRanged, 50, 1_000),
+            Some(51)
+        );
+        assert_eq!(
+            projectile_due_tick(&flight, ProjectileFamily::PlayerRanged, 50, 1_000),
+            Some(52)
+        );
+        assert_eq!(
+            projectile_due_tick(&flight, ProjectileFamily::PlayerThrown, 50, 1_000),
+            Some(51)
+        );
     }
 
     #[test]

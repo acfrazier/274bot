@@ -5,6 +5,7 @@ use super::prayer::{PrayerSweep, RaisedPrayers};
 use super::request::*;
 use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
 use super::select;
+use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
@@ -39,6 +40,7 @@ struct Counters {
     restorations: u8,
     locked: u8,
     multi: u8,
+    ammo: u8,
 }
 
 /// Server-effect identity survives the host's rotating dispatch-receipt ring.
@@ -78,9 +80,11 @@ pub struct Combat {
     prep_failures: u64,
     sequence: u64,
     rhand_pick: i32,
+    ammo_pick: i32,
     engaged_type: i32,
     suspended_type: i32,
     chat_since: i32,
+    // Melee animation identity; ranged uses anim_id as its launch-cycle cursor.
     anim_id: i32,
     anim_frame: i32,
     engaged: Option<ActorRef>,
@@ -112,6 +116,8 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
+const AMMO_ATTEMPT_SHIFT: u32 = 56;
+const AMMO_SWEEP_DONE: u64 = 1 << 59;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
@@ -122,7 +128,7 @@ impl NativeMachine for Combat {
         (request, tables): Self::Args,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, ActionError> {
-        if request.style != Style::Melee {
+        if !matches!(request.style, Style::Melee | Style::Ranged) {
             return Err(unavailable("style slice"));
         }
         if request.prayer_mode != PrayerMode::Hold {
@@ -173,6 +179,7 @@ impl NativeMachine for Combat {
             counters: Counters::default(),
             sequence: 0,
             rhand_pick: -1,
+            ammo_pick: -1,
             engaged_type: -1,
             suspended_type: -1,
             chat_since: -1,
@@ -360,6 +367,9 @@ impl NativeMachine for Combat {
                     if self.phase == Phase::WindDown
                         && self.baseline_on & BASELINE_READY != 0
                         && self.sweep.pending_mask() == 0
+                        && !self.pending_row(RowKind::Pickup)
+                        && (self.request.style != Style::Ranged
+                            || self.prep_failures & AMMO_SWEEP_DONE != 0)
                         && !(self.flags & TERMINAL_FOOD != 0 && self.pending_row(RowKind::Eat))
                         && self
                             .sweep
@@ -450,7 +460,7 @@ impl Combat {
             hits_while_protected: self.counters.protected,
             protect_switches: self.counters.switches,
             intruders: self.counters.intruders,
-            ammo_pickups: 0,
+            ammo_pickups: self.counters.ammo,
             restorations: self.counters.restorations,
             locked_ticks: self.counters.locked,
             multi_op_plans: self.counters.multi,
@@ -461,12 +471,20 @@ impl Combat {
         }
     }
     fn rate(&self, frame: &Frame<'_>) -> u8 {
-        frame
+        let base = frame
             .equipment
             .iter()
             .find(|row| row.slot == 3)
             .and_then(|row| self.tables.weapon_style(row.def.id))
-            .map_or(4, |row| row.attackrate.max(1))
+            .map_or(4, |row| row.attackrate.max(1));
+        self.style_rate(base)
+    }
+    fn style_rate(&self, base: u8) -> u8 {
+        if self.request.style == Style::Ranged {
+            ranged::rate(base, self.request.ranged_style)
+        } else {
+            base.max(1)
+        }
     }
     fn engage(&mut self, actor: ActorRef, frame: &Frame<'_>) {
         if self.engaged != Some(actor) {
@@ -505,13 +523,7 @@ impl Combat {
     fn resolve_worth(&mut self, frame: &Frame<'_>) {
         let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
-                [
-                    PotionKind::SuperAttack,
-                    PotionKind::SuperStrength,
-                    PotionKind::SuperDefence,
-                ]
-                .iter()
-                .any(|kind| {
+                self.boost_kinds().iter().any(|kind| {
                     self.tables.potion(*kind).is_some_and(|family| {
                         family.doses.iter().flatten().any(|dose| dose.id == *id)
                     })
@@ -540,6 +552,15 @@ impl Combat {
     }
     fn pick_weapon(&mut self, frame: &Frame<'_>) {
         if self.request.kit.is_some() {
+            return;
+        }
+        if self.request.style == Style::Ranged {
+            self.rhand_pick = frame
+                .equipment
+                .iter()
+                .chain(frame.inventory)
+                .find(|row| row.count > 0 && ranged::weapon(&self.tables, row.def.id).is_some())
+                .map_or(-1, |row| row.def.id);
             return;
         }
         let Some(names) = self.tables.selected().equipment_names() else {
@@ -730,6 +751,9 @@ impl Combat {
             RowKind::Eat => super::schedule::InputEffect::Food(
                 self.tables.food(row.id).expect("planned food fact"),
             ),
+            RowKind::Attack if self.request.style == Style::Ranged => {
+                super::schedule::InputEffect::RangedAttack
+            }
             RowKind::Prayer if row.aux != 0 => super::schedule::InputEffect::PrayerOn,
             RowKind::Wear
                 if self
@@ -820,6 +844,9 @@ impl Combat {
                 RowKind::Eat => super::schedule::InputEffect::Food(
                     self.tables.food(row.id).expect("planned food fact"),
                 ),
+                RowKind::Attack if self.request.style == Style::Ranged => {
+                    super::schedule::InputEffect::RangedAttack
+                }
                 RowKind::Prayer if row.aux != 0 => super::schedule::InputEffect::PrayerOn,
                 RowKind::Wear
                     if self
@@ -877,7 +904,7 @@ impl Combat {
                         self.antifire_sip = self.emitted_tick;
                     }
                 }
-                RowKind::Style => {
+                RowKind::Style if self.request.style == Style::Melee => {
                     if let Some(mode) = MeleeMode::from_code((row.aux >> 2) & 3) {
                         self.mode_fallback =
                             (Some(mode) != self.request.melee_mode).then_some(mode);
@@ -930,14 +957,20 @@ impl Combat {
                 self.raised_prayers.accepted(row.varp, false, 0);
             }
         }
-        if super::style::melee::onset(
-            &frame.local.player.actor,
-            self.engaged,
-            &self.tables,
-            &mut self.anim_id,
-            &mut self.anim_frame,
-        ) && (!self.schedule.clear_valid
-            || (reached(tick, self.schedule.last_clear) && tick != self.schedule.last_clear))
+        let onset = if self.request.style == Style::Ranged {
+            ranged::onset(frame, self.engaged, &mut self.anim_id)
+        } else {
+            super::style::melee::onset(
+                &frame.local.player.actor,
+                self.engaged,
+                &self.tables,
+                &mut self.anim_id,
+                &mut self.anim_frame,
+            )
+        };
+        if onset
+            && (!self.schedule.clear_valid
+                || (reached(tick, self.schedule.last_clear) && tick != self.schedule.last_clear))
         {
             self.counters.swings = self.counters.swings.saturating_add(1);
             self.schedule.observe_swing(tick, self.rate(frame));
@@ -964,7 +997,7 @@ impl Combat {
                         .equipment
                         .iter()
                         .any(|item| item.slot == i32::from(row.aux) && item.def.id == row.id),
-                    RowKind::Style => self.tables.melee_mode_varp().is_some_and(|varp| {
+                    RowKind::Style => self.style_varp().is_some_and(|varp| {
                         frame.varps.iter().any(|value| {
                             value.index == varp && value.value == i32::from(row.aux & 3)
                         })
@@ -986,6 +1019,7 @@ impl Combat {
                                 || (reached(tick, self.schedule.last_clear)
                                     && tick != self.schedule.last_clear))
                     }
+                    RowKind::Pickup => self.ammo_count(frame) > i32::from(pending.baseline),
                     RowKind::Empty => false,
                 };
             if settled {
@@ -1002,6 +1036,7 @@ impl Combat {
                         }
                         _ => self.counters.boost = self.counters.boost.saturating_add(1),
                     },
+                    RowKind::Pickup => self.counters.ammo = self.counters.ammo.saturating_add(1),
                     RowKind::Attack => self.schedule.interaction = Interaction::Installed,
                     RowKind::Wear => self.prep_failures &= !(7 << (u32::from(row.aux) * 3)),
                     RowKind::Retaliate => self.flags &= !PREP_RETALIATE,
@@ -1014,7 +1049,11 @@ impl Combat {
                 self.pending[slot].age = pending.age.saturating_add(1);
                 let window = match row.kind {
                     RowKind::Eat => 6,
-                    RowKind::Drink | RowKind::Wear | RowKind::Retaliate | RowKind::Style => 4,
+                    RowKind::Drink
+                    | RowKind::Wear
+                    | RowKind::Retaliate
+                    | RowKind::Style
+                    | RowKind::Pickup => 4,
                     RowKind::Prayer if row.aux == 0 => 4,
                     RowKind::Prayer | RowKind::Attack => 8,
                     RowKind::Empty => unreachable!("pending row"),
@@ -1060,6 +1099,7 @@ impl Combat {
                     RowKind::Retaliate if failures >= 2 && self.flags & PREP_RETALIATE != 0 => {
                         self.flags |= SKIP_RETALIATE
                     }
+                    RowKind::Pickup => {}
                     _ if failures >= 3 => self.flags |= FAILED_ATTACK,
                     _ => {}
                 }
@@ -1407,6 +1447,9 @@ impl Combat {
             {
                 self.eat(&mut plan, frame, tick, danger);
             }
+            if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
+                self.ranged_sweep(&mut plan, frame, tick, danger, cx);
+            }
             return Ok(plan);
         }
         if self.phase == Phase::Escape {
@@ -1535,6 +1578,9 @@ impl Combat {
             }
             return Ok(plan);
         }
+        if self.request.style == Style::Ranged && !self.ranged_prepare(frame, tick) {
+            return self.plan(frame, tick, cx);
+        }
         if self.phase == Phase::Prep {
             let weapon = self.desired(3);
             let conflict = self.flags & SHIELD_OVERRIDE != 0
@@ -1565,6 +1611,10 @@ impl Combat {
             }
             self.wear(&mut plan, frame, tick);
             self.style(&mut plan, frame, tick);
+            // Ranged Prep waits for the exact tab and observed style echo.
+            if self.request.style == Style::Ranged && !self.ranged_ready(frame) {
+                return Ok(plan);
+            }
             self.retaliate(&mut plan, frame, tick);
             if self.flags & SHIELD_OVERRIDE != 0
                 && (!self.antifire(tick) || elapsed(tick, self.antifire_sip) >= 590)
@@ -1671,7 +1721,7 @@ impl Combat {
             && points > 0
             && (points > policy::prayer_sip_floor(base)
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
-        let offensives = if offense {
+        let offensives = if offense && self.request.style == Style::Melee {
             [
                 self.offensive_prayer(PrayerRole::Strength, base, &observation),
                 self.offensive_prayer(PrayerRole::Attack, base, &observation),
@@ -1733,24 +1783,33 @@ impl Combat {
             .iter()
             .find(|row| row.kind == RowKind::Wear && row.aux == 3)
             .and_then(|row| self.tables.weapon_style(row.id))
-            .map_or_else(|| self.rate(frame), |weapon| weapon.attackrate.max(1));
+            .map_or_else(
+                || self.rate(frame),
+                |weapon| self.style_rate(weapon.attackrate),
+            );
         PlanRow::new(
             RowKind::Attack,
             actor_token(self.engaged.expect("planned engaged actor")),
             rate,
         )
     }
+    fn boost_kinds(&self) -> &'static [PotionKind] {
+        match self.request.style {
+            Style::Ranged => &[PotionKind::Ranging, PotionKind::SuperDefence],
+            Style::Mage => &[PotionKind::Magic, PotionKind::SuperDefence],
+            Style::Melee => &[
+                PotionKind::SuperAttack,
+                PotionKind::SuperStrength,
+                PotionKind::SuperDefence,
+            ],
+        }
+    }
     fn boost(&self, frame: &Frame<'_>) -> Option<PotionKind> {
         if !self.request.allow.potions {
             return None;
         }
-        [
-            PotionKind::SuperAttack,
-            PotionKind::SuperStrength,
-            PotionKind::SuperDefence,
-        ]
-        .into_iter()
-        .find(|kind| {
+        let kinds = self.boost_kinds();
+        kinds.iter().copied().find(|kind| {
             let Some(family) = self.tables.potion(*kind) else {
                 return false;
             };
@@ -1778,8 +1837,21 @@ impl Combat {
                 .iter()
                 .find(|(wanted, _)| *wanted == slot)
                 .map(|(_, id)| *id)
+                .or_else(|| {
+                    (slot == 13
+                        && self.request.style == Style::Ranged
+                        && self.ammo_pick >= 0
+                        && Some(self.ammo_pick) != self.desired(3))
+                    .then_some(self.ammo_pick)
+                })
         } else if slot == 3 && self.rhand_pick >= 0 {
             Some(self.rhand_pick)
+        } else if slot == 13
+            && self.request.style == Style::Ranged
+            && self.ammo_pick >= 0
+            && self.ammo_pick != self.rhand_pick
+        {
+            Some(self.ammo_pick)
         } else {
             None
         }
@@ -1812,7 +1884,242 @@ impl Combat {
         let state = (self.prep_failures >> (u32::from(slot) * 3)) & 7;
         state & 4 != 0 && state & 3 >= 2
     }
+    fn style_varp(&self) -> Option<i32> {
+        if self.request.style == Style::Ranged {
+            self.tables.selected().ranged_mode_varp()
+        } else {
+            self.tables.melee_mode_varp()
+        }
+    }
+
+    /// The server owns approach/LOS; tactics use this same style range.
+    pub fn attack_range(&self, frame: &Frame<'_>) -> u8 {
+        if self.request.style == Style::Ranged {
+            frame
+                .equipment
+                .iter()
+                .find(|row| row.slot == 3)
+                .and_then(|row| ranged::weapon(&self.tables, row.def.id))
+                .map_or(0, |weapon| {
+                    ranged::range(weapon.attackrange, self.request.ranged_style)
+                })
+        } else {
+            1
+        }
+    }
+
+    fn ammo_count(&self, frame: &Frame<'_>) -> i32 {
+        frame
+            .inventory
+            .iter()
+            .chain(frame.equipment)
+            .filter(|row| row.def.id == self.ammo_pick)
+            .fold(0i32, |count, row| count.saturating_add(row.count))
+    }
+
+    fn ranged_prepare(&mut self, frame: &Frame<'_>, tick: u16) -> bool {
+        let weapon_id = self.desired(3).or_else(|| {
+            frame
+                .equipment
+                .iter()
+                .find(|row| row.slot == 3 && row.count > 0)
+                .map(|row| row.def.id)
+        });
+        let weapon = weapon_id.and_then(|id| ranged::weapon(&self.tables, id));
+        let prep = self.phase == Phase::Prep;
+        let Some(weapon) = weapon else {
+            self.finish(
+                CombatEnd::Aborted(if prep {
+                    AbortReason::PrepFailed(PrepItem::Weapon)
+                } else {
+                    AbortReason::Unprotected(Unprotected::NoAmmo)
+                }),
+                tick,
+            );
+            return false;
+        };
+        let ammo = if ranged::thrown(weapon) {
+            Some(weapon.obj_id)
+        } else {
+            self.request
+                .kit
+                .as_ref()
+                .and_then(|kit| {
+                    kit.worn
+                        .iter()
+                        .find(|(slot, _)| *slot == 13)
+                        .map(|(_, id)| *id)
+                })
+                .or_else(|| {
+                    frame
+                        .equipment
+                        .iter()
+                        .filter(|row| row.slot == 13)
+                        .chain(frame.inventory)
+                        .find(|row| {
+                            row.count > 0 && ranged::accepts(&self.tables, weapon, row.def.id)
+                        })
+                        .map(|row| row.def.id)
+                })
+        };
+        let usable = ammo.is_some_and(|id| {
+            ranged::accepts(&self.tables, weapon, id)
+                && frame
+                    .equipment
+                    .iter()
+                    .chain(
+                        frame
+                            .inventory
+                            .iter()
+                            .filter(|_| self.request.allow.equipment),
+                    )
+                    .any(|row| row.def.id == id && row.count > 0)
+        });
+        let slot = if ranged::thrown(weapon) { 3 } else { 13 };
+        let failed = (self.prep_failures >> (slot * 3)) & 3 >= 2;
+        if !usable || failed {
+            self.finish(
+                CombatEnd::Aborted(if prep {
+                    AbortReason::PrepFailed(PrepItem::Ammo)
+                } else {
+                    AbortReason::Unprotected(Unprotected::NoAmmo)
+                }),
+                tick,
+            );
+            return false;
+        }
+        self.ammo_pick = ammo.expect("usable ammo");
+        true
+    }
+
+    fn ranged_choice(&self, frame: &Frame<'_>) -> Option<&api::game_data::RangedModeFact> {
+        let weapon = frame
+            .equipment
+            .iter()
+            .find(|row| row.slot == 3 && row.count > 0)?;
+        let tab = self.tables.weapon_style(weapon.def.id)?.tab?;
+        if frame.combat_tab != self.tables.combat_tab_root(tab) {
+            return None;
+        }
+        self.tables
+            .selected()
+            .ranged_modes()
+            .iter()
+            .find(|row| row.tab == tab as u8 && row.mode == self.request.ranged_style as u8)
+    }
+
+    fn ranged_ready(&self, frame: &Frame<'_>) -> bool {
+        if self.pending_row(RowKind::Wear)
+            || self.desired(3).is_some_and(|id| {
+                !frame
+                    .equipment
+                    .iter()
+                    .any(|row| row.slot == 3 && row.def.id == id && row.count > 0)
+            })
+            || !frame.equipment.iter().any(|row| {
+                row.def.id == self.ammo_pick && row.count > 0 && (row.slot == 3 || row.slot == 13)
+            })
+        {
+            return false;
+        }
+        let Some(choice) = self.ranged_choice(frame) else {
+            return false;
+        };
+        self.style_varp().is_some_and(|varp| {
+            frame
+                .varps
+                .iter()
+                .any(|row| row.index == varp && row.value == i32::from(choice.slot))
+        }) && !self.pending_row(RowKind::Style)
+    }
+
+    fn ranged_style(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
+        if self.pending_row(RowKind::Wear)
+            || self.pending_row(RowKind::Style)
+            || plan.contains(RowKind::Style)
+            || !self.schedule.ready(OpKind::Style, tick)
+        {
+            return;
+        }
+        let Some(choice) = self.ranged_choice(frame) else {
+            return;
+        };
+        if plan.iter().any(|row| {
+            row.kind == RowKind::Wear
+                && row.aux == 3
+                && self
+                    .tables
+                    .weapon_style(row.id)
+                    .and_then(|fact| fact.tab)
+                    .map(|tab| tab as u8)
+                    != Some(choice.tab)
+        }) {
+            return;
+        }
+        if !self.style_varp().is_some_and(|varp| {
+            frame
+                .varps
+                .iter()
+                .any(|row| row.index == varp && row.value == i32::from(choice.slot))
+        }) {
+            self.push(
+                plan,
+                PlanRow::new(RowKind::Style, choice.button, choice.slot),
+            );
+        }
+    }
+
+    fn ranged_sweep(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        danger: Option<i32>,
+        cx: &ActionContext<'_>,
+    ) {
+        if self.request.style != Style::Ranged {
+            return;
+        }
+        if self.end != Some(CombatEnd::Killed)
+            || self.request.tactic != Tactic::Open
+            || danger != Some(0)
+            || self.ammo_pick < 0
+            || (self.prep_failures >> AMMO_ATTEMPT_SHIFT) & 7 >= 4
+        {
+            self.prep_failures |= AMMO_SWEEP_DONE;
+            return;
+        }
+        if self.pending_row(RowKind::Pickup) || !self.schedule.ready(OpKind::Pickup, tick) {
+            return;
+        }
+        let snapshot = cx.snapshot();
+        let (Some(ground), Some(reach)) = (snapshot.ground_items(), snapshot.reach()) else {
+            return;
+        };
+        let next = ground
+            .value
+            .iter()
+            .filter(|row| {
+                row.def.id == self.ammo_pick
+                    && row.count > 0
+                    && distance(frame.here, row.tile) <= 2
+                    && reach
+                        .value
+                        .can_reach(row.tile, &api::query::SceneReachOptions::default())
+            })
+            .min_by_key(|row| (distance(frame.here, row.tile), row.tile.x, row.tile.z));
+        if let Some(item) = next {
+            self.push(plan, PlanRow::new(RowKind::Pickup, pack_tile(item.tile), 0));
+        } else {
+            self.prep_failures |= AMMO_SWEEP_DONE;
+        }
+    }
+
     fn style(&mut self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
+        if self.request.style == Style::Ranged {
+            self.ranged_style(plan, frame, tick);
+            return;
+        }
         let Some(wanted) = self.request.melee_mode else {
             return;
         };
@@ -2007,6 +2314,29 @@ impl Combat {
                     baselines[index] = arbiter::doses(frame, &self.tables, potion_kind(row.aux));
                     held(frame.inventory, row.id, "Drink")?
                 }
+                RowKind::Pickup => {
+                    let tile = unpack_tile(row.id);
+                    baselines[index] = self.ammo_count(frame).min(i32::from(i16::MAX)) as i16;
+                    InteractReq::Obj {
+                        x: tile.x,
+                        z: tile.z,
+                        level: tile.level,
+                        name: cx
+                            .snapshot()
+                            .ground_items()
+                            .and_then(|ground| {
+                                ground
+                                    .value
+                                    .iter()
+                                    .find(|item| item.tile == tile && item.def.id == self.ammo_pick)
+                            })
+                            .ok_or_else(|| unavailable("planned ammo disappeared"))?
+                            .def
+                            .name
+                            .to_owned(),
+                        action: "Take".into(),
+                    }
+                }
                 RowKind::Prayer | RowKind::Style => InteractReq::IfButton {
                     component_id: row.id,
                 },
@@ -2075,6 +2405,9 @@ impl Combat {
         } else {
             self.flags &= !PLAN_FIGHT;
         }
+        if self.plan.contains(RowKind::Pickup) {
+            self.prep_failures += 1 << AMMO_ATTEMPT_SHIFT;
+        }
         if self.phase == Phase::WindDown && self.plan.contains(RowKind::Eat) {
             self.flags |= TERMINAL_FOOD;
         }
@@ -2109,6 +2442,7 @@ fn op_kind(kind: RowKind) -> OpKind {
         RowKind::Style => OpKind::Style,
         RowKind::Retaliate => OpKind::Retaliate,
         RowKind::Attack => OpKind::Attack,
+        RowKind::Pickup => OpKind::Pickup,
         RowKind::Empty => unreachable!("empty pending operation"),
     }
 }
@@ -2168,6 +2502,16 @@ fn distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
         i32::MAX
     } else {
         (a.x - b.x).abs().max((a.z - b.z).abs())
+    }
+}
+fn pack_tile(tile: api::WorldTile) -> i32 {
+    (tile.x & 0x3fff) | ((tile.z & 0x3fff) << 14) | ((tile.level & 3) << 28)
+}
+fn unpack_tile(packed: i32) -> api::WorldTile {
+    api::WorldTile {
+        x: packed & 0x3fff,
+        z: (packed >> 14) & 0x3fff,
+        level: (packed >> 28) & 3,
     }
 }
 

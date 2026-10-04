@@ -851,6 +851,40 @@ pub struct MeleeModeFact {
     pub button: i32,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RangedAmmoFamily {
+    Arrow,
+    OgreArrow,
+    Bolt,
+    Thrown,
+    Javelin,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct RangedWeaponFact {
+    pub obj_id: i32,
+    pub attackrange: u8,
+    pub levelrequire: u8,
+    pub ammo_family: RangedAmmoFamily,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct RangedAmmoFact {
+    pub obj_id: i32,
+    pub levelrequire: u8,
+    pub family: RangedAmmoFamily,
+}
+
+/// One source-joined ranged attack-style button (`mode`: accurate 0, rapid 1, long-range 2).
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct RangedModeFact {
+    pub tab: u8,
+    pub slot: u8,
+    pub mode: u8,
+    pub button: i32,
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
 pub struct WeaponStyleFact {
     pub obj_id: i32,
@@ -1253,6 +1287,14 @@ pub struct SelectedGameData {
     melee_modes: Vec<MeleeModeFact>,
     #[serde(default)]
     melee_mode_varp: Option<i32>,
+    #[serde(default)]
+    ranged_weapons: Vec<RangedWeaponFact>,
+    #[serde(default)]
+    ranged_ammo: Vec<RangedAmmoFact>,
+    #[serde(default)]
+    ranged_modes: Vec<RangedModeFact>,
+    #[serde(default)]
+    ranged_mode_varp: Option<i32>,
     #[serde(default)]
     loc_names: Option<LocNameFacts>,
     #[serde(default)]
@@ -1866,6 +1908,22 @@ impl SelectedGameData {
 
     pub fn melee_mode_varp(&self) -> Option<i32> {
         self.melee_mode_varp
+    }
+
+    pub fn ranged_weapons(&self) -> &[RangedWeaponFact] {
+        &self.ranged_weapons
+    }
+
+    pub fn ranged_ammo(&self) -> &[RangedAmmoFact] {
+        &self.ranged_ammo
+    }
+
+    pub fn ranged_modes(&self) -> &[RangedModeFact] {
+        &self.ranged_modes
+    }
+
+    pub fn ranged_mode_varp(&self) -> Option<i32> {
+        self.ranged_mode_varp
     }
 
     pub fn loc_names(&self) -> Option<&LocNameFacts> {

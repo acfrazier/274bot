@@ -50,6 +50,15 @@ impl MeleeMode {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum RangedMode {
+    Accurate,
+    #[default]
+    Rapid,
+    LongRange,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrayerMode {
     #[default]
@@ -144,6 +153,7 @@ pub struct CombatRequest {
     pub tactic: Tactic,
     pub style: Style,
     pub melee_mode: Option<MeleeMode>,
+    pub ranged_style: RangedMode,
     pub kit: Option<Arc<CompiledKit>>,
     pub spells: Option<Arc<[SpellRef]>>,
     pub stand: Option<WorldTile>,
@@ -170,6 +180,7 @@ impl Default for CombatRequest {
             kit: None,
             spells: None,
             melee_mode: None,
+            ranged_style: RangedMode::default(),
             stand: None,
             search_bounds: None,
             engage_radius: 12,

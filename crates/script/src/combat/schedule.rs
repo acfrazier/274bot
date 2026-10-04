@@ -11,6 +11,7 @@ pub enum OpKind {
     Retaliate,
     Attack,
     Style,
+    Pickup = 8,
 }
 impl OpKind {
     pub const fn index(self) -> usize {
@@ -22,6 +23,7 @@ pub enum InputEffect<'a> {
     Standard,
     PrayerOn,
     ElementalShield,
+    RangedAttack,
     Food(&'a FoodFact),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,10 +48,10 @@ pub fn elapsed(tick: u16, since: u16) -> u16 {
 }
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Schedule {
-    earliest: [u16; 7],
-    pub unsettled: [u8; 7],
-    ready_mask: u8,
-    pending_mask: u8,
+    earliest: [u16; 9],
+    pub unsettled: [u8; 9],
+    ready_mask: u16,
+    pending_mask: u16,
     pub cycle: Cycle,
     pub input_lock: u16,
     lock_valid: bool,
@@ -107,8 +109,10 @@ impl Schedule {
                 _ => unreachable!("food admission requires its immutable timing fact"),
             },
             OpKind::Drink | OpKind::Prayer => Some(3),
-            OpKind::Wear | OpKind::Retaliate | OpKind::Style => Some(2),
-            OpKind::Attack => Some(u16::from(rate.max(1)) + 1),
+            OpKind::Wear | OpKind::Retaliate | OpKind::Style | OpKind::Pickup => Some(2),
+            OpKind::Attack => Some(
+                u16::from(rate.max(1)) + u16::from(!matches!(effect, InputEffect::RangedAttack)),
+            ),
         };
         if kind != OpKind::Prayer || matches!(effect, InputEffect::PrayerOn) {
             if let Some(delay) = delay {
@@ -150,7 +154,9 @@ impl Schedule {
                 }
                 self.clear(tick, if elemental_shield { 2 } else { 1 }, fight);
             }
-            OpKind::Prayer | OpKind::Retaliate | OpKind::Style => self.clear(tick, 1, fight),
+            OpKind::Prayer | OpKind::Retaliate | OpKind::Style | OpKind::Pickup => {
+                self.clear(tick, 1, fight)
+            }
             OpKind::Attack => {
                 self.last_attack = tick;
                 self.attack_valid = true;

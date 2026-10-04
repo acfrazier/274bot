@@ -2848,6 +2848,10 @@ async function generate(spec: Revision) {
         weapon_styles: combatStyles.weapon_styles,
         melee_modes: combatStyles.melee_modes,
         melee_mode_varp: combatStyles.melee_mode_varp,
+        ranged_weapons: combatStyles.ranged_weapons,
+        ranged_ammo: combatStyles.ranged_ammo,
+        ranged_modes: combatStyles.ranged_modes,
+        ranged_mode_varp: combatStyles.ranged_mode_varp,
     });
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
