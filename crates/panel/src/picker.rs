@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
-use frontend_core::{MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING};
+use frontend_core::{
+    DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+};
 use host_play::walk_map::{
     select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
 };
@@ -61,9 +63,7 @@ static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// True while the picker window was drawn last frame; drives the view reset
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
-const ROUTE_THROUGH_ZONES_LABEL: &str = "Route through danger zones";
 const ROUTE_THROUGH_ZONES_TOOLTIP: &str = "Allows routes past monsters that may kill your bot.";
-const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.";
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
 /// `None` detaches when the play is dropped. The picker never decodes the
@@ -1578,6 +1578,7 @@ fn picker_map_body(
     map: &mut WalkMapRenderer,
     world: &NavWorld,
 ) {
+    session.refresh_walk_permissions();
     map.note_open();
     session.sync_walk_map(pack());
     draw_map_bake_banner(ui, session);
@@ -1642,11 +1643,11 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
-    let global_danger = session.ui.nav.allow_danger_zones;
+    let global_danger = session.walk_permissions.globals.allow_danger_zones;
     let route_control_w = if global_danger {
         button_w(ui, GLOBAL_DANGER_WARNING)
     } else {
-        checkbox_w(ui, ROUTE_THROUGH_ZONES_LABEL)
+        checkbox_w(ui, DANGER_THIS_WALK_LABEL)
     };
     let controls = route_control_w + spacing + cluster;
     let status_text = format_walkto_status(
@@ -1661,7 +1662,7 @@ fn picker_map_body(
         ui.text_colored(ERROR, GLOBAL_DANGER_WARNING);
         [[0.0, 0.0], [0.0, 0.0]]
     } else {
-        ui.checkbox(ROUTE_THROUGH_ZONES_LABEL, &mut session.route_through_zones);
+        ui.checkbox(DANGER_THIS_WALK_LABEL, &mut session.route_through_zones);
         let rect = [ui.item_rect_min(), ui.item_rect_max()];
         ui.set_item_tooltip(ROUTE_THROUGH_ZONES_TOOLTIP);
         rect
