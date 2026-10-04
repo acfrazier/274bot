@@ -953,7 +953,9 @@ export interface GatherSettings {
   /** default "Best tier", only when its card show-if holds */
   targetPreference?: 'Best tier' | 'Nearest';
   /** default "Start" */
-  location?: 'Start' | 'Custom' | 'Auto';
+  location?: 'Start' | 'Site' | 'Auto' | 'Custom';
+  /** default "", only when its card show-if holds */
+  site?: string;
   /** no card default, only when its card show-if holds */
   customTile?: WorldTile;
   /** 2..64, default 12 */

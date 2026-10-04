@@ -7,7 +7,10 @@ use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, RunKey, Truth};
-use api::snapshot::{GameSnapshot, QuestListStatus, QuestStatusView, SnapshotView};
+use api::snapshot::{
+    ChatLineView, GameSnapshot, GroundItemView, LocLayer, LocView, QuestListStatus,
+    QuestStatusView, SnapshotView,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -525,6 +528,7 @@ fn with_step_context_at_walk_seq<R>(
             required_after,
             bank: &bank,
             banks: &banks,
+            choices: &crate::quester::choices::QuestChoices::default(),
         })
     })
 }
@@ -959,5 +963,163 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
             action,
             ..
         }) if *x == stand.x && *z == stand.z && action == "Take"
+    ));
+}
+
+#[test]
+fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let door = api::WorldTile {
+        x: 3203,
+        z: 3200,
+        level: 0,
+    };
+    let first_tile = api::WorldTile {
+        x: 3205,
+        z: 3200,
+        level: 0,
+    };
+    let second_tile = api::WorldTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        vec![
+            LootItem {
+                id: 1,
+                name: Arc::from("First drop"),
+            },
+            LootItem {
+                id: 2,
+                name: Arc::from("Second drop"),
+            },
+        ],
+    );
+    let ground = |id, name: &str, tile, distance| GroundItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: Some(name.to_owned()),
+            stackable: false,
+            members: false,
+            base_value: 1,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile,
+        distance,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_local_player(super::super::tests::local_player(here));
+    snapshot.seed_ground_items(vec![
+        ground(1, "First drop", first_tile, 5),
+        ground(2, "Second drop", second_tile, 2),
+    ]);
+    snapshot.seed_locs(vec![LocView {
+        id: 7,
+        name: Some("Door".into()),
+        actions: vec![Some("Open".into())],
+        tile: door,
+        distance: 3,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: LocLayer::GroundDecoration,
+        shape: -1,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    snapshot.seed_chat_lines(vec![]);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            x,
+            z,
+            action,
+            ..
+        }) if *x == first_tile.x && *z == first_tile.z && action == "Take"
+    ));
+
+    // The failed item click identifies the closed door; Reach's real recovery
+    // path emits a walk to that door before this terminal route receipt.
+    ledger.as_mut().unwrap().outbox.clear();
+    snapshot.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that".into(),
+        sequence: 1,
+    }]);
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    let request_id = match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        crate::native::HostEffect::Walk(request) => {
+            assert_eq!(request.target, door);
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .request_id
+                .get()
+        }
+        _ => panic!("Reach must walk to the closed door to recover the loot path"),
+    };
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 15,
+            sequence: 15,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("door recovery route unreachable")),
+    });
+
+    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.loot_index, 2, "the unreachable item is skipped");
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            x,
+            z,
+            action,
+            ..
+        }) if *x == second_tile.x && *z == second_tile.z && action == "Take"
     ));
 }

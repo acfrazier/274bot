@@ -69,6 +69,37 @@ fn selected() -> Arc<SelectedGameData> {
     api::game_data::for_revision(ClientRevision::R274).expect("selected data")
 }
 
+fn clue_death_line(seq: i32) -> crate::observed::ChatLine {
+    crate::observed::ChatLine {
+        seq,
+        text: std::rc::Rc::<str>::from("Oh dear, you are dead!"),
+    }
+}
+
+fn replace_clue_chat(lines: Vec<crate::observed::ChatLine>) {
+    crate::observed::replace(1, true, |post| {
+        post.chat_lines(lines);
+    });
+}
+
+fn post_clue_chat(lines: Vec<crate::observed::ChatLine>) {
+    crate::observed::post(2, |post| {
+        post.chat_lines(lines);
+    });
+}
+
+fn post_clue_hitpoints(effective: i32) {
+    crate::observed::post(3, |post| {
+        post.stats(crate::observed::Skills {
+            hitpoints: Some(crate::observed::Skill {
+                effective,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    });
+}
+
 /// A held id that is none of the selected families' rows: not a membership
 /// row, not one of the six challenge scrolls — holding one of those is the
 /// challenge seam's own join onto its parent, not an unrelated page — and
@@ -3458,76 +3489,101 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
     assert_eq!(redig["kind"], "wait", "{redig}");
 }
 
-/// The posted effective hitpoints at or below zero kill the token: the kind
-/// is `dead` on any live call, the token dies with the player and nothing
-/// posts `'clue solved'`. A page that posted no stat is not a zero, so the
-/// fight still Attacks — and after the kill the redig is not gated by a
-/// player death that has already been posted.
 #[test]
-fn a_posted_hitpoints_at_zero_is_dead_and_kills_the_token() {
+fn compatibility_pages_cannot_override_death_authority() {
+    let data = selected();
+    let page = json!([[GUARDED, 1]]);
+    let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+    for signal in [false, true] {
+        on_reset();
+        replace_clue_chat(Vec::new());
+        let token = spawned(&data);
+        let held = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                wizard.clone(),
+                json!({
+                    "hold": true,
+                    "hitpoints": 40,
+                    "death_observed": signal,
+                    "native_death": signal,
+                }),
+            ),
+        );
+        assert_eq!(
+            held["kind"], "yield",
+            "JSON fields cannot kill a held token: {held}"
+        );
+        let zero_hp = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                wizard.clone(),
+                json!({
+                    "hold": true,
+                    "hitpoints": 0,
+                    "death_observed": signal,
+                    "native_death": signal,
+                }),
+            ),
+        );
+        assert_eq!(
+            zero_hp["kind"], "yield",
+            "posted HP and JSON fields are not death authority: {zero_hp}"
+        );
+        assert_eq!(token_of(&zero_hp), token, "{zero_hp}");
+    }
     on_reset();
+}
+
+/// A zero-HP compatibility page stays live without new chat. Once hitpoints
+/// recover, a newly posted death line still ends the token before hold; old
+/// death chat present at begin is only the latch baseline.
+#[test]
+fn lifecycle_followups_compat_clue_uses_fresh_death_chat_after_respawn() {
+    on_reset();
+    let old_death = clue_death_line(100);
+    replace_clue_chat(vec![old_death.clone()]);
     let data = selected();
     let page = json!([[GUARDED, 1]]);
     let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
 
-    // Missing stat first: the Attack still goes out under a fight that is
-    // posted and alive.
     let token = spawned(&data);
-    let mut bare = fight_scene(wizard.clone(), json!({}));
-    bare.as_object_mut().expect("object").remove("hitpoints");
-    let attack = call(&data, token, page.clone(), bare);
-    assert_eq!(attack["kind"], "combat", "{attack}");
-
-    // Every posted zero-or-below is the terminal, whatever the page also
-    // carries, and the token dies on it.
-    for hp in [0, -1, -20] {
-        on_reset();
-        let token = spawned(&data);
-        let downed = call(
-            &data,
-            token,
-            page.clone(),
-            fight_scene(wizard.clone(), json!({ "hitpoints": hp })),
-        );
-        assert_eq!(downed["kind"], "dead", "{hp} {downed}");
-        for absent in ["action", "index", "component_id", "name", "message"] {
-            assert!(downed.get(absent).is_none(), "{hp} {absent} {downed}");
-        }
-        assert!(!downed.to_string().contains("clue solved"), "{hp} {downed}");
-        let after = call(
-            &data,
-            token,
-            page.clone(),
-            fight_scene(wizard.clone(), json!({})),
-        );
-        assert_eq!(after["kind"], "aborted", "{hp} {after}");
-        assert_eq!(after["reason"], "stale", "{hp} {after}");
-    }
-
-    // The kill, then a zero posted on the very next call: the death is the
-    // terminal on any live call, the post-kill redig included.
-    let token = spawned(&data);
-    let mut bare = fight_scene(wizard.clone(), json!({}));
-    bare.as_object_mut().expect("object").remove("hitpoints");
-    let attack = call(&data, token, page.clone(), bare);
-    assert_eq!(attack["kind"], "combat", "{attack}");
-    let id = attack["id"].as_u64().expect("id") as u32;
-    let kill = call(
+    post_clue_hitpoints(0);
+    let zero_hp = call(
         &data,
         token,
         page.clone(),
-        fight_scene(json!([]), combat_report_page(id, "killed")),
+        fight_scene(wizard.clone(), json!({ "hitpoints": 0 })),
     );
-    assert_eq!(kill["kind"], "held", "{kill}");
-    assert_eq!(kill["action"], DIG, "{kill}");
+    assert_eq!(zero_hp["kind"], "wait", "{zero_hp}");
+    assert_eq!(token_of(&zero_hp), token, "{zero_hp}");
+
+    post_clue_chat(vec![old_death, clue_death_line(101)]);
+    post_clue_hitpoints(40);
+    let dead = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(wizard.clone(), json!({ "hitpoints": 40, "hold": true })),
+    );
+    assert_eq!(dead["kind"], "dead", "{dead}");
+    for absent in ["action", "index", "component_id", "name", "message"] {
+        assert!(dead.get(absent).is_none(), "{absent} {dead}");
+    }
+    assert!(!dead.to_string().contains("clue solved"), "{dead}");
+
     let after = call(
         &data,
         token,
         page,
-        fight_scene(json!([]), json!({ "hitpoints": 0 })),
+        fight_scene(wizard, json!({ "hitpoints": 40 })),
     );
-    assert_eq!(after["kind"], "dead", "{after}");
-    assert!(!after.to_string().contains("clue solved"), "{after}");
+    assert_eq!(after["kind"], "aborted", "{after}");
+    assert_eq!(after["reason"], "stale", "{after}");
 }
 
 /// Freeze and yield beat the guarded encounter the way they beat the landed
@@ -4188,12 +4244,12 @@ fn the_trio_pick_is_the_unique_spawn_rule_and_never_a_lookalike() {
     assert_eq!(named["index"], 6, "{named}");
 }
 
-/// Freeze, hold, the posted interrupt and a posted death all beat the
-/// acquire chain exactly as they beat the landed arms, and the chain itself
-/// never emits a completion kind.
+/// Freeze, hold, the posted interrupt and a new death chat all beat the
+/// acquire chain as they beat the landed arms; the chain never completes.
 #[test]
 fn freeze_yield_and_death_beat_the_trio_acquire() {
     on_reset();
+    replace_clue_chat(Vec::new());
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
     let token = steady(&data, UNGUARDED);
@@ -4227,8 +4283,9 @@ fn freeze_yield_and_death_beat_the_trio_acquire() {
     yielded_scene["hold"] = json!(true);
     let yielded = call(&data, token, page.clone(), yielded_scene);
     assert_eq!(yielded["kind"], "yield", "{yielded}");
+    post_clue_chat(vec![clue_death_line(1)]);
     let mut dead_scene = scene.clone();
-    dead_scene["hitpoints"] = json!(0);
+    dead_scene["hitpoints"] = json!(40);
     let dead = call(&data, token, page.clone(), dead_scene);
     assert_eq!(dead["kind"], "dead", "{dead}");
     for step in [&paused, &held_clock, &yielded, &dead] {
@@ -5881,6 +5938,7 @@ fn the_challenge_seam_keeps_the_live_token_on_the_parent_step() {
 #[test]
 fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
     on_reset();
+    replace_clue_chat(Vec::new());
     let data = selected();
     let page = talk_page(TALK);
     let token = steady(&data, TALK);
@@ -5969,9 +6027,8 @@ fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
     );
     assert_eq!(counted["kind"], "wait", "{counted}");
 
-    // The landed precedence is untouched by the talk arm: the posted
-    // interrupt yields, the frozen clock waits, and a posted hitpoints at
-    // or below zero is `dead` — never `done` and never `'clue solved'`.
+    // The posted interrupt yields, the frozen clock waits, and a new death
+    // chat ends the token before any talk arm runs, even at restored hitpoints.
     let yielded = call(
         &data,
         token,
@@ -5983,6 +6040,7 @@ fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
         ),
     );
     assert_eq!(yielded["kind"], "yield", "{yielded}");
+    post_clue_chat(vec![clue_death_line(1)]);
     let dead = call(
         &data,
         token,
@@ -5990,7 +6048,7 @@ fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
         talk_scene(
             here(3207, 3233, 0),
             on_tile.clone(),
-            json!({ "hitpoints": 0 }),
+            json!({ "hitpoints": 40 }),
         ),
     );
     assert_eq!(dead["kind"], "dead", "{dead}");
@@ -6086,6 +6144,7 @@ fn steady_drains_a_posted_continue_before_the_step_verb() {
 #[test]
 fn the_talk_arm_emits_only_walk_npc_answer_count_wait_and_yield() {
     on_reset();
+    replace_clue_chat(Vec::new());
     let data = selected();
     let scenes = [
         (TALK, json!({ "npcs": [] }), "no page"),
@@ -6166,14 +6225,15 @@ fn the_talk_arm_emits_only_walk_npc_answer_count_wait_and_yield() {
             "{kind}"
         );
     }
-    // `status` is still the machine's continue shape on every one of them,
-    // and `dead` never posts the solved string.
+    // `status` is still the machine's continue shape on every one of them.
+    // A fresh chat death kills this live token and never posts that string.
     let token = steady(&data, TALK);
+    post_clue_chat(vec![clue_death_line(1)]);
     let dead = call(
         &data,
         token,
         talk_page(TALK),
-        talk_scene(here(3207, 3233, 0), json!([]), json!({ "hitpoints": 0 })),
+        talk_scene(here(3207, 3233, 0), json!([]), json!({ "hitpoints": 40 })),
     );
     assert_eq!(dead["kind"], "dead", "{dead}");
     assert!(!dead.to_string().contains("clue solved"), "{dead}");
@@ -6910,13 +6970,13 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
     assert!(!yielded.to_string().contains("clue solved"), "{yielded}");
 }
 
-/// The frozen clock, the posted hitpoints and the token's own end keep
-/// their precedence over the hunt: a frozen call emits no walk and no
-/// Attack, and a posted effective hitpoints at zero is the `dead` terminal
-/// — never `done`, and never a completion kind.
+/// The frozen clock and new death chat keep their precedence over the hunt:
+/// a chat line ends the token even at restored hitpoints, never as a clue
+/// completion kind.
 #[test]
 fn freeze_yield_and_death_beat_the_key_hunt() {
     on_reset();
+    replace_clue_chat(Vec::new());
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
     let spawn = spawn_of(key_of(&data, RIDDLE));
@@ -6940,8 +7000,9 @@ fn freeze_yield_and_death_beat_the_key_hunt() {
     let walked = call(&data, token, page.clone(), danger.clone());
     assert_eq!(walked["kind"], "walk", "{walked}");
 
-    // The posted effective hitpoints read zero: the terminal wins over the
-    // walk, the Attack and the Take alike.
+    post_clue_chat(vec![clue_death_line(1)]);
+    // The new death chat is terminal before the walk, Attack or Take, even
+    // though the page reports restored hitpoints.
     let dead = call(
         &data,
         token,
@@ -6951,7 +7012,7 @@ fn freeze_yield_and_death_beat_the_key_hunt() {
             json!({
                 "npcs": [keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK])],
                 "inv": [inv(KEEPER_KEY, "Key", 1)],
-                "hitpoints": 0,
+                "hitpoints": 40,
             }),
         ),
     );
@@ -7219,7 +7280,7 @@ fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
 }
 
 /// The machine envelope is read before an armed shop trip: cooperative yield
-/// pauses it without advancing, while posted death ends the token.
+/// pauses it, while a fresh death-chat observation ends the token.
 #[test]
 fn gate_toll_yield_and_death_precede_every_shop_verb() {
     let data = selected();
@@ -7228,6 +7289,7 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
     let away = here(3200, 3218, 1);
 
     on_reset();
+    replace_clue_chat(Vec::new());
     let yielded_token = steady(&data, SEARCH);
     let first = call(
         &data,
@@ -7261,6 +7323,7 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
     );
 
     on_reset();
+    replace_clue_chat(Vec::new());
     let dead_token = steady(&data, SEARCH);
     let first = call(
         &data,
@@ -7269,13 +7332,14 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
         json!({ "here": away, "walk_missing_carry": short }),
     );
     assert_eq!(first["kind"], "walk", "{first}");
+    post_clue_chat(vec![clue_death_line(1)]);
     let dead = call(
         &data,
         dead_token,
         page,
         json!({
             "here": away,
-            "hitpoints": 0,
+            "hitpoints": 40,
             "walk_missing_carry": short,
         }),
     );

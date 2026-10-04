@@ -154,3 +154,33 @@ fn legacy_default_paths_require_an_engine_root() {
     assert!(error.contains("BOT_NAV_ENGINE_DIR"));
     assert!(error.contains("ENGINE_DIR"));
 }
+
+#[test]
+fn cli_bake_rejects_a_missing_door_config_before_baking() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "274bot-nav-pack-strict-{}-{unique}",
+        std::process::id()
+    ));
+    let maps = root.join("content/maps");
+    let doors = root.join("content/scripts/doors/configs");
+    std::fs::create_dir_all(&maps).unwrap();
+    std::fs::create_dir_all(&doors).unwrap();
+    std::fs::write(root.join("config.jag"), b"").unwrap();
+    std::fs::write(doors.join("doors.loc"), "[loc_100]\nop1=Open\n").unwrap();
+    let inputs = parse_args([
+        maps.to_string_lossy().into_owned(),
+        doors.to_string_lossy().into_owned(),
+        root.join("config.jag").to_string_lossy().into_owned(),
+    ])
+    .unwrap();
+    let gates = root.join("content/scripts/general_use/configs/gates.loc");
+    let error = bake_world(&inputs, &gates, None)
+        .err()
+        .expect("missing door config must fail");
+    assert!(error.contains("doubledoors.loc"), "{error}");
+    std::fs::remove_dir_all(root).unwrap();
+}

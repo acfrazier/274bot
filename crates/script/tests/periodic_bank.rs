@@ -5,8 +5,24 @@ use script::isolate_fb::{
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
+/// The host raises the bank-side root with the open bank and drops it on
+/// close; the deposit loop reads that root, not the list length.
+fn side_root(input: &SnapshotInput<'_>) -> i32 {
+    if input.bank_open {
+        SIDE_ROOT
+    } else {
+        -1
+    }
+}
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+    iso.post_snapshot(encode_snapshot_with_native(
+        input,
+        NativeFactsInput {
+            side_modal_id: Some(side_root(input)),
+            ..Default::default()
+        },
+    ));
 }
 
 fn post_snapshot_native(
@@ -18,6 +34,7 @@ fn post_snapshot_native(
         input,
         NativeFactsInput {
             bank_approaches: Some(approaches),
+            side_modal_id: Some(side_root(input)),
             ..Default::default()
         },
     ));
@@ -129,16 +146,44 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
-fn item_row<'a>(name: &'a str, id: i32, count: i32) -> ItemRowInput<'a> {
+const SIDE_ROOT: i32 = 700;
+const SIDE_GRID: i32 = 701;
+
+/// The 289 deposit grid's ops.
+static DEPOSIT_OPS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+    [
+        "Deposit-1",
+        "Deposit-5",
+        "Deposit-10",
+        "Deposit-All",
+        "Deposit-X",
+    ]
+    .map(String::from)
+    .to_vec()
+});
+
+/// A bank-side row at `slot` of the deposit grid.
+fn item_row<'a>(name: &'a str, id: i32, count: i32, slot: i32) -> ItemRowInput<'a> {
     ItemRowInput {
         name: Some(name),
         count,
         id,
-        ops: &[],
+        ops: &DEPOSIT_OPS,
         noted: false,
         cert: -1,
-        component_id: 0,
-        slot: -1,
+        component_id: SIDE_GRID,
+        slot,
+    }
+}
+
+/// Deposit-All of side row `id` at `slot` in bank session `generation`.
+fn deposit_all(id: i32, slot: i32, generation: u64) -> InteractReq {
+    InteractReq::InvButton {
+        id,
+        slot,
+        component: SIDE_GRID,
+        operation: 4,
+        bank_generation: generation,
     }
 }
 
@@ -291,30 +336,28 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
         "afterDeposit must not run before a fresh snapshot"
     );
 
-    let bones = [item_row("Bones", 526, 1), item_row("Bronze arrow", 882, 50)];
+    let bones = [
+        item_row("Bones", 526, 1, 0),
+        item_row("Bronze arrow", 882, 50, 1),
+    ];
     snap.tick = 2;
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
     snap.bank_side = &bones;
+    snap.inv = &bones;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Bones".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 1)]);
     assert!(
         iso.probe("__after").is_err(),
         "queued deposit is not completion"
     );
 
-    let kept = [item_row("Bronze arrow", 882, 50)];
+    let kept = [item_row("Bronze arrow", 882, 50, 1)];
     snap.tick = 3;
     snap.bank_side = &kept;
-    snap.bank_op_result_seq = 1;
-    snap.bank_op_result = true;
+    snap.inv = &kept;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(
@@ -563,7 +606,7 @@ export default class T extends TaskBot {
             0,
             "open without loaded stock is not completion"
         );
-        let side = [item_row("Coins", 995, 1)];
+        let side = [item_row("Coins", 995, 1, 0)];
         snap.bank_loaded = true;
         snap.bank_side = &side;
         for n in 4..=6 {
@@ -598,8 +641,8 @@ export default class T extends TaskBot {
     iso.probe("globalThis.__junk = true").unwrap();
     let booth = seers_booth();
     let side = [
-        item_row("Uncut sapphire", 1623, 1),
-        item_row("Coins", 995, 25),
+        item_row("Uncut sapphire", 1623, 1, 0),
+        item_row("Coins", 995, 25, 1),
     ];
     let mut snap = base_snapshot();
     snap.here = Some(TileInput {
@@ -614,24 +657,14 @@ export default class T extends TaskBot {
     snap.bank_side = &side;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Uncut sapphire".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(1623, 0, 4)]);
     iso.join();
 
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
     iso.probe("globalThis.__junk = false").unwrap();
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Coins".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(995, 1, 4)]);
     iso.join();
 }
 
@@ -696,7 +729,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 9;
-    let bones = [item_row("Bones", 526, 1)];
+    let bones = [item_row("Bones", 526, 1, 0)];
     snap.bank_side = &bones;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
@@ -708,17 +741,10 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
 
     iso.resume();
     tick(&iso, 3);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Bones".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 9)]);
 
     iso.reset_session_work();
     snap.tick = 4;
-    snap.bank_op_result_seq = 1;
-    snap.bank_op_result = true;
     snap.bank_side = &[];
     post_snapshot_input(&iso, &snap);
     tick(&iso, 4);
@@ -951,7 +977,7 @@ export default class T extends LoopingBot {
         }]
     );
 
-    let side = [item_row("Coins", 995, 25)];
+    let side = [item_row("Coins", 995, 25, 0)];
     snap.tick = 2;
     snap.bank_open = true;
     snap.bank_loaded = true;
@@ -959,12 +985,7 @@ export default class T extends LoopingBot {
     snap.bank_side = &side;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Coins".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(995, 0, 1)]);
     iso.join();
 }
 
@@ -1002,7 +1023,7 @@ export default class T extends TaskBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    let side = [item_row("Bones", 526, 1), item_row("Coins", 995, 25)];
+    let side = [item_row("Bones", 526, 1, 0), item_row("Coins", 995, 25, 1)];
     let mut snap = base_snapshot();
     snap.here = Some(TileInput {
         x: 2724,
@@ -1016,12 +1037,7 @@ export default class T extends TaskBot {
     snap.bank_side = &side;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Deposit {
-            name: "Bones".into()
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 4)]);
     assert_eq!(
         iso.probe("__calls").unwrap(),
         serde_json::json!(["status:periodic bank run", "deposit:Bones"]),

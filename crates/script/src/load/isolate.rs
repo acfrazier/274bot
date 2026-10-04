@@ -956,6 +956,18 @@ impl LoadIsolate {
         self.ignored_randoms.lock().unwrap().clone()
     }
 
+    /// Match the host knock against the cache without cloning its list. This
+    /// mirrors `RandomEvents.isIgnored`: Unicode lowercase, no whitespace trim.
+    pub(crate) fn ignores_random(&self, name: &str) -> bool {
+        self.pump_logs();
+        self.ignored_randoms.lock().unwrap().iter().any(|ignored| {
+            ignored
+                .chars()
+                .flat_map(char::to_lowercase)
+                .eq(name.chars().flat_map(char::to_lowercase))
+        })
+    }
+
     /// Drain the isolate's log lines (tick errors, slow/interrupted
     /// ticks).
     pub fn drain_logs(&self) -> Vec<String> {

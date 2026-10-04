@@ -4587,6 +4587,7 @@ dependencies = [
  "client",
  "image",
  "nav",
+ "script",
  "serde",
  "serde_json",
 ]

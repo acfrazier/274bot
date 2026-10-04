@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
-import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
@@ -2483,6 +2483,17 @@ function familyRowKeys(family: GatheringFamily, kind: 'l' | 'n', ids: ReadonlySe
     return keys;
 }
 
+/** The 20 compiled bank-catalog rows, read the way the probe reads them: names and tiles only. */
+function readSiteBanks(): GatherSiteBank[] {
+    const source = fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/bank-catalog.rs'), 'utf8');
+    const rows = [...source.matchAll(/name: "([^"]+)", tile: WorldTile \{ x: (\d+), z: (\d+), level: (\d+) \}/g)]
+        .map((match) => ({ name: match[1]!, tile: { x: Number(match[2]), z: Number(match[3]), level: Number(match[4]) } }));
+    assert.equal(rows.length, 20, 'the bank place list is the 20 compiled catalog rows');
+    return rows;
+}
+const siteBanksAll = readSiteBanks();
+const siteRowsByRevision = new Map<number, GatherSiteWire[]>();
+
 for (const { revision, root } of gatheringPins) {
     const family = extractGatheringFamily(root);
     const view = gatherView(family);
@@ -2668,6 +2679,91 @@ for (const { revision, root } of gatheringPins) {
         revision === 289 ? 'monkey-form-forbidden' : null,
         `${revision} the 289 monkey-form gate refuses big-net; 274 has no such gate`,
     );
+    // Named sites (§2.3 P-sites): rows, boxes, names and counts computed from
+    // the content family, never the committed core. Item names are the shared
+    // core input (the same map the generator passes); everything else derives.
+    const siteCore: { items: { id: number; name: string | null }[] } = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8'));
+    const siteItemNames = new Map<number, string>();
+    for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
+    const namedResourceRows = gatherResources(facts, siteItemNames);
+    const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
+    assert.equal(siteResult.rows.length, revision === 289 ? 310 : 307, `${revision} named sites`);
+    const expectedSiteReport = revision === 289
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+    assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
+    const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
+    const site = (id: string): GatherSiteWire => {
+        const found = siteById.get(id);
+        assert.ok(found, `${revision} site ${id} is published`);
+        return found!;
+    };
+    // Direct content names on both revisions, with the Waterfall loc camp keeping its bearing label.
+    assert.equal(site('fishing.musa_point').label, 'Musa Point · Bait, Cage, Harpoon, Net');
+    assert.deepEqual(site('fishing.musa_point').region, { min_x: 2923, min_z: 3179, max_x: 2926, max_z: 3181, level: 0 });
+    assert.equal(site('fishing.barbarian_village').label, 'Barbarian Village · Bait, Lure');
+    assert.deepEqual(site('fishing.barbarian_village').region, { min_x: 3104, min_z: 3424, max_x: 3110, max_z: 3434, level: 0 });
+    assert.equal(site('fishing.catherby').label, 'Catherby · Harpoon, Net, Bait, Cage');
+    assert.equal(site('fishing.baxtorian_falls').label, 'Baxtorian Falls · Bait, Lure');
+    assert.deepEqual(site('fishing.baxtorian_falls').region, { min_x: 2527, min_z: 3403, max_x: 2537, max_z: 3412, level: 0 });
+    assert.equal(site('fishing.baxtorian_falls.2').label, 'Baxtorian Falls (2) · Bait, Lure');
+    assert.deepEqual(site('fishing.baxtorian_falls.2').region, { min_x: 2508, min_z: 3421, max_x: 2508, max_z: 3421, level: 0 });
+    assert.equal(site('fishing.agility_training_area.sw').label, 'Agility Training Area SW19 · Bait, Lure');
+    assert.equal(site('fishing.agility_training_area.sw').region.min_x, revision === 289 ? 2501 : 2498);
+    assert.equal(site('fishing.rimmington').label, 'Rimmington · Bait, Net');
+    assert.equal(site('fishing.rimmington.2').label, 'Rimmington (2) · Bait, Net');
+    assert.equal(site('fishing.entrana').label, 'Entrana · Bait, Lure');
+    assert.equal(site('fishing.entrana.2').label, 'Entrana (2) · Bait, Net');
+    assert.equal(site('fishing.seers_village').label, `Seers' Village · Bait, Lure`);
+    assert.equal(site('fishing.draynor_village').label, 'Draynor Village · Bait, Net');
+    assert.equal(site('fishing.lumbridge_river').label, 'Lumbridge River · Bait, Lure');
+    assert.equal(site('fishing.fishing_guild').label, 'Fishing Guild · Cage, Harpoon, Net');
+    assert.equal(site('fishing.gnome_stronghold').label, 'Gnome Stronghold · Bait, Lure');
+    assert.equal(site('fishing.wilderness_camp').label, 'Wilderness Camp · Bait, Net');
+    assert.ok(!siteById.has('fishing.rimmington.sw') && !siteById.has('fishing.cooks_guild.w'), `${revision} round-2 ids are not rows`);
+    // The three mines keep their honest bearing descriptions: no content identifier names a mine.
+    assert.equal(site('mining.lumbridge.ne').label, 'Lumbridge NE54 · Iron ore 9, Silver ore 5, Coal 3 +5');
+    assert.equal(site('mining.al_kharid.w').label, 'Al Kharid W26 · Coal 7, Mithril ore 5, Adamantite ore 2');
+    assert.equal(site('mining.river_lum').label, 'River Lum · Tin ore 8, Clay 3, Iron ore 3 +1');
+    assert.equal(site('mining.varrock_east.se').label, 'Varrock East SE50 · Copper ore 9, Tin ore 6, Iron ore 4');
+    assert.equal(site('woodcutting.draynor').label, 'Draynor · Logs 25, Willow logs 5, Oak logs 4');
+    assert.deepEqual(site('woodcutting.draynor').region, { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
+    // Search witnesses: the rows the picker filters per selected key and query.
+    const offering = (skill: string, key: string) => siteResult.rows.filter((row) => row.skill === skill && row.keys.some((entry) => entry.key === key));
+    assert.equal(offering('woodcutting', 'normal').length, revision === 289 ? 223 : 220, `${revision} normal-tree choices`);
+    assert.equal(offering('woodcutting', 'oak').length, 113, `${revision} oak choices`);
+    assert.equal(offering('woodcutting', 'willow').length, 47, `${revision} willow choices`);
+    assert.equal(offering('mining', 'coal').length, 16, `${revision} coal choices`);
+    assert.deepEqual(
+        offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
+        ['woodcutting.draynor'],
+        `${revision} willow plus draynor is exactly one site`,
+    );
+    assert.equal(offering('woodcutting', 'normal').filter((row) => /varrock/i.test(`${row.id} ${row.label}`)).length, 11, `${revision} varrock matches`);
+    const tunaKey = namedResourceRows.find((row) => row.aliases.includes('fishing.rarefish.op3'))!.key;
+    const tunaSites = offering('fishing', tunaKey);
+    assert.equal(tunaSites.length, 4, `${revision} tuna harpoon choices`);
+    assert.deepEqual(tunaSites.map((row) => row.label.split(' · ')[0]).sort(), ['Catherby', 'Fishing Guild', 'Musa Point', 'Rellekka NW24'], `${revision} tuna harpoon names`);
+    // Real-row closure: every key is a same-skill picker value, labels carry no coordinates, sites are surface-only.
+    for (const row of siteResult.rows) {
+        for (const entry of row.keys) {
+            assert.ok(namedResourceRows.some((resource) => resource.skill === row.skill && resource.key === entry.key), `${revision} ${row.id} offers ${entry.key}, a ${row.skill} key`);
+        }
+        assert.ok(!/\d{4}/.test(row.label) && row.region.min_z < 6400, `${revision} ${row.id} label and surface`);
+    }
+    siteRowsByRevision.set(revision, siteResult.rows);
+
+}
+// Both revisions publish the same site ids but the three 289 tree scraps.
+{
+    const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
+    const rows289 = siteRowsByRevision.get(289)!;
+    const ids289 = rows289.map((row) => row.id);
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 307, '307 shared site ids');
+    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only rows');
+    assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
+    assert.ok(rows289.some((row) => row.label.startsWith(`Mort'ton · `)), '289 keeps the Mortton camp');
+    assert.ok(rows289.some((row) => row.label.includes('Troll Stronghold')), '289 keeps the Troll Stronghold scraps');
 }
 
 // Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
@@ -3053,4 +3149,133 @@ assert.throws(
 );
 const synUnnamed = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 99999, level: 15 }]), synKnownIds([]));
 assert.equal(gatherResources(synFacts([synUnnamed]), new Map())[0]?.label, 'Oak', 'an unjoined product id falls back instead of inventing a name');
+
+// ---- gather_sites negatives: fixture joins fail closed, never guess ----
+function siteFixtureContent(labels: string[], fishingNpc: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gather-sites-fixture-'));
+    fs.mkdirSync(path.join(dir, 'maps'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'scripts/skill_fishing/configs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'maps/labels.txt'), `${labels.join('\n')}\n`);
+    fs.writeFileSync(path.join(dir, 'scripts/skill_fishing/configs/fishing.npc'), `${fishingNpc}\n`);
+    return dir;
+}
+function synSiteFacts(methods: MethodWire[], entities: string[], movements: GatheringFacts['movements'], placements: GatheringFacts['placements']): GatheringFacts {
+    return { entities, methods, loose: [], zones: [], movements, placements, hazard_npcs: [], incidental_gem_ids: [] };
+}
+function synMovement(npc: number, region: GatheringFacts['movements'][number]['region']): GatheringFacts['movements'][number] {
+    return { npc, region };
+}
+const synKnownBox = (minX: number, minZ: number, maxX: number, maxZ: number): GatheringFacts['movements'][number]['region'] => ({ state: 'known', value: { min_x: minX, min_z: minZ, max_x: maxX, max_z: maxZ, level: 0 } });
+const synNpcTarget = (id: number): TargetWire => ({ kind: 'npc', id, op: 1, class: 'resource', respawn: synRespawn });
+const synPlacements = (file: string, rows: string[]): GatheringFacts['placements'][number] => ({ file, rows });
+const synTestFish = (id: string, targets: TargetWire[], item = 9001): MethodWire =>
+    synMethod(id, 'fishing', ['raw_test'], synKnownIds([{ item, level: 1 }]), synKnownIds([]), { targets: { state: 'known', value: targets } });
+const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
+
+// A geographic enum stem names the NPC camp inside its own movement box.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    assert.deepEqual(result.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Test Water · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }] }]);
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0 });
+}
+// The resolution rule enumerates method targets: a missing, null or unknown movement box throws.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
+    const method = synTestFish('fishing.test.op1', [synNpcTarget(5)]);
+    const rows = gatherResources(synSiteFacts([method], ['npc 5 testspot'], [], []), synFishNames);
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]), rows, content, []), /no known movement box/, 'an entirely missing movement row throws');
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, { state: 'known', value: null })], []), rows, content, []), /no known movement box/, 'a null movement box throws');
+    assert.throws(() => gatherSites(synSiteFacts([method], ['npc 5 testspot'], [synMovement(5, synUnknownGap('movement-enum-missing'))], []), rows, content, []), /no known movement box/, 'an unknown movement box throws');
+}
+// Two stems humanising to one name throw, even before any placement is read.
+{
+    const content = siteFixtureContent([`=Seers' Village,2714,3529,0`], '[spot_a]\nparam=fishing_movement_enum,fishing_movement_seers_village_enum\n[spot_b]\nparam=fishing_movement_enum,fishing_movement_seersvillage_enum');
+    const methods = [synTestFish('fishing.a.op1', [synNpcTarget(5)]), synTestFish('fishing.b.op1', [synNpcTarget(6)], 9002)];
+    const facts = synSiteFacts(methods, ['npc 5 spot_a', 'npc 6 spot_b'], [synMovement(5, synKnownBox(2700, 3520, 2730, 3540)), synMovement(6, synKnownBox(2700, 3520, 2730, 3540))], []);
+    assert.throws(() => gatherSites(facts, gatherResources(facts, synFishNames), content, []), /collide/, 'two stems humanising to one name throw');
+}
+// Two geographic names in one camp throw; one spawn outside its own box is counted, not named.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[pool_a]\nparam=fishing_movement_enum,fishing_movement_test_water_enum\n[pool_b]\nparam=fishing_movement_enum,fishing_movement_far_water_enum');
+    const method = synTestFish('fishing.test.op1', [synNpcTarget(5), synNpcTarget(6)]);
+    const clashing = synSiteFacts([method], ['npc 5 pool_a', 'npc 6 pool_b'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220)), synMovement(6, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0', '2 0 12 10 n6 0'])]);
+    assert.throws(() => gatherSites(clashing, gatherResources(clashing, synFishNames), content, []), /ambiguous/, 'two direct names in one site throw');
+    const outside = synSiteFacts([method], ['npc 5 pool_a', 'npc 6 pool_b'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220)), synMovement(6, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0', '2 0 12 10 n6 0'])]);
+    const outsideResult = gatherSites(outside, gatherResources(outside, synFishNames), content, []);
+    assert.equal(outsideResult.rows[0]?.label, 'Test Water · Mine', 'a spawn outside its own box takes the one inside name');
+    assert.deepEqual(outsideResult.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 1 });
+}
+
+// A loc camp never borrows a nearby NPC's enum, even a geographic one.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[other]\nparam=fishing_movement_enum,fishing_movement_other_enum');
+    const method = synMethod('fishing.test.op1', 'fishing', ['raw_test'], synKnownIds([{ item: 9001, level: 1 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(2092)] } });
+    const facts = synSiteFacts([method], [], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l2092 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a loc camp never borrows a nearby NPC name');
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
+}
+// A spawn outside its own box with no inside name behind it falls back to the place, still counted.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'an all-outside camp keeps its place name');
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 1 });
+}
+// The 64-tile cap drops whichever source would name the site; the dungeon band is never a site.
+{
+    const content = siteFixtureContent(['=Far Place,100,100,0'], '[unrelated]');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    assert.deepEqual(result.rows, [], 'a site with no place within 64 is dropped whichever source would name it');
+    assert.deepEqual(result.report.fishing, { sites: 0, direct: 0, dropped: 1, outside_box: 0 });
+    const deepContent = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
+    const oak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(2092)] } });
+    const deep = synSiteFacts([oak], [], [], [synPlacements('maps/m50_100.jm2', ['1 0 10 0 l2092 0'])]);
+    assert.deepEqual(gatherSites(deep, gatherResources(deep, new Map([[1521, 'Oak logs']])), deepContent, []).rows, [], 'the dungeon band is not a named site');
+}
+// Ordinals rank by distance, then count: the nearer part keeps the bare name.
+{
+    const content = siteFixtureContent(['=P,0,0,0'], '[unrelated]');
+    const oak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]), { targets: { state: 'known', value: [synTarget(7)] } });
+    const facts = synSiteFacts([oak], [], [], [synPlacements('maps/m0_0.jm2', ['1 0 20 0 l7 0', '2 0 21 0 l7 0', '3 0 40 0 l7 0', '4 0 41 0 l7 0', '5 0 42 0 l7 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    assert.deepEqual(result.rows.map((row) => [row.id, row.label]), [['woodcutting.p.e', 'P E20 · Oak logs 2'], ['woodcutting.p.e.2', 'P E40 (2) · Oak logs 3']]);
+}
+
+// Place names sort before their bearing siblings, independently of the label separator.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
+    const oak = synMethod(
+        'woodcutting.oak',
+        'woodcutting',
+        ['oak'],
+        synKnownIds([{ item: 1521, level: 15 }]),
+        synKnownIds([]),
+        { targets: { state: 'known', value: [synTarget(7), synTarget(8)] } },
+    );
+    const facts = synSiteFacts(
+        [oak],
+        [],
+        [],
+        [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l7 0', '2 0 50 10 l8 0'])],
+    );
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    assert.deepEqual(
+        result.rows.map((row) => row.label),
+        ['Test Water · Oak logs 1', 'Test Water E40 · Oak logs 1'],
+    );
+}
+
+// A category-suffixed enum stem is not a direct name.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[coalfish]\nparam=fishing_movement_enum,fishing_movement_coalfish_enum');
+    const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 coalfish'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
+    const result = gatherSites(facts, gatherResources(facts, synFishNames), content, []);
+    assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
+    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
+}
 console.log('generate fixture passed');

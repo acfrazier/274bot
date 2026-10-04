@@ -10,7 +10,9 @@ use super::select::{
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
 use super::supply::{self, SupplyPlan, SupplyPlanResult};
-use super::widen::{remember_group, SearchExclusions, SearchResult, TriedGroup, WidenCursor};
+use super::widen::{
+    remember_group, site_anchor, SearchExclusions, SearchResult, TriedGroup, WidenCursor,
+};
 use super::{GatherRetained, RecoveryState};
 use crate::bank::{self, PickKind, SelectedBank};
 use crate::native::walk::Walk;
@@ -625,6 +627,24 @@ impl Gatherer {
             self.retained.start_tile = Some(here.value);
             self.sync_retained_from_context(cx);
         }
+        if self.settings().location.eq_ignore_ascii_case("site") && self.retained.anchor.is_none() {
+            let site = self.prepared.site().expect("admitted Site setting");
+            let Some(anchor) = site_anchor(
+                &self.prepared.catalog,
+                &self.prepared.methods,
+                &site.region,
+                &self.avoid,
+                cx.evidence().tick,
+            ) else {
+                self.fail(
+                    "area-invalid",
+                    format!("no selected resource is accessible at {}", site.label),
+                );
+                return Validation::Pending;
+            };
+            self.retained.anchor = Some(anchor);
+            self.sync_retained_from_context(cx);
+        }
         if self.settings().location.eq_ignore_ascii_case("auto") && self.retained.anchor.is_none() {
             match self.widen.poll(
                 &self.prepared.catalog,
@@ -843,14 +863,16 @@ impl Gatherer {
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
-        // Observed NPC ops own their client-side approach. Their occupied water
-        // tile is not a navigation destination (and can move before arrival).
-        let observation_approach = selected.class == PlacementClass::Unloaded;
+        // Observed NPC ops own their client-side approach. Only their unloaded
+        // observation stands use Area; locs keep loc-aware Reach settlement
+        // as soon as their live footprint becomes available.
+        let observation_approach = selected.class == PlacementClass::Unloaded
+            && matches!(selected.plan.entity, api::selected::EntityId::Npc(_));
         let loc_id = match selected.plan.entity {
-            api::selected::EntityId::Loc(id) if !observation_approach => Some(id),
+            api::selected::EntityId::Loc(id) => Some(id),
             _ => None,
         };
-        let needs_walk = if observation_approach {
+        let needs_walk = if selected.class == PlacementClass::Unloaded {
             true
         } else if selected.plan.npc_index >= 0 {
             false

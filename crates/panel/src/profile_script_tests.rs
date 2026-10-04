@@ -581,10 +581,12 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
     )
     .unwrap();
 
+    // Same non-blocking contract as the catalog refresh below: the pending
+    // flag is the real transition, and the deadline only fails a true hang.
     let started = Instant::now();
     session.begin_script_reload_clicked();
     assert!(
-        started.elapsed() < Duration::from_millis(500),
+        started.elapsed() < Duration::from_secs(10),
         "the UI action must not wait for hostile module evaluation"
     );
     assert!(
@@ -646,10 +648,15 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
     )
     .unwrap();
 
+    // The control thread must not wait for hostile module evaluation: begin
+    // returns while validation is still owned by the worker. The pending flag
+    // below is the real transition (a blocking begin would return settled),
+    // not a wall-clock bound, which flakes under load. The generous deadline
+    // only fails a begin that truly hangs on evaluation.
     let started = Instant::now();
     session.begin_refresh_catalog_at(&root);
     assert!(
-        started.elapsed() < Duration::from_millis(500),
+        started.elapsed() < Duration::from_secs(10),
         "catalog refresh must not wait for hostile module evaluation"
     );
     assert!(

@@ -66,7 +66,7 @@ impl MapFixture {
         } else {
             &world.collision
         };
-        let bytes = nav::pack::encode(collision, &world.graph, world.banks());
+        let bytes = nav::pack::encode(collision, &world.graph, world.banks()).unwrap();
         let pack = root.join("selected.navpack");
         std::fs::write(&pack, &bytes).unwrap();
         let manifest = NavManifest {

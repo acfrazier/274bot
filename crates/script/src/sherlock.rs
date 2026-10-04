@@ -33,6 +33,12 @@
 //!   collect dies on — advances the card's local solved count. An `aborted`
 //!   answer ends too, on the machine's own reason: `none-held` is the landed
 //!   abort and not a finished clue, and it counts nothing.
+//! * Native death observation uses the shared `DeathLatch` chat signal. HP
+//!   zero alone freezes this card before it can emit work, but does not end the
+//!   clue; a newly latched death chat ends the live token without advancing
+//!   `solved`, even if HP has already recovered. The shared clue machine's
+//!   explicit observation input is supplied only by native callers, so
+//!   compatibility callers keep their existing HP-based behavior.
 //!
 //! Every page is read fail-closed from the observed frame
 //! (snapshot, tile and object names through the crate-private host-frame
@@ -44,8 +50,8 @@
 //! interact queue. `walk_missing_carry` is isolate-posted from a walk
 //! outcome this compiled tick does not observe, so it stays omitted.
 //!
-//! Out of scope for this card, on purpose: keyboard, the death envelope, the
-//! duel `3554` family, honor-SETTINGS and loadout provisioning.
+//! Out of scope for this card, on purpose: keyboard, the duel `3554` family,
+//! honor-SETTINGS and loadout provisioning.
 
 #[cfg(test)]
 use api::game_data::SelectedGameData;
@@ -59,6 +65,7 @@ use crate::combat::{
     begin_clear_owned_prayers, ClearPrayers, Combat, CombatRequest, CombatTables, Hygiene,
     RaisedPrayers,
 };
+use crate::native::death::hitpoints_zero;
 use crate::native::{
     ActionError, ActionHandle, CompiledCard, ConfigError, HostFrame, Interrupt, NativeOutput,
     NativePhase, NativeTick, PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure,
@@ -186,17 +193,20 @@ fn validate_config(config: &PreparedConfig) -> Result<(), ConfigError> {
 fn create(
     run: RunKey,
     config: Arc<PreparedConfig>,
-    _retained: &mut RetainedMemory,
+    retained: &mut RetainedMemory,
 ) -> Result<Box<dyn Script>, StartError> {
     validate_config(&config).map_err(StartError::Config)?;
     let tables = config
         .get::<Prepared>()
         .map(|prepared| Arc::clone(&prepared.tables));
+    let retained = retained.sherlock();
     Ok(Box::new(Sherlock {
         run: Some(run),
         revision: config.revision(),
         dirty: true,
         hygiene_pending: false,
+        death: crate::native::death::DeathLatch::from_watermark(retained.death_seq),
+        death_pending: retained.death_pending,
         tables,
         ..Default::default()
     }))
@@ -244,6 +254,11 @@ pub struct Sherlock {
     revision: u64,
     status: Option<Arc<str>>,
     dirty: bool,
+    /// Sequence-aware chat death observation. The slot retains its watermark
+    /// across watchdog recreation so a death in the gap is still observed.
+    death: crate::native::death::DeathLatch,
+    /// A latched death waiting for the interaction sink to become available.
+    death_pending: bool,
     fight: Option<Fight>,
     combat_id: Option<u32>,
     pending: Option<(u32, Arc<CombatRequest>)>,
@@ -262,6 +277,53 @@ impl Script for Sherlock {
         if self.run != Some(run) {
             self.run = Some(run);
             self.dirty = true;
+        }
+        let death_observed = self.death.observe(tick.cx.snapshot());
+        if death_observed {
+            if self.token.is_some() {
+                self.death_pending = true;
+            } else {
+                // Do not start a new clue on the same frame as a death signal.
+                self.cancel_for_death(tick.actions);
+                self.persist_death_state(tick);
+                self.publish(tick.output);
+                return Ok(self
+                    .blocked
+                    .clone()
+                    .map_or(ScriptFlow::Continue, ScriptFlow::Blocked));
+            }
+        }
+        if self.death_pending {
+            // The explicit signal is terminal even on a held/loading frame;
+            // do not poll combat or emit any other work before aborting it.
+            self.cancel_for_death(tick.actions);
+            if self.tick_frame(tick, true) && self.token.is_none() {
+                self.death_pending = false;
+            }
+            self.persist_death_state(tick);
+            self.publish(tick.output);
+            return Ok(self
+                .blocked
+                .clone()
+                .map_or(ScriptFlow::Continue, ScriptFlow::Blocked));
+        }
+        self.persist_death_state(tick);
+        if let Some(failure) = self.blocked.clone() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(failure));
+        }
+        if !tick.cx.eligible
+            || !tick
+                .frame
+                .snapshot
+                .is_some_and(|snapshot| snapshot.ingame() && snapshot.scene_state() == 2)
+            || hitpoints_zero(tick.frame.snapshot.map(|snapshot| snapshot.stats()))
+        {
+            // Inactive, held and HP-zero frames never advance clue/combat work.
+            // The latch still observes chat above, so a death while held is
+            // consumed by the terminal branch instead of being lost.
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
         }
         match self.poll_fight(tick) {
             Poll::Pending => {
@@ -335,7 +397,7 @@ impl Script for Sherlock {
                 self.outcome = Some(Outcome::failed(id));
             }
         }
-        self.tick_frame(tick);
+        self.tick_frame(tick, false);
         self.publish(tick.output);
         if let Some(failure) = self.blocked.clone() {
             return Ok(ScriptFlow::Blocked(failure));
@@ -367,9 +429,22 @@ impl Script for Sherlock {
             self.hygiene_pending = !self.hygiene_owned.is_empty();
         }
     }
+
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        match self.fight.as_ref() {
+            Some(Fight::Combat(handle)) => handle.prayer_cleanup(),
+            _ => self.hygiene_owned,
+        }
+    }
 }
 
 impl Sherlock {
+    fn persist_death_state(&self, tick: &mut NativeTick<'_>) {
+        let retained = tick.cx.retained().sherlock();
+        retained.death_seq = self.death.watermark();
+        retained.death_pending = self.death_pending;
+    }
+
     fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
         if let Some(Fight::Combat(handle)) = self.fight.as_ref() {
             self.hygiene_owned = handle.prayer_cleanup();
@@ -428,18 +503,22 @@ impl Sherlock {
         }
     }
 
-    fn tick_frame(&mut self, tick: &mut NativeTick<'_>) {
+    fn tick_frame(&mut self, tick: &mut NativeTick<'_>, death_observed: bool) -> bool {
         let Some(mut sink) = tick.frame.compiled.interacts.take() else {
-            return;
+            return false;
         };
         let previous = (self.token, self.solved);
-        self.pump(tick, &mut sink);
+        self.pump(tick, &mut sink, death_observed);
         self.dirty |= previous != (self.token, self.solved);
         tick.frame.compiled.interacts = Some(sink);
+        true
     }
 
     #[cfg(test)]
     fn tick_host(&mut self, ctx: &mut HostFrame<'_>, output: &mut dyn NativeOutput) {
+        if hitpoints_zero(ctx.snapshot.map(|snapshot| snapshot.stats())) {
+            return;
+        }
         let Some(mut sink) = ctx.compiled.interacts.take() else {
             return;
         };
@@ -491,7 +570,12 @@ impl Sherlock {
     }
     /// One pump iteration: the `begin` call while there is no live session,
     /// then one `execute()` iteration over it.
-    fn pump(&mut self, tick: &mut NativeTick<'_>, sink: &mut Vec<InteractReq>) {
+    fn pump(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        sink: &mut Vec<InteractReq>,
+        death_observed: bool,
+    ) {
         let selected = tick.frame.compiled.selected;
         let token = match self.token {
             Some(token) => token,
@@ -508,7 +592,7 @@ impl Sherlock {
         let page = next_payload(&tick.frame, token, combat);
         #[cfg(test)]
         record_combat_page(page.get("combat"));
-        self.iterate(tick, page, sink);
+        self.iterate(tick, page, sink, death_observed);
         if self.block_user_input {
             self.block_user_input = false;
             self.blocked = Some(ScriptFailure {
@@ -545,7 +629,13 @@ impl Sherlock {
         self.iterate_host(selected, page, sink, output);
     }
 
-    fn iterate(&mut self, tick: &mut NativeTick<'_>, mut page: Value, sink: &mut Vec<InteractReq>) {
+    fn iterate(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        mut page: Value,
+        sink: &mut Vec<InteractReq>,
+        death_observed: bool,
+    ) {
         let selected = tick.frame.compiled.selected;
         let mut resume = false;
         for _ in 0..CALLBACK_HANDOFFS {
@@ -557,7 +647,7 @@ impl Sherlock {
             } else {
                 fields.remove("resume");
             }
-            let answer = crate::clue::dispatch(selected, &page);
+            let answer = crate::clue::next_native(selected, &page, death_observed);
             resume = false;
             let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {
@@ -700,6 +790,25 @@ impl Sherlock {
         }
     }
 
+    /// Abort the current action authority after the chat latch confirms death.
+    /// The clue machine receives the terminal signal separately so this cannot
+    /// be mistaken for a combat result or a solved clue.
+    fn cancel_for_death(&mut self, actions: &mut crate::native::NativeActions) {
+        if let Some(fight) = self.fight.take() {
+            match fight {
+                Fight::Combat(handle) => actions.cancel(handle),
+                Fight::ClearPrayers(handle) => actions.cancel(handle),
+            }
+        }
+        // Death turns prayers off. A later activation belongs to the user,
+        // not to the Combat owner that died.
+        self.hygiene_owned = RaisedPrayers::empty();
+        self.hygiene_pending = false;
+        self.combat_id = None;
+        self.pending = None;
+        self.outcome = None;
+        self.block_user_input = false;
+    }
     /// End the live session and clear its token. The machine's own `done` —
     /// the abort a finished collect dies on — is the one end this card counts
     /// locally; a `none-held` abort, a terminal `dead`, `abandon` or
@@ -711,6 +820,7 @@ impl Sherlock {
             self.solved = self.solved.saturating_add(1);
         }
         self.token = None;
+        self.death_pending = false;
     }
 }
 
@@ -738,14 +848,10 @@ fn begin_payload(ctx: &HostFrame<'_>) -> Value {
     })
 }
 
-/// The `next` call's page, in the machine's own field names.
-///
-/// The required keys are always present (`[]`/`null` when the frame posted
-/// nothing there). The optional slots — `here`, the chat / bank / shop
-/// facts, the local player's own target pair, `hitpoints`, `varp95`, the
-/// board and its generation — are posted only when this frame carried the
-/// fact, so the machine reads an unposted slot as unobserved rather than as
-/// a default it was never handed.
+/// The `next` page set is the adapter's: required keys always, optional
+/// chat / bank / shop / overlay slots only when this frame carried them.
+/// Native death authority is a separate Rust argument to `next_native`, not
+/// a page field. Compatibility retains its posted-HP rule.
 fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value {
     let mut page = Map::new();
     page.insert("op".into(), json!("next"));
@@ -1408,9 +1514,9 @@ mod tests {
         }
     }
 
-    /// A frame whose observed stats post hitpoints at `hp` with every other
-    /// skill healthy: the posted effective stat the machine's own dead read is
-    /// made of.
+    /// A frame whose observed stats post hitpoints at `hp`, with every other
+    /// skill healthy; native tick entry uses the effective value as a safety
+    /// gate before it can emit work.
     fn wounded(held: &[(i32, i32)], hp: i32) -> Frame {
         let mut c = client_with(held);
         let slot = Skill::names
@@ -1807,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn a_posted_zero_hitpoint_page_ends_the_session_without_counting() {
+    fn a_posted_zero_hitpoint_page_freezes_without_ending_the_session() {
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -1817,16 +1923,19 @@ mod tests {
             tick(&mut held, &mut script, Some(&data)),
             vec![walk_to(tile)]
         );
-        assert!(script.token.is_some());
+        let token = script.token.expect("a live clue session");
 
-        // The posted effective hitpoints at zero: the token dies with the
-        // player, before anything this call could dispatch. The session ends
-        // with nothing enqueued, and the count stays where the collect's own
-        // `done` left it.
-        let mut dead = wounded(&[(held_id, 1)], 0);
-        assert!(tick(&mut dead, &mut script, Some(&data)).is_empty());
-        assert!(script.token.is_none(), "death ends the session");
-        assert_eq!(script.solved, 0, "death is not a finished clue");
+        // Zero effective hitpoints without a death chat signal freezes the
+        // token: no work is enqueued, no end is invented, and nothing solves.
+        let mut downed = wounded(&[(held_id, 1)], 0);
+        assert!(tick(&mut downed, &mut script, Some(&data)).is_empty());
+        assert_eq!(script.token, Some(token), "HP alone does not end the clue");
+        assert_eq!(script.solved, 0, "HP alone does not solve the clue");
+
+        // The same token resumes clue handling when HP is observed again.
+        let mut recovered = Frame::new(&[(held_id, 1)], Some(far()));
+        let _ = tick(&mut recovered, &mut script, Some(&data));
+        assert_eq!(script.token, Some(token), "recovery keeps the live token");
     }
 
     #[test]

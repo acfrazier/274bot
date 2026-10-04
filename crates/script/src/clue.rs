@@ -12,5 +12,6 @@ pub struct ClueRecovery {
 mod isolate;
 #[cfg(feature = "load")]
 pub(crate) use isolate::{
-    dispatch, on_hold, on_pause, on_reset, on_resume, on_stop, verb_req, Clue, Delegation, Outcome,
+    dispatch, next_native, on_hold, on_pause, on_reset, on_resume, on_stop, verb_req, Clue,
+    Delegation, Outcome,
 };

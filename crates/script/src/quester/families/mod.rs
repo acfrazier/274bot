@@ -1108,6 +1108,26 @@ struct TalkArgs {
     prefer: Vec<String>,
     #[serde(default)]
     choose: Option<i32>,
+    #[serde(default)]
+    expect_combat: Option<ExpectedCombatArgs>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpectedCombatArgs {
+    npc: String,
+}
+
+/// A dialogue deliberately ceded control to its authored combat opponent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalkReceipt {
+    HandedToCombat { npc_type: i32, npc_index: usize },
+}
+
+impl super::compile::FamilyReceipt for TalkReceipt {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 fn compile_talk(
@@ -1124,6 +1144,11 @@ fn compile_talk(
         .ok_or_else(|| CompileError::code("unresolved-npc"))?;
     let tile = anchor_tile(arg.anchor.as_ref())?;
     offered(&cx.selected.npc_by_config(&arg.npc).unwrap().ops, "Talk-to")?;
+    let expect_combat = arg
+        .expect_combat
+        .as_ref()
+        .map(|expected| resolve_npc(cx, &expected.npc))
+        .transpose()?;
     Ok(Arc::new(TalkPlan {
         id,
         npc: Arc::from(display),
@@ -1131,6 +1156,7 @@ fn compile_talk(
         leash: arg.leash.max(1),
         prefer: arg.prefer.into_iter().map(Arc::from).collect(),
         choose: arg.choose,
+        expect_combat,
     }))
 }
 
@@ -1141,6 +1167,7 @@ struct TalkPlan {
     leash: u16,
     prefer: Arc<[Arc<str>]>,
     choose: Option<i32>,
+    expect_combat: Option<i32>,
 }
 impl StepPlan for TalkPlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
@@ -1151,6 +1178,7 @@ impl StepPlan for TalkPlan {
             leash: self.leash,
             prefer: Arc::clone(&self.prefer),
             choose: self.choose,
+            expect_combat: self.expect_combat,
             walk: None,
             dialogue: None,
             started: false,
@@ -1165,6 +1193,7 @@ struct TalkRun {
     leash: u16,
     prefer: Arc<[Arc<str>]>,
     choose: Option<i32>,
+    expect_combat: Option<i32>,
     walk: Option<ActionHandle<Walk>>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
@@ -1213,6 +1242,19 @@ impl StepRun for TalkRun {
                     Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
                 }
                 Poll::Ready(Ok(DialogueOutcome::CombatInterrupted)) => {
+                    if let Some((npc_type, npc_index)) = self
+                        .expect_combat
+                        .and_then(|npc_type| expected_combat_target(&cx.tick.cx, npc_type))
+                    {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: Some(Arc::new(TalkReceipt::HandedToCombat {
+                                npc_type,
+                                npc_index,
+                            })),
+                        }));
+                    }
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&REASON))))
@@ -1236,6 +1278,29 @@ impl StepRun for TalkRun {
         self.walk = None;
         self.dialogue = None;
     }
+}
+
+fn expected_combat_target(
+    cx: &crate::native::ActionContext<'_>,
+    npc_type: i32,
+) -> Option<(i32, usize)> {
+    let snapshot = cx.snapshot();
+    let local = snapshot.local_player()?.value;
+    let combat = snapshot.in_combat()?.value;
+    let target = combat.target?;
+    if !combat.in_combat || target.kind != api::snapshot::ActorKind::Npc {
+        return None;
+    }
+    snapshot.npcs()?.value.iter().find_map(|npc| {
+        (npc.index == target.index
+            && npc.r#type == Some(npc_type as usize)
+            && npc.target
+                == Some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: local.player.index,
+                }))
+        .then_some((npc_type, npc.index))
+    })
 }
 
 #[derive(Deserialize)]

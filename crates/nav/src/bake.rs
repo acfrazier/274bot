@@ -1,5 +1,5 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
-//! transport graph, the bank stand table, the v8 pack bytes, the raw flags
+//! transport graph, the bank stand table, the v15 pack bytes, the raw flags
 //! sidecar, the paint-reach sidecar, the static canlight sidecar and the bound
 //! manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
@@ -174,6 +174,46 @@ pub fn verify_cache_manifest(
     Ok(manifest)
 }
 
+/// Verify a bound cache manifest using hashes already captured for a caller's
+/// complete input snapshot.
+pub fn verify_cache_manifest_from_fingerprints(
+    revision: u16,
+    cache_dir: &Path,
+    manifest_path: &Path,
+    config_jag: &Path,
+    inputs: &[crate::bundle::InputFingerprint],
+) -> Result<CacheManifest, String> {
+    let bytes = std::fs::read(manifest_path)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    let manifest: CacheManifest = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    if manifest.revision != revision {
+        return Err(format!(
+            "cache manifest revision {} does not match selected revision {revision}",
+            manifest.revision
+        ));
+    }
+    let captured = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
+    if manifest != captured {
+        return Err(format!(
+            "cache manifest does not match cache bytes at {}",
+            cache_dir.display()
+        ));
+    }
+    let expected_config = manifest
+        .archives
+        .get("config")
+        .ok_or_else(|| "cache manifest has no config archive".to_string())?;
+    let actual_config = &crate::bundle::fingerprint_for_path(inputs, config_jag)?.sha256;
+    if actual_config != expected_config {
+        return Err(format!(
+            "selected config {} does not belong to the verified revision {revision} cache",
+            config_jag.display()
+        ));
+    }
+    Ok(manifest)
+}
+
 /// Strict read-only decoded identity for offline packaging. The snapshot
 /// must match the selected versionlist; no endpoint is contacted.
 pub fn decoded_identity(
@@ -196,6 +236,35 @@ pub fn decoded_identity(
     }
     Ok(result)
 }
+/// Compute a decoded identity after verifying the cache against a captured
+/// input-fingerprint set. The decoded snapshot is not in that set, so callers
+/// must recompute and compare this identity before publishing.
+pub fn decoded_identity_from_snapshot(
+    revision: u16,
+    cache_dir: &Path,
+    snapshot_root: &Path,
+    inputs: &[crate::bundle::InputFingerprint],
+    expected_manifest: &CacheManifest,
+) -> Result<String, String> {
+    let manifest = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
+    if &manifest != expected_manifest {
+        return Err("cache inputs changed before offline identity preparation".into());
+    }
+    let versionlist_path = cache_dir.join("versionlist");
+    let versionlist = std::fs::read(&versionlist_path).map_err(|e| e.to_string())?;
+    let versionlist_fingerprint = crate::bundle::fingerprint_for_path(inputs, &versionlist_path)?;
+    if crate::manifest::hash_bytes(&versionlist) != versionlist_fingerprint.sha256 {
+        return Err("cache versionlist changed during offline identity preparation".into());
+    }
+    let version = client::unpack::version_hash(&versionlist);
+    Ok(client::content_identity::compute_decoded_content_identity(
+        revision,
+        cache_dir,
+        snapshot_root.join(version),
+    )
+    .map_err(|e| e.to_string())?
+    .content_id_hex())
+}
 
 /// One bake request: canonical inputs for a single revision.
 pub struct BakeRequest<'a> {
@@ -208,10 +277,12 @@ pub struct BakeRequest<'a> {
     pub config_jag: &'a Path,
     /// The verified cache manifest that goes into the sidecar manifest.
     pub cache: Option<&'a CacheManifest>,
-    /// Application builds require every door config and `gates.loc`: a
-    /// missing one would bake a world that silently disagrees with the
-    /// server. The developer CLI keeps skipping unavailable configs.
+    /// A missing required config would bake a world that silently disagrees
+    /// with the server. Only explicitly diagnostic callers should skip them.
     pub require_all_door_configs: bool,
+    /// Caller-owned complete input snapshot, when the caller also owns the
+    /// final stability check (the application build path).
+    pub input_fingerprints: Option<&'a [crate::bundle::InputFingerprint]>,
     /// Decoded cache identity bound into navpois; required for a sidecar.
     pub content_id: Option<&'a str>,
 }
@@ -753,16 +824,33 @@ fn openable_door_faces(
 /// bakes or the call fails; non-`.jm2` files are metadata and skipped.
 pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let source_before = crate::bundle::source_digest(content_root, &[request.config_jag]);
+    let owned_fingerprints = request
+        .input_fingerprints
+        .is_none()
+        .then(|| crate::bundle::fingerprints(content_root, &[request.config_jag]))
+        .transpose()?;
+    let source_fingerprints = request
+        .input_fingerprints
+        .or(owned_fingerprints.as_deref())
+        .expect("one bake input snapshot is present");
+    let source_before = crate::bundle::source_digest_from_fingerprints(
+        content_root,
+        &[request.config_jag],
+        source_fingerprints,
+    )?;
     let mut notes = Vec::new();
 
     // Openable wall door loc ids from the Server door configs.
     let mut door_ids = HashSet::new();
+    let mut parsed_door_configs = Vec::with_capacity(DOOR_CONFIGS.len() + 1);
     let mut config_failed = 0usize;
     for name in DOOR_CONFIGS {
         let path = request.doors_dir.join(name);
         match std::fs::read_to_string(&path) {
-            Ok(text) => door_ids.extend(crate::pack::parse_door_config(&text)),
+            Ok(text) => {
+                door_ids.extend(crate::pack::parse_door_config(&text));
+                parsed_door_configs.push(path);
+            }
             Err(e) => {
                 if request.require_all_door_configs {
                     return Err(format!("door config {}: {e}", path.display()));
@@ -773,10 +861,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         }
     }
     // Fence gates (`scripts/general_use/configs/gates.loc`) join the door
-    // set so their tiles do not stamp blocked in the bake; the transport
-    // graph derives the same set itself in `door_edges`.
+    // set so their tiles do not stamp blocked in the bake. The configured ids
+    // and source paths are passed to `door_edges` to avoid deriving them twice.
     match std::fs::read_to_string(request.gates) {
-        Ok(text) => door_ids.extend(crate::pack::parse_door_config(&text)),
+        Ok(text) => {
+            door_ids.extend(crate::pack::parse_door_config(&text));
+            parsed_door_configs.push(request.gates.to_path_buf());
+        }
         Err(e) => {
             if request.require_all_door_configs {
                 return Err(format!("gates config {}: {e}", request.gates.display()));
@@ -819,7 +910,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let (mut graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
+    let (mut graph, audit) = derive_transports_for_bake(
+        content_root,
+        &loc_defs,
+        &collision,
+        &door_ids,
+        &parsed_door_configs,
+    );
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
     require_members_guards(content_root, &graph)?;
@@ -872,7 +969,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let canlight_bits =
         canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
 
-    // The raw baked flags ride in the sidecar; the v8 pack carries only
+    // The raw baked flags ride in the sidecar; the v15 pack carries only
     // the packed walk surface (the router's resident form).
     let flags = collision
         .flags
@@ -880,7 +977,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         .expect("bake_from_maps always stamps raw flags");
     let flags_bytes =
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
-    let bytes = encode(&collision, &graph, &banks);
+    let bytes = encode(&collision, &graph, &banks)
+        .map_err(|error| format!("pack encode failed: {error}"))?;
     let reach_bits = bake_reach(&collision, &graph);
     let pack_digest: [u8; 32] = Sha256::digest(&bytes).into();
     let reach_bytes = encode_reach_sidecar(
@@ -902,9 +1000,16 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &canlight_bits,
         &canlight_binding,
     );
-    let source_before = source_before?;
-    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
-        return Err("baker inputs changed during preparation".into());
+    if request.input_fingerprints.is_none() {
+        let source_after_inputs = crate::bundle::fingerprints(content_root, &[request.config_jag])?;
+        let source_after = crate::bundle::source_digest_from_fingerprints(
+            content_root,
+            &[request.config_jag],
+            &source_after_inputs,
+        )?;
+        if source_before != source_after {
+            return Err("baker inputs changed during preparation".into());
+        }
     }
     let pois = match (request.revision, request.cache, request.content_id) {
         (Some(revision), Some(_), Some(content_id)) => {

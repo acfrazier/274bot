@@ -7305,6 +7305,97 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     script::observed::on_reset();
 }
 
+/// P-dispatch end to end: two bank-side rows share a name (a noted row
+/// first, then the item). Compat `Bank.deposit(name, 'Deposit-1')` in the
+/// isolate presses the first such row by id, slot and component, and the
+/// host dispatches exactly that row's Deposit-1: no name re-find, never an
+/// All on the other id.
+#[test]
+fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
+    use client::config::ObjType;
+    use client::io::ServerProt289;
+    let mut c = bank_client_289();
+    // A real (loopback) stream so `Interactions` sees an attached client.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    std::mem::forget(listener);
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs.resize(335, ObjType::default());
+        for id in [333, 334] {
+            cache.objs[id].id = id as i32;
+            cache.objs[id].name = "Trout".into();
+        }
+    }
+    // Side grid 701: noted trout (334) ×9 in slot 0, trout (333) ×2 in slot 1.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 2, 1, 79, 9, 1, 78, 2],
+    );
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 89, 0, 1, 0, 2, 5],
+    );
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_loaded(), "the main bank posted its stock");
+    let side: Vec<(i32, i32)> = snap
+        .bank_side()
+        .iter()
+        .map(|item| (item.def.id, item.slot))
+        .collect();
+    assert_eq!(side, vec![(334, 0), (333, 1)], "two same-name side rows");
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        None,
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
+    }
+}
+"#;
+    let iso =
+        script::LoadIsolate::spawn(src.into(), script::LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    let reqs = iso.drain_interacts();
+    let pressed = inv_button_req(334, 0, 701, 1, snap.bank_session_generation());
+    assert_eq!(
+        reqs,
+        vec![pressed.clone()],
+        "the selected row and its label"
+    );
+    iso.join();
+    let rec = dispatch_inv_button(&snap, pressed);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::INV_BUTTON1, 334, 0, 701)],
+        "the host presses that exact row, not the other trout"
+    );
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -8418,12 +8509,15 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Deposit-All reaches the driver");
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_some());
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_bank_op()
+            .is_none(),
+        "the exact-row press arms no host-owned name op"
+    );
     assert_eq!(
         script_slot(&scripts, "alice")
             .unwrap()
@@ -8434,6 +8528,10 @@ export default class T extends LoopingBot {
         "undefined"
     );
 
+    // The server's deposit: the backpack (500) and its bank-side mirror
+    // (701) empty, and the bank holds the bones.
+    let mut empty_pack = Packet::new(vec![1, 244, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_pack);
     let mut empty_side = Packet::new(vec![2, 189, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
     let mut deposited_bank = Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 2, 3]);
@@ -8469,9 +8567,9 @@ export default class T extends LoopingBot {
         .unwrap()
         .pending_bank_op()
         .is_none());
-    // The emptied side view is waited on for the frozen 1.2 s Rust deadline.
-    // Drive ticks until the script observes that transition rather than
-    // assuming one fixed sleep lands on the right isolate schedule.
+    // The pressed id left the pack and the side posted empty with its root
+    // up: the deposit settles without the 1.2 s not-ready wait. Drive ticks
+    // until the script observes it rather than assuming one isolate schedule.
     let before_withdraw = c.out.pos;
     let deadline = empty_side_observed_at + Duration::from_secs(10);
     let mut next_tick = 3;
@@ -8523,10 +8621,6 @@ export default class T extends LoopingBot {
         "the deposited bank snapshot must resolve the wait without reopening or timing out"
     );
     let settle_elapsed = empty_side_observed_at.elapsed();
-    assert!(
-        settle_elapsed >= Duration::from_millis(1_200),
-        "deposit settled before the 1.2 s empty-side deadline: {settle_elapsed:?}"
-    );
     assert!(
         settle_elapsed < Duration::from_secs(3),
         "deposit settlement exceeded the end-to-end 3 s bound: {settle_elapsed:?}"
@@ -10358,7 +10452,27 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .is_none(),
+        "the exact-row All press arms no host-owned fill"
+    );
+    assert_eq!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("typeof globalThis.__fill_result")
+            .unwrap(),
+        "undefined",
+        "the press is not the load"
+    );
 
+    // Frozen `withdrawLoad`'s posted observation: the row's bank count is 0.
     let mut empty_bank = Packet::new(vec![2, 89, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_bank);
     snap.rebuild(&c);
@@ -10369,43 +10483,7 @@ export default class T extends LoopingBot {
         true,
         2,
         Some((3205, 3205, 0)),
-        Some(&before_inv),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .probe("typeof globalThis.__fill_result")
-            .unwrap(),
-        "undefined",
-        "a vanished stock row alone cannot claim fill progress"
-    );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_withdraw_x()
-        .is_some());
-
-    let filled_inv = [(1, 3), (2, 20)];
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        3,
-        Some((3205, 3205, 0)),
-        Some(&filled_inv),
+        Some(&[(1, 3), (2, 20)]),
         None,
         Some(&snap),
         Some(&names),
@@ -20768,49 +20846,183 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
 }
 
 #[test]
-fn ignored_randoms_skips_flee_but_detect_still_publishes() {
-    // SEC-003: `ignoredRandoms()` remains readable from JS (EventSignal)
-    // but the host knock must not honor it — Load isolates cannot
-    // decline the guardian. Detect still publishes the kind.
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("load isolate starts");
-    // The production knock arm (see the slot thread): always ask the
-    // running slot script; ignore-list is not consulted here.
-    let knock_scripts = Arc::clone(&scripts);
-    let knock_name = "alice".to_string();
-    let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
-        let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
-            return RandomClaim::Host;
-        };
-        let mut slot = slot.lock().unwrap();
-        slot.on_random(ev)
-    };
+fn load_ignored_randoms_decline_only_listed_events() {
+    fn production_knock(
+        scripts: &ScriptWall,
+        name: &str,
+    ) -> impl FnMut(&DetectedRandom) -> RandomClaim {
+        let knock_scripts = Arc::clone(scripts);
+        let knock_name = name.to_owned();
+        move |ev| {
+            let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
+                return RandomClaim::Host;
+            };
+            let Ok(mut slot) = slot.lock() else {
+                return RandomClaim::Host;
+            };
+            slot.on_random(ev)
+        }
+    }
 
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let src =
+        "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
+    {
+        let slot = script_slot_or_insert(&scripts, "alice");
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("load isolate starts");
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        // Test barrier only; the production knock reads the resulting cache.
+        slot.probe("1").expect("the first tick completes");
+        assert_eq!(
+            slot.ignored_randoms(),
+            vec!["SWARM".to_string()],
+            "the cached list preserves the isolate's spelling"
+        );
+    }
+    let mut knock = production_knock(&scripts, "alice");
+    let settings = ProfileSettings::default();
+
+    // The host detector canonicalizes the event label to lower-case; the
+    // frozen `isIgnored` contract matches names case-insensitively.
     let mut c = guardian_client();
     plant_attacking_npc(&mut c, 0, "Swarm");
     plant_positive_hit(&mut c);
     let mut g = Guardian::new();
     let mut drv = GuardRec::default();
-    let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
     assert_eq!(status.kind, Some(api::random::RandomKind::Evade));
     assert_eq!(status.name.as_deref(), Some("swarm"));
-    assert!(status.ours, "detect still publishes the event");
-    assert_eq!(
-        status.claim,
-        RandomClaim::Host,
-        "ignoredRandoms cannot decline the guardian"
+    assert!(
+        status.ours,
+        "the ignored event remains detected and published"
+    );
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(
+        !status.hold,
+        "an ignored event does not safety-hold the slot"
     );
     assert!(
+        drv.walks.is_empty() && drv.menus.is_empty() && drv.actions.is_empty(),
+        "the guardian emits no action for an ignored event"
+    );
+
+    // An unlisted dialog remains host-owned and acted on.
+    let mut c = guardian_client();
+    plant_npc(&mut c, 0, "Genie", Some("Greetings Test!"));
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.name.as_deref(), Some("genie"));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
+        !drv.menus.is_empty(),
+        "the guardian still handles unlisted events"
+    );
+
+    // A non-ignored Load slot keeps the guardian's trapped-Maze hold.
+    let mut c = guardian_client();
+    let player = c.local_player.as_mut().expect("local player");
+    player.entity.x = 45 * 64 * 128 + 64;
+    player.entity.z = 71 * 64 * 128 + 64;
+    player.route_x[0] = 45 * 64;
+    player.route_z[0] = 71 * 64;
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.kind, Some(api::random::RandomKind::Maze));
+    assert_eq!(status.name.as_deref(), Some("maze"));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
+        status.hold,
+        "an unlisted trapped Maze retains its safety hold"
+    );
+
+    // The same exact production knock releases the hold when Maze itself is
+    // listed, while continuing to publish the detected event.
+    let maze_src =
+        "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
+    {
+        let slot = script_slot_or_insert(&scripts, "bob");
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(maze_src.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("maze-ignoring isolate starts");
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("1").expect("the first tick completes");
+        assert_eq!(slot.ignored_randoms(), vec!["MAZE".to_string()]);
+    }
+    let mut maze_knock = production_knock(&scripts, "bob");
+    let mut c = guardian_client();
+    let player = c.local_player.as_mut().expect("local player");
+    player.entity.x = 45 * 64 * 128 + 64;
+    player.entity.z = 71 * 64 * 128 + 64;
+    player.route_x[0] = 45 * 64;
+    player.route_z[0] = 71 * 64;
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut maze_knock));
+    assert_eq!(status.kind, Some(api::random::RandomKind::Maze));
+    assert_eq!(status.name.as_deref(), Some("maze"));
+    assert!(
+        status.ours,
+        "Maze remains detected and published when ignored"
+    );
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(
+        !status.hold,
+        "an explicitly ignored Maze does not safety-hold"
+    );
+    assert!(drv.walks.is_empty() && drv.menus.is_empty() && drv.actions.is_empty());
+
+    // Pausing a Load bot cannot use its cached names to exempt the guardian.
+    {
+        let slot = script_slot(&scripts, "alice").expect("slot remains present");
+        let mut slot = slot.lock().unwrap();
+        slot.pause();
+        assert_eq!(slot.state(), script::RunState::Paused);
+        assert!(!slot.want_run);
+    }
+    let mut c = guardian_client();
+    plant_attacking_npc(&mut c, 0, "Swarm");
+    plant_positive_hit(&mut c);
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
         !drv.walks.is_empty(),
-        "the guardian flees even when the script lists swarm as ignored"
+        "the guardian acts for an inactive bot"
     );
 }
 
@@ -23561,12 +23773,12 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
 /// Compare every admitted and rejected candidate, including directed walls
 /// and detours whose distance alone cannot decide the dequeue-rank budget.
 #[test]
-fn real_v13_batched_arrival_matches_every_forward_predicate() {
+fn real_v15_batched_arrival_matches_every_forward_predicate() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v13 pack");
+    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v15 pack");
     let tile = |x, z, level| WorldTile { x, z, level };
     let cases = [
         (tile(3017, 3170, 0), 12),
@@ -23641,16 +23853,16 @@ fn real_v13_batched_arrival_matches_every_forward_predicate() {
 }
 
 /// NAV-ARRIVAL-1: the real Return route and the native snapshot must agree.
-/// Set NAV_ARRIVAL_PACK to a v13 pack; its raw flags sidecar supplies the
+/// Set NAV_ARRIVAL_PACK to a v15 pack; its raw flags sidecar supplies the
 /// endpoint scene without connecting to the game engine.
 #[test]
-fn real_v13_return_radius_endpoint_is_native_arrival() {
+fn real_v15_return_radius_endpoint_is_native_arrival() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
     let path = std::path::PathBuf::from(path);
-    let mut world = NavWorld::load_pack(&path).expect("real v13 pack");
+    let mut world = NavWorld::load_pack(&path).expect("real v15 pack");
     let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
         .expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
