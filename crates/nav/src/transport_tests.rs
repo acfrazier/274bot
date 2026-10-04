@@ -1665,6 +1665,13 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
         "coins on the fare are consumed"
     );
     assert!(
+        carts
+            .iter()
+            .filter(|edge| matches!(edge.loc_id, 510 | 511))
+            .all(|edge| edge.consumed_req == [(995, 10)]),
+        "the live cart's minimum is 10 coins; its 5% debit is balance-dependent"
+    );
+    assert!(
         carts.iter().any(|e| !e.quest_req.is_empty()),
         "Shilo complete on Brim→Shilo"
     );
@@ -7912,7 +7919,7 @@ fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
         graph
             .edges
             .iter()
-            .all(|e| e.loc_id != 4031 && e.consumed_req != vec![(995, 10)]),
+            .all(|e| !matches!(e.loc_id, 2882 | 2883 | 4031)),
         "no toll or henge hops without border_gate.loc"
     );
     assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);

@@ -15,6 +15,7 @@ type NpcBlock = {
     attackrange: number;
     huntrange: number;
     vislevel: number;
+    headicon: number | null;
     hitpoints: number;
     damagetype: string | null;
     category: string | null;
@@ -84,6 +85,7 @@ function parseNpcFiles(content: string) {
                     attackrange: 0,
                     huntrange: 0,
                     vislevel: 0,
+                    headicon: null,
                     hitpoints: 0,
                     damagetype: null,
                     category: null,
@@ -111,6 +113,7 @@ function parseNpcFiles(content: string) {
             else if (key === 'attackrange') current.attackrange = parseIntField(value, key, 0);
             else if (key === 'huntrange') current.huntrange = parseIntField(value, key, 0);
             else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : parseIntField(value, key, 0);
+            else if (key === 'headicon') current.headicon = parseCombatInt(value, `${current.name}.headicon`);
             else if (key === 'hitpoints') current.hitpoints = parseIntField(value, key, 0);
             else if (key === 'category') current.category = value;
             else if (key === 'strength') current.strength = parseCombatInt(value, `${current.name}.strength`);
@@ -164,6 +167,7 @@ export function extractNpcNamesFacts(content: string, scripts: CombatScripts = p
                 attackrange: block?.attackrange ?? 0,
                 huntrange: block?.huntrange ?? 0,
                 vislevel: block?.vislevel ?? 0,
+                headicon: block?.headicon ?? undefined,
                 hitpoints: block?.hitpoints ?? 0,
                 damagetype: block?.damagetype ?? null,
                 strength: block?.strength ?? null,

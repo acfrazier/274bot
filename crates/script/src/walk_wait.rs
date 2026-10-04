@@ -120,6 +120,13 @@ impl Observation for IsolateObservation {
             })
         })
     }
+    fn moving(&self) -> Option<bool> {
+        observed::with(|scene| match scene.latest().local_player_motion() {
+            Some(crate::isolate_fb::LOCAL_PLAYER_MOTION_STATIONARY) => Some(false),
+            Some(crate::isolate_fb::LOCAL_PLAYER_MOTION_MOVING) => Some(true),
+            _ => None,
+        })
+    }
 }
 
 /// After the isolate applied `snap` to the scene.
@@ -826,10 +833,10 @@ mod tests {
         }
     }
 
-    /// Compat 'closest' may settle a correlated route end even when a wall
-    /// separates that endpoint from the requested tile.
+    /// A legacy actor-animation byte does not prove that the player stopped.
+    /// Without authoritative motion state, route completion is not arrival.
     #[test]
-    fn route_end_can_settle_closest_without_crossing_a_closed_wall() {
+    fn route_end_stays_pending_without_stationary_evidence() {
         on_reset();
         let token = begin(2820, 3557, 0, 3, false);
         let approach = WorldTile {
@@ -839,9 +846,40 @@ mod tests {
         };
         let view = walled_view(approach);
         observe_at(2, approach, &view);
-        assert!(!settled(token), "proximity cannot cross the closed wall");
-        observe_at_with(3, approach, &view, route_end_native(1, token, 3));
-        assert!(settled(token), "the route end settles the wait");
+        let mut animation_only = route_end_native(1, token, 3);
+        animation_only.self_anim = Some(390);
+        observe_at_with(3, approach, &view, animation_only);
+        assert!(
+            !settled(token),
+            "legacy animation bytes cannot establish stationary motion"
+        );
+        assert!(!value(token));
+    }
+
+    #[test]
+    fn route_end_waits_for_observed_motion_to_stop() {
+        on_reset();
+        let token = begin(2820, 3557, 0, 3, false);
+        let approach = WorldTile {
+            x: 2820,
+            z: 3554,
+            level: 0,
+        };
+        let view = walled_view(approach);
+        observe_at(2, approach, &view);
+        let moving = NativeFactsInput {
+            local_player_moving: Some(true),
+            ..route_end_native(1, token, 3)
+        };
+        observe_at_with(3, approach, &view, moving);
+        assert!(!settled(token), "a route terminal during motion is pending");
+
+        let stationary = NativeFactsInput {
+            local_player_moving: Some(false),
+            ..route_end_native(1, token, 3)
+        };
+        observe_at_with(4, approach, &view, stationary);
+        assert!(settled(token), "the stationary route end settles the wait");
         assert!(value(token), "frozen 'closest' returns true");
     }
 

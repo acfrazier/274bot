@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
+use client::io::ClientProt289;
 use script::native::{HostAuthority, NativePhase, ScriptStatus, StatusValue};
 use script::shim::InteractReq;
 use serde_json::{json, Value};
@@ -29,10 +30,10 @@ pub(crate) struct CombatCapture {
     pub(crate) started: bool,
     pub(crate) maze_owner_live_before: Option<bool>,
     pub(crate) maze_owner_live_after: Option<bool>,
-    pub(crate) maze_prayer_restaged: bool,
     last_frame: Option<String>,
     last_status: Option<String>,
     m5_attack_owner: Option<HostAuthority>,
+    m5_protect_raise_owner: Option<HostAuthority>,
 }
 
 pub(crate) struct CaptureRegistration {
@@ -91,16 +92,6 @@ pub(crate) fn record_frame(account: &str, tick: u64, snapshot: &GameSnapshot) {
         capture.last_frame = Some(signature);
         capture.frames.push(facts);
     }
-}
-
-pub(crate) fn host_tick_for_snapshot(account: &str, snapshot_tick: u32) -> Option<u64> {
-    let capture = capture_for(account)?;
-    let capture = capture.lock().unwrap_or_else(|e| e.into_inner());
-    capture.frames.iter().rev().find_map(|frame| {
-        (frame["snapshot_tick"].as_u64() == Some(u64::from(snapshot_tick)))
-            .then(|| frame["host_tick"].as_u64())
-            .flatten()
-    })
 }
 
 pub(crate) fn record_start_baseline(account: &str, snapshot: &GameSnapshot) {
@@ -183,20 +174,80 @@ pub(crate) fn record_interaction(
         "wire_opcodes": wire_opcodes,
         "snapshot": snapshot_facts(snapshot, Some(tick)),
     }));
-    if capture.inject_maze_after_imp_attack
-        && !capture.maze_pending
-        && !capture.maze_injected
-        && accepted
-        && matches!(
-            request,
-            InteractReq::Npc { name, action, .. }
-                if name.eq_ignore_ascii_case("imp") && action.eq_ignore_ascii_case("attack")
-        )
-    {
-        capture.m5_attack_owner = Some(authority.clone());
-        capture.maze_pending = true;
+    if capture.inject_maze_after_imp_attack && !capture.maze_pending && !capture.maze_injected {
+        if accepted
+            && decoded
+            && authority.owner_live()
+            && m5_is_real_imp_attack(request)
+            && m5_attack_wire_valid(wire_opcodes)
+        {
+            capture.m5_attack_owner = Some(authority.clone());
+        }
+        if accepted
+            && decoded
+            && authority.owner_live()
+            && m5_is_protect_raise(&capture, request, snapshot)
+            && wire_opcodes == [ClientProt289::IF_BUTTON.id as u8]
+        {
+            capture.m5_protect_raise_owner = Some(authority.clone());
+        }
+        capture.maze_pending = capture
+            .m5_attack_owner
+            .as_ref()
+            .zip(capture.m5_protect_raise_owner.as_ref())
+            .is_some_and(|(attack, raise)| {
+                attack.run() == raise.run()
+                    && attack.action_id() == raise.action_id()
+                    && attack.owner_live()
+                    && raise.owner_live()
+            });
     }
 }
+
+fn m5_is_real_imp_attack(request: &InteractReq) -> bool {
+    matches!(
+        request,
+        InteractReq::Npc { name, action, .. }
+            if name.eq_ignore_ascii_case("imp") && action.eq_ignore_ascii_case("attack")
+    )
+}
+
+fn m5_attack_wire_valid(wire_opcodes: &[u8]) -> bool {
+    wire_opcodes == [ClientProt289::OPNPC2.id as u8]
+        || wire_opcodes
+            == [
+                ClientProt289::MOVE_OPCLICK.id as u8,
+                ClientProt289::OPNPC2.id as u8,
+            ]
+}
+
+fn m5_is_protect_raise(
+    capture: &CombatCapture,
+    request: &InteractReq,
+    snapshot: &GameSnapshot,
+) -> bool {
+    let Some(prayer) = capture.prayer_facts.iter().find(|fact| {
+        fact["name"]
+            .as_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Protect from Melee"))
+            && fact["varp"] == json!(97)
+    }) else {
+        return false;
+    };
+    let Some(component_id) = prayer["button_com"].as_i64() else {
+        return false;
+    };
+    matches!(
+        request,
+        InteractReq::IfButton {
+            component_id: requested
+        } if i64::from(*requested) == component_id
+    ) && snapshot
+        .varps()
+        .iter()
+        .any(|row| row.index == 97 && row.value == 0)
+}
+
 pub(crate) fn record_shim_interactions(
     account: &str,
     tick: u64,
@@ -324,10 +375,16 @@ pub(crate) fn record_walk(
 
 pub(crate) fn maze_injection_pending(account: &str) -> bool {
     capture_for(account).is_some_and(|capture| {
-        capture
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .maze_pending
+        let capture = capture.lock().unwrap_or_else(|e| e.into_inner());
+        capture.maze_pending
+            && capture
+                .m5_attack_owner
+                .as_ref()
+                .is_some_and(HostAuthority::owner_live)
+            && capture
+                .m5_protect_raise_owner
+                .as_ref()
+                .is_some_and(HostAuthority::owner_live)
     })
 }
 

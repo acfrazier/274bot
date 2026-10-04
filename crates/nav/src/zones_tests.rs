@@ -104,7 +104,7 @@ fn spawn_resolution_requires_the_exact_canonical_identity() {
 }
 
 #[test]
-fn named_group_and_endpoint_exemptions_mask_whole_zone_identities() {
+fn named_exemptions_are_whole_walk_but_endpoint_exemptions_are_scoped() {
     let table = table();
     assert_eq!(table.resolve("ranger-pack"), Some(ZoneKey::Group(0)));
     assert_eq!(table.resolve("ranger@5,5,0"), Some(ZoneKey::Group(0)));
@@ -114,6 +114,7 @@ fn named_group_and_endpoint_exemptions_mask_whole_zone_identities() {
     assert_eq!(table.resolve("bog"), Some(ZoneKey::Zone(2)));
     assert_eq!(table.name(ZoneKey::Zone(2)), "bog");
     assert_eq!(table.label(ZoneKey::Zone(2)), "Bog");
+
     let wilderness = WildernessRules::default();
     let group = ZoneExempt::named(&[ZoneKey::Group(0)]).unwrap();
     let by_group = ZoneFilter::new(&table, Some(10), &[], &group);
@@ -127,10 +128,45 @@ fn named_group_and_endpoint_exemptions_mask_whole_zone_identities() {
         vec![1]
     );
 
-    let endpoint = ZoneFilter::new(&table, Some(11), &[tile(5, 5, 0)], &ZoneExempt::NONE);
+    let endpoint = ZoneFilter::new(&table, Some(10), &[tile(5, 5, 0)], &ZoneExempt::NONE);
     assert!(endpoint.masked(0));
     assert!(endpoint.masked(1));
-    assert!(!endpoint.blocks(&wilderness, tile(5, 5, 0)));
+    assert!(endpoint.blocks(&wilderness, tile(5, 5, 0)));
+    assert!(
+        endpoint
+            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(6, 5, 0), false)
+            .next()
+            .is_none(),
+        "the source may leave and continue inside its active zones"
+    );
+    assert_eq!(
+        endpoint
+            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), false)
+            .collect::<Vec<_>>(),
+        vec![1],
+        "entering an overlapping non-origin zone stays blocked"
+    );
+
+    let destination = ZoneFilter::new(
+        &table,
+        Some(10),
+        &[tile(0, 5, 0), tile(5, 5, 0)],
+        &ZoneExempt::NONE,
+    );
+    assert!(
+        destination
+            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), false)
+            .next()
+            .is_none(),
+        "the selected destination permits movement within its active zones"
+    );
+    assert_eq!(
+        destination
+            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(4, 5, 0), false)
+            .collect::<Vec<_>>(),
+        vec![1],
+        "leaving a destination zone cannot turn it into transit"
+    );
 }
 
 #[test]

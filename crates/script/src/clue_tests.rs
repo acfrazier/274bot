@@ -3458,6 +3458,47 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
     assert_eq!(redig["kind"], "wait", "{redig}");
 }
 
+#[test]
+fn compatibility_pages_cannot_override_death_authority() {
+    let data = selected();
+    let page = json!([[GUARDED, 1]]);
+    let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+    for signal in [false, true] {
+        on_reset();
+        let token = spawned(&data);
+        let held = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                wizard.clone(),
+                json!({
+                    "hold": true, "hitpoints": 40, "death_observed": signal,
+                }),
+            ),
+        );
+        assert_eq!(
+            held["kind"], "yield",
+            "extra fields cannot kill a held token: {held}"
+        );
+        let dead = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                wizard.clone(),
+                json!({
+                    "hitpoints": 0, "death_observed": signal,
+                }),
+            ),
+        );
+        assert_eq!(
+            dead["kind"], "dead",
+            "extra fields cannot override compat HP: {dead}"
+        );
+    }
+}
+
 /// The posted effective hitpoints at or below zero kill the token: the kind
 /// is `dead` on any live call, the token dies with the player and nothing
 /// posts `'clue solved'`. A page that posted no stat is not a zero, so the

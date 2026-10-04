@@ -38,6 +38,16 @@ pub use generated::rs_2b_0t::isolate::{
     PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface,
     Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
 };
+pub(crate) const LOCAL_PLAYER_MOTION_UNKNOWN: u8 = 0;
+pub(crate) const LOCAL_PLAYER_MOTION_STATIONARY: u8 = 1;
+pub(crate) const LOCAL_PLAYER_MOTION_MOVING: u8 = 2;
+const fn local_player_motion_code(moving: Option<bool>) -> u8 {
+    match moving {
+        Some(false) => LOCAL_PLAYER_MOTION_STATIONARY,
+        Some(true) => LOCAL_PLAYER_MOTION_MOVING,
+        None => LOCAL_PLAYER_MOTION_UNKNOWN,
+    }
+}
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -460,6 +470,9 @@ pub struct NativeFactsInput<'a> {
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
     pub self_anim: Option<i32>,
+    /// Authoritative local actor movement. `None` means there is no local
+    /// player observation; old buffers likewise decode as unknown.
+    pub local_player_moving: Option<bool>,
     /// The host's live gather session. `None` means do not write this delta
     /// page; `Some` has a status only after the card publishes one.
     pub api_gather: Option<&'a crate::api_gather::GatherPage>,
@@ -801,6 +814,7 @@ impl<'a> Snapshot<'a> {
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
         has_side_modal_id => VT_SIDE_MODAL_ID,
+        has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1249,6 +1263,7 @@ pub struct SnapshotFingerprint {
     pub collision: CollisionViewFp,
     pub bank_selection: BankSelectionInput,
     pub self_anim: Option<i32>,
+    pub local_player_motion: u8,
     /// `(token, phase, status Arc identity)` for the live host session.
     pub api_gather: Option<ApiGatherFp>,
     /// The most recent terminal token; terminals are retained, never cleared
@@ -1549,6 +1564,7 @@ impl SnapshotFingerprint {
             collision: collision_fp(None, native.collision),
             bank_selection: native.bank_selection,
             self_anim: native.self_anim,
+            local_player_motion: local_player_motion_code(native.local_player_moving),
             bank_snapshot_generation: native.bank_snapshot_generation,
             api_gather: native.api_gather.map(ApiGatherFp::from),
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
@@ -1707,6 +1723,8 @@ pub struct DeltaMask {
     pub bank_selection: bool,
     /// The local player's animation id; written only when supplied.
     pub self_anim: bool,
+    /// Slot 286, independent of animation and user movement intent.
+    pub local_player_motion: bool,
     pub bank_snapshot_generation: bool,
     /// The live session page, including an explicit zero-id clear.
     pub api_gather: bool,
@@ -1809,6 +1827,7 @@ impl DeltaMask {
             puzzle_board: true,
             bank_selection: true,
             self_anim: true,
+            local_player_motion: true,
             bank_snapshot_generation: true,
             api_gather: true,
             api_gather_outcome: true,
@@ -1931,6 +1950,7 @@ impl DeltaMask {
             puzzle_board: next.puzzle_board != last.puzzle_board,
             bank_selection: next.bank_selection != last.bank_selection,
             self_anim: next.self_anim != last.self_anim,
+            local_player_motion: next.local_player_motion != last.local_player_motion,
             bank_snapshot_generation: next.bank_snapshot_generation
                 != last.bank_snapshot_generation,
             api_gather: next.api_gather != last.api_gather,
@@ -2896,6 +2916,9 @@ fn encode_snapshot_masked_into(
     }
     if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
         table.add_side_modal_id(side);
+    }
+    if mask.local_player_motion {
+        table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -5783,6 +5806,43 @@ pub(crate) mod tests {
         let old = decode_snapshot(&old).expect("old");
         assert!(!old.has_self_anim());
         assert_eq!(old.self_anim(), -1);
+    }
+
+    #[test]
+    fn local_player_motion_delta_is_independent_of_animation() {
+        let mut input = empty_input(5);
+        input.animating = true;
+        let native = |moving| NativeFactsInput {
+            self_anim: Some(390),
+            local_player_moving: moving,
+            ..NativeFactsInput::default()
+        };
+        let (moving_bytes, moving_fp) =
+            encode_snapshot_delta_with_native(None, &input, native(Some(true)), false);
+        let moving = decode_snapshot(&moving_bytes).expect("moving");
+        assert!(moving.has_local_player_motion());
+        assert_eq!(moving.local_player_motion(), LOCAL_PLAYER_MOTION_MOVING);
+
+        let (same_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&moving_fp), &input, native(Some(true)), false);
+        assert!(!decode_snapshot(&same_bytes)
+            .expect("unchanged motion")
+            .has_local_player_motion());
+
+        let (stationary_bytes, stationary_fp) =
+            encode_snapshot_delta_with_native(Some(&moving_fp), &input, native(Some(false)), false);
+        let stationary = decode_snapshot(&stationary_bytes).expect("stationary");
+        assert!(stationary.has_local_player_motion());
+        assert_eq!(
+            stationary.local_player_motion(),
+            LOCAL_PLAYER_MOTION_STATIONARY
+        );
+
+        let (unknown_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&stationary_fp), &input, native(None), false);
+        let unknown = decode_snapshot(&unknown_bytes).expect("unknown");
+        assert!(unknown.has_local_player_motion());
+        assert_eq!(unknown.local_player_motion(), LOCAL_PLAYER_MOTION_UNKNOWN);
     }
 
     #[test]

@@ -141,6 +141,7 @@ impl GameSnapshot {
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
+                headicons: lp.headicons,
                 weapon: player_weapon(&lp.appearance),
             },
             energy: client.runenergy,
@@ -169,6 +170,7 @@ impl GameSnapshot {
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
+                    headicons: player.headicons,
                     weapon: player_weapon(&player.appearance),
                 });
             }
