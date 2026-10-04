@@ -24,6 +24,7 @@ pub mod log_file;
 pub mod map_bake;
 pub mod marked;
 pub mod nav_prefs;
+pub mod walk_permissions;
 pub mod operations;
 pub mod profile_form;
 pub mod profile_saves;
@@ -49,6 +50,10 @@ pub use marked::{
     RestartScope,
 };
 pub use nav_prefs::{nav_preference_at, NavPreference};
+pub use walk_permissions::{
+    WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING,
+    GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, SCRIPT_SCOPE_NOTICE,
+};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,

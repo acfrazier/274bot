@@ -2930,45 +2930,6 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         });
 }
 
-/// Persist only changed walk-global keys through the shared nested writer.
-fn persist_walk_global_changes(
-    path: &std::path::Path,
-    previous: &crate::nav_settings::NavSettings,
-    current: &crate::nav_settings::NavSettings,
-) -> std::io::Result<()> {
-    for (preference, before, after) in [
-        (
-            frontend_core::NavPreference::AllowTeleports,
-            previous.allow_teleports,
-            current.allow_teleports,
-        ),
-        (
-            frontend_core::NavPreference::AllowWilderness,
-            previous.allow_wilderness,
-            current.allow_wilderness,
-        ),
-        (
-            frontend_core::NavPreference::AllowBankFetch,
-            previous.allow_bank_fetch,
-            current.allow_bank_fetch,
-        ),
-        (
-            frontend_core::NavPreference::AllowDangerZones,
-            previous.allow_danger_zones,
-            current.allow_danger_zones,
-        ),
-        (
-            frontend_core::NavPreference::ScriptScopeNoticeAck,
-            previous.script_scope_notice_ack,
-            current.script_scope_notice_ack,
-        ),
-    ] {
-        if before != after {
-            frontend_core::nav_preference_at(path, preference, Some(after))?;
-        }
-    }
-    Ok(())
-}
 
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Preference edits write `session.ui.nav`
@@ -2979,6 +2940,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.nav_settings_open {
         return;
     }
+    session.refresh_walk_permissions();
     let mut open = true;
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
@@ -2990,37 +2952,37 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
+            let previous_permissions = session.walk_permissions;
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
             let previous_pause_script_on_manual_walk_abort =
                 previous_nav.pause_script_on_manual_walk_abort;
-            let previous_allow_danger_zones = previous_nav.allow_danger_zones;
             let mut changed = false;
             ui.text_colored(ACCENT, "Routing");
-            if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[0].1, &mut nav.allow_teleports) {
                 changed = true;
             }
             ui.set_item_tooltip("Global routing permission for every walk.");
             ui.same_line();
-            ui.text_disabled("Global — applies to every walk.");
-            if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[1].1, &mut nav.allow_wilderness) {
                 changed = true;
             }
             ui.set_item_tooltip(
                 "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
             );
             ui.same_line();
-            ui.text_disabled("Global — applies to every walk.");
-            if ui.checkbox("allow bank fetch", &mut nav.allow_bank_fetch) {
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[2].1, &mut nav.allow_bank_fetch) {
                 changed = true;
             }
             ui.set_item_tooltip(
                 "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
             );
             ui.same_line();
-            ui.text_disabled("Global — applies to every walk.");
+            ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
             if ui.checkbox(
-                "Route through danger zones",
+                frontend_core::DANGER_THIS_WALK_LABEL,
                 &mut nav.allow_danger_zones,
             ) {
                 changed = true;
@@ -3029,11 +2991,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 "Allows routes past monsters that may kill your bot. Routing permission is independent of protected walking.",
             );
             ui.same_line();
-            ui.text_disabled("Global — applies to every walk.");
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
             if !nav.script_scope_notice_ack {
                 ui.separator();
                 ui.text_wrapped(
-                    "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. Danger is new (default off). rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+                    frontend_core::SCRIPT_SCOPE_NOTICE,
                 );
                 if ui.button("Dismiss walk permissions notice") {
                     nav.script_scope_notice_ack = true;
@@ -3104,11 +3066,15 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             if changed {
                 session.ui.nav = nav;
-                if !previous_allow_danger_zones && session.ui.nav.allow_danger_zones {
+                let after_permissions = frontend_core::WalkGlobalsView {
+                    globals: session.ui.nav.walk_globals(),
+                    script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
+                };
+                if !previous_permissions.globals.allow_danger_zones
+                    && after_permissions.globals.allow_danger_zones
+                {
                     session.route_through_zones = false;
                 }
-                let walk_globals = session.ui.nav.walk_globals();
-                session.core.set_walk_globals(walk_globals);
                 if previous_pause_script_on_manual_walk_abort
                     != session.ui.nav.pause_script_on_manual_walk_abort
                 {
@@ -3116,11 +3082,14 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         session.ui.nav.pause_script_on_manual_walk_abort,
                     );
                 }
-                let save_result = crate::ui_state::save_checked(&session.ui);
-                let routing_result = persist_walk_global_changes(
-                    &crate::ui_state::path(),
-                    &previous_nav,
-                    &session.ui.nav,
+                let save_result = crate::ui_state::save_at_checked(
+                    &session.walk_permissions_path,
+                    &session.ui,
+                );
+                let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
+                    &session.walk_permissions_path,
+                    previous_permissions,
+                    after_permissions,
                 );
                 match (save_result, routing_result) {
                     (Ok(()), Ok(())) => {
@@ -3131,10 +3100,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         {
                             session.error = None;
                         }
-                        match session.ui.nav.refresh_walk_globals_at(&crate::ui_state::path()) {
-                            Ok(()) => session.core.set_walk_globals(session.ui.nav.walk_globals()),
-                            Err(error) => session.error = Some(format!("Nav config: {error}")),
-                        }
+                        session.refresh_walk_permissions();
                     }
                     (Err(error), _) | (_, Err(error)) => {
                         session.error = Some(format!("Nav config: {error}"));
@@ -3316,29 +3282,9 @@ fn script_parameter_text_input(
     }
 }
 
-fn is_walk_permission_id(id: &str) -> bool {
-    matches!(
-        id,
-        "allow_teleports"
-            | "allow_wilderness"
-            | "allow_danger_zones"
-            | "allowTeleports"
-            | "allowWilderness"
-            | "allowDangerZones"
-    )
-}
-
-fn walk_permission_global(nav: &crate::nav_settings::NavSettings, id: &str) -> Option<bool> {
-    match id {
-        "allow_teleports" | "allowTeleports" => Some(nav.allow_teleports),
-        "allow_wilderness" | "allowWilderness" => Some(nav.allow_wilderness),
-        "allow_danger_zones" | "allowDangerZones" => Some(nav.allow_danger_zones),
-        _ => None,
-    }
-}
-
 /// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
+    session.refresh_walk_permissions();
     let Some(selection) = session.script_sel.clone() else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
@@ -3400,7 +3346,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         if !script::setting_visible(def.show_if.as_deref(), &bag) {
             continue;
         }
-        let group = if is_walk_permission_id(&def.id) {
+        let permission_global = session.walk_permissions.permission_enabled(&def.id);
+        let group = if permission_global.is_some() {
             Some("Walk permissions")
         } else {
             def.group.as_deref()
@@ -3429,7 +3376,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         }
         match def.ty.as_str() {
             "boolean" => {
-                let global = walk_permission_global(&session.ui.nav, &def.id);
+                let global = permission_global;
                 let mut value = bag
                     .get(&def.id)
                     .and_then(|v| v.as_bool())
