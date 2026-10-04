@@ -244,6 +244,7 @@ hitpoints=44
 strength=24
 ranged=3
 category=dagannoth_mother
+headicon=8
 param=strengthbonus,8
 param=rangebonus,4
 param=undead,^true
@@ -375,6 +376,8 @@ assert.equal(combatScripts.triggers.has('ghost'), false);
 const npcFacts = extractNpcNamesFacts(content, combatScripts);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
+assert.equal(testNpc.headicon, 8);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.headicon, undefined);
 assert.equal(testNpc.strength, 24);
 assert.equal(testNpc.ranged, 3);
 assert.equal(testNpc.strengthbonus, 8);

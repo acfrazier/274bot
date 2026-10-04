@@ -1286,6 +1286,7 @@ fn player_rebuild_reads_local_and_remote_players() {
     local.entity.x = 20 * 128 + 64;
     local.entity.z = 12 * 128 + 64;
     local.name = Some("Zezima".into());
+    local.headicons = (1 << 3) | (1 << 5);
     local.combat_level = 126;
     local.skill_level = 99;
     local.entity.primary_anim = 808;
@@ -1295,6 +1296,7 @@ fn player_rebuild_reads_local_and_remote_players() {
     other.entity.x = 100;
     other.entity.z = 150;
     other.name = Some("Other".into());
+    other.headicons = 1 << 4;
     other.combat_level = 3;
     other.skill_level = 5;
     other.entity.face_entity = 7 + 32768; // facing the local player
@@ -1334,6 +1336,7 @@ fn player_rebuild_reads_local_and_remote_players() {
         })
     );
     assert_eq!(local_view.player.actor.animation, 808);
+    assert_eq!(local_view.player.headicons, (1 << 3) | (1 << 5));
     assert_eq!(local_view.player.combat_level, 126);
     assert_eq!(local_view.player.skill_level, 99);
     assert_eq!(local_view.energy, 63);
@@ -1373,6 +1376,7 @@ fn player_rebuild_reads_local_and_remote_players() {
         })
     );
     assert_eq!(p.combat_level, 3);
+    assert_eq!(p.headicons, 1 << 4);
     assert_eq!(p.skill_level, 5);
     // The canonical tile carries the real scene level (`minusedlevel`).
     assert_eq!(snap.tile(), Some((3220, 3212, 1)));

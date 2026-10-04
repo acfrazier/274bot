@@ -75,6 +75,17 @@ unchanged, while a present empty vector clears it.
 `MakeProductView`, `ToggleControlsView`, plus `WorldTile`/`LocalTile` and
 `ItemDefView`/`LocDefView` (from `api::obj_names`).
 
+`PlayerView.headicons` carries the client's appearance bitmask unchanged for
+local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,
+and magic.
+
+`NpcView` retains the packed NPC type id; matching
+`SelectedGameData::npc_name(id).headicon` is the optional headicon fact
+extracted from selected content. `None` means content did not publish a
+value, not headicon index zero. These remain host-side facts; this slice does
+not add them to the isolate wire.
+
+
 ## Native observation readiness
 
 `SnapshotView` returns borrowed `Observed` values with their evidence stamp,

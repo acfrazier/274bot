@@ -509,6 +509,7 @@ mod tests {
                         actor: actor(at),
                         combat_level: 60,
                         skill_level: 0,
+                        headicons: 0,
                         weapon: None,
                     },
                     energy: 100,

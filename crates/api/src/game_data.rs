@@ -876,6 +876,13 @@ pub struct NpcNameRow {
     pub vislevel: i32,
     pub hitpoints: i32,
     pub damagetype: Option<String>,
+    /// Selected-content NPC headicon **sprite index**, not a bitmask (unlike
+    /// `PlayerView::headicons`): 3 protect melee, 4 protect missiles,
+    /// 5 protect magic, 8 protect missiles + magic. Absent content is unknown.
+    /// In 289 the icon is visual only; no server script grants the matching
+    /// damage immunity.
+    #[serde(default)]
+    pub headicon: Option<i32>,
     #[serde(default)]
     pub strength: Option<i32>,
     #[serde(default)]

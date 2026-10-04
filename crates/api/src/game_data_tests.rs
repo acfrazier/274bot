@@ -219,6 +219,7 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
             "vislevel":0,"hitpoints":44,"damagetype":null,"strength":24,"ranged":3,
             "strengthbonus":8,"rangebonus":4,"undead":1,"ap_attack":true,
             "attack_kind":"mixed","forced_max_hit":24,"dragonfire":"chromatic",
+            "headicon":8,
             "attackrate":6,"bespoke":true
         }"#,
     )
@@ -229,6 +230,7 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     assert_eq!(npc.forced_max_hit, Some(24));
     assert_eq!(npc.dragonfire, Some(DragonfireKind::Chromatic));
     assert_eq!(npc.attackrate, Some(6));
+    assert_eq!(npc.headicon, Some(8));
 
     let sequence: StyleSequenceFact = serde_json::from_str(r#"{"seq_id":1,"style":3}"#).unwrap();
     let spotanim: StyleSpotanimFact =
