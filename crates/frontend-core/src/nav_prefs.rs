@@ -8,6 +8,16 @@ pub enum NavPreference {
     ShowSpecialAreas,
     /// Whether qualifying manual movement pauses the owning script.
     PauseScriptOnManualWalkAbort,
+    /// Global permission for every walk to use teleports.
+    AllowTeleports,
+    /// Global permission for every walk to enter the wilderness.
+    AllowWilderness,
+    /// Global permission for manual WalkTo to use BankBudget fetch.
+    AllowBankFetch,
+    /// Global permission for every walk to route through danger zones.
+    AllowDangerZones,
+    /// Whether the user dismissed the one-time script-scope notice.
+    ScriptScopeNoticeAck,
 }
 
 impl NavPreference {
@@ -15,12 +25,17 @@ impl NavPreference {
         match self {
             Self::ShowSpecialAreas => ("show_special_areas", false),
             Self::PauseScriptOnManualWalkAbort => ("pause_script_on_manual_walk_abort", true),
+            Self::AllowTeleports => ("allow_teleports", false),
+            Self::AllowWilderness => ("allow_wilderness", false),
+            Self::AllowBankFetch => ("allow_bank_fetch", false),
+            Self::AllowDangerZones => ("allow_danger_zones", false),
+            Self::ScriptScopeNoticeAck => ("script_scope_notice_ack", false),
         }
     }
 }
 
 /// Read or update one shared nested nav boolean. The read preserves legacy
-/// defaults; the write preserves every other `nav` and root preference.
+/// defaults; the write merges only that key inside the shared writer lock.
 pub fn nav_preference_at(
     path: &Path,
     preference: NavPreference,
@@ -28,13 +43,21 @@ pub fn nav_preference_at(
 ) -> io::Result<bool> {
     let (key, default) = preference.key_and_default();
     if let Some(enabled) = update {
-        let mut nav = host_play::panel_ui_value_at(path, "nav")
-            .filter(|value| value.is_object())
-            .unwrap_or_else(|| serde_json::json!({}));
-        nav.as_object_mut()
-            .expect("a replacement nav object is always an object")
-            .insert(key.into(), serde_json::Value::Bool(enabled));
-        host_play::persist_panel_ui_value_at(path, "nav", nav)?;
+        host_play::update_panel_ui_at(path, |document, _, _| {
+            let root = document.as_object_mut().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "panel-ui.json is not an object")
+            })?;
+            let mut nav = root
+                .get("nav")
+                .filter(|value| value.is_object())
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            nav.as_object_mut()
+                .expect("a replacement nav object is always an object")
+                .insert(key.into(), serde_json::Value::Bool(enabled));
+            root.insert("nav".into(), nav);
+            Ok(None)
+        })?;
         Ok(enabled)
     } else {
         Ok(host_play::panel_ui_value_at(path, "nav")
@@ -73,6 +96,19 @@ mod tests {
         assert!(
             nav_preference_at(&path, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
         );
+        for preference in [
+            NavPreference::AllowTeleports,
+            NavPreference::AllowWilderness,
+            NavPreference::AllowBankFetch,
+            NavPreference::AllowDangerZones,
+            NavPreference::ScriptScopeNoticeAck,
+        ] {
+            assert!(
+                !nav_preference_at(&path, preference, None).unwrap(),
+                "missing {preference:?} defaults off"
+            );
+            nav_preference_at(&path, preference, Some(true)).unwrap();
+        }
 
         nav_preference_at(&path, NavPreference::ShowSpecialAreas, Some(true)).unwrap();
         nav_preference_at(
@@ -89,13 +125,28 @@ mod tests {
         assert_eq!(saved["nav"]["custom"]["keep"], 7);
         assert_eq!(saved["nav"]["show_special_areas"], true);
         assert_eq!(saved["nav"]["pause_script_on_manual_walk_abort"], false);
+        assert_eq!(saved["nav"]["allow_teleports"], true);
+        assert_eq!(saved["nav"]["allow_wilderness"], true);
+        assert_eq!(saved["nav"]["allow_bank_fetch"], true);
+        assert_eq!(saved["nav"]["allow_danger_zones"], true);
+        assert_eq!(saved["nav"]["script_scope_notice_ack"], true);
 
         let missing = temp_path("legacy");
         std::fs::write(&missing, r#"{"last_focus":"bob","nav":{}}"#).unwrap();
         assert!(
             nav_preference_at(&missing, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
         );
+        for preference in [
+            NavPreference::AllowTeleports,
+            NavPreference::AllowWilderness,
+            NavPreference::AllowBankFetch,
+            NavPreference::AllowDangerZones,
+            NavPreference::ScriptScopeNoticeAck,
+        ] {
+            assert!(!nav_preference_at(&missing, preference, None).unwrap());
+        }
         assert!(!nav_preference_at(&missing, NavPreference::ShowSpecialAreas, None).unwrap());
+
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
         std::fs::remove_dir_all(missing.parent().unwrap()).unwrap();
     }

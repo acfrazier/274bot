@@ -51,6 +51,46 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
 }
 
 #[test]
+fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
+    let dir = scratch("peer-nav-lock");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prefs = dir.join("panel-ui.json");
+    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(dir.join("panel-ui.json.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let writer_path = prefs.clone();
+    let writer = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let result = persist_session_log_setting_at(&writer_path, true);
+        done_tx.send(result).unwrap();
+    });
+    started_rx.recv().unwrap();
+    let premature = done_rx.recv_timeout(Duration::from_millis(100));
+    // The lock represents the peer's transaction. Publish its grant before
+    // releasing it, so the log writer must merge from this newer document.
+    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+    lock.unlock().unwrap();
+    writer.join().unwrap();
+    assert!(
+        matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+        "the log-pane writer bypassed the shared preference lock"
+    );
+    done_rx.recv().unwrap().unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["nav"]["allow_danger_zones"], true);
+    assert_eq!(saved[SESSION_LOG_KEY], true);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn a_new_store_writes_no_file() {
     let store = LogStore::new();
     assert_eq!(store.file_path(), None);

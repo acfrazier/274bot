@@ -1,8 +1,10 @@
 //! Resource labels are shared by walk nodes and change only at paid hops.
 //! Generous inventories keep the original tile-only search after a conservative
 //! proof that no simple path can exhaust a stack.
+//! World tiles hash their scalar identity in one write. Metered labels include
+//! the balance in the same write, retaining the original scalar bytes.
 use super::*;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 const RESOURCE_LIMIT: usize = 64;
 const BALANCE_LIMIT: usize = 4096;
@@ -25,10 +27,22 @@ impl SearchKey for WorldTile {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ResourceKey {
     tile: WorldTile,
     balance: u32,
+}
+
+impl Hash for ResourceKey {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut bytes = [0; 16];
+        bytes[..4].copy_from_slice(&self.tile.x.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&self.tile.z.to_ne_bytes());
+        bytes[8..12].copy_from_slice(&self.tile.level.to_ne_bytes());
+        bytes[12..].copy_from_slice(&self.balance.to_ne_bytes());
+        state.write(&bytes);
+    }
 }
 
 impl SearchKey for ResourceKey {
@@ -83,7 +97,7 @@ impl Budget for Unmetered {
     }
     fn finish(
         self,
-        tree: HashMap<WorldTile, Back>,
+        tree: HashMap<WorldTile, Back<WorldTile>>,
         _: HashMap<WorldTile, WorldTile>,
     ) -> Predecessors {
         Predecessors::Tiles(tree)
@@ -286,7 +300,7 @@ impl Budget for ResourceBudget {
 }
 
 pub(super) enum Predecessors {
-    Tiles(HashMap<WorldTile, Back>),
+    Tiles(HashMap<WorldTile, Back<WorldTile>>),
     Resources {
         tree: HashMap<ResourceKey, Back<ResourceKey>>,
         reached: HashMap<WorldTile, ResourceKey>,
@@ -316,5 +330,55 @@ impl Predecessors {
                 reconstruct_key(reached[&to], tree, graph, model, essence)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+    use std::hash::Hasher;
+
+    #[derive(Default)]
+    struct Writes {
+        count: usize,
+        len: usize,
+        bytes: [u8; 16],
+    }
+
+    impl Hasher for Writes {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.count += 1;
+            self.bytes[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+            self.len += bytes.len();
+        }
+    }
+
+    fn sip_hash(value: &impl Hash) -> u64 {
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut state);
+        state.finish()
+    }
+
+    #[test]
+    fn metered_key_hashes_the_tile_and_balance_in_one_write() {
+        let key = ResourceKey {
+            tile: WorldTile {
+                x: -1,
+                z: 0,
+                level: i32::MIN,
+            },
+            balance: u32::MAX,
+        };
+        let mut writes = Writes::default();
+        key.hash(&mut writes);
+        assert_eq!((writes.count, writes.len), (1, 16));
+        let mut original = Writes::default();
+        (key.tile, key.balance).hash(&mut original);
+        assert_eq!(writes.bytes, original.bytes);
+        assert_eq!(sip_hash(&key), sip_hash(&(key.tile, key.balance)));
+        assert_eq!(std::mem::size_of::<ResourceKey>(), 16);
     }
 }

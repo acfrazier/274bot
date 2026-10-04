@@ -2,7 +2,7 @@
 use super::{reach, walk_step_evidence};
 use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
@@ -453,7 +453,7 @@ impl StepRun for BankRun {
                         facts: Arc::clone(cx.banks),
                         from: from.value,
                         preferences: api::named_banks::BankPreferences::default(),
-                        allow_wilderness: false,
+                        options: WalkOptions::default(),
                         explicit: self.explicit.clone(),
                     },
                     &mut cx.tick.cx,

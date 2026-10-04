@@ -527,7 +527,7 @@ pub fn walk_request(
         loc_id,
         radius,
         arrival: nav::arrival::ArrivalKind::Reach,
-        options: crate::FindOptions::default(),
+        options: crate::native::WalkOptions::default(),
         required_after,
         evidence: None,
         cross: Vec::new().into_boxed_slice(),

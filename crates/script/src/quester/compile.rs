@@ -1201,22 +1201,40 @@ mod tests {
     }
 
     #[test]
-    fn path_walk_cross_refusal_has_invalid_args_code_and_specific_detail() {
-        let err = compile_err(|document| {
-            let step = &mut document.roles[0].sequences[0].steps[0];
-            step.kind = "walk".into();
-            step.args = serde_json::json!({
+    fn path_walk_crossing_and_protection_compile_independently() {
+        let data = selected();
+        let quests = quests(&data);
+        for args in [
+            serde_json::json!({
                 "tile": [3224, 3200, 0],
                 "source": "regression test",
                 "radius": 1,
-                "cross": ["Test barrier"],
-            });
-        });
-        assert_eq!(err.code.as_ref(), "invalid-args");
-        assert_eq!(
-            err.detail.as_deref(),
-            Some("walk: cross needs protected walk (combat slice)")
-        );
+                "cross": ["death-plateau-throwers"],
+            }),
+            serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "regression test",
+                "radius": 1,
+                "guard": "protect",
+            }),
+        ] {
+            let mut document = decode_cook().unwrap();
+            let step = &mut document.roles[0].sequences[0].steps[0];
+            step.kind = "walk".into();
+            step.args = args;
+            step.skip_if = PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+            };
+            step.settle = PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+            };
+            compile_uncached_for_test(&document, &data, &quests)
+                .expect("a named crossing or protection does not require the other");
+        }
     }
 
     #[test]
@@ -1228,7 +1246,7 @@ mod tests {
             "tile": [3224, 3200, 0],
             "source": "regression test",
             "radius": 1,
-            "cross": ["Test barrier"],
+            "cross": ["death-plateau-throwers"],
             "guard": "protect",
         });
         step.skip_if = PredicateDocument::Fact {
