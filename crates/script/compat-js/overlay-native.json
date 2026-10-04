@@ -345,11 +345,27 @@
     "declaration": "player(): { name: string | null; count: number; slot: number }[];"
   },
   {
+    "id": "hunting-prayer-site-advisory",
+    "module": "api/combat/hunting/logic.js",
+    "selector": "prayerFor",
+    "reason": "This compatibility helper is a site advisory; live Hunt protection selection is performed by the native fight machine.",
+    "runtime": "crates/script/src/hunt_catalog.rs:434",
+    "declaration": "/** Site/advisory overhead helper; the live Hunt fight picker is native. */\nexport function prayerFor(style: Style, fireAtRange: boolean): string | null;"
+  },
+  {
+    "id": "hunting-prayer-native-c5-floor",
+    "module": "api/combat/hunting/logic.js",
+    "selector": "prayerSipDue",
+    "reason": "The compatibility helper uses the shared native C5 prayer floor to decide when to sip.",
+    "runtime": "crates/script/src/combat/policy.rs:20",
+    "declaration": "/** Whether to sip at the native C5 floor: max(3, max - (7 + floor(max / 4))). */\nexport function prayerSipDue(points: number, max: number): boolean;"
+  },
+  {
     "id": "script-loadout-setting-resolution",
     "module": "api/loadout/loadoutSetting.js",
     "selector": "selectedLoadout",
-    "reason": "The shared script-setting resolver keeps blank-first semantics, accepts only a unique trimmed case-insensitive fallback, and refuses invalid settings before use.",
-    "runtime": "crates/script/src/shim/loadout_setting.js:10",
-    "declaration": "export function selectedLoadout(bag: SettingsBag): Loadout;"
+    "reason": "The native resolver prefers exact saved names, selects the first loadout for a blank setting, otherwise accepts only a unique trimmed ASCII-case-insensitive match, and refuses unresolved or ambiguous names with the available loadouts.",
+    "runtime": "crates/script/src/loadouts_store.rs:722",
+    "declaration": "/** Exact names win; a blank setting selects the first loadout. Otherwise a unique trimmed, ASCII case-insensitive match is required, or the function throws with the available loadout names. */\nexport function selectedLoadout(bag: SettingsBag): Loadout;"
   }
 ]
