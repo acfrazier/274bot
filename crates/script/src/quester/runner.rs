@@ -2209,11 +2209,11 @@ impl Script for QueuedQuester {
                 let bytes = super::card::released_path(&id)
                     .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
                 super::compile::compile_path(bytes, &selected, &quests).map_err(|error| {
-                    Arc::from(format!(
-                        "{}: {}",
-                        error.code,
-                        error.detail.as_deref().unwrap_or("Path compilation failed")
-                    ))
+                    let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
+                    Arc::from(match &error.step {
+                        Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
+                        None => format!("{}: {detail}", error.code),
+                    })
                 })
             });
             match worker {
@@ -2736,7 +2736,7 @@ mod tests {
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "wait".into();
         step.args = serde_json::json!({"until":{"All":[]},"max_ticks": 10});
-        step.advances = false;
+        step.advances = Some(false);
         step.settle = super::super::path::PredicateDocument::Fact {
             kind: "message".into(),
             version: 1,
@@ -2851,7 +2851,7 @@ mod tests {
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "talk".into();
         step.args = serde_json::json!({"npc": "cook"});
-        step.advances = true;
+        step.advances = Some(true);
         step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
         step.settle = super::super::path::PredicateDocument::All(vec![]);
         let path =
@@ -3034,7 +3034,8 @@ mod tests {
                 let step = &mut document.roles[0].sequences[0].steps[0];
                 step.kind = "interact".into();
                 step.args = serde_json::json!({"target":{"ground":"egg"},"op":"Take","wait_if_missing":true});
-                step.advances = false;
+                step.settle = super::super::path::PredicateDocument::Any(Vec::new());
+                step.advances = Some(false);
             }
             let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
                 .unwrap();
@@ -3206,7 +3207,7 @@ mod tests {
         step.kind = "walk".into();
         step.args =
             serde_json::json!({"tile": [3200, 3200, 0], "source": "test fixture", "radius": 1});
-        step.advances = true;
+        step.advances = Some(true);
         step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
         step.settle = super::super::path::PredicateDocument::All(vec![]);
         let path =

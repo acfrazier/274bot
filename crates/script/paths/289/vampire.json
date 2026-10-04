@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "vampire",
   "display_name": "Vampire Slayer",
   "required": [],

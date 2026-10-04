@@ -46,75 +46,110 @@ impl FamilyReceipt for CombatReceipt {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct CombatArgs {
+pub(super) struct CombatArgs {
+    /// Target selector; exactly one supported target mode is required.
     target: TargetArgs,
+    /// Combat action and style configuration.
     tactic: TacticArgs,
+    /// Optional melee attack mode.
     #[serde(default)]
     melee_mode: Option<MeleeMode>,
+    /// Optional named loadout for the encounter.
     #[serde(default)]
     loadout: Option<String>,
+    /// Spell aliases; non-empty spell lists are currently unsupported.
     #[serde(default)]
     spells: Option<Vec<String>>,
+    /// Optional sourced stand tile; `anchor` is accepted as an alias.
     #[serde(default, alias = "anchor")]
     stand: Option<super::AnchorArg>,
+    /// Optional named or inline search area.
     #[serde(default)]
     area: Option<AreaArg>,
+    /// Maximum distance in tiles before the target is considered lost.
     lost_radius: u8,
+    /// Maximum game ticks to spend on a combat attempt.
     kill_budget_ticks: u16,
+    /// Item config names to loot after a kill.
     #[serde(default)]
     loot: Vec<String>,
+    /// Optional predicate that ends the combat loop when true.
     #[serde(default)]
     until: Option<PredicateDocument>,
+    /// Optional success predicate that ends the combat loop when true.
     #[serde(default)]
     win: Option<PredicateDocument>,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetArgs {
+    /// One or more NPC config names to target.
     #[serde(default)]
     npc: Option<NpcArg>,
+    /// Select NPCs or players that are already attacking the player.
     #[serde(default)]
     attacker: Option<AttackerArgs>,
+    /// Player targeting is represented in the wire format but is unsupported.
     #[serde(default)]
     player: Option<serde_json::Value>,
+    /// Require the chosen NPC not to be targeting another player.
     #[serde(default)]
     not_targeting_others: Option<bool>,
+    /// Policy used when choosing among matching targets.
     #[serde(default)]
     pick: Option<PickArg>,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum NpcArg {
+    /// A single NPC config name.
     One(String),
+    /// Several alternative NPC config names.
     Many(Vec<String>),
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AttackerArgs {
+    /// Include NPC attackers.
     npcs: bool,
+    /// Include player attackers.
     players: bool,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum PickArg {
+    /// Choose the closest matching target.
     Nearest,
+    /// Choose a matching target at random.
     Random,
+    /// Choose the matching target with the lowest health.
     LowestHealth,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TacticArgs {
+    /// Combat opening mode; only `open` is currently supported.
     kind: String,
+    /// Attack style; only `melee` is currently supported.
     style: String,
+    /// Maximum distance at which to engage a target.
     engage_radius: u8,
+    /// Whether to enable auto-retaliation; defaults to true.
     #[serde(default = "default_auto_retaliate")]
     auto_retaliate: bool,
+    /// Optional fallback; only `abort` is currently supported.
     #[serde(default)]
     fallback: Option<String>,
 }
@@ -124,29 +159,39 @@ fn default_auto_retaliate() -> bool {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum AreaArg {
+    /// Name of an area declared in the quest header.
     Named(String),
+    /// Inline one or more sourced region boxes.
     Inline(InlineArea),
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct InlineArea {
+    /// Optional single region box `[x1, z1, x2, z2, level]`.
     #[serde(default, rename = "box")]
     one: Option<[i32; 5]>,
+    /// Optional list of region boxes `[x1, z1, x2, z2, level]`.
     #[serde(default)]
     boxes: Option<Vec<[i32; 5]>>,
+    /// Source citation for these authored region boxes.
     source: String,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct CombatEndArgs {
+pub(super) struct CombatEndArgs {
+    /// Combat outcome to match.
     end: CombatEndName,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum CombatEndName {
     Killed,
@@ -159,11 +204,9 @@ enum CombatEndName {
 }
 
 pub(super) fn compile(
-    args: &serde_json::Value,
+    args: CombatArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: CombatArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args
         .spells
         .as_ref()
@@ -241,11 +284,9 @@ pub(super) fn compile(
 }
 
 pub(super) fn compile_end_predicate(
-    args: &serde_json::Value,
+    args: CombatEndArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: CombatEndArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(CombatEndPredicate { expected: args.end }))
 }
 

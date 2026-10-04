@@ -1,0 +1,401 @@
+use api::game_data::{self, SelectedGameData};
+use api::quest_facts::QuestCatalog;
+use api::selected::{ClientRevision, FactKey};
+use script::quester::compile::{compile_uncached_for_test, CompileError};
+use script::quester::path::PathDocument;
+use script::quester::schema::{path_schema_path, render};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundledIndex {
+    schema: u16,
+    paths: Vec<IndexEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexEntry {
+    id: String,
+    file: String,
+}
+
+fn paths_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289")
+}
+
+fn selected_and_quests() -> (std::sync::Arc<SelectedGameData>, QuestCatalog) {
+    let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).expect("289 quest catalog");
+    (selected, quests)
+}
+
+fn compile_value(
+    value: Value,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> Result<std::sync::Arc<script::quester::compile::CompiledPath>, CompileError> {
+    let document: PathDocument = serde_json::from_value(value).expect("Path envelope decodes");
+    compile_uncached_for_test(&document, selected, quests)
+}
+
+fn read_path(path: &Path) -> Value {
+    let bytes =
+        std::fs::read(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
+}
+
+fn find_step_mut<'a>(value: &'a mut Value, id: &str) -> Option<&'a mut Value> {
+    if value.as_object().is_some_and(|object| {
+        object.get("kind").is_some() && object.get("id").and_then(Value::as_str) == Some(id)
+    }) {
+        return Some(value);
+    }
+    match value {
+        Value::Array(array) => {
+            for child in array {
+                if let Some(step) = find_step_mut(child, id) {
+                    return Some(step);
+                }
+            }
+        }
+        Value::Object(object) => {
+            for child in object.values_mut() {
+                if let Some(step) = find_step_mut(child, id) {
+                    return Some(step);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn expect_compile_error(
+    value: Value,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> CompileError {
+    match compile_value(value, selected, quests) {
+        Err(error) => error,
+        Ok(_) => panic!("Path unexpectedly compiled"),
+    }
+}
+
+#[test]
+fn path_schema_matches_generator() {
+    let actual = std::fs::read_to_string(path_schema_path()).expect("read path.schema.json");
+    assert_eq!(
+        actual,
+        render(),
+        "{} is stale; run: cargo test -p script --test path_schema regen_path_schema -- --ignored",
+        path_schema_path().display()
+    );
+}
+
+#[test]
+#[ignore]
+fn regen_path_schema() {
+    std::fs::write(path_schema_path(), render()).expect("write path.schema.json");
+}
+
+#[test]
+fn bundled_paths_decode_and_compile() {
+    let _home = script::IsolatedEnv::enter("path-schema-bundled");
+    let root = paths_dir();
+    let index_path = root.join("index.json");
+    let index: BundledIndex = serde_json::from_slice(
+        &std::fs::read(&index_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", index_path.display())),
+    )
+    .unwrap_or_else(|error| panic!("decode {}: {error}", index_path.display()));
+    assert_eq!(index.schema, 1, "the release index has its own schema");
+
+    let (selected, quests) = selected_and_quests();
+    for entry in index.paths {
+        let path = root.join(&entry.file);
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let document: PathDocument = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
+        assert_eq!(
+            document.id.0.as_ref(),
+            entry.id,
+            "{} id mismatch",
+            entry.file
+        );
+        compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
+            panic!(
+                "{} path={} step={:?} code={} detail={:?}",
+                entry.file, error.path.0, error.step, error.code, error.detail
+            )
+        });
+    }
+    let fixture_dir = root.join("fixtures");
+    let mut fixtures = std::fs::read_dir(&fixture_dir)
+        .unwrap_or_else(|error| panic!("read {}: {error}", fixture_dir.display()))
+        .map(|entry| entry.expect("read Path fixture directory entry").path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    fixtures.sort();
+    assert!(!fixtures.is_empty(), "expected combat Path fixtures");
+    for path in fixtures {
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let document: PathDocument = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
+        compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
+            panic!(
+                "{} path={} step={:?} code={} detail={:?}",
+                path.display(),
+                error.path.0,
+                error.step,
+                error.code,
+                error.detail
+            )
+        });
+    }
+}
+
+#[test]
+fn unknown_talk_arguments_are_rejected_with_step_context() {
+    let _home = script::IsolatedEnv::enter("path-schema-talk-errors");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+
+    let mut value = read_path(&root.join("cook.json"));
+    let step = find_step_mut(&mut value, "start").expect("Cook start step");
+    step["args"]["radius"] = json!(1);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("cook"));
+    assert_eq!(error.step, Some(FactKey::new("start")));
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("radius")));
+
+    let mut value = read_path(&root.join("cook.json"));
+    let step = find_step_mut(&mut value, "start").expect("Cook start step");
+    step["args"]["anchor"]["radius"] = json!(1);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("cook"));
+    assert_eq!(error.step, Some(FactKey::new("start")));
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("radius")));
+
+    let mut value = read_path(&root.join("sheep.json"));
+    let step = find_step_mut(&mut value, "shear").expect("Sheep shear step");
+    step["args"]["until"]["qty"]["radius"] = json!(1);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("sheep"));
+    assert_eq!(error.step, Some(FactKey::new("shear")));
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("radius")));
+}
+
+#[test]
+fn invalid_args_keep_step_context_in_recipes_and_prelude() {
+    let _home = script::IsolatedEnv::enter("path-schema-nested-errors");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+
+    let mut value = read_path(&root.join("cook.json"));
+    let step = find_step_mut(&mut value, "take-egg").expect("Cook recipe step");
+    step["args"]["unknown"] = json!(true);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("cook"));
+    assert_eq!(error.step, Some(FactKey::new("take-egg")));
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("unknown")));
+
+    let mut value = read_path(&root.join("cook.json"));
+    let mut prelude_step = find_step_mut(&mut value, "start")
+        .expect("Cook start step")
+        .clone();
+    prelude_step["id"] = json!("prelude-bad");
+    prelude_step["args"]["unknown"] = json!(true);
+    value["roles"][0]["prelude"]
+        .as_array_mut()
+        .expect("prelude array")
+        .push(prelude_step);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("cook"));
+    assert_eq!(error.step, Some(FactKey::new("prelude-bad")));
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("unknown")));
+}
+
+#[test]
+fn advances_checks_cover_historical_and_dynamic_quantity_cases() {
+    let _home = script::IsolatedEnv::enter("path-schema-advances-checks");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/paths/runemysteries-ec8f29ad1.json");
+    let error = expect_compile_error(read_path(&fixture), &selected, &quests);
+    assert_eq!(error.path, FactKey::new("runemysteries"));
+    assert_eq!(error.step, Some(FactKey::new("deliver-package")));
+    assert_eq!(error.code.as_ref(), "advances-undeclared");
+
+    let mut value = read_path(&root.join("cook.json"));
+    let step = find_step_mut(&mut value, "hand-in").expect("Cook hand-in step");
+    step["advances"] = json!(false);
+    let settle = step["settle"].clone();
+    step["settle"] = json!({ "All": [{ "Any": [{ "Not": settle }] }] });
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.path, FactKey::new("cook"));
+    assert_eq!(error.step, Some(FactKey::new("hand-in")));
+    assert_eq!(error.code.as_ref(), "settle-needs-advance");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("quest_colour")));
+
+    let mut sheep_value = read_path(&root.join("sheep.json"));
+    for id in ["shear", "spin"] {
+        let step = find_step_mut(&mut sheep_value, id).expect("Sheep step");
+        assert_eq!(step["advances"], json!(false));
+        assert_eq!(step["settle"]["Fact"]["kind"], json!("item_count_at_least"));
+        assert!(step["settle"]["Fact"]["args"]["qty"]["progress"].is_object());
+    }
+    compile_value(sheep_value, &selected, &quests)
+        .expect("Sheep dynamic quantity settles are not progress facts");
+}
+
+#[test]
+fn default_advance_class_defaults_false_and_accepts_true() {
+    let _home = script::IsolatedEnv::enter("path-schema-default-advances");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&root.join("cook.json"));
+    let step = json!({
+        "id": "schema-default-walk",
+        "kind": "walk",
+        "version": 1,
+        "args": { "tile": [3209, 3215, 0], "source": "PATH-SCHEMA-1 test" },
+        "skip_if": { "Any": [] },
+        "settle": { "Any": [] }
+    });
+    value["roles"][0]["prelude"] = json!([step]);
+    let compiled = compile_value(value.clone(), &selected, &quests).expect("Default walk compiles");
+    assert!(!compiled.prelude[0].advances);
+
+    find_step_mut(&mut value, "schema-default-walk").expect("test walk step")["advances"] =
+        json!(true);
+    let compiled = compile_value(value, &selected, &quests)
+        .expect("explicit true is accepted for Default kind");
+    assert!(compiled.prelude[0].advances);
+}
+
+#[test]
+fn schema_3_envelope_corrections_are_typed() {
+    let _home = script::IsolatedEnv::enter("path-schema-envelope");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+
+    let mut value = read_path(&root.join("cook.json"));
+    value["quest"]["bank"] = json!("anywhere");
+    assert!(serde_json::from_value::<PathDocument>(value).is_err());
+
+    let mut value = read_path(&root.join("cook.json"));
+    let step = find_step_mut(&mut value, "start").expect("Cook start step");
+    step["skip_if"] = json!({ "Fact": { "kind": "prayer_points_at_least", "version": 1, "args": { "level": 43 } } });
+    compile_value(value.clone(), &selected, &quests).expect("prayer-point fact uses a level only");
+    find_step_mut(&mut value, "start").expect("Cook start step")["skip_if"] = json!({
+        "Fact": { "kind": "prayer_points_at_least", "version": 1, "args": { "skill": "prayer", "level": 43 } }
+    });
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("skill")));
+
+    let mut value = read_path(&root.join("cook.json"));
+    find_step_mut(&mut value, "start").expect("Cook start step")["skip_if"] = json!({
+        "Fact": { "kind": "near", "version": 1, "args": { "tile": [20000, 3215, 0], "radius": 2 } }
+    });
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.code.as_ref(), "invalid-tile");
+
+    let mut value = read_path(&root.join("cook.json"));
+    find_step_mut(&mut value, "start").expect("Cook start step")["settle"] = json!({
+        "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "cook", "is": "done" } }
+    });
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("done")));
+}
+
+#[test]
+fn recursive_wait_predicate_inside_recipe_compiles() {
+    let _home = script::IsolatedEnv::enter("path-schema-recursive-wait");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&root.join("cook.json"));
+    let wait = json!({
+        "id": "wait-for-egg",
+        "kind": "wait",
+        "version": 1,
+        "args": {
+            "until": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } }
+            },
+            "max_ticks": 1
+        },
+        "skip_if": { "Any": [] },
+        "settle": { "Any": [] }
+    });
+    value["quest"]["acquire"]["acquire:egg"]
+        .as_array_mut()
+        .expect("Cook egg recipe")
+        .insert(0, wait);
+    compile_value(value, &selected, &quests)
+        .expect("recursive wait predicate is valid inside an acquire recipe");
+}
+
+#[test]
+fn symbolic_skill_requirement_uses_stats_index() {
+    let _home = script::IsolatedEnv::enter("path-schema-symbolic-skill");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&root.join("cook.json"));
+    value["quest"]["requirements"] = json!([{
+        "id": "agility",
+        "kind": { "Skill": { "skill": "agility", "level": 25 } },
+        "at": "Start",
+        "source": "schema-3 fixture"
+    }]);
+
+    let compiled =
+        compile_value(value, &selected, &quests).expect("symbolic skill requirement compiles");
+    let requirement = &compiled.eligibility.requirements[0];
+    assert_eq!(requirement.id, FactKey::new("agility"));
+    assert!(requirement.at_start);
+    assert_eq!(requirement.source.as_ref(), "schema-3 fixture");
+    assert!(matches!(
+        &requirement.kind,
+        api::selected::RequirementKind::Skill(minimum)
+            if minimum.skill == 16 && minimum.level == 25
+    ));
+}
