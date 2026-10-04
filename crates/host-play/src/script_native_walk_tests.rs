@@ -2974,10 +2974,7 @@ fn combat_debt_rig() -> Rig {
 }
 
 fn owe_combat_debt(rig: &Rig, varps: &[i32], tick: u16) {
-    let mut owned = script::combat::RaisedPrayers::empty();
-    for &varp in varps {
-        owned.accepted(varp, true, 0);
-    }
+    let owned = script::combat::RaisedPrayers::from_test_varps(varps);
     let mut navs = rig.navs.lock().unwrap();
     let bot = navs.get_mut("alice").expect("debt bot");
     owe_combat_prayers_off(bot, owned, tick);
@@ -3051,6 +3048,11 @@ fn combat_prayer_off_refused_retry_spends_the_retry_without_a_loop() {
             // send gate after the first off-click was accepted.
             rig.snapshot.seed_main_modal(5608, Vec::new());
         }
+        if tick == 4 {
+            // Restore the retry target so an unbounded retry becomes visible.
+            seed_prayer_widgets(&mut rig.snapshot);
+        }
+
         rig.step();
         if tick == 0 {
             assert_eq!(
