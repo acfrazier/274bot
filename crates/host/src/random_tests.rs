@@ -920,6 +920,20 @@ fn maze_square_holds_without_any_send() {
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
     assert_eq!(status.kind, Some(RandomKind::Maze));
     assert!(!status.hold, "toggle off never holds");
+    assert!(
+        !status.ours,
+        "toggle off the host solves no Maze, so the trap must not freeze the script"
+    );
+
+    // The Mime stage is the other trap square: the same with the toggle off.
+    plant_player(&mut c, "Test", 31 * 64, 74 * 64);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(status.kind, Some(RandomKind::Mime));
+    assert!(
+        !status.hold && !status.ours,
+        "toggle off: the Mime is inert too"
+    );
 }
 
 #[test]
@@ -3383,6 +3397,48 @@ fn maze_spawn_walks_opens_and_advances_door_to_door() {
     tick_at(&mut c, &mut snap);
     g.tick(&mut drv, &snap, &settings, 0, None);
     assert_eq!(drv.walks, vec![(2888, 4587)], "walk toward door 1");
+}
+
+/// MAZE-RANDOM-1: a Maze visit the solver never walks out of must end.
+/// Within [`maze::SOLVE_TICKS`] the guardian owns the square; past it the
+/// visit is given up — still detected, but no hold, no `ours` and no
+/// further sends — so the slot's native run sees the trap and blocks.
+#[test]
+fn a_maze_the_solver_cannot_leave_is_given_up_and_releases_the_slot() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 2891, 4555); // SW spawn; never moves
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    for _ in 0..maze::SOLVE_TICKS {
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold && status.ours, "the solver owns the Maze");
+    }
+    assert!(!drv.walks.is_empty(), "the solver was walking the route");
+
+    for _ in 0..3 {
+        drv.walks.clear();
+        drv.menus.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze), "still detected");
+        assert!(!status.hold, "a given-up Maze releases the slot");
+        assert!(!status.ours, "and does not keep the script pending");
+        assert!(drv.walks.is_empty() && drv.menus.is_empty());
+    }
+
+    // Leaving the square re-arms the next visit.
+    plant_player(&mut c, "Test", 3222, 3222);
+    tick_at(&mut c, &mut snap);
+    assert_eq!(g.tick(&mut drv, &snap, &settings, 0, None).kind, None);
+    plant_player(&mut c, "Test", 2891, 4555);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold && status.ours, "a new visit is solved again");
 }
 
 #[test]

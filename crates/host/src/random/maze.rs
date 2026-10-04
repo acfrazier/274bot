@@ -11,8 +11,6 @@ use std::sync::OnceLock;
 mod layout;
 use layout::MAZE_LAYOUT;
 
-/// Maze region: `x>>6 == 45 && z>>6 == 71` at level 0.
-pub const MAZE_SQUARE: (i32, i32) = (45, 71);
 /// SW origin of the maze region (`45*64`, `71*64`).
 const MAZE_ORIGIN: (i32, i32) = (2880, 4544);
 /// SW corner of the 3x3 Strange shrine (loc 3634 `macro_maze_complete`).
@@ -52,6 +50,15 @@ pub const OPEN_WAIT: u32 = 12;
 pub const TOUCH_WAIT: u32 = 20;
 /// Touch passes before the pass gives up (rs2b0t 6).
 pub const TOUCH_LIMIT: u32 = 6;
+/// The content's reward clock: `start_macro_maze` sets `%xplamp = 100` and
+/// `[timer,macro_maze]` (every 5 ticks) drains one point, so the reward is
+/// gone 500 game ticks after the teleport.
+const REWARD_TICKS: u32 = 100 * 5;
+/// Game ticks the guardian spends solving one Maze visit before it gives
+/// the Maze up and releases the slot. The longest spawn route (SW, 18
+/// doors) took about 400 ticks live; twice the reward clock leaves room for
+/// resyncs and touch passes while a stuck solve still ends.
+pub const SOLVE_TICKS: u32 = 2 * REWARD_TICKS;
 /// Touch stands after the chamber door (rs2b0t `touchStands`).
 pub const TOUCH_STANDS: [(i32, i32); 3] = [
     MAZE_SHRINE_DOOR,
