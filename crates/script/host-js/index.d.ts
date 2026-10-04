@@ -986,6 +986,12 @@ export interface GatherSettings {
   deathPolicy?: 'Stop' | 'Recover';
   /** 0..255, default 2 */
   maxDeaths?: number;
+  /** default false */
+  allowTeleports?: boolean;
+  /** default false */
+  allowWilderness?: boolean;
+  /** default false */
+  allowDangerZones?: boolean;
 }
 
 /** The Gatherer's published status, keyed exactly as the card publishes it (gatherer::status::KEYS). `xp_per_hour` is -1 below five minutes elapsed. */

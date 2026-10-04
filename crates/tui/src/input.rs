@@ -593,6 +593,12 @@ impl TuiApp {
         AppAction::None
     }
 
+    fn queue_nav_preference(&mut self, preference: frontend_core::NavPreference) {
+        if !self.nav_preferences_dirty.contains(&preference) {
+            self.nav_preferences_dirty.push(preference);
+        }
+    }
+
     fn settings_key(&mut self, key: KeyEvent) -> AppAction {
         let mut pane = SettingsPane::new(
             &mut self.settings,
@@ -600,7 +606,8 @@ impl TuiApp {
             &mut self.map_bake,
             &mut self.settings_state,
         )
-        .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort);
+        .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+        .script_scope_notice_ack(&mut self.script_scope_notice_ack);
         pane.memory = self.settings_memory;
         let outcome = pane.on_key(key);
         match outcome {
@@ -609,6 +616,28 @@ impl TuiApp {
                 // The draft moved on: a notice about its last save no
                 // longer describes it.
                 self.settings_save.edited();
+            }
+            SettingsKey::WalkGlobal(preference) => {
+                let pending = frontend_core::WalkGlobalsView {
+                    globals: self.nav,
+                    script_scope_notice_ack: self.script_scope_notice_ack,
+                };
+                if preference == frontend_core::NavPreference::AllowDangerZones
+                    && !pending.danger_this_walk(true)
+                {
+                    self.map_route_through_zones = false;
+                }
+                self.queue_nav_preference(preference);
+                if self.shared_preferences_path().is_none() {
+                    self.refresh_walk_permissions();
+                }
+            }
+            SettingsKey::ScriptScopeNoticeAck => {
+                self.script_scope_notice_ack = true;
+                self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
+                if self.shared_preferences_path().is_none() {
+                    self.refresh_walk_permissions();
+                }
             }
             SettingsKey::MemoryRelog => {
                 if let Some(name) = self.settings_profile.clone() {
@@ -715,10 +744,8 @@ impl TuiApp {
     }
 
     fn settings_click(&mut self, col: u16, row: u16) -> AppAction {
-        let popup = SettingsPane::popup_rect(self.regions.area);
-        let first = popup.y + 1;
-        if contains(popup, col, row) && row >= first && row < popup.y + popup.height - 1 {
-            self.settings_state.row = usize::from(row - first).min(8);
+        if let Some(setting) = self.settings_state.row_at(col, row) {
+            self.settings_state.row = setting;
             return self.settings_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         AppAction::None

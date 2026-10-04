@@ -322,6 +322,8 @@ pub struct OperatorSession<Io> {
     /// Shared preference applied whenever a Play is installed and whenever
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
+    walk_globals: host_play::WalkGlobals,
+    walk_globals_store: Option<std::path::PathBuf>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
 }
@@ -369,17 +371,23 @@ impl<Io> OperatorSession<Io> {
             resources: Resources::default(),
             walk_arms: None,
             pause_script_on_manual_walk_abort: true,
+            walk_globals: host_play::WalkGlobals::default(),
+            walk_globals_store: None,
             _instance: instance,
         }
     }
 
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
-    pub fn start(&mut self, vault: Vault, play: Play) {
+    pub fn start(&mut self, vault: Vault, mut play: Play) {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
         play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
+        play.set_walk_globals(self.walk_globals);
+        if let Some(path) = self.walk_globals_store.as_ref() {
+            play.set_walk_globals_store(path.clone());
+        }
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
@@ -396,6 +404,22 @@ impl<Io> OperatorSession<Io> {
         if let Some(play) = self.play.as_ref() {
             play.set_pause_script_on_manual_walk_abort(enabled);
         }
+    }
+
+    /// Publish grants before or after Play installation.
+    pub fn set_walk_globals(&mut self, globals: host_play::WalkGlobals) {
+        self.walk_globals = globals;
+        if let Some(play) = self.play.as_ref() {
+            play.set_walk_globals(globals);
+        }
+    }
+
+    /// Interactive frontends share the durable store even after Continue anyway.
+    pub fn set_walk_globals_store(&mut self, path: std::path::PathBuf) {
+        if let Some(play) = self.play.as_mut() {
+            play.set_walk_globals_store(path.clone());
+        }
+        self.walk_globals_store = Some(path);
     }
 
     pub fn vault(&self) -> Option<&Vault> {

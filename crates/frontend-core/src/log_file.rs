@@ -262,23 +262,22 @@ pub fn persist_session_log_setting(on: bool) -> io::Result<()> {
 }
 
 pub fn persist_session_log_setting_at(prefs: &Path, on: bool) -> io::Result<()> {
-    let mut value = match std::fs::read(prefs) {
-        Ok(data) => {
-            serde_json::from_slice(&data).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
+    host_play::update_panel_ui_at(prefs, |value, _, corrupt| {
+        if corrupt {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "invalid panel-ui.json",
+            ));
         }
-        Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(e),
-    };
-    let Some(obj) = value.as_object_mut() else {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            format!("{} is not a JSON object", prefs.display()),
-        ));
-    };
-    obj.insert(SESSION_LOG_KEY.into(), serde_json::Value::Bool(on));
-    let data =
-        serde_json::to_vec_pretty(&value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    vault::write_private_file(prefs, &data)
+        let obj = value.as_object_mut().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!("{} is not a JSON object", prefs.display()),
+            )
+        })?;
+        obj.insert(SESSION_LOG_KEY.into(), serde_json::Value::Bool(on));
+        Ok(None)
+    })
 }
 
 /// Open (on) or close (off) this process's session file on the global

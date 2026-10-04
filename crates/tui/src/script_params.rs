@@ -13,6 +13,8 @@ use script::{
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParamsState {
     pub open: bool,
+    /// Latest durable permission view for inherited setting rows.
+    pub walk_permissions: frontend_core::WalkGlobalsView,
     pub cursor: usize,
     pub scroll: usize,
     pub editing: bool,
@@ -306,6 +308,9 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         if def.ty == "boolean" {
+            if self.state.walk_permissions.permission_enabled(&def.id) == Some(true) {
+                return ParamsKey::None;
+            }
             let cur = self
                 .bag
                 .get(&def.id)
@@ -650,10 +655,25 @@ impl Widget for ParamsPane<'_> {
         } else {
             let mut last_group: Option<&str> = None;
             for (i, def) in rows.iter().enumerate() {
-                if def.group.as_deref() != last_group {
-                    last_group = def.group.as_deref();
-                    if let Some(g) = last_group {
+                let group = if self
+                    .state
+                    .walk_permissions
+                    .permission_enabled(&def.id)
+                    .is_some()
+                {
+                    Some("Walk permissions")
+                } else {
+                    def.group.as_deref()
+                };
+                if group != last_group {
+                    last_group = group;
+                    if let Some(g) = group {
                         lines.push(Line::from(format!("— {g} —")));
+                        if g == "Walk permissions" {
+                            lines.push(Line::from(
+                                "Allow for this script even when the global setting is off.",
+                            ));
+                        }
                     }
                 }
                 if i == self.state.cursor {
@@ -663,6 +683,22 @@ impl Widget for ParamsPane<'_> {
                 let mark = if i == self.state.cursor { "> " } else { "  " };
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
+                } else if let Some(global) = self.state.walk_permissions.permission_enabled(&def.id)
+                {
+                    if global {
+                        "On (inherited globally; script cannot veto)".into()
+                    } else {
+                        let enabled = self
+                            .bag
+                            .get(&def.id)
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                        if enabled {
+                            "On (script opt-in)".into()
+                        } else {
+                            "Off".into()
+                        }
+                    }
                 } else {
                     let options = self.resolved_options(def);
                     if def.options_from.is_some() && options.is_empty() {
@@ -868,6 +904,110 @@ mod tests {
         };
         assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
+    }
+
+    #[test]
+    fn global_walk_permission_is_inherited_and_script_additive_when_off() {
+        let dir = temp_dir("walk-permissions");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = vec![SettingDef {
+            group: Some("Quester".into()),
+            ..setting(
+                "allow_teleports",
+                "boolean",
+                Some("false"),
+                Some("Allow teleports"),
+                &[],
+            )
+        }];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", &schema, None);
+        assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(false)));
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            walk_permissions: frontend_core::WalkGlobalsView {
+                globals: host_play::WalkGlobals {
+                    allow_teleports: true,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    allow_danger_zones: false,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::None);
+            assert_eq!(
+                pane.bag.get("allow_teleports"),
+                Some(&serde_json::json!(false)),
+                "a script cannot veto a global allow"
+            );
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut read_only,
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Walk permissions"), "{text:?}");
+        assert!(
+            text.contains("Allow for this script even when the global setting is off."),
+            "{text:?}"
+        );
+        assert!(
+            text.contains("On (inherited globally; script cannot veto)"),
+            "{text:?}"
+        );
+
+        state.walk_permissions = frontend_core::WalkGlobalsView {
+            globals: host_play::WalkGlobals {
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                allow_danger_zones: false,
+            },
+            ..Default::default()
+        };
+        let outcome = {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            pane.on_key(KeyCode::Char(' '))
+        };
+        assert_eq!(outcome, ParamsKey::Toggle);
+        assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(true)));
     }
 
     #[test]

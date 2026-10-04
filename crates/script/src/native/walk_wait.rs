@@ -8,7 +8,7 @@ use api::snapshot::WorldTile;
 pub struct WalkKey {
     pub tile: WorldTile,
     pub radius: i32,
-    pub allow_teleports: bool,
+    pub allow_teleports: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +36,7 @@ impl HostOutcome {
                     level: 0,
                 },
                 radius: 0,
-                allow_teleports: false,
+                allow_teleports: Some(false),
             },
         }
     }
@@ -104,7 +104,12 @@ impl WalkSlot {
     fn outcome_matches(outcome: HostOutcome, wait: &Wait) -> bool {
         outcome.request_id != 0
             && outcome.request_id == wait.token
-            && outcome.key == wait.key
+            && outcome.key.tile == wait.key.tile
+            && outcome.key.radius == wait.key.radius
+            && (match wait.key.allow_teleports {
+                None => true,
+                Some(expected) => outcome.key.allow_teleports == Some(expected),
+            })
             && outcome.seq != 0
             && outcome.seq != wait.seq_at_begin
     }
@@ -157,6 +162,64 @@ impl WalkSlot {
             .is_some_and(|wait| wait.token == token && wait.settled == Some(true) && wait.blocked)
     }
 }
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+
+    fn key(allow_teleports: Option<bool>) -> WalkKey {
+        WalkKey {
+            tile: WorldTile {
+                x: 10,
+                z: 20,
+                level: 0,
+            },
+            radius: 2,
+            allow_teleports,
+        }
+    }
+
+    fn outcome(allow_teleports: Option<bool>) -> HostOutcome {
+        HostOutcome {
+            seq: 1,
+            generation: 1,
+            request_id: 7,
+            failed: false,
+            blocked: false,
+            key: key(allow_teleports),
+        }
+    }
+
+    fn wait(allow_teleports: Option<bool>) -> Wait {
+        Wait {
+            token: 7,
+            key: key(allow_teleports),
+            settled: None,
+            seq_at_begin: 0,
+            matched: None,
+            blocked: false,
+        }
+    }
+
+    #[test]
+    fn inherited_teleport_permission_matches_resolved_host_value() {
+        assert!(WalkSlot::outcome_matches(outcome(Some(true)), &wait(None)));
+        assert!(WalkSlot::outcome_matches(outcome(Some(false)), &wait(None)));
+    }
+
+    #[test]
+    fn explicit_teleport_permission_requires_same_host_value() {
+        assert!(WalkSlot::outcome_matches(
+            outcome(Some(false)),
+            &wait(Some(false))
+        ));
+        assert!(!WalkSlot::outcome_matches(
+            outcome(Some(true)),
+            &wait(Some(false))
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,7 +264,7 @@ mod tests {
                     level: 0,
                 },
                 radius: 0,
-                allow_teleports: false,
+                allow_teleports: Some(false),
             },
         }
     }

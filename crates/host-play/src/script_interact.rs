@@ -337,6 +337,19 @@ where
                 avoid,
                 cross,
             } => {
+                let opts = super::walk_permissions::compiled_options(
+                    navs,
+                    name,
+                    FindOptions {
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        ..FindOptions::default()
+                    },
+                );
+                let allow_teleports = opts.allow_teleports;
+                let allow_wilderness = opts.allow_wilderness;
+                let allow_bank_fetch = opts.allow_bank_fetch;
                 let key = (
                     WorldTile { x, z, level },
                     0,
@@ -361,19 +374,7 @@ where
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                let queued = arm.queue_route_avoiding(
-                    x,
-                    z,
-                    level,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    request_id,
-                    exclusions,
-                );
+                let queued = arm.queue_route_avoiding(x, z, level, opts, request_id, exclusions);
                 if queued {
                     record_script_act(
                         navs,
@@ -403,6 +404,19 @@ where
                 avoid,
                 cross,
             } => {
+                let opts = super::walk_permissions::compiled_options(
+                    navs,
+                    name,
+                    FindOptions {
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        ..FindOptions::default()
+                    },
+                );
+                let allow_teleports = opts.allow_teleports;
+                let allow_wilderness = opts.allow_wilderness;
+                let allow_bank_fetch = opts.allow_bank_fetch;
                 let key = (
                     WorldTile { x, z, level },
                     radius,
@@ -427,19 +441,7 @@ where
                         .collect(),
                 };
                 let queued = arm.queue_route_in_snapshot_avoiding(
-                    snapshot,
-                    x,
-                    z,
-                    level,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    radius,
-                    request_id,
-                    exclusions,
+                    snapshot, x, z, level, opts, radius, request_id, exclusions,
                 );
                 if queued {
                     record_script_act(
@@ -554,12 +556,16 @@ where
                 let to = WorldTile { x, z, level };
                 let empty_state = WorldState::empty();
                 let route_state = state.as_ref().unwrap_or(&empty_state);
-                let opts = FindOptions {
-                    allow_teleports,
-                    allow_wilderness,
-                    allow_bank_fetch,
-                    ..FindOptions::default()
-                };
+                let opts = super::walk_permissions::compiled_options(
+                    navs,
+                    name,
+                    FindOptions {
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        ..FindOptions::default()
+                    },
+                );
                 let (zones, rects, invalid_args) = match world.as_ref() {
                     Some(world) => {
                         match super::script_nav::resolve_route_exclusions(
@@ -600,9 +606,9 @@ where
                     route_inspect::InspectRequest {
                         from,
                         to,
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
+                        allow_teleports: opts.allow_teleports,
+                        allow_wilderness: opts.allow_wilderness,
+                        allow_bank_fetch: opts.allow_bank_fetch,
                         zones,
                         avoid: rects,
                         request_id,

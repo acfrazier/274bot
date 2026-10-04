@@ -151,14 +151,14 @@ fn named_exemptions_are_whole_walk_but_endpoint_exemptions_are_scoped() {
         .is_some());
     assert!(
         endpoint
-            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(6, 5, 0), false)
+            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(6, 5, 0), &|| false)
             .next()
             .is_none(),
         "the source may leave and continue inside its active zones"
     );
     assert_eq!(
         endpoint
-            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), false)
+            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), &|| false)
             .collect::<Vec<_>>(),
         vec![1],
         "entering an overlapping non-origin zone stays blocked"
@@ -172,17 +172,55 @@ fn named_exemptions_are_whole_walk_but_endpoint_exemptions_are_scoped() {
     );
     assert!(
         destination
-            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), false)
+            .blocking_transition_at(&wilderness, tile(4, 5, 0), tile(5, 5, 0), &|| false)
             .next()
             .is_none(),
         "the selected destination permits movement within its active zones"
     );
     assert_eq!(
         destination
-            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(4, 5, 0), false)
+            .blocking_transition_at(&wilderness, tile(5, 5, 0), tile(4, 5, 0), &|| false)
             .collect::<Vec<_>>(),
         vec![1],
         "leaving a destination zone cannot turn it into transit"
+    );
+}
+
+#[test]
+fn transition_queries_goals_only_for_active_unexempted_entries() {
+    let table = table();
+    let wilderness = WildernessRules::default();
+    for (combat, exemptions, to, queries) in [
+        (10, ZoneExempt::NONE, tile(0, 0, 0), 0),
+        (11, ZoneExempt::NONE, tile(5, 5, 0), 0),
+        (10, ZoneExempt::all(), tile(5, 5, 0), 0),
+        (10, ZoneExempt::NONE, tile(5, 5, 0), 1),
+    ] {
+        let filter = ZoneFilter::new(&table, Some(combat), &[tile(0, 0, 0)], &exemptions);
+        let called = std::cell::Cell::new(0);
+        let blocked: Vec<_> = filter
+            .blocking_transition_at(&wilderness, tile(0, 0, 0), to, &|| {
+                called.set(called.get() + 1);
+                true
+            })
+            .collect();
+        assert!(blocked.is_empty(), "{to:?}");
+        assert_eq!(called.get(), queries, "{to:?}");
+    }
+
+    let filter = ZoneFilter::new(&table, Some(10), &[tile(0, 0, 0)], &ZoneExempt::NONE);
+    let called = std::cell::Cell::new(0);
+    let blocked: Vec<_> = filter
+        .blocking_transition_at(&wilderness, tile(0, 0, 0), tile(5, 5, 0), &|| {
+            called.set(called.get() + 1);
+            false
+        })
+        .collect();
+    assert_eq!(blocked, vec![0, 1]);
+    assert_eq!(
+        called.get(),
+        1,
+        "overlapping zones share the same goal query"
     );
 }
 
