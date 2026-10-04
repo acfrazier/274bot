@@ -228,6 +228,10 @@ pub trait Script: Send {
         })
     }
     fn interrupt(&mut self, _event: Interrupt) {}
+    /// Accepted Combat raises still owed when the host retires this fight.
+    fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        crate::combat::RaisedPrayers::empty()
+    }
     fn on_stop(&mut self, _reason: StopReason) {}
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         RandomClaim::Host

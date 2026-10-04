@@ -103,12 +103,14 @@
 //! `duel-travel` to its fixed arena tile, then admits the ordinary coordinate
 //! tools and Dig only after the family reports that crossing complete.
 //!
-//! Native Sherlock passes the chat latch's death signal as a Rust argument.
-//! It ends the live token before freeze/hold checks; this authority is not a
+//! Native Sherlock passes the chat latch's death signal as a Rust argument. It
+//! ends the live token before freeze/hold checks; this authority is not a
 //! caller-writable page field. Native HP-zero frames without chat stay frozen.
-//! Compatibility callers retain their existing rule:
-//! posted effective `hitpoints` at or below zero is `dead` after freeze/hold.
-//! A page that posted no stat is not a zero.
+//! Compatibility uses the same Rust death latch over the decoded isolate
+//! snapshot; posted hitpoints and JSON `native_death` fields are never clue death
+//! authority.
+//! Zero effective hitpoints without a new chat line freeze clue work but do
+//! not end the token.
 //!
 //! The one desc-only exception is the held puzzle box. An identified row whose
 //! own selected `{alias}_puzzlebox` item is held — the nine hard riddles, and
@@ -361,10 +363,9 @@ const GRIND_READY: &str = "grind-ready";
 /// own `kind`.
 const DONE: &str = "done";
 
-/// A Rust-native chat observation, or compatibility's posted-HP fallback,
-/// kills the token. A page that posted no stat at all is not a zero. Native
-/// authority is checked before freeze/hold; compatibility retains its
-/// existing freeze/hold precedence.
+/// A fresh death-chat observation from the shared Rust latch kills the token.
+/// Compatibility and native authority both precede freeze/hold; posted hitpoints
+/// are not death authority.
 const DEAD: &str = "dead";
 
 /// An arrived dig with no posted `Spade`: a named wait-class and not a
@@ -563,6 +564,14 @@ enum Phase {
     Collecting,
 }
 
+/// Which Rust-owned death observation applies to this caller: Sherlock's
+/// typed host signal or compatibility's current decoded-snapshot chat ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeathObservation {
+    Compatibility,
+    Native(bool),
+}
+
 /// The finished collect's own exit, latched on the live token: the exact
 /// `'clue solved'` status, then the `grind-ready` continue kind, then `done`.
 /// The first state is the Entrana restore's: while `strippedGear` is non-empty
@@ -712,6 +721,10 @@ struct ClueRuntime {
     /// about the live session is captured: `enabled`, the page and the
     /// `hold || ours` signal are re-read at call time.
     generation: u64,
+    /// The compatibility session's cursor over the decoded chat ring. It is
+    /// absent between tokens, seeded on begin, and cleared with the token;
+    /// Sherlock supplies its own typed authority.
+    death: Option<crate::native::death::DeathLatch>,
     /// The membership row this phase belongs to: a different held row
     /// re-arms the gate, so the enabled read is never reused across steps.
     step_id: i32,
@@ -809,6 +822,7 @@ impl ClueRuntime {
             token: 0,
             phase: Phase::Idle,
             generation: 0,
+            death: None,
             step_id: 0,
             open: None,
             discarded: Vec::new(),
@@ -845,6 +859,7 @@ impl ClueRuntime {
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Idle;
         self.generation = 0;
+        self.death = None;
         self.step_id = 0;
         // The walk memory, the live trip and the gate-toll latch are the
         // token's own: a reset, a stop and a second begin all clear them, and
@@ -855,6 +870,39 @@ impl ClueRuntime {
         self.shopped.clear();
         self.next_delegation = 0;
         self.clear_step();
+    }
+
+    /// Seed compatibility's cursor from the current decoded chat ring so an
+    /// old death line cannot end this new clue session.
+    fn baseline_compat_death(&mut self) {
+        self.death = Some(crate::native::death::DeathLatch::default());
+        self.observe_compat_death();
+    }
+
+    /// Observe the current Rust-owned chat page through the shared latch core.
+    /// A missing chat page leaves the cursor unbaselined, like `DeathLatch`.
+    fn observe_compat_death(&mut self) -> bool {
+        let Some(death) = self.death.as_mut() else {
+            return false;
+        };
+        crate::observed::with(|scene| {
+            let Some(lines) = scene.since_login().chat_lines() else {
+                return false;
+            };
+            death.observe_lines(|| lines.iter().map(|line| (line.seq, line.text.as_ref())))
+        })
+    }
+
+    /// A posted zero-effective-hitpoints stat freezes clue work but is not
+    /// itself evidence of death. Missing stats are not zero.
+    fn observed_hitpoints_zero() -> bool {
+        crate::observed::with(|scene| {
+            scene
+                .since_login()
+                .stats()
+                .and_then(|skills| skills.hitpoints)
+                .is_some_and(|hitpoints| hitpoints.effective <= 0)
+        })
     }
 
     /// The hunt reclaim shape, over this session's own stamps: a freeze that
@@ -954,10 +1002,8 @@ impl ClueRuntime {
         self.emit(kind)
     }
 
-    /// A Rust-native chat observation, or compatibility's posted effective
-    /// hitpoints at or below zero, kills the token. Native authority wins
-    /// before freeze/hold; compatibility retains its existing precedence,
-    /// and a page with no stat is not a zero.
+    /// A fresh chat-death signal from compatibility's shared Rust latch or
+    /// Sherlock's typed native authority kills the token.
     fn dead(&mut self) -> Value {
         self.ended(DEAD)
     }
@@ -1083,6 +1129,7 @@ impl ClueRuntime {
         // aborted; an omitted key (the Clue family payload) is not.
         self.generation = input.get("generation").and_then(Value::as_u64).unwrap_or(0);
         self.step_id = row.id;
+        self.baseline_compat_death();
         json!({ "kind": "token", "token": self.token })
     }
 
@@ -1090,7 +1137,7 @@ impl ClueRuntime {
         &mut self,
         selected: Option<&SelectedGameData>,
         input: &Value,
-        native_death: bool,
+        death: DeathObservation,
     ) -> Value {
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted(STALE);
@@ -1105,9 +1152,13 @@ impl ClueRuntime {
                 return self.aborted(ABORTED);
             }
         }
-        if native_death {
-            // The native chat latch is terminal even if pause/hold is active or
-            // the first observation follows HP recovery.
+        let died = match death {
+            DeathObservation::Compatibility => self.observe_compat_death(),
+            DeathObservation::Native(observed) => observed,
+        };
+        if died {
+            // A new death line is terminal before the freeze and held gates,
+            // even when hitpoints have already recovered.
             return self.dead();
         }
         if self.clock.frozen() {
@@ -1120,10 +1171,8 @@ impl ClueRuntime {
             // lives and the step is not trail completion.
             return self.emit("yield");
         }
-        // Compatibility keeps its terminal HP check after freeze/hold. Native
-        // frames at zero HP are gated before this call unless chat ended them.
-        if posted_i32(input, "hitpoints").is_some_and(|hp| hp <= 0) {
-            return self.dead();
+        if Self::observed_hitpoints_zero() {
+            return self.emit("wait");
         }
         if self.completion.is_some() {
             // The collect is over and latched: its own exit runs before any
@@ -1947,9 +1996,10 @@ pub(crate) fn on_stop() {
     });
 }
 
-/// Compatibility dispatcher: the selected pin comes from the registration's
-/// captured `game_data`, and each family pass hydrates its facts from the
-/// posted scene. Native death authority enters only through `next_native`.
+/// Compatibility dispatcher: selected data comes from the registration's
+/// captured `game_data`, and its death latch reads the current decoded
+/// `observed` chat ring. Sherlock's native death authority enters only through
+/// `next_native`.
 pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => {
@@ -1958,7 +2008,10 @@ pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Va
         }
         "next" => {
             let input = hydrate(input);
-            RUNTIME.with(|rt| rt.borrow_mut().next(selected, &input, false))
+            RUNTIME.with(|rt| {
+                rt.borrow_mut()
+                    .next(selected, &input, DeathObservation::Compatibility)
+            })
         }
         // The machine-state seats. None is a step over a page and none takes a
         // token: `ownsEquipment` is a read of the stripped list the shim
@@ -2005,7 +2058,10 @@ pub(crate) fn next_native(
     death_observed: bool,
 ) -> Value {
     let input = hydrate(input);
-    RUNTIME.with(|rt| rt.borrow_mut().next(selected, &input, death_observed))
+    RUNTIME.with(|rt| {
+        rt.borrow_mut()
+            .next(selected, &input, DeathObservation::Native(death_observed))
+    })
 }
 
 /// Frozen `TELEPORT_MIN_SPAN` (`ClueExecutor.ts:53`).
