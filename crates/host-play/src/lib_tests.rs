@@ -20768,49 +20768,183 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
 }
 
 #[test]
-fn ignored_randoms_skips_flee_but_detect_still_publishes() {
-    // SEC-003: `ignoredRandoms()` remains readable from JS (EventSignal)
-    // but the host knock must not honor it — Load isolates cannot
-    // decline the guardian. Detect still publishes the kind.
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("load isolate starts");
-    // The production knock arm (see the slot thread): always ask the
-    // running slot script; ignore-list is not consulted here.
-    let knock_scripts = Arc::clone(&scripts);
-    let knock_name = "alice".to_string();
-    let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
-        let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
-            return RandomClaim::Host;
-        };
-        let mut slot = slot.lock().unwrap();
-        slot.on_random(ev)
-    };
+fn load_ignored_randoms_decline_only_listed_events() {
+    fn production_knock(
+        scripts: &ScriptWall,
+        name: &str,
+    ) -> impl FnMut(&DetectedRandom) -> RandomClaim {
+        let knock_scripts = Arc::clone(scripts);
+        let knock_name = name.to_owned();
+        move |ev| {
+            let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
+                return RandomClaim::Host;
+            };
+            let Ok(mut slot) = slot.lock() else {
+                return RandomClaim::Host;
+            };
+            slot.on_random(ev)
+        }
+    }
 
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let src =
+        "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
+    {
+        let slot = script_slot_or_insert(&scripts, "alice");
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("load isolate starts");
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        // Test barrier only; the production knock reads the resulting cache.
+        slot.probe("1").expect("the first tick completes");
+        assert_eq!(
+            slot.ignored_randoms(),
+            vec!["SWARM".to_string()],
+            "the cached list preserves the isolate's spelling"
+        );
+    }
+    let mut knock = production_knock(&scripts, "alice");
+    let settings = ProfileSettings::default();
+
+    // The host detector canonicalizes the event label to lower-case; the
+    // frozen `isIgnored` contract matches names case-insensitively.
     let mut c = guardian_client();
     plant_attacking_npc(&mut c, 0, "Swarm");
     plant_positive_hit(&mut c);
     let mut g = Guardian::new();
     let mut drv = GuardRec::default();
-    let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
     assert_eq!(status.kind, Some(api::random::RandomKind::Evade));
     assert_eq!(status.name.as_deref(), Some("swarm"));
-    assert!(status.ours, "detect still publishes the event");
-    assert_eq!(
-        status.claim,
-        RandomClaim::Host,
-        "ignoredRandoms cannot decline the guardian"
+    assert!(
+        status.ours,
+        "the ignored event remains detected and published"
+    );
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(
+        !status.hold,
+        "an ignored event does not safety-hold the slot"
     );
     assert!(
+        drv.walks.is_empty() && drv.menus.is_empty() && drv.actions.is_empty(),
+        "the guardian emits no action for an ignored event"
+    );
+
+    // An unlisted dialog remains host-owned and acted on.
+    let mut c = guardian_client();
+    plant_npc(&mut c, 0, "Genie", Some("Greetings Test!"));
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.name.as_deref(), Some("genie"));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
+        !drv.menus.is_empty(),
+        "the guardian still handles unlisted events"
+    );
+
+    // A non-ignored Load slot keeps the guardian's trapped-Maze hold.
+    let mut c = guardian_client();
+    let player = c.local_player.as_mut().expect("local player");
+    player.entity.x = 45 * 64 * 128 + 64;
+    player.entity.z = 71 * 64 * 128 + 64;
+    player.route_x[0] = 45 * 64;
+    player.route_z[0] = 71 * 64;
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.kind, Some(api::random::RandomKind::Maze));
+    assert_eq!(status.name.as_deref(), Some("maze"));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
+        status.hold,
+        "an unlisted trapped Maze retains its safety hold"
+    );
+
+    // The same exact production knock releases the hold when Maze itself is
+    // listed, while continuing to publish the detected event.
+    let maze_src =
+        "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
+    {
+        let slot = script_slot_or_insert(&scripts, "bob");
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(maze_src.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("maze-ignoring isolate starts");
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("1").expect("the first tick completes");
+        assert_eq!(slot.ignored_randoms(), vec!["MAZE".to_string()]);
+    }
+    let mut maze_knock = production_knock(&scripts, "bob");
+    let mut c = guardian_client();
+    let player = c.local_player.as_mut().expect("local player");
+    player.entity.x = 45 * 64 * 128 + 64;
+    player.entity.z = 71 * 64 * 128 + 64;
+    player.route_x[0] = 45 * 64;
+    player.route_z[0] = 71 * 64;
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut maze_knock));
+    assert_eq!(status.kind, Some(api::random::RandomKind::Maze));
+    assert_eq!(status.name.as_deref(), Some("maze"));
+    assert!(
+        status.ours,
+        "Maze remains detected and published when ignored"
+    );
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(
+        !status.hold,
+        "an explicitly ignored Maze does not safety-hold"
+    );
+    assert!(drv.walks.is_empty() && drv.menus.is_empty() && drv.actions.is_empty());
+
+    // Pausing a Load bot cannot use its cached names to exempt the guardian.
+    {
+        let slot = script_slot(&scripts, "alice").expect("slot remains present");
+        let mut slot = slot.lock().unwrap();
+        slot.pause();
+        assert_eq!(slot.state(), script::RunState::Paused);
+        assert!(!slot.want_run);
+    }
+    let mut c = guardian_client();
+    plant_attacking_npc(&mut c, 0, "Swarm");
+    plant_positive_hit(&mut c);
+    let mut g = Guardian::new();
+    let mut drv = GuardRec::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(
         !drv.walks.is_empty(),
-        "the guardian flees even when the script lists swarm as ignored"
+        "the guardian acts for an inactive bot"
     );
 }
 

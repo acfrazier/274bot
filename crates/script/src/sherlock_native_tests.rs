@@ -8,9 +8,9 @@ use api::obj_names::ItemDefView;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{
-    ActorView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer,
-    LocalPlayerView, NpcView, PlayerView, SnapshotView, StatView, VarpView, WorldStateView,
-    WorldTile,
+    ActorView, ChatLineView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily,
+    ItemContainer, LocalPlayerView, NpcView, PlayerView, SnapshotView, StatView, VarpView,
+    WorldStateView, WorldTile,
 };
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -37,6 +37,15 @@ fn run_key() -> RunKey {
 
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
+}
+
+fn chat_line(sequence: i32, text: &str) -> ChatLineView {
+    ChatLineView {
+        type_: 0,
+        username: None,
+        text: text.into(),
+        sequence,
+    }
 }
 
 fn actor(at: WorldTile) -> ActorView {
@@ -165,6 +174,8 @@ struct World {
     varps: Vec<VarpView>,
     stats: Vec<StatView>,
     local: LocalPlayerView,
+    held: bool,
+    run: RunKey,
 }
 
 impl World {
@@ -232,6 +243,8 @@ impl World {
             varps,
             stats,
             local,
+            held: false,
+            run: run_key(),
         };
         world.refresh();
         world
@@ -263,6 +276,14 @@ impl World {
         });
         self.snapshot.seed_chat_lines(Vec::new());
         self.snapshot.seed_local_player(self.local.clone());
+    }
+    fn set_hitpoints(&mut self, hitpoints: i32) {
+        self.stats
+            .iter_mut()
+            .find(|stat| stat.name == "hitpoints")
+            .expect("hitpoints stat")
+            .effective = hitpoints;
+        self.refresh();
     }
 
     fn set_prayers(&mut self, on: usize) {
@@ -354,7 +375,7 @@ fn with_tick<R>(
 ) -> R {
     let pin = world.data.selected_pin().unwrap();
     let evidence = EvidenceStamp {
-        run: run_key(),
+        run: world.run,
         tick,
         sequence: tick,
     };
@@ -376,7 +397,7 @@ fn with_tick<R>(
             wall_now: Instant::now(),
             ledger,
             budget: &mut budget,
-            eligible: true,
+            eligible: !world.held,
         },
         output: &mut output,
         pairs: None,
@@ -387,7 +408,7 @@ fn with_tick<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&world.data),
                 reach: None,
-                hold: false,
+                hold: world.held,
                 interacts: Some(Vec::new()),
             },
         },
@@ -917,6 +938,79 @@ fn policy_s2_pause_does_not_retain_displaced_ownership() {
 }
 
 #[test]
+fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
+    let mut world = World::new(0);
+    let raised = world
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .unwrap()
+        .clone();
+    world.stats[5].effective = 43;
+    world.stats[5].base = 43;
+    world.prepare_policy_s2_combat();
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    begin_policy_s2_combat(&mut script, &world, &mut ledger);
+    drive(&mut script, &world, &mut ledger, 1)
+        .0
+        .expect("Combat prayer raise");
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            action.effect,
+            HostEffect::Interaction(InteractReq::IfButton { component_id })
+                if component_id == raised.button_com
+        )
+    }));
+    accept_outbox(&mut ledger, 1);
+    world.set_prayer(raised.varp, true);
+    world.prepare_policy_s2_combat();
+    drive(&mut script, &world, &mut ledger, 2)
+        .0
+        .expect("observe the accepted Combat raise");
+    accept_outbox(&mut ledger, 2);
+    assert!(
+        script.hygiene_owned.contains(raised.varp),
+        "the death must settle an actual cached Combat obligation"
+    );
+
+    // Real death turns prayers off. The chat latch cancels the live action
+    // before any future cleanup can mistake a respawned user's raise for it.
+    world.set_hitpoints(0);
+    world.set_prayer(raised.varp, false);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(1, "Oh dear, you are dead!")]);
+    world.held = true;
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, 3);
+    assert_eq!(flow.expect("death tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty());
+    assert!(!live_owner(&ledger), "death revokes the Combat owner");
+
+    world.set_hitpoints(40);
+    world.set_prayer(raised.varp, true);
+    script.interrupt(Interrupt::Pause);
+    world.held = false;
+    for tick in 4..=5 {
+        drive(&mut script, &world, &mut ledger, tick)
+            .0
+            .expect("post-respawn Pause tick");
+        assert!(
+            !ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.iter().any(|action| {
+                    matches!(
+                        action.effect,
+                        HostEffect::Interaction(InteractReq::IfButton { component_id })
+                            if component_id == raised.button_com
+                    )
+                })
+            }),
+            "Pause must not click off the prayer the user raised after respawn"
+        );
+    }
+    assert!(world.prayer_is_on(raised.varp));
+}
+
+#[test]
 fn allocation_counts_by_tick_class() {
     let mut world = World::new(0);
     let mut script = script(&world, false);
@@ -961,4 +1055,161 @@ fn allocation_counts_by_tick_class() {
         report.count_total,
         report.bytes_current
     );
+}
+
+#[test]
+fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    let begun = until_combat(&mut script, &mut world, &mut ledger, 1);
+    let original_token = script.token.expect("guarded clue token");
+    assert!(matches!(script.fight, Some(Fight::Combat(_))));
+
+    // The first observed death signal arrives after effective HP is restored.
+    world.set_hitpoints(40);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(1, "Oh dear, you are dead!")]);
+    world.held = true;
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, begun + 1);
+    assert_eq!(flow.expect("death tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty(), "death emits no clue work");
+    assert!(
+        script.fight.is_none(),
+        "death cancels the active guard action"
+    );
+    assert!(script.token.is_none(), "death ends the current clue token");
+    assert_eq!(script.solved, 0, "death is not a solved clue");
+    assert!(
+        !live_owner(&ledger),
+        "death revokes the guard's action owner"
+    );
+
+    // The same ring entry is a duplicate, not a second death. The held clue
+    // returns to normal processing on the next frame with a fresh token.
+    world.held = false;
+    let (flow, _) = drive(&mut script, &world, &mut ledger, begun + 2);
+    flow.expect("post-death clue tick");
+    let resumed_token = script.token.expect("the held clue starts again");
+    assert_ne!(resumed_token, original_token, "the old token stays ended");
+    assert_eq!(script.solved, 0);
+}
+
+#[test]
+fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    let begun = until_combat(&mut script, &mut world, &mut ledger, 1);
+    let token = script.token.expect("guarded clue token");
+    assert!(matches!(script.fight, Some(Fight::Combat(_))));
+
+    world.set_hitpoints(0);
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, begun + 1);
+    assert_eq!(flow.expect("HP-zero tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty(), "zero HP emits no work");
+    assert_eq!(script.token, Some(token), "HP alone does not end the token");
+    assert!(
+        matches!(script.fight, Some(Fight::Combat(_))),
+        "guard stays paused"
+    );
+    assert_eq!(script.solved, 0, "HP alone does not solve the clue");
+
+    world.set_hitpoints(40);
+    let (flow, _) = drive(&mut script, &world, &mut ledger, begun + 2);
+    flow.expect("recovered tick");
+    assert_eq!(script.token, Some(token), "recovery resumes the same clue");
+    assert_eq!(script.solved, 0);
+}
+
+#[test]
+fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    let begun = 1;
+    let (flow, _) = drive(&mut script, &world, &mut ledger, begun);
+    flow.expect("begin guarded clue tick");
+    let token = script.token.expect("guarded clue token");
+    world.set_hitpoints(0);
+    let original_attack = {
+        let attack = world
+            .stats
+            .iter_mut()
+            .find(|stat| stat.name == "attack")
+            .expect("attack stat");
+        let original = (attack.base, attack.used);
+        attack.base = 0;
+        attack.used = true;
+        original
+    };
+    world.refresh();
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, begun + 1);
+    assert_eq!(
+        flow.expect("partial-stat HP-zero tick"),
+        ScriptFlow::Continue
+    );
+    assert!(interactions.is_empty(), "zero HP emits no work");
+    assert_eq!(
+        script.token,
+        Some(token),
+        "unrelated stat gaps do not end the clue"
+    );
+    assert_eq!(script.solved, 0);
+
+    let attack = world
+        .stats
+        .iter_mut()
+        .find(|stat| stat.name == "attack")
+        .expect("attack stat");
+    attack.base = original_attack.0;
+    attack.used = original_attack.1;
+    world.set_hitpoints(40);
+    let (flow, _) = drive(&mut script, &world, &mut ledger, begun + 2);
+    flow.expect("complete-stat recovered tick");
+    assert_eq!(script.token, Some(token), "recovery resumes the same clue");
+    assert_eq!(script.solved, 0);
+}
+
+#[test]
+fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(10, "Welcome back")]);
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    let _ = drive(&mut script, &world, &mut ledger, 1);
+    let token = script.token.expect("guarded clue token");
+
+    world.run.session += 1;
+    world.snapshot.seed_ingame(0);
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, 2);
+    assert_eq!(flow.expect("inactive reconnect tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty(), "inactive frames emit no work");
+    assert_eq!(
+        script.token,
+        Some(token),
+        "inactive frame preserves the clue"
+    );
+
+    // A replacement chat ring has a lower sequence head. The shared latch
+    // reconciles it and consumes the new death line once on the resumed run.
+    world.refresh();
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(1, "Oh dear, you are dead!")]);
+    let (flow, interactions) = drive(&mut script, &world, &mut ledger, 3);
+    assert_eq!(flow.expect("reconnected death tick"), ScriptFlow::Continue);
+    assert!(interactions.is_empty(), "death emits no clue work");
+    assert!(
+        script.token.is_none(),
+        "reconnected death ends the live token"
+    );
+    assert_eq!(script.solved, 0);
 }
