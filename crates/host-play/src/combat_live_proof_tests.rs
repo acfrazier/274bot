@@ -857,7 +857,7 @@ fn preparation_steps(
             ("prayer", 5, 43),
         ],
         Case::MageAuto | Case::MageManualFallback | Case::MageManualNoFallback => &[
-            ("magic", 7, 35),
+            ("magic", 6, 35),
             ("defence", 1, 40),
             ("hitpoints", 3, 40),
             ("prayer", 5, 43),
@@ -5362,6 +5362,22 @@ fn mage_rune_deltas_count_splashes_and_capture_two_cast_ranges() {
         receipt["seed_rationale"]["previous_seed_maximum_damage"]["warlord_hitpoints"],
         json!(170)
     );
+}
+
+#[test]
+fn every_magic_cell_waits_for_magic_not_cooking_during_staging() {
+    for case in [
+        Case::MageAuto,
+        Case::MageManualFallback,
+        Case::MageManualNoFallback,
+    ] {
+        let steps = preparation_steps(
+            case,
+            IMP_START,
+            Arc::new(Mutex::new(CombatCapture::default())),
+        );
+        assert!(matches!(&steps[0].wait.arm, Proof::Stat { id: 6, min: 35 }));
+    }
 }
 
 #[test]
