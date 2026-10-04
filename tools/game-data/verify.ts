@@ -58,6 +58,25 @@ type PublishedTrioGiverRow = { alias: string; id: number; name: string; spawn?: 
 type PublishedTrioGiverCoverage = { class: string; family: string; alias: string; reason: string };
 /** The published trio_givers family object. */
 type PublishedTrioGivers = { rows: PublishedTrioGiverRow[]; coverage: PublishedTrioGiverCoverage[] };
+type PublishedCombatSpell = {
+    name: string; source_row: string; ssb: number; component_id: number;
+    autocast_selectable: boolean; level: number; impact_spotanim: number;
+    runes: { name: string; count: number }[];
+};
+function isPublishedCombatSpell(value: unknown): value is PublishedCombatSpell {
+    return typeof value === 'object' && value !== null
+        && 'name' in value && typeof value.name === 'string'
+        && 'source_row' in value && typeof value.source_row === 'string'
+        && 'ssb' in value && typeof value.ssb === 'number' && Number.isInteger(value.ssb)
+        && 'component_id' in value && typeof value.component_id === 'number' && Number.isInteger(value.component_id)
+        && 'autocast_selectable' in value && typeof value.autocast_selectable === 'boolean'
+        && 'level' in value && typeof value.level === 'number' && Number.isInteger(value.level)
+        && 'impact_spotanim' in value && typeof value.impact_spotanim === 'number' && Number.isInteger(value.impact_spotanim)
+        && 'runes' in value && Array.isArray(value.runes)
+        && value.runes.every((rune: unknown) => typeof rune === 'object' && rune !== null
+            && 'name' in rune && typeof rune.name === 'string'
+            && 'count' in rune && typeof rune.count === 'number' && Number.isInteger(rune.count));
+}
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
@@ -150,12 +169,18 @@ async function verifyRevision(revision: number) {
     const greenDrops = drops.find((row: any) => row.name === 'Green dragon');
     if (!greenDrops?.items.some((item: any) => item.alias === 'dragonhide_green' && item.id === 1753 && item.name === 'Dragonhide')) throw new Error(`${revision}: Green dragonhide alias/id evidence`);
     if (greenDrops.display_names.includes('Bones') || !greenDrops.display_names.includes('Dragonhide')) throw new Error(`${revision}: Green dragon invented Bones or missing Dragonhide`);
-    const spells = payload.spells ?? [];
-    if (spells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave') throw new Error(`${revision}: named autocast combat spells`);
-    const wind = spells.find((spell: any) => spell.name === 'Wind Strike');
-    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
-    const fireWave = spells.find((spell: any) => spell.name === 'Fire Wave');
-    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
+    const spellInput: unknown = payload.spells ?? [];
+    if (!Array.isArray(spellInput) || !spellInput.every(isPublishedCombatSpell)) throw new Error(`${revision}: malformed combat spells`);
+    const spells: PublishedCombatSpell[] = spellInput;
+    const selectableSpells = spells.filter(spell => spell.autocast_selectable);
+    if (spells.length !== 21 || selectableSpells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave' || selectableSpells.some((spell, index) => spell.ssb !== index)) throw new Error(`${revision}: named combat spells and 16-row chooser`);
+    const manualSpells = spells.filter(spell => !spell.autocast_selectable);
+    if (JSON.stringify(manualSpells.map(spell => spell.source_row)) !== JSON.stringify(['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast']) || manualSpells.some(spell => spell.ssb !== -1 || spell.component_id < 0)) throw new Error(`${revision}: manual spell identities`);
+    if (payload.failed_spell_impact !== 85 || spells.some(spell => spell.impact_spotanim === payload.failed_spell_impact)) throw new Error(`${revision}: splash must remain distinct from successful spell impacts`);
+    const wind = spells.find(spell => spell.name === 'Wind Strike');
+    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
+    const fireWave = spells.find(spell => spell.name === 'Fire Wave');
+    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
     const staves = payload.staves ?? [];
     if (staves.length !== 14) throw new Error(`${revision}: expected 14 staves`);
     const fireProviders = staves.filter((staff: any) => staff.runes.some((rune: any) => rune.name === 'Fire rune')).map((staff: any) => staff.name).sort();
