@@ -310,6 +310,15 @@ journal during the fight. The combat step may declare `"advances": true` once
 the fight and its reward have settled. An ordinary dialogue completion retains
 the normal talk outcome; `expect_combat` does not fabricate a fight.
 
+### Quester combat-owned walks
+
+A `combat` step may declare `cross: ["danger-zone-id"]` and
+`guard: "protect"`, with the same meaning as the `walk` arguments.
+The combat step's return-to-stand and abort walks retain these permissions.
+A non-empty `cross` requires `guard: "protect"`; other guard modes are rejected.
+Omission keeps the existing empty crossing scope and unprotected walk.
+An earlier `walk` step does not grant permissions to the combat step.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
