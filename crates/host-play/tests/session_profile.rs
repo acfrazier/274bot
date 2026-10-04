@@ -2513,8 +2513,8 @@ fn malformed_web_port_does_not_affect_fact_qualification() {
 }
 
 fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {
-    let engine = PathBuf::from("/tmp/274bot-r018-engine.aYl8li");
-    let content = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+    let engine = std::env::var_os("ISOLATED_289_ENGINE_DIR").map(PathBuf::from)?;
+    let content = std::env::var_os("ISOLATED_289_CONTENT_DIR").map(PathBuf::from)?;
     let ready = engine.join("data/config/world.json").is_file()
         && engine.join("data/pack/client/config").is_file()
         && content
@@ -2527,7 +2527,9 @@ fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {
 #[test]
 fn named_local_matching_isolated_ports_attach_lobster_heal12() {
     let Some((engine, content)) = isolated_local_289_tree() else {
-        eprintln!("skip: isolated local-289 engine/content unavailable");
+        eprintln!(
+            "skip: isolated local-289 engine/content unavailable (set ISOLATED_289_ENGINE_DIR and ISOLATED_289_CONTENT_DIR)"
+        );
         return;
     };
     let fixture = Fixture::new();
