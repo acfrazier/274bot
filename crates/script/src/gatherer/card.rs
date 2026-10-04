@@ -169,9 +169,9 @@ fn resolve_site(
                 .iter()
                 .any(|row| row.id.eq_ignore_ascii_case(id))
             {
-                format!("site: {id} is not a {skill} site")
+                format!("{id} is not a {skill} site")
             } else {
-                format!("site: unknown {id}")
+                format!("unknown {id}")
             },
         );
     };
@@ -184,7 +184,7 @@ fn resolve_site(
             })
         })
     }) {
-        return error(format!("site: {id} is not for the selected resources"));
+        return error(format!("{id} is not for the selected resources"));
     }
     (Some(index), None)
 }
@@ -244,14 +244,11 @@ mod tests {
         };
         for (site, message) in [
             ("", "Site location needs a named site"),
-            ("gone", "site: unknown gone"),
-            (
-                "fishing.catherby",
-                "site: fishing.catherby is not a mining site",
-            ),
+            ("gone", "unknown gone"),
+            ("fishing.catherby", "fishing.catherby is not a mining site"),
             (
                 "mining.varrock_east.se",
-                "site: mining.varrock_east.se is not for the selected resources",
+                "mining.varrock_east.se is not for the selected resources",
             ),
         ] {
             let config = prepared_site("Mining", "runite", site, "Site");
