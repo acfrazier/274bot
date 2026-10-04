@@ -1710,6 +1710,7 @@ mod tests {
         snapshot.seed_local_player(LocalPlayerView {
             player: PlayerView {
                 index: 0,
+                network: tile,
                 actor: ActorView {
                     name: Some("alice".into()),
                     actions: Vec::new(),

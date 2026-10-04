@@ -329,7 +329,8 @@ fn actor_onsets_and_player_weapon_rebuild_from_client_fields() {
 }
 
 /// Projectiles are refreshed from the no-generation client list on each
-/// snapshot rebuild, but only rows targeting the local player are retained.
+/// snapshot rebuild. Incoming local-target rows take priority over candidates
+/// whose source tile is the local tile.
 #[test]
 fn projectiles_rebuild_only_local_targets_and_reuse_capacity() {
     let mut client = client_with_npc();
@@ -1319,6 +1320,39 @@ fn npc_face_target_encodes_npc_and_player_kinds() {
             index: 7
         })
     );
+}
+
+#[test]
+fn player_network_tiles_follow_route_heads_not_rendered_poses() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 1;
+    let mut local = ClientPlayer::at(20, 12);
+    local.entity.x = 18 * 128 + 64;
+    local.entity.z = 12 * 128 + 64;
+    c.local_player = Some(local);
+    let mut other = ClientPlayer::at(20, 12);
+    other.entity.x = 17 * 128 + 64;
+    other.entity.z = 12 * 128 + 64;
+    c.players[3] = Some(Box::new(other));
+    c.player_ids[0] = 3;
+    c.player_count = 1;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&c, Family::Player));
+    let local = &snap.local_player().unwrap().player;
+    let remote = &snap.players()[0];
+    let network = WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 1,
+    };
+    assert_eq!(local.network, network);
+    assert_eq!(remote.network, network);
+    assert_eq!(local.actor.tile.x, 3218);
+    assert_eq!(remote.actor.tile.x, 3217);
+    assert_eq!(snap.tile(), Some((network.x, network.z, network.level)));
 }
 
 /// Player rebuild reads the local player (`LocalPlayerView` with energy,

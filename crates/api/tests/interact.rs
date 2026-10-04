@@ -970,6 +970,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
     };
     let player = PlayerView {
         index: 0,
+        network: tile,
         actor: ActorView {
             name: None,
             actions: Vec::new(),

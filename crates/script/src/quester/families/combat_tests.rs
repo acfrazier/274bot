@@ -70,6 +70,34 @@ fn open_tactic_defaults_auto_retaliate_on() {
     assert!(!args.auto_retaliate);
 }
 
+#[test]
+fn ranged_tactic_maps_each_ranged_style_and_defaults_to_rapid() {
+    let tactic = |ranged_style: Option<&str>| {
+        let mut value = serde_json::json!({
+            "kind": "open",
+            "style": "ranged",
+            "engage_radius": 6
+        });
+        if let Some(ranged_style) = ranged_style {
+            value["ranged_style"] = ranged_style.into();
+        }
+        serde_json::from_value::<TacticArgs>(value)
+            .unwrap()
+            .ranged_style
+    };
+
+    assert_eq!(tactic(None), RangedMode::Rapid);
+    assert_eq!(tactic(Some("rapid")), RangedMode::Rapid);
+    assert_eq!(tactic(Some("accurate")), RangedMode::Accurate);
+    assert_eq!(tactic(Some("long_range")), RangedMode::LongRange);
+}
+
+#[test]
+fn ranged_tactic_rejects_a_melee_mode() {
+    assert!(validate_style_options(Style::Ranged, Some(MeleeMode::Accurate)).is_err());
+    assert!(validate_style_options(Style::Melee, Some(MeleeMode::Accurate)).is_ok());
+}
+
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,

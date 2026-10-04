@@ -230,6 +230,22 @@ or TUI pane.
 
 ### Quester combat outcomes
 
+
+Path combat supports `"tactic.style": "ranged"` and
+`"tactic.ranged_style": "rapid"`, `"accurate"`, or `"long_range"`;
+`tactic.ranged_style` defaults to `"rapid"`. `melee_mode` is only valid with
+melee combat and is rejected when the tactic style is ranged.
+
+Ranged launch attribution compares the projectile's source tile with the player's
+packet-time route head (`PlayerView.network`), not its interpolated rendered pose.
+The client does not publish a firing-player index. If another player's network
+tile shares the local network tile,
+matching launches are consumed without counting a confirmed swing; an installed
+fight advances on the weapon-rate clock from the last confirmed launch. Fresh
+launch evidence resumes when the tile is unshared. The post-kill sweep attempts
+at most four ammunition stacks, ignores only the confirmed corpse's residual
+threat row, and aborts for other live threats or a respawn in the same NPC slot.
+
 During a multi-kill combat or acquisition step, status exposes the latest
 completed combat sub-operation, including its end, exact target and evidence
 stamp, even while the enclosing step remains pending. A new receipt publishes

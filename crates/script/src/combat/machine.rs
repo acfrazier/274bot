@@ -50,12 +50,40 @@ struct PendingRow {
     baseline: i16,
     age: u8,
 }
+struct MeleeState {
+    anim_id: i32,
+    anim_frame: i32,
+    mode_fallback: Option<MeleeMode>,
+}
+
+/// NPC type and player name hash are mutually exclusive engagement identities.
+#[derive(Default)]
+enum EngagementIdentity {
+    #[default]
+    None,
+    Npc(i32),
+    Player(Option<i32>),
+}
+
+#[repr(u8)]
+enum StyleState {
+    Melee(MeleeState),
+    Ranged(Box<RangedState>),
+}
+
+struct RangedState {
+    ammo_pick: i32,
+    launch_cycle: i32,
+    pickup_baseline: i32,
+    sweep_attempts: u8,
+    sweep_done: bool,
+}
 /// One shared planner and one host owner. Observation commits are independent
 /// from admitted-operation commits; no-op ticks are real progress.
 pub struct Combat {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
-    player_ident: Option<i32>,
+    identity: EngagementIdentity,
     deadline: Duration,
     pending_walk: Option<NonZeroU64>,
     threats: ThreatSet,
@@ -74,19 +102,14 @@ pub struct Combat {
     raised_prayers: RaisedPrayers,
     eat_ready: u16,
     food_total: u16,
-    mode_fallback: Option<MeleeMode>,
+    style_state: StyleState,
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
     // The remaining bits hold Prep-origin and skipped boost-family masks.
     prep_failures: u64,
     sequence: u64,
     rhand_pick: i32,
-    ammo_pick: i32,
-    engaged_type: i32,
     suspended_type: i32,
     chat_since: i32,
-    // Melee animation identity; ranged uses anim_id as its launch-cycle cursor.
-    anim_id: i32,
-    anim_frame: i32,
     engaged: Option<ActorRef>,
     suspended: Option<ActorRef>,
     end: Option<CombatEnd>,
@@ -116,8 +139,6 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-const AMMO_ATTEMPT_SHIFT: u32 = 56;
-const AMMO_SWEEP_DONE: u64 = 1 << 59;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
@@ -165,10 +186,24 @@ impl NativeMachine for Combat {
         } else {
             request.budget_ticks
         };
+        let style_state = match request.style {
+            Style::Ranged => StyleState::Ranged(Box::new(RangedState {
+                ammo_pick: -1,
+                launch_cycle: -1,
+                pickup_baseline: 0,
+                sweep_attempts: 0,
+                sweep_done: false,
+            })),
+            _ => StyleState::Melee(MeleeState {
+                anim_id: -1,
+                anim_frame: -1,
+                mode_fallback: None,
+            }),
+        };
         let mut machine = Self {
             request,
             tables,
-            player_ident: None,
+            identity: EngagementIdentity::None,
             deadline: cx
                 .active_now()
                 .saturating_add(Duration::from_millis(u64::from(ticks) * 600)),
@@ -179,12 +214,8 @@ impl NativeMachine for Combat {
             counters: Counters::default(),
             sequence: 0,
             rhand_pick: -1,
-            ammo_pick: -1,
-            engaged_type: -1,
             suspended_type: -1,
             chat_since: -1,
-            anim_id: -1,
-            anim_frame: -1,
             engaged: None,
             suspended: None,
             end: None,
@@ -203,7 +234,7 @@ impl NativeMachine for Combat {
             raised_prayers: RaisedPrayers::default(),
             eat_ready: 0,
             food_total: 0,
-            mode_fallback: None,
+            style_state,
             prep_failures: 0,
             phase: Phase::Prep,
             flags: 0,
@@ -368,8 +399,7 @@ impl NativeMachine for Combat {
                         && self.baseline_on & BASELINE_READY != 0
                         && self.sweep.pending_mask() == 0
                         && !self.pending_row(RowKind::Pickup)
-                        && (self.request.style != Style::Ranged
-                            || self.prep_failures & AMMO_SWEEP_DONE != 0)
+                        && (self.request.style != Style::Ranged || self.ranged().sweep_done)
                         && !(self.flags & TERMINAL_FOOD != 0 && self.pending_row(RowKind::Eat))
                         && self
                             .sweep
@@ -434,6 +464,18 @@ impl Combat {
     pub fn engaged(&self) -> Option<ActorRef> {
         self.engaged
     }
+    fn engaged_type(&self) -> i32 {
+        match self.identity {
+            EngagementIdentity::Npc(id) => id,
+            _ => -1,
+        }
+    }
+    fn player_ident(&self) -> Option<i32> {
+        match self.identity {
+            EngagementIdentity::Player(id) => id,
+            _ => None,
+        }
+    }
     fn finish(&mut self, end: CombatEnd, _tick: u16) {
         if self.end.is_some() {
             return;
@@ -448,7 +490,7 @@ impl Combat {
             end: self.end.expect("terminal phase has a latched end"),
             evidence,
             engaged: self.engaged,
-            engaged_npc_type: self.engaged_type,
+            engaged_npc_type: self.engaged_type(),
             ticks: self.counters.ticks,
             swings: self.counters.swings,
             casts: 0,
@@ -464,7 +506,10 @@ impl Combat {
             restorations: self.counters.restorations,
             locked_ticks: self.counters.locked,
             multi_op_plans: self.counters.multi,
-            melee_mode_fallback: self.mode_fallback,
+            melee_mode_fallback: match &self.style_state {
+                StyleState::Melee(state) => state.mode_fallback,
+                StyleState::Ranged(_) => None,
+            },
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
@@ -497,26 +542,24 @@ impl Combat {
         }
         self.engaged = Some(actor);
         self.flags &= !LOST;
-        match actor.kind {
-            ActorKind::Npc => {
-                self.engaged_type = frame
+        self.identity = match actor.kind {
+            ActorKind::Npc => EngagementIdentity::Npc(
+                frame
                     .npcs
                     .iter()
                     .find(|row| row.index == usize::from(actor.index))
                     .and_then(|row| row.r#type)
-                    .map_or(-1, |id| id as i32);
-                self.player_ident = None;
-            }
-            ActorKind::Player => {
-                self.engaged_type = -1;
-                self.player_ident = frame
+                    .map_or(-1, |id| id as i32),
+            ),
+            ActorKind::Player => EngagementIdentity::Player(
+                frame
                     .players
                     .iter()
                     .find(|row| row.index == usize::from(actor.index))
                     .and_then(|row| row.actor.name.as_deref())
-                    .map(select::ident::fnv1a);
-            }
-        }
+                    .map(select::ident::fnv1a),
+            ),
+        };
         self.schedule.interaction = Interaction::Unknown;
         self.resolve_worth(frame);
     }
@@ -530,8 +573,12 @@ impl Combat {
                 })
             })
         });
-        let worth =
-            select::offensives_worth(self.engaged, self.engaged_type, &self.tables, carries_boost);
+        let worth = select::offensives_worth(
+            self.engaged,
+            self.engaged_type(),
+            &self.tables,
+            carries_boost,
+        );
         if worth {
             self.flags |= BOOST_WORTH;
         } else {
@@ -539,7 +586,7 @@ impl Combat {
         }
         if self
             .tables
-            .npc(self.engaged_type)
+            .npc(self.engaged_type())
             .is_some_and(|row| row.dragonfire.is_some())
         {
             self.flags |= SHIELD_OVERRIDE;
@@ -616,7 +663,7 @@ impl Combat {
                         .find(|row| row.index == usize::from(actor.index))
                     {
                         let ty = row.r#type.map_or(-1, |id| id as i32);
-                        let same = ty == self.engaged_type;
+                        let same = ty == self.engaged_type();
                         let listed = match &self.request.target {
                             Target::Npc { types, .. } => types.contains(&ty),
                             _ => same,
@@ -631,7 +678,7 @@ impl Combat {
                                 <= i32::from(self.request.lost_radius);
                         killed = same && row.total_health > 0 && row.health == 0;
                         if present && !same {
-                            self.engaged_type = ty;
+                            self.identity = EngagementIdentity::Npc(ty);
                             self.schedule.interaction = Interaction::Unknown;
                             self.resolve_worth(frame);
                         }
@@ -640,9 +687,9 @@ impl Combat {
                 ActorKind::Player => {
                     if let Some(row) = frame.players.iter().find(|row| {
                         row.index == usize::from(actor.index)
-                            && self.player_ident.is_some()
+                            && self.player_ident().is_some()
                             && row.actor.name.as_deref().map(select::ident::fnv1a)
-                                == self.player_ident
+                                == self.player_ident()
                     }) {
                         present =
                             distance(row.actor.tile, self.request.stand.unwrap_or(frame.here))
@@ -704,7 +751,7 @@ impl Combat {
                 .map(|threat| threat.actor);
             if let Some(actor) = player {
                 self.suspended = self.engaged;
-                self.suspended_type = self.engaged_type;
+                self.suspended_type = self.engaged_type();
                 self.engage(actor, frame);
                 self.counters.intruders = self.counters.intruders.saturating_add(1);
                 self.phase = Phase::Fight;
@@ -905,9 +952,11 @@ impl Combat {
                     }
                 }
                 RowKind::Style if self.request.style == Style::Melee => {
-                    if let Some(mode) = MeleeMode::from_code((row.aux >> 2) & 3) {
-                        self.mode_fallback =
-                            (Some(mode) != self.request.melee_mode).then_some(mode);
+                    if let StyleState::Melee(state) = &mut self.style_state {
+                        if let Some(mode) = MeleeMode::from_code((row.aux >> 2) & 3) {
+                            state.mode_fallback =
+                                (Some(mode) != self.request.melee_mode).then_some(mode);
+                        }
                     }
                 }
                 RowKind::Attack => {
@@ -957,16 +1006,17 @@ impl Combat {
                 self.raised_prayers.accepted(row.varp, false, 0);
             }
         }
-        let onset = if self.request.style == Style::Ranged {
-            ranged::onset(frame, self.engaged, &mut self.anim_id)
-        } else {
-            super::style::melee::onset(
+        let onset = match &mut self.style_state {
+            StyleState::Ranged(state) => {
+                ranged::onset(frame, self.engaged, &mut state.launch_cycle)
+            }
+            StyleState::Melee(state) => super::style::melee::onset(
                 &frame.local.player.actor,
                 self.engaged,
                 &self.tables,
-                &mut self.anim_id,
-                &mut self.anim_frame,
-            )
+                &mut state.anim_id,
+                &mut state.anim_frame,
+            ),
         };
         if onset
             && (!self.schedule.clear_valid
@@ -974,6 +1024,29 @@ impl Combat {
         {
             self.counters.swings = self.counters.swings.saturating_add(1);
             self.schedule.observe_swing(tick, self.rate(frame));
+        }
+        if self.request.style == Style::Ranged
+            && ranged::ambiguous_shooter(frame)
+            && self.schedule.swing_valid
+            && self.schedule.cycle.known
+            && self.schedule.interaction == Interaction::Installed
+            && self.engaged.is_some_and(|actor| {
+                frame
+                    .in_combat
+                    .target
+                    .is_some_and(|target| actor.matches(target))
+            })
+            && reached(tick, self.schedule.cycle.deadline)
+        {
+            // Preserve the last confirmed launch and its counter. While stacked,
+            // only advance the inferred weapon clock, never claim launch evidence.
+            let rate = u16::from(self.rate(frame).max(1));
+            let late = elapsed(tick, self.schedule.cycle.deadline);
+            self.schedule.cycle.deadline = self
+                .schedule
+                .cycle
+                .deadline
+                .wrapping_add((late / rate + 1).wrapping_mul(rate));
         }
         for slot in 0..self.pending.len() {
             let pending = self.pending[slot];
@@ -1019,7 +1092,7 @@ impl Combat {
                                 || (reached(tick, self.schedule.last_clear)
                                     && tick != self.schedule.last_clear))
                     }
-                    RowKind::Pickup => self.ammo_count(frame) > i32::from(pending.baseline),
+                    RowKind::Pickup => self.ammo_count(frame) > self.ranged().pickup_baseline,
                     RowKind::Empty => false,
                 };
             if settled {
@@ -1448,7 +1521,7 @@ impl Combat {
                 self.eat(&mut plan, frame, tick, danger);
             }
             if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
-                self.ranged_sweep(&mut plan, frame, tick, danger, cx);
+                self.ranged_sweep(&mut plan, frame, tick, cx);
             }
             return Ok(plan);
         }
@@ -1840,18 +1913,18 @@ impl Combat {
                 .or_else(|| {
                     (slot == 13
                         && self.request.style == Style::Ranged
-                        && self.ammo_pick >= 0
-                        && Some(self.ammo_pick) != self.desired(3))
-                    .then_some(self.ammo_pick)
+                        && self.ranged().ammo_pick >= 0
+                        && Some(self.ranged().ammo_pick) != self.desired(3))
+                    .then(|| self.ranged().ammo_pick)
                 })
         } else if slot == 3 && self.rhand_pick >= 0 {
             Some(self.rhand_pick)
         } else if slot == 13
             && self.request.style == Style::Ranged
-            && self.ammo_pick >= 0
-            && self.ammo_pick != self.rhand_pick
+            && self.ranged().ammo_pick >= 0
+            && self.ranged().ammo_pick != self.rhand_pick
         {
-            Some(self.ammo_pick)
+            Some(self.ranged().ammo_pick)
         } else {
             None
         }
@@ -1892,20 +1965,18 @@ impl Combat {
         }
     }
 
-    /// The server owns approach/LOS; tactics use this same style range.
-    pub fn attack_range(&self, frame: &Frame<'_>) -> u8 {
-        if self.request.style == Style::Ranged {
-            frame
-                .equipment
-                .iter()
-                .find(|row| row.slot == 3)
-                .and_then(|row| ranged::weapon(&self.tables, row.def.id))
-                .map_or(0, |weapon| {
-                    ranged::range(weapon.attackrange, self.request.ranged_style)
-                })
-        } else {
-            1
-        }
+    fn ranged(&self) -> &RangedState {
+        let StyleState::Ranged(state) = &self.style_state else {
+            unreachable!("ranged mechanics require the ranged style");
+        };
+        state
+    }
+
+    fn ranged_mut(&mut self) -> &mut RangedState {
+        let StyleState::Ranged(state) = &mut self.style_state else {
+            unreachable!("ranged mechanics require the ranged style");
+        };
+        state
     }
 
     fn ammo_count(&self, frame: &Frame<'_>) -> i32 {
@@ -1913,7 +1984,7 @@ impl Combat {
             .inventory
             .iter()
             .chain(frame.equipment)
-            .filter(|row| row.def.id == self.ammo_pick)
+            .filter(|row| row.def.id == self.ranged().ammo_pick)
             .fold(0i32, |count, row| count.saturating_add(row.count))
     }
 
@@ -1988,7 +2059,7 @@ impl Combat {
             );
             return false;
         }
-        self.ammo_pick = ammo.expect("usable ammo");
+        self.ranged_mut().ammo_pick = ammo.expect("usable ammo");
         true
     }
 
@@ -2017,7 +2088,9 @@ impl Combat {
                     .any(|row| row.slot == 3 && row.def.id == id && row.count > 0)
             })
             || !frame.equipment.iter().any(|row| {
-                row.def.id == self.ammo_pick && row.count > 0 && (row.slot == 3 || row.slot == 13)
+                row.def.id == self.ranged().ammo_pick
+                    && row.count > 0
+                    && (row.slot == 3 || row.slot == 13)
             })
         {
             return false;
@@ -2074,7 +2147,6 @@ impl Combat {
         plan: &mut TickPlan,
         frame: &Frame<'_>,
         tick: u16,
-        danger: Option<i32>,
         cx: &ActionContext<'_>,
     ) {
         if self.request.style != Style::Ranged {
@@ -2082,11 +2154,30 @@ impl Combat {
         }
         if self.end != Some(CombatEnd::Killed)
             || self.request.tactic != Tactic::Open
-            || danger != Some(0)
-            || self.ammo_pick < 0
-            || (self.prep_failures >> AMMO_ATTEMPT_SHIFT) & 7 >= 4
+            || self.ranged().ammo_pick < 0
+            || self.ranged().sweep_attempts >= 4
         {
-            self.prep_failures |= AMMO_SWEEP_DONE;
+            self.ranged_mut().sweep_done = true;
+            return;
+        }
+        // Killed is latched from observed zero health, not disappearance. Ignore
+        // its residual event row, but never ignore a respawn reusing the slot.
+        let corpse = self.engaged.filter(|actor| {
+            actor.kind == ActorKind::Npc
+                && !frame.npcs.iter().any(|npc| {
+                    npc.index == usize::from(actor.index)
+                        && (npc.total_health <= 0 || npc.health > 0)
+                })
+        });
+        let danger = self.threats.danger_except(
+            &self.tables,
+            tick,
+            (self.shield(frame), self.antifire(tick)),
+            select::active_protect(frame, &self.tables),
+            corpse,
+        );
+        if danger != Some(0) {
+            self.ranged_mut().sweep_done = true;
             return;
         }
         if self.pending_row(RowKind::Pickup) || !self.schedule.ready(OpKind::Pickup, tick) {
@@ -2100,7 +2191,7 @@ impl Combat {
             .value
             .iter()
             .filter(|row| {
-                row.def.id == self.ammo_pick
+                row.def.id == self.ranged().ammo_pick
                     && row.count > 0
                     && distance(frame.here, row.tile) <= 2
                     && reach
@@ -2111,7 +2202,7 @@ impl Combat {
         if let Some(item) = next {
             self.push(plan, PlanRow::new(RowKind::Pickup, pack_tile(item.tile), 0));
         } else {
-            self.prep_failures |= AMMO_SWEEP_DONE;
+            self.ranged_mut().sweep_done = true;
         }
     }
 
@@ -2181,8 +2272,8 @@ impl Combat {
                     choice.slot | ((choice.actual as u8) << 2),
                 ),
             );
-        } else {
-            self.mode_fallback = (choice.actual != wanted).then_some(choice.actual);
+        } else if let StyleState::Melee(state) = &mut self.style_state {
+            state.mode_fallback = (choice.actual != wanted).then_some(choice.actual);
         }
     }
     fn retaliate(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
@@ -2230,7 +2321,7 @@ impl Combat {
                 .iter()
                 .find(|row| {
                     row.index == usize::from(actor.index)
-                        && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type
+                        && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type()
                 })
                 .map(|row| row.tile),
             ActorKind::Player => frame
@@ -2238,8 +2329,9 @@ impl Combat {
                 .iter()
                 .find(|row| {
                     row.index == usize::from(actor.index)
-                        && self.player_ident.is_some()
-                        && row.actor.name.as_deref().map(select::ident::fnv1a) == self.player_ident
+                        && self.player_ident().is_some()
+                        && row.actor.name.as_deref().map(select::ident::fnv1a)
+                            == self.player_ident()
                 })
                 .map(|row| row.actor.tile),
         }?;
@@ -2316,7 +2408,6 @@ impl Combat {
                 }
                 RowKind::Pickup => {
                     let tile = unpack_tile(row.id);
-                    baselines[index] = self.ammo_count(frame).min(i32::from(i16::MAX)) as i16;
                     InteractReq::Obj {
                         x: tile.x,
                         z: tile.z,
@@ -2325,10 +2416,9 @@ impl Combat {
                             .snapshot()
                             .ground_items()
                             .and_then(|ground| {
-                                ground
-                                    .value
-                                    .iter()
-                                    .find(|item| item.tile == tile && item.def.id == self.ammo_pick)
+                                ground.value.iter().find(|item| {
+                                    item.tile == tile && item.def.id == self.ranged().ammo_pick
+                                })
                             })
                             .ok_or_else(|| unavailable("planned ammo disappeared"))?
                             .def
@@ -2361,7 +2451,7 @@ impl Combat {
                                 .iter()
                                 .find(|row| {
                                     row.index == usize::from(actor.index)
-                                        && row.r#type == usize::try_from(self.engaged_type).ok()
+                                        && row.r#type == usize::try_from(self.engaged_type()).ok()
                                 })
                                 .ok_or_else(|| unavailable("npc identity changed"))?;
                             InteractReq::Npc {
@@ -2380,9 +2470,9 @@ impl Combat {
                                 .iter()
                                 .find(|row| {
                                     row.index == usize::from(actor.index)
-                                        && self.player_ident.is_some()
+                                        && self.player_ident().is_some()
                                         && row.actor.name.as_deref().map(select::ident::fnv1a)
-                                            == self.player_ident
+                                            == self.player_ident()
                                 })
                                 .and_then(|row| row.actor.name.as_deref())
                                 .ok_or_else(|| unavailable("player identity"))?;
@@ -2406,7 +2496,10 @@ impl Combat {
             self.flags &= !PLAN_FIGHT;
         }
         if self.plan.contains(RowKind::Pickup) {
-            self.prep_failures += 1 << AMMO_ATTEMPT_SHIFT;
+            let baseline = self.ammo_count(frame);
+            let state = self.ranged_mut();
+            state.sweep_attempts += 1;
+            state.pickup_baseline = baseline;
         }
         if self.phase == Phase::WindDown && self.plan.contains(RowKind::Eat) {
             self.flags |= TERMINAL_FOOD;

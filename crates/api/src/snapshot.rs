@@ -23,7 +23,8 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
-/// Maximum number of local-target projectiles retained in a snapshot.
+/// Maximum number of projectiles retained per snapshot, including incoming
+/// local-target projectiles and candidates whose source tile is the local tile.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family

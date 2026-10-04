@@ -525,11 +525,26 @@ impl ThreatSet {
         antifire: bool,
         protect: Option<StyleObs>,
     ) -> Option<i32> {
+        self.danger_except(tables, tick, (shield, antifire), protect, None)
+    }
+
+    /// A confirmed corpse can retain an event row until its threat TTL expires.
+    pub(crate) fn danger_except(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        (shield, antifire): (bool, bool),
+        protect: Option<StyleObs>,
+        corpse: Option<ActorRef>,
+    ) -> Option<i32> {
         if self.has_unknown(tick) {
             return None;
         }
         let mut total = 0i32;
-        for threat in self.iter(tick) {
+        for threat in self
+            .iter(tick)
+            .filter(|threat| Some(threat.actor) != corpse)
+        {
             let style = if threat.style == StyleObs::Unknown {
                 threat.fallback_style()
             } else {

@@ -161,6 +161,7 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
     api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
+            network: tile,
             actor: api::snapshot::ActorView {
                 name: None,
                 actions: vec![],
@@ -437,6 +438,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
     s.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
+            network: tile(3077, 3426),
             actor: api::snapshot::ActorView {
                 name: None,
                 actions: vec![],
@@ -1457,6 +1459,7 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
         s.seed_local_player(api::snapshot::LocalPlayerView {
             player: api::snapshot::PlayerView {
                 index: 0,
+                network: tile(3209, 3215),
                 actor: api::snapshot::ActorView {
                     name: None,
                     actions: vec![],
@@ -3304,6 +3307,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
     snapshot.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
+            network: tile(3253, 3401),
             actor: api::snapshot::ActorView {
                 name: None,
                 actions: vec![],

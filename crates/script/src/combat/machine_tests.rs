@@ -344,6 +344,7 @@ impl Scene {
             local: LocalPlayerView {
                 player: PlayerView {
                     index: 1,
+                    network: at,
                     actor: actor(at),
                     combat_level: 60,
                     skill_level: 0,
@@ -562,6 +563,7 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     let mut scene = Scene::new("imp");
     let mut attacker = PlayerView {
         index: 8,
+        network: tile(2601, 3200),
         actor: actor(tile(2601, 3200)),
         combat_level: 60,
         skill_level: 0,
@@ -704,7 +706,7 @@ fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
     scene.refresh();
     assert!(matches!(harness.poll(&scene.snapshot, 2), Poll::Pending));
     assert_ne!(harness.machine.end, Some(CombatEnd::Killed));
-    assert_eq!(harness.machine.engaged_type, other);
+    assert_eq!(harness.machine.engaged_type(), other);
     harness.take();
     scene.npcs[0].r#type = Some(scene.data.npc_by_config("nasty_tree").unwrap().id as usize);
     scene.refresh();
@@ -3582,9 +3584,39 @@ fn ranged_prep_waits_for_style_observation_then_ammo_out_is_explicit() {
 
 #[test]
 fn ranged_winddown_caps_even_unobserved_pickups_at_four() {
+    ranged_winddown_fixture(false, false);
+}
+
+#[test]
+fn ranged_winddown_aborts_for_another_live_threat() {
+    ranged_winddown_fixture(true, false);
+}
+
+#[test]
+fn ranged_winddown_does_not_ignore_a_respawned_target() {
+    ranged_winddown_fixture(false, true);
+}
+
+fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
     let mut scene = Scene::new("cow");
     let ammo = scene.held("steel_arrow", 0);
     let here = scene.local.player.actor.tile;
+    let mut held = ammo.clone();
+    held.count = 40_000;
+    scene.inventory.push(held);
+    scene.npcs[0].health = if respawned { 30 } else { 0 };
+    if other_threat {
+        let mut other = scene.npcs[0].clone();
+        other.index = 8;
+        other.health = 30;
+        other.target = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        });
+        other.in_combat = true;
+        scene.npcs.push(other);
+    }
+    scene.refresh();
     scene
         .snapshot
         .seed_ground_items(vec![api::snapshot::GroundItemView {
@@ -3612,7 +3644,17 @@ fn ranged_winddown_caps_even_unobserved_pickups_at_four() {
         step: vec![0],
         canlight: Vec::new(),
     });
-    harness.machine.ammo_pick = ammo.def.id;
+    harness.machine.ranged_mut().ammo_pick = ammo.def.id;
+    harness.machine.engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    harness.machine.threats.observe_hunt(
+        [(7, scene.npcs[0].r#type.unwrap() as i32, true, 2, 1)],
+        1,
+        &scene.tables,
+        0,
+    );
     harness.machine.finish(CombatEnd::Killed, 0);
     let mut pickups = 0;
     let mut completed = false;
@@ -3640,7 +3682,7 @@ fn ranged_winddown_caps_even_unobserved_pickups_at_four() {
         }
     }
     assert!(completed);
-    assert_eq!(pickups, 4);
+    assert_eq!(pickups, if other_threat || respawned { 0 } else { 4 });
 }
 
 #[test]
@@ -3674,9 +3716,11 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     request.style = Style::Ranged;
     let mut harness = Harness::new(&scene, request);
     attack(harness.pending(&scene, 1));
-    assert_eq!(harness.machine.ammo_pick, id);
+    assert_eq!(harness.machine.ranged().ammo_pick, id);
     assert_eq!(harness.machine.desired(13), None);
     scene.install();
+    // Route-head launch coordinates lead the rendered pose during a chase.
+    scene.local.player.actor.tile.x += 3;
     scene.refresh();
     scene.combat_tab(root);
     assert!(harness.pending(&scene, 2).is_none());
@@ -3695,7 +3739,7 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
             .seed_projectiles(vec![api::snapshot::ProjectileView {
                 spotanim: 9,
                 level: 0,
-                src: scene.local.player.actor.tile,
+                src: scene.local.player.network,
                 target: Some(ActorTargetView {
                     kind: ActorKind::Npc,
                     index: 7,
@@ -3715,5 +3759,92 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     assert_eq!(
         harness.ready(&scene, 203).end,
         CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoAmmo))
+    );
+}
+
+#[test]
+fn ranged_stacked_shooter_uses_rate_clock_then_resumes_launch_evidence() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    scene.equipment.push(bow);
+    scene.install();
+    let mut other = scene.local.player.clone();
+    other.index = 2;
+    // A co-located network shooter can still have a different rendered pose.
+    other.actor.tile.x += 2;
+    scene.players.push(other);
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    let rate = measured_weapon_rate(&harness, &scene);
+    harness.machine.schedule.observe_swing(1, rate);
+    for tick in 2..=30 {
+        let frame = Frame::borrow(SnapshotView::new(
+            Some(&scene.snapshot),
+            harness.runtime.evidence.unwrap(),
+        ))
+        .unwrap();
+        harness.machine.settle(&frame, tick);
+        assert_eq!(harness.machine.schedule.last_swing, 1);
+        assert_eq!(harness.machine.counters.swings, 0);
+        assert!(!harness.machine.schedule.stale_ready(tick, rate));
+        assert!(!reached(tick, harness.machine.schedule.cycle.deadline));
+    }
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            src: scene.local.player.actor.tile,
+            level: scene.local.player.actor.tile.level,
+            target: scene.local.player.actor.target,
+            t1: 32,
+            t2: 40,
+        }]);
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 31);
+    assert_eq!(harness.machine.ranged().launch_cycle, 32);
+    assert_eq!(harness.machine.counters.swings, 0);
+    scene.snapshot.seed_players(Vec::new());
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 32);
+    assert_eq!(
+        harness.machine.counters.swings, 0,
+        "old ambiguous launch stays consumed"
+    );
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            src: scene.local.player.actor.tile,
+            level: scene.local.player.actor.tile.level,
+            target: scene.local.player.actor.target,
+            t1: 35,
+            t2: 45,
+        }]);
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 33);
+    assert_eq!(harness.machine.counters.swings, 1);
+    assert_eq!(harness.machine.schedule.last_swing, 33);
+    assert_eq!(
+        harness.machine.schedule.cycle.deadline,
+        33 + u16::from(rate)
     );
 }

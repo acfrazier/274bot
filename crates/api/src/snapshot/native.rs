@@ -777,6 +777,11 @@ mod tests {
         snapshot.seed_local_player(super::super::LocalPlayerView {
             player: super::super::PlayerView {
                 index: 7,
+                network: super::super::WorldTile {
+                    x: 3205,
+                    z: 3405,
+                    level: 1,
+                },
                 actor: super::super::ActorView {
                     name: Some("alice".into()),
                     actions: Vec::new(),

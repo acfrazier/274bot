@@ -2006,26 +2006,40 @@ fn is_take_of_alias(action: &Value, alias: &str) -> bool {
             .is_some_and(|debug| normalized_name(debug).contains(&expected))
 }
 
-fn ranged_pickup_count(action: &Value, ammo_id: i32) -> Option<i64> {
+fn ranged_pickup_count(action: &Value, after: &Value, ammo_id: i32) -> Option<i64> {
     let request = &action["request"];
     let (x, z, level) = (
         request["x"].as_i64()?,
         request["z"].as_i64()?,
         request["level"].as_i64()?,
     );
-    let mut count = 0_i64;
-    let mut found = false;
-    for item in action["snapshot"]["ground_items"].as_array()? {
-        if item["id"].as_i64() == Some(i64::from(ammo_id))
-            && item["tile"]["x"].as_i64() == Some(x)
-            && item["tile"]["z"].as_i64() == Some(z)
-            && item["tile"]["level"].as_i64() == Some(level)
-        {
-            count = count.checked_add(item["count"].as_i64()?)?;
-            found = true;
+    let stacks = |frame: &Value| -> Option<Vec<i64>> {
+        let mut counts = Vec::new();
+        for item in frame["ground_items"].as_array()? {
+            if item["id"].as_i64() == Some(i64::from(ammo_id))
+                && item["tile"]["x"].as_i64() == Some(x)
+                && item["tile"]["z"].as_i64() == Some(z)
+                && item["tile"]["level"].as_i64() == Some(level)
+            {
+                counts.push(item["count"].as_i64()?);
+            }
         }
+        counts.sort_unstable();
+        Some(counts)
+    };
+    let before = stacks(&action["snapshot"])?;
+    let after = stacks(after)?;
+    // One Take removes one stack, not every same-ID stack on its tile.
+    // Compare independent ground observations; do not infer units from inventory.
+    if before.len() != after.len() + 1 {
+        return None;
     }
-    found.then_some(count)
+    let removed = before
+        .iter()
+        .zip(&after)
+        .position(|(before, after)| before != after)
+        .unwrap_or(after.len());
+    (before[removed] > 0 && before[removed + 1..] == after[removed..]).then_some(before[removed])
 }
 
 fn ranged_dart_count_steps(
@@ -2076,6 +2090,26 @@ fn ranged_dart_count_steps(
         .collect()
 }
 
+fn ranged_corpse_frame<'a>(capture: &'a CombatCapture, report: &Value) -> Option<&'a Value> {
+    let index = integer(report, "combat_engaged_index")?;
+    let kind = integer(report, "combat_engaged_npc_type")?;
+    let start = capture.start_baseline.as_ref()?["tick"].as_i64()?;
+    let end = integer(report, "combat_evidence_tick")?;
+    capture.frames.iter().find(|frame| {
+        frame["tick"]
+            .as_i64()
+            .is_some_and(|tick| (start..=end).contains(&tick))
+            && frame["nearby_npcs"].as_array().is_some_and(|npcs| {
+                npcs.iter().any(|npc| {
+                    npc["index"].as_i64() == Some(index)
+                        && npc["type"].as_i64() == Some(kind)
+                        && npc["health"] == json!(0)
+                        && npc["total_health"].as_i64().is_some_and(|total| total > 0)
+                })
+            })
+    })
+}
+
 fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> Value {
     let Some(selected) = ranged_selected_event(capture) else {
         return json!({"valid": false, "error": "selected ranged fact receipt missing"});
@@ -2089,12 +2123,14 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
     let Some(final_frame) = capture.frames.last() else {
         return json!({"valid": false, "error": "terminal item frame missing"});
     };
-    let Some(killed_tick) = integer(report, "combat_evidence_tick") else {
-        return json!({"valid": false, "error": "Killed evidence tick missing"});
+    let Some(corpse_frame) = ranged_corpse_frame(capture, report) else {
+        return json!({"valid": false, "error": "observed target corpse missing"});
     };
+    let killed_tick = corpse_frame["tick"].as_i64().unwrap();
     let ammo_id = ammo_id as i32;
     let ammo_start = item_count(start, ammo_id) + equipment_count(start, ammo_id);
     let ammo_final = item_count(final_frame, ammo_id) + equipment_count(final_frame, ammo_id);
+    let ammo_at_kill = item_count(corpse_frame, ammo_id) + equipment_count(corpse_frame, ammo_id);
     let (_, ammo_alias) = ranged_aliases(case);
     let launches = ranged_launches(capture);
     let dart_count_steps = if case == Case::R3 {
@@ -2124,7 +2160,13 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
     ];
     let pickup_counts = pickups
         .iter()
-        .map(|action| ranged_pickup_count(action, ammo_id))
+        .enumerate()
+        .map(|(index, action)| {
+            let after = pickups
+                .get(index + 1)
+                .map_or(final_frame, |next| &next["snapshot"]);
+            ranged_pickup_count(action, after, ammo_id)
+        })
         .collect::<Vec<_>>();
     let pickup_counts_valid = pickup_counts
         .iter()
@@ -2148,10 +2190,15 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
     }) && pickup_counts_valid;
     let expected_final = swept_units.map(|swept| ammo_start - launches.len() as i64 + swept);
     let count_matches_launches = expected_final == Some(ammo_final);
-    let pickup_limit = case != Case::R1 || pickups.len() <= 4;
+    let pickup_limit = pickups.len() <= 4;
+    // These cells must exercise the sweep, not pass vacuously with ground ammo.
+    let sweep_observed = !pickups.is_empty()
+        && swept_units.is_some_and(|units| units > 0)
+        && ammo_final > ammo_at_kill;
     let valid = !launches.is_empty()
         && count_matches_launches
         && pickup_limit
+        && sweep_observed
         && pickup_after_kill
         && pickup_plan_valid
         && dart_count_per_launch;
@@ -2163,6 +2210,9 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
         "pickup_actions": pickups,
         "pickup_count": pickups.len(),
         "pickup_limit_valid": pickup_limit,
+        "sweep_observed": sweep_observed,
+        "corpse_tick": killed_tick,
+        "held_count_at_kill": ammo_at_kill,
         "pickup_stack_counts": pickup_counts,
         "swept_units": swept_units,
         "all_pickups_after_kill": pickup_after_kill,
@@ -2229,7 +2279,7 @@ fn ranged_ready(case: Case, capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);
     report["fields"]["combat_engaged_index"].as_i64() == Some(spawned_index)
         && report["fields"]["combat_engaged_npc_type"] == json!(WARLORD_NPC_ID)
-        && every_killed_report_has_corpse(capture)
+        && ranged_corpse_frame(capture, report).is_some()
         && attacks_target_spawn
         && launches_match_report
         && ranged_style_prep_ok(case, capture)
@@ -2289,7 +2339,7 @@ fn ranged_receipt(case: Case, capture: &CombatCapture) -> Value {
         "protect_before_first_onset_plus_two": protection_timing_ok(capture),
         "restoration_runs": report.is_some_and(|report| m2_restoration_runs_ok(capture, report)),
         "batch_plan_contract": batch_plan_contract(capture, &plans),
-        "corpse_for_every_kill": every_killed_report_has_corpse(capture),
+        "corpse_for_kill": report.is_some_and(|report| ranged_corpse_frame(capture, report).is_some()),
         "ready": ranged_ready(case, capture),
     })
 }
@@ -5352,9 +5402,73 @@ fn ranged_ammo_sweep_counts_targeted_ground_stack_units() {
             {"id": 882, "count": 5, "tile": {"x": 2639, "z": 3224, "level": 0}},
         ]},
     });
-    assert_eq!(ranged_pickup_count(&action, 882), Some(3));
-    assert_eq!(ranged_pickup_count(&action, 883), Some(7));
-    assert_eq!(ranged_pickup_count(&action, 884), None);
+    let after = json!({"ground_items": [
+        {"id": 883, "count": 7, "tile": {"x": 2638, "z": 3224, "level": 0}},
+        {"id": 882, "count": 5, "tile": {"x": 2639, "z": 3224, "level": 0}}
+    ]});
+    assert_eq!(ranged_pickup_count(&action, &after, 882), Some(3));
+    assert_eq!(ranged_pickup_count(&action, &after, 883), None);
+    assert_eq!(ranged_pickup_count(&action, &after, 884), None);
+}
+
+#[test]
+fn ranged_ammo_sweep_does_not_double_count_same_tile_stacks() {
+    let stack = |count| {
+        json!({
+            "id": 886, "count": count, "tile": {"x": 2600, "z": 3372, "level": 0}
+        })
+    };
+    let mut action = json!({
+        "request": {"x": 2600, "z": 3372, "level": 0},
+        "snapshot": {"ground_items": [stack(24), stack(22)]}
+    });
+    let after = json!({"ground_items": [stack(22)]});
+    assert_eq!(ranged_pickup_count(&action, &after, 886), Some(24));
+    assert_eq!(ranged_pickup_count(&action, &action["snapshot"], 886), None);
+    assert_eq!(
+        ranged_pickup_count(&action, &json!({"ground_items": []}), 886),
+        None
+    );
+    action["snapshot"] = after;
+    assert_eq!(
+        ranged_pickup_count(&action, &json!({"ground_items": []}), 886),
+        Some(22)
+    );
+}
+
+#[test]
+fn ranged_sweep_requires_pickups_and_uses_the_observed_corpse_baseline() {
+    let mut capture = CombatCapture::default();
+    capture.start_baseline = Some(json!({"tick": 10, "inventory": [{"id": 882, "count": 20}]}));
+    capture.random_events.push(json!({
+        "kind": "RangedSelectedFacts", "ammo_obj_id": 882
+    }));
+    let corpse = json!({
+        "tick": 12,
+        "inventory": [{"id": 882, "count": 19}],
+        "nearby_npcs": [{"index": 7, "type": 81, "health": 0, "total_health": 10}],
+        "ground_items": [{"id": 882, "count": 1}]
+    });
+    capture.frames.extend([
+        corpse.clone(),
+        json!({
+            "tick": 15, "inventory": [{"id": 882, "count": 19}], "nearby_npcs": []
+        }),
+    ]);
+    let report = json!({"fields": {
+        "combat_engaged_index": 7, "combat_engaged_npc_type": 81, "combat_evidence_tick": 15
+    }});
+    assert_eq!(ranged_corpse_frame(&capture, &report), Some(&corpse));
+    for case in [Case::R1, Case::R3] {
+        let receipt = ranged_ammo_receipt(case, &capture, &report);
+        assert_eq!(receipt["corpse_tick"], json!(12));
+        assert_eq!(receipt["held_count_at_kill"], json!(19));
+        assert_eq!(receipt["pickup_count"], json!(0));
+        assert_eq!(receipt["sweep_observed"], json!(false));
+        assert_eq!(receipt["valid"], json!(false));
+    }
+    capture.frames[0]["nearby_npcs"][0]["type"] = json!(82);
+    assert!(ranged_corpse_frame(&capture, &report).is_none());
 }
 
 #[test]

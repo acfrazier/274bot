@@ -39,21 +39,37 @@ pub fn rate(base: u8, mode: RangedMode) -> u8 {
     }
 }
 
-pub fn range(base: u8, mode: RangedMode) -> u8 {
-    base.min(10)
-        .saturating_add(if mode == RangedMode::LongRange { 2 } else { 0 })
-        .min(10)
-}
-
 /// Consume the published launch, never a later hit-bar mask. `t1` identifies the
 /// projectile but marks flight start (41 cycles after a bow launch, 32 thrown).
-/// Waiting for `t1` would lose launches whose shooter moves before flight starts.
+/// The client records the source tile, not the firing player index; a co-located
+/// player therefore makes a tile-matched launch ambiguous.
+fn another_player_at_tile(
+    mut players: impl Iterator<Item = (usize, api::snapshot::WorldTile)>,
+    local_index: usize,
+    here: api::snapshot::WorldTile,
+) -> bool {
+    players.any(|(index, tile)| index != local_index && tile == here)
+}
+
+pub fn ambiguous_shooter(frame: &Frame<'_>) -> bool {
+    another_player_at_tile(
+        frame
+            .players
+            .iter()
+            .map(|player| (player.index, player.network)),
+        frame.me(),
+        frame.local.player.network,
+    )
+}
+
 pub fn onset(frame: &Frame<'_>, engaged: Option<ActorRef>, seen: &mut i32) -> bool {
+    // Waiting for `t1` itself would lose launches whose shooter moves before
+    // flight starts.
     let launch = frame
         .projectiles
         .iter()
         .filter(|projectile| {
-            projectile.src == frame.here
+            projectile.src == frame.local.player.network
                 && engaged.is_some_and(|actor| {
                     projectile
                         .target
@@ -65,6 +81,16 @@ pub fn onset(frame: &Frame<'_>, engaged: Option<ActorRef>, seen: &mut i32) -> bo
         })
         .map(|projectile| projectile.t1)
         .max();
+
+    // Consume matching evidence while ambiguous so it cannot be re-attributed
+    // after the other player leaves; it is not a confirmed local launch.
+    if ambiguous_shooter(frame) {
+        if let Some(launch) = launch {
+            *seen = launch;
+        }
+        return false;
+    }
+
     if let Some(launch) = launch {
         *seen = launch;
         true
@@ -77,13 +103,37 @@ pub fn onset(frame: &Frame<'_>, engaged: Option<ActorRef>, seen: &mut i32) -> bo
 mod tests {
     use super::*;
 
+    fn same_tile_players() -> impl Iterator<Item = (usize, api::snapshot::WorldTile)> {
+        let here = api::snapshot::WorldTile {
+            x: 2600,
+            z: 3370,
+            level: 0,
+        };
+        [(7, here), (12, here)].into_iter()
+    }
+
     #[test]
-    fn rapid_and_long_range_respect_engine_limits() {
-        assert_eq!(rate(4, RangedMode::Rapid), 3);
-        assert_eq!(rate(3, RangedMode::Rapid), 2);
-        assert_eq!(rate(4, RangedMode::Accurate), 4);
-        assert_eq!(range(7, RangedMode::LongRange), 9);
-        assert_eq!(range(10, RangedMode::LongRange), 10);
-        assert_eq!(range(12, RangedMode::Rapid), 10);
+    fn another_player_on_local_tile_makes_launch_attribution_ambiguous() {
+        let here = api::snapshot::WorldTile {
+            x: 2600,
+            z: 3370,
+            level: 0,
+        };
+        assert!(another_player_at_tile(same_tile_players(), 7, here));
+    }
+
+    #[test]
+    fn local_index_is_not_treated_as_another_shooter() {
+        let here = api::snapshot::WorldTile {
+            x: 2600,
+            z: 3370,
+            level: 0,
+        };
+        assert!(!another_player_at_tile([(7, here)].into_iter(), 7, here));
+        assert!(!another_player_at_tile(
+            [(12, api::snapshot::WorldTile { x: 2601, ..here })].into_iter(),
+            7,
+            here
+        ));
     }
 }
