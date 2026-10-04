@@ -149,7 +149,6 @@ fn blocked_end(token: u64) -> GatherEnd {
         failure: GatherFailure {
             code: Arc::from("route-blocked"),
             message: Arc::from("path is blocked"),
-            retryable: true,
         },
         counts: GatherCounts {
             yielded: 11,
@@ -217,7 +216,6 @@ fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
             1,
             None,
             None,
-            false,
             counts,
         ),
         (
@@ -226,14 +224,12 @@ fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
                 failure: GatherFailure {
                     code: Arc::from("blocked"),
                     message: Arc::from("path closed"),
-                    retryable: true,
                 },
                 counts,
             },
             2,
             Some("blocked"),
             Some("path closed"),
-            true,
             counts,
         ),
         (
@@ -244,7 +240,6 @@ fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
             3,
             None,
             Some("invalid-settings"),
-            false,
             GatherCounts::default(),
         ),
         (
@@ -256,12 +251,11 @@ fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
             4,
             None,
             Some("preparation failed"),
-            false,
             counts,
         ),
     ];
 
-    for (end, expected_end, code, message, retryable, expected_counts) in cases {
+    for (end, expected_end, code, message, expected_counts) in cases {
         let (bytes, _) = encode_snapshot_delta_with_native(
             None,
             &empty_input(1),
@@ -274,7 +268,6 @@ fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
         assert_eq!(outcome.end(), expected_end);
         assert_eq!(outcome.code(), code);
         assert_eq!(outcome.message(), message);
-        assert_eq!(outcome.retryable(), retryable);
         assert_eq!(
             (
                 outcome.yielded(),
@@ -440,7 +433,6 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
     );
     assert_eq!(outcome.code(), Some("route-blocked"));
     assert_eq!(outcome.message(), Some("path is blocked"));
-    assert!(outcome.retryable());
     observed::apply(&outcome_view);
     fingerprint = next;
 

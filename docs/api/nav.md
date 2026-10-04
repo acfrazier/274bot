@@ -518,14 +518,14 @@ are also outside this takeover rule, and standalone client-window input is not
 claimed.
 
 Quester treats a refused native walk as the owning step's terminal. A
-`Failed`, `Blocked`, or `Refused` walk receipt parks the step as `Blocked`;
-missing quest evidence also parks it with the required gates in the reason.
-This applies to explicit walk steps and the approach walks inside talk,
-interact, use-on, bank, buy, and make steps. The step does not silently queue
-the same route again or advance to the interaction. Explicit **Retry** or
-**Read Journal** (which retries a parked Quester) re-arms a refused approach.
-The host and native action still publish one correlated receipt for the
-original request.
+`Failed`, `Blocked`, or `Refused` walk receipt sets that step to `Blocked`;
+missing quest evidence blocks it with the required gates in the reason. This
+applies to explicit walk steps and approach walks inside talk, interact,
+use-on, bank, buy, and make steps. The step does not silently queue the same
+route again or advance to its interaction. A terminal blocked Quester run
+requires an explicit Start; **Read Journal** cannot revive the old run. The
+host and native action still publish one correlated receipt for the original
+request.
 
 ## Traveller (`nav::traveller`)
 

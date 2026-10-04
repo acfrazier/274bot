@@ -2543,13 +2543,12 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "supply-missing");
     assert!(failure.message.to_ascii_lowercase().contains("axe"));
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
     slot.stop();
 }
 
 #[test]
-fn refused_death_return_retry_and_recreation_resume_retained_steps() {
+fn death_return_and_recreation_resume_retained_live_steps() {
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2588,35 +2587,10 @@ fn refused_death_return_retry_and_recreation_resume_retained_steps() {
         &fresh_authority,
         fresh_request,
         now,
-        script::native::WalkEnd::Refused,
-    );
-    now += 1;
-    tick(&mut slot, &death, now);
-    let status = slot.native_status().unwrap();
-    assert_eq!(status.phase, NativePhase::Blocked);
-    let failure = status.failure.as_ref().unwrap();
-    assert_eq!(failure.code.as_ref(), "return-failed");
-    assert!(failure.retryable);
-    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
-
-    slot.retry_compiled(slot.native_run().unwrap())
-        .expect("Retry consents to the retained return");
-    let (retry_authority, retry_request, effect) = next_trip_effect(&mut slot, &death, &mut now);
-    let HostEffect::Walk(request) = effect else {
-        panic!("Retry must resume recovery at step 5")
-    };
-    assert_resource_return(&selected, &request, anchor);
-    assert_eq!(request.target, return_target);
-    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
-    let mut returned = lifecycle_frame_copy(&death);
-    trip_position(&mut returned, request.target);
-    complete_lifecycle_walk(
-        &mut slot,
-        &retry_authority,
-        retry_request,
-        now,
         script::native::WalkEnd::Arrived,
     );
+    let mut returned = lifecycle_frame_copy(&death);
+    trip_position(&mut returned, return_target);
     now += 1;
     tick(&mut slot, &returned, now);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
@@ -2654,6 +2628,58 @@ fn refused_death_return_retry_and_recreation_resume_retained_steps() {
         "recovered after death 1"
     );
     slot.stop();
+}
+
+#[test]
+fn death_return_refused_stops_terminally_with_reason() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4413, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Refused,
+    );
+
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "return-failed");
+    assert!(
+        failure.message.contains("Refused")
+            && failure
+                .message
+                .contains("arrival at the resource observation stand must be observed"),
+        "terminal status retains the return refusal reason: {}",
+        failure.message
+    );
+    assert_eq!(slot.state(), script::RunState::Idle);
+    assert!(slot.native_run().is_none());
+    assert!(!slot.has_native_actions());
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.reason),
+        Some(failure.message.to_string())
+    );
+    assert!(slot.restart_from_identity(Instant::now()).is_err());
 }
 
 #[test]
@@ -2738,13 +2764,12 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "max-deaths");
-    assert!(!failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 3);
     slot.stop();
 }
 
 #[test]
-fn stop_policy_is_explicit_and_retry_consents_to_recovery() {
+fn stop_death_policy_terminates_the_recovery_run() {
     let selected = selected();
     let mut settings = SettingsBag::new();
     settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
@@ -2759,20 +2784,15 @@ fn stop_policy_is_explicit_and_retry_consents_to_recovery() {
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died");
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
 
-    slot.retry_compiled(slot.native_run().unwrap())
-        .expect("Retry explicitly consents to recovery");
+    assert_eq!(slot.state(), script::RunState::Idle);
+    assert!(slot.native_run().is_none());
     for now in 3..=6 {
         tick(&mut slot, &death, now);
-        if lifecycle_status_integer(&slot, "recovery_step") == 2 {
-            break;
-        }
     }
-    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
-    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
-    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 2);
+    assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
+    assert!(!slot.want_run);
     slot.stop();
 }
 
@@ -2960,7 +2980,6 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
     let status = slot.native_status().unwrap();
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died-again");
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
     assert!(!slot.has_native_actions());
@@ -3005,4 +3024,41 @@ fn recovery_return_reconnect_on_another_plane_keeps_the_retained_resource_area()
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
     assert!(slot.native_status().unwrap().failure.is_none());
     slot.stop();
+}
+
+#[test]
+fn refused_death_return_stops_and_cannot_be_recreated() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let mut slot = started(4410, &selected);
+    tick(&mut slot, &initial, 1);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    let mut now = 2;
+    tick(&mut slot, &death, now);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Refused,
+    );
+    tick(&mut slot, &death, now + 1);
+    assert_eq!(slot.state(), script::RunState::Idle);
+    assert!(!slot.want_run);
+    assert!(slot.native_run().is_none());
+    assert!(!authority.live());
+    assert!(!slot.has_native_actions());
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "return-failed"
+    );
+    assert!(slot.restart_from_identity(Instant::now()).is_err());
+    tick(&mut slot, &death, now + 2);
+    assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
 }

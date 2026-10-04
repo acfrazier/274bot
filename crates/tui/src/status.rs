@@ -289,12 +289,12 @@ mod tests {
         assert!(text.contains("last error: code 5"), "{text:?}");
     }
     #[test]
-    fn native_queue_refusal_precedes_routine_status_rows() {
+    fn stopped_native_queue_refusal_precedes_routine_status_rows() {
         let detail = SlotDetail {
             row: FleetRow {
                 name: "qs-alice".into(),
                 phase: Phase::Ready,
-                script: script::RunState::Running,
+                script: script::RunState::Idle,
                 ..FleetRow::default()
             },
             state: "ingame scene 2".into(),
@@ -313,13 +313,12 @@ mod tests {
                     code: "empty-queue".into(),
                     message: "no quests selected; review Script prefs and Skip, then Stop/Start"
                         .into(),
-                    retryable: true,
                 }),
             })),
             ..SlotDetail::default()
         };
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
-        assert!(text.contains("script: blocked"), "{text:?}");
+        assert!(text.contains("script: stopped (blocked)"), "{text:?}");
         assert!(text.contains("no quests selected"), "{text:?}");
         assert!(
             text.contains("Script prefs and Skip, then Stop/Start"),

@@ -16,7 +16,6 @@ impl Script for Reader {
             return Err(ScriptFailure {
                 code: "forced".into(),
                 message: "forced read failure".into(),
-                retryable: false,
             });
         }
         if let Some(handle) = &self.handle {
@@ -25,7 +24,6 @@ impl Script for Reader {
                 result.map_err(|error| ScriptFailure {
                     code: "read".into(),
                     message: format!("{error:?}").into(),
-                    retryable: false,
                 })?;
                 return Ok(ScriptFlow::Complete);
             }
@@ -42,7 +40,6 @@ impl Script for Reader {
                     .map_err(|error| ScriptFailure {
                         code: "begin".into(),
                         message: format!("{error:?}").into(),
-                        retryable: false,
                     })?,
             );
         }

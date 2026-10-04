@@ -102,7 +102,6 @@ impl Script for WalkerScript {
             return Ok(ScriptFlow::Blocked(ScriptFailure {
                 code: "test-blocked".into(),
                 message: "blocked by the card".into(),
-                retryable: true,
             }));
         }
         Ok(ScriptFlow::Continue)
@@ -474,6 +473,11 @@ fn a_blocked_tick_dispatches_no_native_walk() {
     rig.observe(1);
     assert_eq!(rig.shared.lock().begun, 1, "the tick began a walk");
     assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Idle,
+        "terminal Blocked uses Stop, not a running dispatch hold"
+    );
+    assert_eq!(
         rig.slot().lock().unwrap().native_status().unwrap().phase,
         script::native::NativePhase::Blocked
     );
@@ -494,6 +498,22 @@ fn blocking_mid_walk_stops_the_follow() {
     assert_eq!(rig.driver.walked, Some((4, 0)));
     rig.shared.lock().blocked = true;
     rig.observe(2);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    assert!(!rig.slot().lock().unwrap().want_run);
+    assert!(rig.slot().lock().unwrap().native_run().is_none());
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .native_status()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .message
+            .as_ref(),
+        "blocked by the card"
+    );
     rig.driver.walked = None;
     rig.step();
     assert_eq!(queued(&rig.navs), None, "Blocked revokes the follow");
@@ -504,6 +524,89 @@ fn blocking_mid_walk_stops_the_follow() {
         .unwrap()
         .native_quiet_read(Instant::now())
         .is_none());
+}
+#[test]
+fn terminal_blocked_resets_all_navigation_once_per_generation() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.shared.lock().blocked = true;
+    rig.observe(4);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    let generation = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .terminal_lifecycle_generation()
+        .expect("Blocked records a Failed lifecycle");
+    let (route_generation, walk_outcome_seq) = {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.inspect.generation = 9;
+        bot.inspect.pending_id = 17;
+        bot.bank_pick.posted = script::isolate_fb::BankSelectionInput {
+            request_id: 23,
+            generation: 4,
+            bank_index: 2,
+            kind: 1,
+        };
+        bot.duel_offer_partner = Some("Old partner".into());
+        bot.walk_outcome_seq = 31;
+        bot.walk_outcome_failed = true;
+        bot.walk_outcome_blocked = true;
+        (bot.route_generation, bot.walk_outcome_seq)
+    };
+
+    rig.observe(5);
+    let (reset_route_generation, reset_inspect_generation, reset_walk_outcome_seq) = {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        assert_eq!(bot.route_generation, route_generation.wrapping_add(1));
+        assert_eq!(bot.inspect.generation, 10);
+        assert_eq!(bot.inspect.pending_id, 0);
+        assert_eq!(
+            bot.bank_pick.posted,
+            script::isolate_fb::BankSelectionInput::default()
+        );
+        assert_eq!(bot.duel_offer_partner, None);
+        assert!(!bot.walk_outcome_failed);
+        assert!(!bot.walk_outcome_blocked);
+        assert_eq!(bot.walk_outcome_seq, walk_outcome_seq.wrapping_add(1));
+        assert!(bot.walk_guard.is_none());
+        assert!(bot.walk_guard_off.is_some());
+        assert_eq!(bot.terminal_nav_reset_generation, Some(generation));
+
+        let sentinel = script::isolate_fb::BankSelectionInput {
+            request_id: 29,
+            generation: 5,
+            bank_index: 3,
+            kind: 2,
+        };
+        bot.inspect.pending_id = 99;
+        bot.bank_pick.posted = sentinel;
+        bot.duel_offer_partner = Some("Later partner".into());
+        (
+            bot.route_generation,
+            bot.inspect.generation,
+            bot.walk_outcome_seq,
+        )
+    };
+    rig.observe(6);
+    let navs = rig.navs.lock().unwrap();
+    let bot = navs.get("alice").unwrap();
+    assert_eq!(bot.route_generation, reset_route_generation);
+    assert_eq!(bot.inspect.generation, reset_inspect_generation);
+    assert_eq!(bot.inspect.pending_id, 99);
+    assert_eq!(
+        bot.bank_pick.posted,
+        script::isolate_fb::BankSelectionInput {
+            request_id: 29,
+            generation: 5,
+            bank_index: 3,
+            kind: 2,
+        }
+    );
+    assert_eq!(bot.duel_offer_partner.as_deref(), Some("Later partner"));
+    assert_eq!(bot.walk_outcome_seq, reset_walk_outcome_seq);
 }
 
 #[test]
@@ -774,7 +877,7 @@ fn check_guard_end(seam: GuardEndSeam) {
         match seam {
             GuardEndSeam::Stop => {
                 rig.slot().lock().unwrap().stop();
-                reset_script_nav(&rig.navs, "alice");
+                reset_script_nav(&rig.navs, "alice", None);
             }
             GuardEndSeam::Pause => {
                 pause_script(&mut rig.slot().lock().unwrap(), &rig.navs, "alice");
@@ -837,7 +940,7 @@ fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     rig.slot().lock().unwrap().stop();
-    reset_script_nav(&rig.navs, "alice");
+    reset_script_nav(&rig.navs, "alice", None);
     seed_protect_state(&mut rig.snapshot, None);
     rig.snapshot.seed_tick(4);
     rig.step();
