@@ -4156,3 +4156,298 @@ fn talk_expected_combat_rejects_unknown_npc_config() {
         );
     });
 }
+
+fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
+    compile_context_test(|base| {
+        let row = crate::loadouts_store::Loadout::new("cook/disguise")
+            .with_slot("torso", "Desert shirt")
+            .with_slot("feet", "Desert boots");
+        let loadouts =
+            crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
+        f(&CompileContext {
+            loadouts: &loadouts,
+            ..*base
+        })
+    })
+}
+
+fn loadout_test_item(alias: &str, container: ItemContainer, slot: i32) -> ItemView {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias(alias).unwrap();
+    ItemView {
+        def: def(item.id, item.name.as_deref().unwrap()),
+        container,
+        action_family: if container == ItemContainer::Equipment {
+            ItemActionFamily::Component
+        } else {
+            ItemActionFamily::Held
+        },
+        slot,
+        count: 1,
+        actions: vec![],
+        component_id: 0,
+    }
+}
+
+fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) -> Truth {
+    let mut ledger = None;
+    with_tick(snapshot, &mut ledger, 1, |tick| {
+        plan.evaluate(&PredicateContext {
+            cx: &tick.cx,
+            quests: &api::quest_facts::QuestCatalog::empty(),
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            outcome: None,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+        })
+    })
+}
+
+#[test]
+fn exclusive_loadout_removes_extra_then_equips_held_item_without_banking() {
+    with_loadout_context(|cx| {
+        let args = serde_json::json!({"loadout":"disguise","exclusive":true});
+        let plan = s2::compile_loadout(&args, cx).unwrap();
+        let ready_plan = s2::compile_loadout_ready(&args, cx).unwrap();
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let boots = loadout_test_item("desert_boots", ItemContainer::Inventory, 0);
+        let helmet = loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0);
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![shirt.clone(), helmet.clone()]);
+        snapshot.seed_inventory(vec![boots.clone()], 28);
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::False
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Unequip { name } if name == "Rune full helm")
+        );
+
+        let mut held_helmet = helmet;
+        held_helmet.container = ItemContainer::Inventory;
+        held_helmet.slot = 1;
+        snapshot.seed_equipment(vec![shirt.clone()]);
+        snapshot.seed_inventory(vec![boots.clone(), held_helmet.clone()], 28);
+        for tick in 4..=5 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(matches!(emitted(&ledger), InteractReq::Wear { name } if name == "Desert boots"));
+        let mut worn_boots = boots;
+        worn_boots.container = ItemContainer::Equipment;
+        worn_boots.slot = 10;
+        snapshot.seed_equipment(vec![shirt, worn_boots]);
+        snapshot.seed_inventory(vec![held_helmet], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                with_step(tick, |step| run.poll(step))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::True
+        );
+        // Admitting Wear revokes the prior Unequip owner's outbox.
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(ledger.as_ref().unwrap().outbox.iter().all(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Wear { .. } | InteractReq::Unequip { .. })
+            )
+        }));
+    });
+}
+
+#[test]
+fn exclusive_loadout_resumes_partial_outfit_without_stripping_correct_items() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            &serde_json::json!({"loadout":"disguise","exclusive":true}),
+            cx,
+        )
+        .unwrap();
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let mut boots = loadout_test_item("desert_boots", ItemContainer::Inventory, 0);
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![shirt.clone()]);
+        snapshot.seed_inventory(vec![boots.clone()], 28);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(matches!(emitted(&ledger), InteractReq::Wear { name } if name == "Desert boots"));
+        boots.container = ItemContainer::Equipment;
+        boots.slot = 10;
+        snapshot.seed_equipment(vec![shirt, boots]);
+        snapshot.seed_inventory(vec![], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |step| run.poll(step))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    });
+}
+
+#[test]
+fn exclusive_loadout_blocks_before_removal_when_inventory_is_full() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            &serde_json::json!({"loadout":"disguise","exclusive":true}),
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![
+            loadout_test_item("desert_shirt", ItemContainer::Equipment, 4),
+            loadout_test_item("desert_boots", ItemContainer::Equipment, 10),
+            loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0),
+        ]);
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| loadout_test_item("lobster", ItemContainer::Inventory, slot))
+                .collect(),
+            28,
+        );
+        let mut ledger = None;
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap().poll(step))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "exclusive loadout: inventory space required to remove worn items")
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    });
+}
+
+#[test]
+fn exclusive_loadout_can_remove_ammo_into_a_held_stack_with_full_inventory() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            &serde_json::json!({"loadout":"disguise","exclusive":true}),
+            cx,
+        )
+        .unwrap();
+        let mut arrows = loadout_test_item("bronze_arrow", ItemContainer::Equipment, 13);
+        arrows.def.stackable = true;
+        arrows.count = 20;
+        let mut held_arrows = arrows.clone();
+        held_arrows.container = ItemContainer::Inventory;
+        held_arrows.slot = 27;
+        let mut inventory = (0..27)
+            .map(|slot| loadout_test_item("lobster", ItemContainer::Inventory, slot))
+            .collect::<Vec<_>>();
+        inventory.push(held_arrows);
+        let mut snapshot = ready();
+        snapshot.seed_inventory(inventory, 28);
+        snapshot.seed_equipment(vec![
+            loadout_test_item("desert_shirt", ItemContainer::Equipment, 4),
+            loadout_test_item("desert_boots", ItemContainer::Equipment, 10),
+            arrows,
+        ]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Unequip { name } if name == "Bronze arrow")
+        );
+    });
+}
+
+#[test]
+fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
+    with_loadout_context(|cx| {
+        let predicate = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "equipment_only".into(),
+                version: 1,
+                args: serde_json::json!({"objs":["desert_shirt","desert_boots"]}),
+            },
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::Unknown
+        );
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let boots = loadout_test_item("desert_boots", ItemContainer::Equipment, 10);
+        let helmet = loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0);
+        for (worn, expected) in [
+            (vec![], Truth::False),
+            (vec![shirt.clone()], Truth::False),
+            (vec![shirt.clone(), boots.clone(), helmet], Truth::False),
+            (vec![shirt, boots], Truth::True),
+        ] {
+            snapshot.seed_equipment(worn);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                expected
+            );
+        }
+        let empty = s2::compile_equipment_only(&serde_json::json!({"objs":[]}), cx).unwrap();
+        assert_eq!(
+            loadout_predicate_truth(empty.as_ref(), &snapshot),
+            Truth::False
+        );
+        snapshot.seed_equipment(vec![]);
+        assert_eq!(
+            loadout_predicate_truth(empty.as_ref(), &snapshot),
+            Truth::True
+        );
+    });
+}
+
+#[test]
+fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
+    with_loadout_context(|cx| {
+        for conflict in ["strip", "allow_lower_tier"] {
+            let mut args = serde_json::json!({"loadout":"disguise","exclusive":true});
+            args[conflict] = true.into();
+            assert_eq!(
+                s2::compile_loadout(&args, cx).err().unwrap().code.as_ref(),
+                "exclusive-loadout-requires-exact-items"
+            );
+            assert_eq!(
+                s2::compile_loadout_ready(&args, cx)
+                    .err()
+                    .unwrap()
+                    .code
+                    .as_ref(),
+                "exclusive-loadout-requires-exact-items"
+            );
+        }
+    });
+}

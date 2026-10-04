@@ -235,6 +235,11 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             version: 1,
             compile: s2::compile_loadout_ready,
         },
+        super::compile::PredicateHandler {
+            kind: "equipment_only",
+            version: 1,
+            compile: s2::compile_equipment_only,
+        },
     ]
 }
 
