@@ -586,11 +586,14 @@ impl<K: Kind> Hunt<K> {
                 let value = effect.get("value").and_then(Value::as_bool) == Some(true);
                 return Ok(Some(self.done(Some(value))));
             }
-            "aborted" => {
+            "aborted" | "failed" => {
                 // The stepper will not run this token again: a session
                 // continues on a fresh one, as the old JS re-bind did.
                 if K::SESSION {
                     K::renew(self.token);
+                }
+                if kind == "failed" {
+                    return Ok(Some(self.fail(Thrown::new(string(effect, "reason")))));
                 }
                 return Ok(Some(self.done(None)));
             }
@@ -648,6 +651,12 @@ impl<K: Kind> Hunt<K> {
                 self.walk(effect, kind == "walk", radius, cx);
             }
             "continue" => cx.emit(InteractReq::ContinueDialog),
+            "if-button" => {
+                cx.emit(InteractReq::IfButton {
+                    component_id: int(effect, "component_id"),
+                });
+                self.reply = Some(ack);
+            }
             "answer" => cx.emit(InteractReq::Answer {
                 option: int(effect, "option"),
             }),

@@ -1468,9 +1468,10 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
 }
 
 fn teller_evidence_dir(account: &str) -> PathBuf {
-    let root = std::env::var_os("LIVE_EVIDENCE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Volumes/dev-scratch/274bot-evidence/GATHERER-G3-1"));
+    let root = PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR")
+            .expect("live_mage_teller_native_real_play_receipt requires LIVE_EVIDENCE_DIR"),
+    );
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())

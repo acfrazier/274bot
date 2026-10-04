@@ -1240,6 +1240,35 @@ fn an_unroutable_native_walk_delivers_one_failed_terminal() {
     assert_eq!(rig.driver.walked, None);
 }
 
+#[test]
+fn native_walk_failure_receipt_names_missing_route_supplies() {
+    let world = toll_nav_world();
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    world.bind_named_bank_facts(&selected).unwrap();
+    let mut rig = rig(Some(Arc::new(world)), false);
+    rig.observe(1);
+    assert!(
+        wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
+            .route_worker
+            .is_none()),
+        "the planner completes the fare-gated request"
+    );
+    rig.observe(2);
+
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Failed);
+    let detail = receipt
+        .detail
+        .as_deref()
+        .expect("the failed walk receipt carries its navigation diagnosis");
+    assert!(
+        detail.contains("Insufficient route supplies: 10 more Coins (need 10, carrying 0)"),
+        "{detail}"
+    );
+    assert!(detail.contains("native walk route failed"), "{detail}");
+}
+
 /// The host's own route arm, as the watchdog's recovery walk and legacy
 /// script walks use it: no native authority.
 fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {

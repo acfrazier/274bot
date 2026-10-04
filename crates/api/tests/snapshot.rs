@@ -6,6 +6,7 @@ use api::query::{npc_by_index, npcs_at};
 use api::snapshot::{
     ActorKind, ActorTargetView, Family, GameSnapshot, ItemActionFamily, ItemContainer, LocLayer,
     ReadContext, VarpView, WidgetKind, WidgetRoot, WidgetVarpBindingView, WorldTile,
+    MAX_PROJECTILES_PER_SNAPSHOT,
 };
 use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
@@ -328,12 +329,14 @@ fn actor_onsets_and_player_weapon_rebuild_from_client_fields() {
 }
 
 /// Projectiles are refreshed from the no-generation client list on each
-/// snapshot rebuild, with world-tile sources and sign-decoded actor targets.
+/// snapshot rebuild, but only rows targeting the local player are retained.
 #[test]
-fn projectiles_rebuild_fresh_and_decode_target_signs() {
+fn projectiles_rebuild_only_local_targets_and_reuse_capacity() {
     let mut client = client_with_npc();
     client.ingame = true;
     client.scene_state = 2;
+    client.self_slot = 4;
+    client.local_player = Some(ClientPlayer::at(20, 12));
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3400;
 
@@ -352,14 +355,15 @@ fn projectiles_rebuild_fresh_and_decode_target_signs() {
             0,
         )
     };
-    client.projectiles.push(projectile(8, 100));
-    client.projectiles.push(projectile(-5, 101));
-    client.projectiles.push(projectile(0, 102));
+    client.projectiles.push(projectile(-5, 100)); // local player slot 4
+    client.projectiles.push(projectile(8, 101)); // NPC
+    client.projectiles.push(projectile(-2, 102)); // another player
+    client.projectiles.push(projectile(0, 103)); // unknown target
 
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
     let projectiles = snapshot.projectiles();
-    assert_eq!(projectiles.len(), 3);
+    assert_eq!(projectiles.len(), 1);
     assert_eq!(projectiles[0].spotanim, 77);
     assert_eq!(projectiles[0].level, 1);
     assert_eq!(
@@ -373,39 +377,60 @@ fn projectiles_rebuild_fresh_and_decode_target_signs() {
     assert_eq!(
         projectiles[0].target,
         Some(ActorTargetView {
-            kind: ActorKind::Npc,
-            index: 7,
-        })
-    );
-    assert_eq!(projectiles[0].t1, 100);
-    assert_eq!(projectiles[0].t2, 110);
-    assert_eq!(
-        projectiles[1].target,
-        Some(ActorTargetView {
             kind: ActorKind::Player,
             index: 4,
         })
     );
-    assert_eq!(projectiles[2].target, None);
+    assert_eq!(projectiles[0].t1, 100);
+    assert_eq!(projectiles[0].t2, 110);
+    let projectile_buffer = projectiles.as_ptr();
 
-    // No ClientGens counter moves for projectile changes; the next full
-    // snapshot read still replaces the old rows.
+    // Projectile changes have no ClientGens counter. The next full snapshot
+    // read replaces the row while retaining its bounded backing allocation.
     client.projectiles.clear();
-    client.projectiles.push(projectile(-2, 210));
+    client.projectiles.push(projectile(-5, 210));
     snapshot.rebuild(&client);
     assert_eq!(snapshot.projectiles().len(), 1);
-    assert_eq!(
-        snapshot.projectiles()[0].target,
-        Some(ActorTargetView {
-            kind: ActorKind::Player,
-            index: 1,
-        })
-    );
+    assert_eq!(snapshot.projectiles().as_ptr(), projectile_buffer);
     assert_eq!(snapshot.projectiles()[0].t1, 210);
 
     client.ingame = false;
     snapshot.rebuild(&client);
     assert!(snapshot.projectiles().is_empty());
+}
+
+#[test]
+fn projectiles_cap_counts_only_local_player_targets() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.self_slot = 4;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    let projectile =
+        |spotanim, target| ClientProj::new(spotanim, 0, 64, 0, 64, 1, 2, 0, 0, target, 0);
+
+    for index in 0..MAX_PROJECTILES_PER_SNAPSHOT + 5 {
+        client.projectiles.push(projectile(800, -2));
+        client.projectiles.push(projectile(801, 8));
+        client.projectiles.push(projectile(802, 0));
+        let spotanim = 700 + i32::try_from(index).expect("small capped test index");
+        client.projectiles.push(projectile(spotanim, -5));
+    }
+
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let rows = snapshot.projectiles();
+    assert_eq!(rows.len(), MAX_PROJECTILES_PER_SNAPSHOT);
+    for (index, row) in rows.iter().enumerate() {
+        let expected = 700 + i32::try_from(index).expect("small capped test index");
+        assert_eq!(row.spotanim, expected);
+        assert_eq!(
+            row.target,
+            Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 4,
+            })
+        );
+    }
 }
 
 /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The iface

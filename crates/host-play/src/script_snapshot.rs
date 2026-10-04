@@ -5,11 +5,11 @@ use nav::world::NavWorld;
 
 use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
-/// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`): `tick, here,
-/// ingame, inv, stats, booths, banks, bank, bank_side, bank_open,
-/// bank_loaded, hold, ours` — the exact fields the shim
-/// Game/Inventory/Skills/Bank/Banking/EventSignal read, and nothing else
-/// (no World clone). `here` is the local player's tile `{x, z, level}`
+/// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`) carries the
+/// shim-readable fields (`tick, here, ingame, inv, stats, booths, banks,
+/// bank, bank_side, bank_open, bank_loaded, hold, ours`) plus compact native
+/// fact pages such as projectiles and prayer varps. It is not a `World` clone.
+/// `here` is the local player's tile `{x, z, level}`
 /// (absent when the body decoded none); `inv` rows carry the obj's
 /// resolved name (`None` when the shared table has none — a name a script
 /// queries never matches); `stats` rows carry the snapshot's stat
@@ -1521,6 +1521,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         api_gather_outcome: None,
         api_progress: None,
         side_modal_id: Some(modals.map_or(-1, |m| m.side)),
+        projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
     };
     f(&input, native)
 }

@@ -23,6 +23,8 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
+/// Maximum number of local-target projectiles retained in a snapshot.
+pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
@@ -275,7 +277,7 @@ impl Default for GameSnapshot {
             thieving_stun_stamp: None,
             players: Vec::new(),
             players_available: false,
-            projectiles: Vec::new(),
+            projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
             hitmarks: None,
             stats: Vec::new(),
             runenergy: 0,
