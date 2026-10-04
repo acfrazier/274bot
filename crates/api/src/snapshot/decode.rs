@@ -213,30 +213,47 @@ impl GameSnapshot {
         if client.ingame && client.self_slot >= 0 {
             let base = (client.map_build_base_x, client.map_build_base_z);
             let local_slot = client.self_slot as usize;
-            client.projectiles.for_each(|projectile| {
+            let local_tile = local_world_tile(client);
+            // Keep incoming threats first; outgoing launches use remaining
+            // capacity and must never displace an incoming projectile.
+            for incoming in [true, false] {
                 if self.projectiles.len() >= MAX_PROJECTILES_PER_SNAPSHOT {
-                    return;
+                    break;
                 }
-                let target = decode_projectile_target(projectile.target);
-                if !target.is_some_and(|target| {
-                    target.kind == ActorKind::Player && target.index == local_slot
-                }) {
-                    return;
-                }
-                self.projectiles.push(ProjectileView {
-                    spotanim: projectile.spotanim,
-                    level: projectile.level,
-                    src: projectile_source_tile(
+                client.projectiles.for_each(|projectile| {
+                    if self.projectiles.len() >= MAX_PROJECTILES_PER_SNAPSHOT {
+                        return;
+                    }
+                    let target = decode_projectile_target(projectile.target);
+                    let targets_local = target.is_some_and(|target| {
+                        target.kind == ActorKind::Player && target.index == local_slot
+                    });
+                    if targets_local != incoming {
+                        return;
+                    }
+                    let src = projectile_source_tile(
                         projectile.src_x,
                         projectile.src_z,
                         projectile.level,
                         base,
-                    ),
-                    target,
-                    t1: projectile.t1,
-                    t2: projectile.t2,
+                    );
+                    if !incoming
+                        && (target.is_none()
+                            || Some((src.x, src.z)) != local_tile
+                            || src.level != client.minusedlevel)
+                    {
+                        return;
+                    }
+                    self.projectiles.push(ProjectileView {
+                        spotanim: projectile.spotanim,
+                        level: projectile.level,
+                        src,
+                        target,
+                        t1: projectile.t1,
+                        t2: projectile.t2,
+                    });
                 });
-            });
+            }
         }
     }
 

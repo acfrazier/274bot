@@ -1,5 +1,12 @@
-//! Shared observed-state combat machine. S3a admits melee Open/Hold only.
+//! Shared observed-state melee and ranged combat machine.
 //! Style/flick/PvP slices extend this core rather than adding another planner.
+//!
+//! Ranged PvM uses selected weapon/ammo facts, observes the equipped combat tab
+//! before selecting its mode, and defaults to rapid. Projectile launches drive
+//! its attack cycle; delayed impacts do not reset it. Missing compatible ammo
+//! ends preparation with `PrepFailed(Ammo)` and an active fight with
+//! `Unprotected(NoAmmo)`. After an open-tactic kill at zero danger, wind-down
+//! attempts at most four reachable nearby pickups of the selected ammunition.
 mod arbiter;
 pub mod frame;
 pub mod guard;
@@ -13,6 +20,7 @@ pub mod tables;
 pub mod threats;
 pub mod style {
     pub mod melee;
+    pub mod ranged;
 }
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::Combat;

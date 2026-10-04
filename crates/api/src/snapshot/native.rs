@@ -314,8 +314,9 @@ impl<'a> SnapshotView<'a> {
         (snapshot.scene_state() == 2).then_some(snapshot)
     }
 
-    /// Projectile rows from the current scene. An empty list is observed once
-    /// the scene is ready; before then it is unavailable.
+    /// Bounded projectile rows: local-target threats first, then targeted
+    /// launches from the local tile. An empty list is observed once the scene
+    /// is ready; before then it is unavailable.
     pub fn projectiles(&self) -> Option<Observed<&'a [ProjectileView]>> {
         let snapshot = self.scene_ready()?;
         Some(Observed {
