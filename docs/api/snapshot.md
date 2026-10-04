@@ -54,6 +54,15 @@ snap.stats() / snap.varps() / snap.chat() / snap.world() / snap.scene() / snap.c
   (`base + route_x[0]`, level = `minusedlevel`). Entity-pixel tiles remain
   available on `local_player().actor.tile` for visuals.
 
+## Combat projectile page
+
+The shared snapshot keeps projectiles targeted at the local player, identified
+by the decoded `self_slot`. It retains the full native `ProjectileView` fields
+for combat consumers. At most 32 matching projectiles are kept per snapshot,
+in client-list order; the isolate encoder enforces the same cap for direct
+synthetic inputs. An omitted projectile page leaves the isolate's prior page
+unchanged, while a present empty vector clears it.
+
 ## View structs
 
 `api::snapshot` owns the view structs the query DSL and scripts consume:

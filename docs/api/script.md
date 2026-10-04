@@ -368,6 +368,17 @@ unchanged.
   space) sits on top of JS heap and is **unmeasured** at the 50-slot wall —
   `rss_ladder` is Null/draw-off clients, not Started JS.
 
+Hunt Fight and Hold use the same native protection picker and Prayer
+level/points gates as Combat. Each mode handles its outstanding reply before
+inserting a protect click; that click's acknowledgement resumes the saved mode
+effect, not its previous request. An unobserved toggle is retried after three
+game ticks, without re-clicking while pending. Dragonfire inputs use the worn
+selected Dragonfire shield and a confirmed antifire sip (fresh consume chat
+plus a selected-dose decrease), expiring after 600 game ticks. Combat tables
+are cached for the isolate's selected content; a build failure logs an
+actionable protection error and fails the awaited Hunt run rather than silently
+disabling protection.
+
 ### Persistence
 
 `~/.274bot/js-scripts.json` (the Load list) and `~/.274bot/rs2b0t-path` (the

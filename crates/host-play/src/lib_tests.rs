@@ -14988,15 +14988,13 @@ fn script_observe_drains_queued_cheat_onto_driver() {
     );
 }
 
-// Task 9b — the posted blob is FlatBuffers (schema:
-// crates/script/schema/isolate.fbs) and carries exactly the fields the
-// shim Game/Inventory/Skills/EventSignal read: inv rows carry resolved
-// obj names (None when the table has none), stats rows the stat
-// index/name/xp/base/effective, bank flags from the snapshot, and
-// hold/ours pass through for EventSignal.pending(). No World clone —
-// only these fields. Round-trips through the script crate's decoder.
+// Task 9b — the posted FlatBuffer (schema: crates/script/schema/isolate.fbs)
+// carries the shim fields plus compact native facts such as projectiles;
+// inv rows carry resolved obj names, stats rows index/name/xp/base/effective,
+// and bank flags plus hold/ours pass through. No World clone — round-trip
+// through the script crate's decoder.
 #[test]
-fn script_snapshot_fb_carries_observed_fields_only() {
+fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     let mut c = prepare_client(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -15015,8 +15013,25 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     c.stat_base_level[7] = 35;
     c.stat_xp[7] = 1300;
     c.bump_gens(ServerProt::UPDATE_STAT);
+    c.self_slot = 1;
+    c.bump_gens(ServerProt::PLAYER_INFO);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    snap.seed_projectiles(vec![api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: 0,
+        src: api::WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: 1,
+        }),
+        t1: 1,
+        t2: 2,
+    }]);
     let mut objs = vec![client::config::ObjType::default(); 2];
     objs[1].id = 1;
     objs[1].name = "Bones".into();
@@ -15042,6 +15057,9 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     let here = view.here().expect("here posted");
     assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
     assert!(view.ingame());
+    let projectile = view.projectiles().expect("native projectile page").get(0);
+    assert_eq!(projectile.spotanim(), 9);
+    assert_eq!(projectile.target_player_index(), Some(1));
     assert!(view.has_inv(), "keyframe carries inv");
     let inv = view.inv().expect("inventory rows");
     assert_eq!(inv.len(), 2);
