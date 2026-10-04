@@ -654,6 +654,90 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     panic!("guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent}");
 }
 
+fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
+    let in_maze = |tile: Option<(i32, i32, i32)>| {
+        tile.and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
+            == Some(api::random::RandomKind::Maze)
+    };
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("mz{}{}", profile.revision().as_i32(), serial % 10_000_000);
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .expect("prepare selected client");
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    // The content's own `[debugproc,maze]`: the same teleport, reward and
+    // briefing as `start_macro_maze`, without waiting for the RNG.
+    assert!(
+        interact::cheat(&mut client, "~maze").is_sent(),
+        "local maze command refused"
+    );
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(30),
+        "maze-entered",
+        |snapshot| in_maze(snapshot.tile()),
+    );
+    let spawn = snapshot.tile();
+    let settings = ProfileSettings {
+        random_events: true,
+        ..Default::default()
+    };
+    let mut guardian = Guardian::new();
+    let end = Instant::now() + Duration::from_secs(420);
+    let mut last_tick = 0;
+    let mut saw_hold = false;
+    let mut released_in_maze = false;
+    while Instant::now() < end {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let status = guardian.tick(&mut client, &snapshot, &settings, now_ms, None);
+        saw_hold |= status.hold;
+        if snapshot.tick() != last_tick {
+            last_tick = snapshot.tick();
+            println!(
+                "{}",
+                json!({"phase": "maze-tick", "tick": last_tick, "tile": snapshot.tile(), "hold": status.hold, "ours": status.ours, "kind": format!("{:?}", status.kind), "chat": snapshot.chat_lines().first().map(|line| line.text.to_string())})
+            );
+        }
+        if saw_hold && !in_maze(snapshot.tile()) && snapshot.scene_state() == 2 {
+            println!(
+                "PASS: guardian_maze: {}",
+                json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold})
+            );
+            if client.ingame {
+                client.logout();
+            }
+            return;
+        }
+        if saw_hold && in_maze(snapshot.tile()) && !status.hold && !status.ours {
+            released_in_maze = true;
+            println!(
+                "RELEASED: guardian_maze: {}",
+                json!({"spawn": spawn, "tile": snapshot.tile(), "kind": format!("{:?}", status.kind)})
+            );
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if client.ingame {
+        client.logout();
+    }
+    panic!(
+        "guardian_maze incomplete: spawn={spawn:?} tile={:?} hold={saw_hold} released_in_maze={released_in_maze}",
+        snapshot.tile()
+    );
+}
+
 #[test]
 #[ignore = "requires LIVE=1, WORLD_REVISION, WORLD_CASE, WORLD_NAV_PACK and local engine"]
 fn world_boundary_live() {
@@ -664,12 +748,13 @@ fn world_boundary_live() {
         let case = required("WORLD_CASE");
         assert!(matches!(
             case.as_str(),
-            "nav_full" | "nav_door" | "guardian_lamp" | "bank_return"
+            "nav_full" | "nav_door" | "guardian_lamp" | "guardian_maze" | "bank_return"
         ));
         let (profile, template) = selected();
         match case.as_str() {
             "nav_full" | "nav_door" => run_nav(&case, template, profile),
             "guardian_lamp" => run_guardian(template, profile),
+            "guardian_maze" => run_guardian_maze(template, profile),
             "bank_return" => run_bank_return(template, profile),
             _ => unreachable!(),
         }
