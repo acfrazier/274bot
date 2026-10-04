@@ -115,7 +115,8 @@ pub fn source_digest_from_fingerprints(
         let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
-        // Sorting the `/`-joined labels avoids native-separator ordering.
+        // Preserve path-component order while hashing a platform-neutral
+        // `/`-joined label.
         let mut label = String::new();
         for component in relative.components() {
             if !label.is_empty() {
@@ -123,14 +124,15 @@ pub fn source_digest_from_fingerprints(
             }
             label.push_str(&component.as_os_str().to_string_lossy());
         }
-        source_inputs.push((label, input));
+        source_inputs.push((relative, label, input));
     }
-    source_inputs.sort_unstable_by(|(left_label, left), (right_label, right)| {
-        left_label
-            .cmp(right_label)
+    source_inputs.sort_unstable_by(|(left_path, _, left), (right_path, _, right)| {
+        left_path
+            .components()
+            .cmp(right_path.components())
             .then_with(|| left.sha256.cmp(&right.sha256))
     });
-    for (label, input) in source_inputs {
+    for (_, label, input) in source_inputs {
         digest.update((label.len() as u64).to_be_bytes());
         digest.update(label.as_bytes());
         digest.update(input.sha256.as_bytes());
