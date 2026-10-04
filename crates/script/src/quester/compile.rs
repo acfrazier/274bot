@@ -358,20 +358,38 @@ fn compile_uncached(
             *required,
         ),
     };
+    // Path headers use config aliases; the shared Loadouts consumer uses
+    // display names. Resolve each kit row once, without an intermediate copy.
+    let loadout_item_name = |alias: &str| -> Result<&str, CompileError> {
+        selected
+            .item_by_alias(alias)
+            .ok_or_else(|| CompileError::code("unresolved-obj"))?
+            .name
+            .as_deref()
+            .ok_or_else(|| CompileError::code("unresolved-obj-name"))
+    };
     let compiled_loadouts: Vec<_> = header
         .loadouts
         .iter()
         .map(|(name, row)| {
             let mut out = crate::loadouts_store::Loadout::new(format!("{}/{name}", document.id.0));
             for (slot, item) in &row.worn {
-                out = out.with_slot(slot, item);
+                if !crate::loadouts_store::is_worn_slot(slot) {
+                    return Err(CompileError::code("invalid-worn-slot"));
+                }
+                out = out.with_slot(slot, loadout_item_name(item)?);
             }
             for carry in &row.carry {
-                out = out.with_carry(&carry.item, carry.qty);
+                let item = loadout_item_name(&carry.item)?;
+                if carry.qty == 0 {
+                    return Err(CompileError::code("invalid-quantity"));
+                }
+                out = out.with_carry(item, carry.qty);
             }
-            out
+            Ok(out)
         })
-        .collect();
+        .collect::<Result<Vec<_>, CompileError>>()
+        .map_err(|error| error.with_path(document.id.clone()))?;
     let loadouts =
         super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
     let compiled_items: Arc<[CompiledQuestItem]> = Arc::from(
@@ -792,20 +810,6 @@ fn validate_header(
         obj(tool
             .strip_prefix("obj:")
             .ok_or_else(|| CompileError::code("invalid-tool"))?)?;
-    }
-    for loadout in header.loadouts.values() {
-        for (slot, item) in &loadout.worn {
-            if !crate::loadouts_store::is_worn_slot(slot) {
-                return Err(CompileError::code("invalid-worn-slot"));
-            }
-            obj(item)?;
-        }
-        for item in &loadout.carry {
-            obj(&item.item)?;
-            if item.qty == 0 {
-                return Err(CompileError::code("invalid-quantity"));
-            }
-        }
     }
     match &header.bank {
         super::path::QuestBankDocument::Nearest(name) if name == "nearest" => {}
@@ -1354,6 +1358,48 @@ mod tests {
         assert_eq!(error.code.as_ref(), "unresolved-progress-stage");
         assert_eq!(error.path, FactKey::new("cook"));
         assert!(error.step.is_some());
+    }
+
+    #[test]
+    fn alias_loadout_compiles_and_begins_application() {
+        let _home = crate::IsolatedEnv::enter("quester-alias-loadout");
+        let data = selected();
+        let quests = quests(&data);
+        let mut document: serde_json::Value = serde_json::from_str(COOK_JSON).unwrap();
+        document["quest"]["loadouts"] = serde_json::json!({
+            "probe": {
+                "worn": { "righthand": "rune_scimitar" },
+                "carry": [{ "item": "4doseprayerrestore", "qty": 2 }]
+            }
+        });
+        document["roles"][0]["prelude"] = serde_json::json!([{
+            "id": "apply-alias-kit", "kind": "loadout", "version": 1,
+            "args": { "loadout": "probe", "at": "nearest" },
+            "skip_if": { "Any": [] }, "settle": { "All": [] }
+        }]);
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        let bank = super::super::bank_memo::BankMemo::default();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut ledger = None;
+        families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let required_after = tick.cx.evidence();
+            let mut context = StepContext {
+                tick,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                bank: &bank,
+                banks: &banks,
+                choices: &super::super::choices::QuestChoices::default(),
+            };
+            if let Err(error) = path.prelude[0].plan.begin(&mut context) {
+                panic!("valid alias loadout could not begin application: {error:?}");
+            }
+        });
     }
 
     #[test]
