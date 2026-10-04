@@ -87,32 +87,42 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         "router.rs bytes join generator_identity"
     );
 
+    let input_sha = "56".repeat(32);
+    let pack_sha = "ab".repeat(32);
+    let flags_sha = "cd".repeat(32);
+    let reach_sha = "ef".repeat(32);
+    let canlight_sha = "12".repeat(32);
+    let manifest_sha = "13".repeat(32);
     let inputs = [crate::bundle::InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
         modified_nanos: 5,
+        sha256: input_sha.clone(),
     }];
     let baked = crate::bundle::BakeStamp {
         content_id: None,
         source_sha256: None,
         generator: warm,
-        format: "274V8".into(),
+        format: "274V15".into(),
         revision: 289,
         cache_id: "cache-1".into(),
         cache_manifest: None,
-        nav_sha256: "ab".repeat(32),
-        flags_sha256: "cd".repeat(32),
-        reach_sha256: "ef".repeat(32),
-        canlight_sha256: "12".repeat(32),
+        nav_sha256: pack_sha.clone(),
+        flags_sha256: flags_sha.clone(),
+        reach_sha256: reach_sha.clone(),
+        canlight_sha256: canlight_sha.clone(),
         canlight_identity: "34".repeat(32),
         pack_bytes: 11,
         flags_bytes: 7,
         reach_bytes: 9,
         canlight_bytes: 5,
+        manifest_sha256: Some(manifest_sha.clone()),
+        manifest_bytes: Some(13),
         relative_pack: "nav/289/274bot.navpack".into(),
         relative_flags: "nav/289/274bot.navflags".into(),
         relative_reach: "nav/289/274bot.navreach".into(),
         relative_canlight: "nav/289/274bot.navcanlight".into(),
+        relative_manifest: Some("nav/289/274bot.navpack.json".into()),
         pois_sha256: Some("56".repeat(32)),
         pois_bytes: Some(3),
         relative_pois: Some("nav/289/274bot.navpois".into()),
@@ -121,19 +131,25 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
     };
     let expected = crate::bundle::StampExpectation {
         revision: 289,
-        format: "274V8",
+        format: "274V15",
         generator: &after_router,
         cache_id: "cache-1",
         inputs: &inputs,
         staged_pack_bytes: Some(11),
+        staged_pack_sha256: Some(&pack_sha),
         staged_flags_bytes: Some(7),
+        staged_flags_sha256: Some(&flags_sha),
         staged_reach_bytes: Some(9),
+        staged_reach_sha256: Some(&reach_sha),
         staged_canlight_bytes: Some(5),
+        staged_canlight_sha256: Some(&canlight_sha),
+        staged_manifest_bytes: Some(13),
+        staged_manifest_sha256: Some(&manifest_sha),
         staged_pois_bytes: Some(3),
-        pois_generator: "pois-gen",
         staged_pois_sha256: Some(
             "5656565656565656565656565656565656565656565656565656565656565656",
         ),
+        pois_generator: "pois-gen",
     };
     let error = baked
         .covers(&expected)
@@ -142,19 +158,39 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
 }
 
 #[test]
-fn a_missing_canonical_input_fails_the_bake() {
+fn a_missing_door_config_fails_the_bake() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "274bot-nav-missing-door-{}-{unique}",
+        std::process::id()
+    ));
+    let maps = root.join("content/maps");
+    let doors = root.join("content/scripts/doors/configs");
+    let config_jag = root.join("engine/data/pack/config");
+    std::fs::create_dir_all(&doors).unwrap();
+    std::fs::create_dir_all(config_jag.parent().unwrap()).unwrap();
+    std::fs::write(doors.join("doors.loc"), "[loc_100]\nop1=Open\n").unwrap();
+    std::fs::write(&config_jag, b"").unwrap();
+    let gates = root.join("content/scripts/general_use/configs/gates.loc");
     let request = BakeRequest {
         revision: None,
-        maps_dir: Path::new("/nonexistent/content/maps"),
-        doors_dir: Path::new("/nonexistent/content/scripts/doors/configs"),
-        gates: Path::new("/nonexistent/content/scripts/general_use/configs/gates.loc"),
-        config_jag: Path::new("/nonexistent/engine/data/pack/config"),
+        maps_dir: &maps,
+        doors_dir: &doors,
+        gates: &gates,
+        config_jag: &config_jag,
         cache: None,
         require_all_door_configs: true,
+        input_fingerprints: None,
         content_id: None,
     };
-    let error = bake_world(&request).err().expect("a bake without inputs");
-    assert!(error.contains("doors.loc"), "{error}");
+    let error = bake_world(&request)
+        .err()
+        .expect("a bake without all door inputs");
+    assert!(error.contains("doubledoors.loc"), "{error}");
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 fn collision_with_flags(

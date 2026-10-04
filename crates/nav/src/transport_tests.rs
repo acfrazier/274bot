@@ -1190,7 +1190,7 @@ fn straight_door_reverse_routes_out_when_behind_loc_is_scenery() {
     );
     let graph = derive_transports(fx.path(), &defs, &collision);
     // Exercise the packed graph, not just the deriver's in-memory endpoints.
-    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let bytes = crate::pack::encode(&collision, &graph, &[]).unwrap();
     let (collision, graph, _) = crate::pack::decode(&bytes).unwrap();
     for (from, to) in [(inside, outside), (outside, inside)] {
         let route = find(&collision, &graph, from, to).expect("door routes both ways");
@@ -1353,10 +1353,10 @@ fn derive_transports_packs_identically_across_runs() {
         .filter(|e| e.kind == TransportKind::Door)
         .count();
     assert_eq!(door_edges, 2 * ids.len());
-    let bytes = crate::pack::encode(&wc, &first, &[]);
+    let bytes = crate::pack::encode(&wc, &first, &[]).unwrap();
     for _ in 0..4 {
         let again = derive_transports(fx.path(), &defs, &wc);
-        assert!(crate::pack::encode(&wc, &again, &[]) == bytes);
+        assert!(crate::pack::encode(&wc, &again, &[]).unwrap() == bytes);
     }
 }
 
@@ -3273,7 +3273,7 @@ fn gangplank_landings_remain_canonical_across_pack_roundtrip() {
     let fx = Fixture::new();
     let defs = loc_defs(&[]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let bytes = crate::pack::encode(&collision, &graph, &[]).unwrap();
     let (_, decoded, _) = crate::pack::decode(&bytes).expect("decode gangplank pack");
     assert_canonical_gangplank_landings(&decoded);
 }
@@ -3322,7 +3322,7 @@ fn non_anchor_gangplank_takeoff_routes_through_backward_proof() {
     fx.write("maps/m47_50.jm2", "==== MAP ====\n0 0 22: u50\n");
     let defs = loc_defs(&[]);
     let graph = derive_transports(fx.path(), &defs, &collision);
-    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let bytes = crate::pack::encode(&collision, &graph, &[]).unwrap();
     let (collision, graph, _) = crate::pack::decode(&bytes).expect("decode gangplank pack");
 
     let search = find_first_with(

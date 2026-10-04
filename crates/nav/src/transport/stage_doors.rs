@@ -451,34 +451,24 @@ fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
 /// (`[label,open_legends_door](int $side)`), which `script_blocks` cannot
 /// see. Returns `(kind, name, parameter names, body)`.
 fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String, Vec<String>, String)> = None;
-    for line in text.lines() {
-        let header = line.strip_prefix('[').and_then(|rest| {
-            let (inner, after) = rest.split_once(']')?;
-            let (kind, name) = inner.split_once(',')?;
-            let word = |s: &str| {
-                !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-            };
-            // `[proc,.chatnpc]`: a secondary-subject proc is its own block.
-            let name_ok = word(name.strip_prefix('.').unwrap_or(name));
-            (word(kind) && name_ok).then(|| (kind.to_string(), name.to_string(), after))
-        });
-        if let Some((kind, name, after)) = header {
-            if let Some(done) = cur.take() {
-                out.push(done);
-            }
-            let (params, rest) = header_params(after);
-            cur = Some((kind, name, params, format!("{rest}\n")));
-        } else if let Some((_, _, _, body)) = cur.as_mut() {
-            body.push_str(line);
-            body.push('\n');
+    super::script_text::collect_script_blocks(text, |line| {
+        let Some(header) = super::script_text::parse_script_header(
+            line,
+            super::script_text::ScriptHeaderStyle::Secondary,
+        ) else {
+            return super::script_text::ScriptBlockLine::Body(line);
+        };
+        let (params, rest) = header_params(header.tail);
+        super::script_text::ScriptBlockLine::Header {
+            value: (header.kind.to_string(), header.name.to_string(), params),
+            inline_body: Some(rest),
+            inline_body_newline: true,
+            keep: true,
         }
-    }
-    if let Some(done) = cur {
-        out.push(done);
-    }
-    out
+    })
+    .into_iter()
+    .map(|((kind, name, params), body)| (kind, name, params, body))
+    .collect()
 }
 
 /// A header's `(type $a, type $b)` parameter list (and a proc's return

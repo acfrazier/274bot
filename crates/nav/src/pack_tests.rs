@@ -92,7 +92,7 @@ fn pack_walk_roundtrips_step_ok_vs_u32_flags() {
 }
 
 #[test]
-fn v8_pack_has_no_resident_flags() {
+fn v15_pack_has_no_resident_flags() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -107,7 +107,7 @@ fn v8_pack_has_no_resident_flags() {
         blocked,
         flags: None,
     };
-    let bytes = encode(&collision, &TransportGraph::default(), &[]);
+    let bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
     assert_eq!(bytes[4], VERSION);
     let (c, _, _) = decode(&bytes).unwrap();
     assert!(c.flags.is_none());
@@ -115,7 +115,7 @@ fn v8_pack_has_no_resident_flags() {
 }
 
 #[test]
-fn v8_decode_rejects_v7_and_older() {
+fn v15_decode_rejects_older_versions() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -130,7 +130,7 @@ fn v8_decode_rejects_v7_and_older() {
         blocked,
         flags: None,
     };
-    let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
     bytes[4] = 7;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(7))));
     bytes[4] = 6;
@@ -888,7 +888,7 @@ fn roundtrip_collision_and_transport_graph() {
         None,
         None,
     ];
-    let bytes = encode(&collision, &graph, &[]);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
     let (c, g, _) = decode(&bytes).unwrap();
     assert_eq!(c.origin, collision.origin);
     assert_eq!(c.width, collision.width);
@@ -965,7 +965,7 @@ fn v15_roundtrips_consumed_and_returned_resources() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(edge.clone());
 
-    let bytes = encode(&collision, &graph, &[]);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
     let (_, decoded, _) = decode(&bytes).unwrap();
     assert_eq!(decoded.teleports, vec![edge]);
 }
@@ -1063,12 +1063,12 @@ fn zone_table_pack_fixture() -> (Vec<u8>, ZoneTable) {
         zones: Some(table.clone()),
         ..Default::default()
     };
-    (encode(&collision, &graph, &[]), table)
+    (encode(&collision, &graph, &[]).unwrap(), table)
 }
 
 #[test]
 fn v13_pack_keeps_an_empty_zone_table_present() {
-    let bytes = encode(&tiny_collision(), &TransportGraph::default(), &[]);
+    let bytes = encode(&tiny_collision(), &TransportGraph::default(), &[]).unwrap();
     let (_, graph, _) = decode(&bytes).unwrap();
     let table = graph.zones.as_ref().expect("v13 declares a zone table");
     assert!(table.zones().is_empty());
@@ -1079,7 +1079,7 @@ fn v13_pack_keeps_an_empty_zone_table_present() {
 fn v13_zone_table_roundtrips_rows_and_rebuilds_its_index() {
     let (bytes, table) = zone_table_pack_fixture();
     assert_eq!(bytes[4], VERSION);
-    assert_eq!(super::zones::wire_size(Some(&table)), 211);
+    assert_eq!(super::zones::wire_size(Some(&table)).unwrap(), 211);
     let (_, decoded, _) = decode(&bytes).unwrap();
     let decoded_table = decoded.zones.as_ref().unwrap();
     assert_eq!(decoded_table, &table);
@@ -1188,8 +1188,8 @@ fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
         ..Default::default()
     };
 
-    assert_eq!(super::zones::wire_size(Some(&table)), 97);
-    let bytes = encode(&collision, &graph, &[]);
+    assert_eq!(super::zones::wire_size(Some(&table)).unwrap(), 97);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
     let (_, decoded, _) = decode(&bytes).unwrap();
     let decoded_table = decoded.zones.as_ref().unwrap();
     assert_eq!(decoded_table, &table);
@@ -1234,7 +1234,7 @@ fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
 #[test]
 fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     let (bytes, table) = zone_table_pack_fixture();
-    let zone_start = bytes.len() - super::zones::wire_size(Some(&table));
+    let zone_start = bytes.len() - super::zones::wire_size(Some(&table)).unwrap();
     let kind_0_size = 15 + "ranger".len() + "Ranger".len();
     let kind_1_start = zone_start + 4 + kind_0_size;
     let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
@@ -1322,7 +1322,7 @@ fn decode_rejects_old_version_streams() {
         flags: None,
     };
     let graph = TransportGraph::default();
-    let mut bytes = encode(&collision, &graph, &[]);
+    let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // The version byte sits right after the 4-byte magic.
     bytes[4] = 3;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(3))));
@@ -1382,8 +1382,8 @@ fn v8_roundtrips_worn_req() {
     let mut graph = TransportGraph::default();
     graph.edges.push(door.clone());
     graph.at.entry(door.at).or_default().push(0);
-    let bytes = encode(&collision, &graph, &[]);
-    // The version byte sits right after the 4-byte magic: v8 now.
+    let bytes = encode(&collision, &graph, &[]).unwrap();
+    // The version byte sits right after the 4-byte magic: v15 now.
     assert_eq!(bytes[4], VERSION);
     let (c, g, _) = decode(&bytes).unwrap();
     assert_eq!(g.edges, graph.edges);
@@ -1441,7 +1441,7 @@ fn v9_roundtrips_members_req_true_and_false() {
     for members_req in [true, false] {
         let mut graph = TransportGraph::default();
         graph.edges.push(edge(members_req));
-        let bytes = encode(&collision, &graph, &[]);
+        let bytes = encode(&collision, &graph, &[]).unwrap();
         assert_eq!(bytes[4], VERSION);
         let (_, g, _) = decode(&bytes).unwrap();
         assert_eq!(g.edges[0].members_req, members_req);
@@ -1464,7 +1464,7 @@ fn v15_decode_rejects_older_version_bytes() {
         blocked,
         flags: None,
     };
-    let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
     // v14 predates the consumed-resource and replacement-item vectors.
     bytes[4] = 14;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(14))));
@@ -1533,7 +1533,7 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     };
     let mut graph = TransportGraph::default();
     graph.edges.push(door);
-    let mut bytes = encode(&collision, &graph, &[]);
+    let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
     // count (u32), bank-stand count (u32), wilderness rules (12 B), and
     // the five zero-count zone tables (20 B).
@@ -2017,7 +2017,7 @@ fn v8_roundtrips_bank_stands() {
             },
         },
     ];
-    let bytes = encode(&collision, &TransportGraph::default(), &banks);
+    let bytes = encode(&collision, &TransportGraph::default(), &banks).unwrap();
     assert_eq!(bytes[4], VERSION);
     let (c, g, out) = decode(&bytes).unwrap();
     assert_eq!(out, banks);
@@ -2238,7 +2238,7 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
         wildy_cap: Some(20),
         quest_gates: None,
     });
-    let bytes = encode(&collision, &graph, &[]);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
     assert_eq!(bytes[4], VERSION);
     let (_, g, _) = decode(&bytes).unwrap();
     assert_eq!(g.wilderness, graph.wilderness);
@@ -2348,7 +2348,7 @@ fn relative_stairs_wire_preserves_actual_takeoff_and_backward_proof() {
         })],
         ..TransportGraph::default()
     };
-    let bytes = encode(&collision, &graph, &[]);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
     let (collision, mut graph, _) = decode(&bytes).unwrap();
     let from = WorldTile {
         x: 1,
@@ -2419,14 +2419,14 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
         player_delta: None,
         ..gated_door(Some(completed))
     });
-    let bytes = encode(&tiny_collision(), &graph, &[]);
+    let bytes = encode(&tiny_collision(), &graph, &[]).unwrap();
     let (_, g, _) = decode(&bytes).unwrap();
     assert_eq!(g.quest_family, Some(family));
     assert_eq!(g.edges, graph.edges);
     assert_eq!(g.edges[0].quest_gates, Some(gates));
     assert_eq!(g.teleports, graph.teleports);
 
-    let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]);
+    let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]).unwrap();
     assert_eq!(decode(&plain).unwrap().1.quest_family, None);
 }
 
@@ -2469,7 +2469,7 @@ fn nav_world_from_reader_streams_pack_and_legacy_grid() {
             choose: Some("Bank".into()),
         },
     }];
-    let mut bytes = encode(&tiny_collision(), &graph, &banks);
+    let mut bytes = encode(&tiny_collision(), &graph, &banks).unwrap();
     bytes.extend_from_slice(&[0xA1, 0xB2, 0xC3]);
 
     let expected = NavWorld::from_bytes(&bytes).unwrap();
@@ -2548,7 +2548,7 @@ fn every_constructible_quest_family_encodes_a_decodable_pack() {
             ..TransportGraph::default()
         };
         graph.edges.push(gated_door(Some(gates.clone())));
-        let (_, g, _) = decode(&encode(&tiny_collision(), &graph, &[]))
+        let (_, g, _) = decode(&encode(&tiny_collision(), &graph, &[]).unwrap())
             .unwrap_or_else(|e| panic!("schema {schema}: {e:?}"));
         assert_eq!(g.quest_family, Some(family), "schema {schema}");
         assert_eq!(g.edges[0].quest_gates, Some(gates), "schema {schema}");
@@ -2564,7 +2564,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     const TRAILER: usize = 4 + 12 + 20;
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
-    let unbound = encode(&tiny_collision(), &graph, &[]);
+    let unbound = encode(&tiny_collision(), &graph, &[]).unwrap();
     let count_at = unbound.len() - TRAILER - 1 - 4;
     let mut spliced = unbound[..count_at].to_vec();
     spliced.extend_from_slice(&1u32.to_le_bytes());
@@ -2589,7 +2589,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     bound
         .edges
         .push(gated_door(Some(QuestGates::new(family, [exact]).unwrap())));
-    let bytes = encode(&tiny_collision(), &bound, &[]);
+    let bytes = encode(&tiny_collision(), &bound, &[]).unwrap();
     assert!(decode(&bytes).is_ok());
     let mut schema_zero = bytes.clone();
     schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
@@ -2611,7 +2611,6 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
 /// One pack binds one quest family: an edge whose gates name another family
 /// cannot be written, so its keys are never silently rebound.
 #[test]
-#[should_panic(expected = "another quest family")]
 fn encode_refuses_gates_of_another_quest_family() {
     let foreign = QuestGates::new(
         gate_family(8),
@@ -2623,5 +2622,61 @@ fn encode_refuses_gates_of_another_quest_family() {
         ..TransportGraph::default()
     };
     graph.edges.push(gated_door(Some(foreign)));
-    encode(&tiny_collision(), &graph, &[]);
+    assert!(matches!(
+        encode(&tiny_collision(), &graph, &[]),
+        Err(PackError::BadLength(message)) if message.contains("another quest family")
+    ));
+}
+
+#[test]
+fn encode_returns_errors_for_invalid_edge_requirements() {
+    let mut edge = gated_door(None);
+    edge.item_req.push((239, 0));
+    let mut graph = TransportGraph::default();
+    graph.edges.push(edge);
+    assert!(matches!(
+        encode(&tiny_collision(), &graph, &[]),
+        Err(PackError::BadLength(_))
+    ));
+}
+#[test]
+fn encode_returns_errors_for_invalid_edge_model_data() {
+    let mut relative_door = gated_door(None);
+    relative_door.player_delta = Some(WorldTile {
+        x: 1,
+        z: 0,
+        level: 0,
+    });
+    let mut overflowing_stairs = gated_door(None);
+    overflowing_stairs.kind = TransportKind::Stairs;
+    overflowing_stairs.player_delta = Some(WorldTile {
+        x: 1,
+        z: 0,
+        level: 0,
+    });
+    overflowing_stairs.at.x = i32::MAX;
+    let mut runtime_only = gated_door(None);
+    runtime_only.kind = TransportKind::EssenceExit;
+
+    for edge in [relative_door, overflowing_stairs, runtime_only] {
+        let mut graph = TransportGraph::default();
+        graph.edges.push(edge);
+        assert!(matches!(
+            encode(&tiny_collision(), &graph, &[]),
+            Err(PackError::BadLength(_))
+        ));
+    }
+    let mut invalid_approach = TransportGraph::default();
+    let mut ladder = gated_door(None);
+    ladder.kind = TransportKind::Ladder;
+    invalid_approach.edges.push(ladder);
+    invalid_approach.approaches.push(Some(LocApproach {
+        width: 0,
+        length: 1,
+        blocked_sides: 0,
+    }));
+    assert!(matches!(
+        encode(&tiny_collision(), &invalid_approach, &[]),
+        Err(PackError::BadLength(_))
+    ));
 }

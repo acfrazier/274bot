@@ -481,61 +481,55 @@ fn jewellery_item_return_id(
     }
 }
 
-/// `(op, name, body)` blocks in an enchanted_jewellry file. Headers here
-/// are `[op,<name>]` possibly with body text on the same line (the glory
-/// `opheld4` one-liners) and/or a `(params)` list
-/// (`[label,<name>](string $m)`); the strict [`script_header`] rejects
-/// both, so these files need their own lenient parse.
+/// `(op, name, body)` blocks in an enchanted_jewellry file. The shared
+/// header grammar admits same-line bodies and parameter lists here.
 pub(super) fn jewellery_blocks(text: &str) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String)> = None;
-    let mut body = String::new();
-    for raw in text.lines() {
-        let line = match raw.find("//") {
-            Some(i) => raw[..i].trim(),
-            None => raw.trim(),
-        };
+    super::script_text::collect_script_blocks(text, |raw| {
+        let line = raw
+            .split_once("//")
+            .map_or(raw, |(before, _)| before)
+            .trim();
         if line.is_empty() {
-            continue;
+            return super::script_text::ScriptBlockLine::Ignore;
         }
-        if let Some((header, rest)) = jewellery_header(line) {
-            if let Some(prev) = cur.take() {
-                out.push((prev.0, prev.1, std::mem::take(&mut body)));
-            }
-            cur = Some((header.0.to_string(), header.1.to_string()));
-            if let Some(rest) = rest {
-                body.push_str(rest);
-                body.push('\n');
-            }
-        } else if cur.is_some() {
-            body.push_str(line);
-            body.push('\n');
+        let Some(header) = super::script_text::parse_script_header(
+            line,
+            super::script_text::ScriptHeaderStyle::Exact,
+        ) else {
+            return super::script_text::ScriptBlockLine::Body(line);
+        };
+        let tail = header.tail.trim();
+        let inline_body = if tail.is_empty() || (tail.starts_with('(') && tail.ends_with(')')) {
+            None
+        } else {
+            Some(tail)
+        };
+        super::script_text::ScriptBlockLine::Header {
+            value: (header.kind.to_string(), header.name.to_string()),
+            inline_body,
+            inline_body_newline: true,
+            keep: true,
         }
-    }
-    if let Some(prev) = cur.take() {
-        out.push((prev.0, prev.1, body));
-    }
-    out
+    })
+    .into_iter()
+    .map(|((kind, name), body)| (kind, name, body))
+    .collect()
 }
 
 /// `[op,<name>](params)` block header → `((op, name), same-line body)`.
-/// A header line carries a trailing body only when there is no `(params)`
-/// list after the `]`.
+/// A complete parameter list has no same-line body.
 pub(super) fn jewellery_header(line: &str) -> Option<((&str, &str), Option<&str>)> {
-    let rest = line.strip_prefix('[')?;
-    let close = rest.find(']')?;
-    let head = &rest[..close];
-    let tail = rest[close + 1..].trim();
-    let (a, b) = head.split_once(',')?;
-    let word = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
-    if !word(a) || !word(b) {
-        return None;
-    }
-    if tail.is_empty() || (tail.starts_with('(') && tail.ends_with(')')) {
-        Some(((a, b), None))
+    let header = super::script_text::parse_script_header(
+        line,
+        super::script_text::ScriptHeaderStyle::Exact,
+    )?;
+    let tail = header.tail.trim();
+    let body = if tail.is_empty() || (tail.starts_with('(') && tail.ends_with(')')) {
+        None
     } else {
-        Some(((a, b), Some(tail)))
-    }
+        Some(tail)
+    };
+    Some(((header.kind, header.name), body))
 }
 
 /// The body of `[label,<name>](…)` in the raw script text, from the header

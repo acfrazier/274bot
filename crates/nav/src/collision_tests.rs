@@ -542,6 +542,30 @@ fn flag_world(flags: Vec<u32>) -> WorldCollision {
 }
 
 #[test]
+fn nearest_walkable_at_grid_margin_keeps_the_blind_neighbor() {
+    let wc = flag_world(vec![0]);
+    let door = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let outside = wc.nearest_walkable(door, -1, 0);
+
+    assert_eq!(
+        outside,
+        WorldTile {
+            x: 3199,
+            z: 3200,
+            level: 0,
+        }
+    );
+    assert!(
+        !wc.walkable(outside),
+        "the edge fallback is a blind neighbour outside the baked grid"
+    );
+}
+
+#[test]
 fn face_flag_tile_is_standable_but_not_walkable() {
     let wc = flag_world(vec![CollisionFlag::W_N as u32]);
     let t = WorldTile {
