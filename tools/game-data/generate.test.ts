@@ -15,6 +15,7 @@ import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import { extractKaramjaFacts } from './extractors/karamja.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -3336,4 +3337,91 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
     assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
 }
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-karamja-fixture-'));
+    const write = (relative: string, text: string) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    write('pack/loc.pack', '700=bananacrate\n701=bananatreefull\n702=bananatreeone\n703=bananatreeempty\n');
+    write('pack/npc.pack', '500=luthas\n');
+    write('scripts/areas/area_karamja/configs/plantation.loc', [
+        '[bananatreefull]', 'category=banana_tree', 'param=next_loc_stage,bananatreeone',
+        '[bananatreeone]', 'category=banana_tree', 'param=next_loc_stage,bananatreeempty',
+        '[bananatreeempty]',
+    ].join('\n'));
+    write('scripts/areas/area_karamja/scripts/banana_tree.rs2', [
+        '[oploc1,_banana_tree]',
+        'loc_change(loc_param(next_loc_stage), 500);',
+        'inv_add(inv, banana, 1);',
+        '[oploc1,bananatreeempty]',
+    ].join('\n'));
+    write('scripts/quests/quest_hunt/scripts/banana_crate.rs2', [
+        '[oploc1,bananacrate]',
+        'if (%crate_bananas = 0 & %crate_rum = 0) {',
+        '    mes("The crate is completely empty.");',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("The crate is full of bananas.");',
+        '}',
+    ].join('\n'));
+    const luthasPath = 'scripts/quests/quest_hunt/scripts/luthas.rs2';
+    const luthasScript = [
+        '[opnpc1,luthas]',
+        'if (testbit(%hunt_store_employed, ^hunt_not_started) = ^false) {',
+        '    @multi2("Offer employment?", luthas_employment, "Other choice", other);',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("Luthas hands you 43 coins.");',
+        '    inv_add(inv, coins, 43);',
+        '    @multi4("Another crate?", again, "Thanks!", thanks, "Delivery?", delivery, "Other?", other);',
+        '}',
+        '@multi4("Repeat?", repeat, "Not yet.", incomplete, "Delivery?", delivery, "Other?", other);',
+    ].join('\n');
+    write(luthasPath, luthasScript);
+    write('maps/m45_49.jm2', [
+        '==== LOC ====',
+        '0 1 2: 700 10 0',
+        '0 4 5: 701 10 0',
+        '0 5 6: 702 10 0',
+        '==== NPC ====',
+    ].join('\n'));
+    execFileSync('git', ['init', '-q'], { cwd: content });
+    execFileSync('git', ['add', 'maps/m45_49.jm2'], { cwd: content });
+    const npcNames = { rows: [{ id: 500, config: 'luthas', display: 'Fixture Luthas', ops: ['Talk-to'] }] };
+    const locNames = { rows: [
+        { id: 700, config: 'bananacrate', display: 'Crate', ops: ['Search'] },
+        { id: 701, config: 'bananatreefull', display: 'Banana Tree', ops: ['Search'] },
+        { id: 702, config: 'bananatreeone', display: 'Banana Tree', ops: ['Search'] },
+        { id: 703, config: 'bananatreeempty', display: 'Banana Tree', ops: ['Search'] },
+    ] };
+    const npcPlacements = { rows: [{ npc_id: 500, x: 2882, z: 3139, plane: 0, mapsquare: 'm45_49' }] };
+    const result = extractKaramjaFacts(content, npcNames, locNames, npcPlacements);
+    assert.deepEqual(result.facts, {
+        luthas_spawn: { config: 'luthas', x: 2882, z: 3139, plane: 0 },
+        crate_spawn: { config: 'bananacrate', x: 2881, z: 3138, plane: 0 },
+        banana_tree_configs: ['bananatreefull', 'bananatreeone'],
+        banana_tree_spawns: [
+            { config: 'bananatreefull', x: 2884, z: 3141, plane: 0 },
+            { config: 'bananatreeone', x: 2885, z: 3142, plane: 0 },
+        ],
+        crate_capacity: 7,
+        coin_payout: 43,
+        dialogue: { employment: 'Offer employment?', paid: 'Thanks!', incomplete: 'Not yet.' },
+    });
+    assert(result.inputs.some((input) => input.path === 'maps/m45_49.jm2'), 'placement map is a family provenance input');
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, { rows: [] }),
+        /expected one Luthas NPC placement, got 0/,
+        'missing content placement refuses instead of guessing an anchor',
+    );
+    write(luthasPath, luthasScript.replace('inv_add(inv, coins, 43);', 'inv_add(inv, coins, 44);'));
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, npcPlacements),
+        /Luthas coin message\/grant disagree \(43\/44\)/,
+        'the full-crate payout is the amount the content actually grants',
+    );
+}
+
 console.log('generate fixture passed');

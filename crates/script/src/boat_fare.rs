@@ -20,30 +20,28 @@
 //! The caller's `Sustain.run()` runs once a tick while walking, as frozen
 //! runs it every follow pass (`WalkExecutor.ts:844–853`).
 //!
-//! `missingBoatFare` (`karamjaRecovery.ts:16–20`): standing on Karamja
-//! (`onIsland`), walking off it, fewer than 30 coins, and the failed walk's
-//! only missing gate item is coins making up the fare. Frozen names the
-//! shortfall (`bankPlan.ts:98–113`, `coins + missing.count === 30`); the host
-//! navigator posts the edge's required count on `walk_missing_carry`
-//! (`nav::router::missing_item_reqs`), so the host test is one row, coins
-//! (995), count 30. The rows are only posted for a `NoPath` failure, as
-//! frozen only explains an `unreachable` one (`WalkExecutor.ts:466–490`).
+//! `missingBoatFare` (`karamjaRecovery.ts:16–20`) only applies on Karamja
+//! when walking off the island and the route reports exactly one missing
+//! coins row whose required count equals the selected full-crate payout and
+//! exceeds the amount held. Frozen names the shortfall (`bankPlan.ts:98–113`);
+//! the host gets the required total from `walk_missing_carry`
+//! (`nav::router::missing_item_reqs`). These rows are only posted for a
+//! `NoPath` failure, as frozen only explains an `unreachable` one
+//! (`WalkExecutor.ts:466–490`).
 //!
-//! The recovery is the banana-plantation job, ordinary 289 content
-//! (`quest_hunt/scripts/luthas.rs2`: employment offered while
-//! `%hunt_store_employed` is clear, 30 coins once `%crate_bananas = 10`):
-//! walk to Luthas and `talkStrict` him; with the fare still short,
-//! `fillCrate` (`piratestreasure/karamja.ts:79–113`: read the crate, pick the
-//! shortfall from the grove, pack each banana, re-read) and `talkStrict`
-//! again. Frozen primitives ported here: `openDialogue` / `talkChoosingBy`
-//! with no rules (`primitives.ts:227–253, 276–318`), `driveChoice` /
-//! `driveUntil` / `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`),
-//! `pickBananas` (`karamja.ts:45–74`) and `searchBananaCrate` /
-//! `readCrateMessages` (`crate.ts:16–60`). `openDialogue`'s
-//! `Reach.entityOp` is [`NpcReach`]. `driveUntil`'s `prayerUpkeep` has no
-//! host quest-prayer state and is not called; `Sustain.run` is the
-//! embedding family's per-tick `sustain` pump. The host posts no chat-modal
-//! text, so the strict talk's no-match line cannot quote what the NPC said.
+//! Karamja facts come from the selected Luthas and banana-crate scripts,
+//! plantation/tree configs, identity packs and map placements. The frozen
+//! `karamja.ts` orchestration is ported here: talk to Luthas, fill the
+//! configured crate from fruiting placements, then talk again. Frozen
+//! primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
+//! (`primitives.ts:227–253, 276–318`), `driveChoice` / `driveUntil` /
+//! `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`), `pickBananas`
+//! (`karamja.ts:45–74`) and `searchBananaCrate` / `readCrateMessages`
+//! (`crate.ts:16–60`). `openDialogue`'s `Reach.entityOp` is [`NpcReach`].
+//! `driveUntil`'s `prayerUpkeep` has no host quest-prayer state and is not
+//! called; `Sustain.run` is the embedding family's per-tick `sustain` pump.
+//! The host posts no chat-modal text, so the strict talk's no-match line cannot
+//! quote what the NPC said.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
@@ -51,6 +49,7 @@ use crate::reach_entity::{
     chat_mark, chat_state, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
 };
 use crate::shim::{InspectAvoidWire, InteractReq};
+use crate::supply_v2;
 use crate::walk::{
     avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
 };
@@ -59,43 +58,9 @@ use serde::Deserialize;
 use serde_json::json;
 use std::cell::Cell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::time::Duration;
 
-/// Frozen `BOAT_FARE` (`karamjaRecovery.ts:10`).
-pub(crate) const BOAT_FARE: i32 = 30;
-/// Frozen `PT_ID.COINS` / `PT_ID.BANANA` (`areas.ts`).
-const COINS: i32 = 995;
-const BANANA: i32 = 1963;
-/// Frozen `PT_LOC.BANANA_CRATE`.
-const BANANA_CRATE: i32 = 2072;
-/// Frozen `BANANA_TREE_IDS`: the five trees still bearing fruit.
-const BANANA_TREE_IDS: [i32; 5] = [2073, 2074, 2075, 2076, 2077];
-/// Frozen `CRATE_FULL` (`crate.ts:13`).
-const CRATE_FULL: i32 = 10;
-const LUTHAS: &str = "Luthas";
-/// Frozen `LUTHAS.anchor`.
-const LUTHAS_ANCHOR: WorldTile = WorldTile {
-    x: 2939,
-    z: 3154,
-    level: 0,
-};
-/// Frozen `LUTHAS.prefer`.
-const LUTHAS_PREFER: &[&str] = &[
-    "Could you offer me employment on your plantation?",
-    "Thank you, I'll be on my way",
-    "No, the crate isn't full yet.",
-];
-/// Frozen `PT_TILE.BANANA_CRATE` / `PT_TILE.BANANA_GROVE`.
-const CRATE_TILE: WorldTile = WorldTile {
-    x: 2943,
-    z: 3151,
-    level: 0,
-};
-const GROVE_TILE: WorldTile = WorldTile {
-    x: 2926,
-    z: 3160,
-    level: 0,
-};
 /// Frozen talk walk bound (`karamjaRecovery.ts:37`).
 const TALK_WALK_MS: u64 = 120_000;
 /// Frozen `walkResilient(..., { attempts: 3, timeoutMs: 180_000 })` legs.
@@ -138,6 +103,155 @@ impl Drop for Guard {
 fn on_island(tile: WorldTile) -> bool {
     tile.level == 0 && (2700..3000).contains(&tile.x) && (2880..=3255).contains(&tile.z)
 }
+/// The frozen grove center is a free tile; anchor on its nearest content tree.
+const FROZEN_GROVE_ANCHOR: WorldTile = WorldTile {
+    x: 2926,
+    z: 3160,
+    level: 0,
+};
+
+/// Choose the content tree nearest the frozen grove center in Chebyshev tile
+/// distance, with plane, z, then x as deterministic tie-breakers.
+fn grove_anchor(spawns: &[api::game_data::KaramjaSpawn]) -> Option<WorldTile> {
+    spawns
+        .iter()
+        .min_by_key(|spawn| {
+            let dx = (i64::from(spawn.x) - i64::from(FROZEN_GROVE_ANCHOR.x)).abs();
+            let dz = (i64::from(spawn.z) - i64::from(FROZEN_GROVE_ANCHOR.z)).abs();
+            (
+                dx.max(dz),
+                (spawn.plane - FROZEN_GROVE_ANCHOR.level).abs(),
+                spawn.plane,
+                spawn.z,
+                spawn.x,
+            )
+        })
+        .map(|spawn| WorldTile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        })
+}
+
+struct TreeAction {
+    id: i32,
+    action: String,
+}
+
+struct BoatFacts {
+    coins: i32,
+    banana: i32,
+    crate_loc: i32,
+    tree_actions: Vec<TreeAction>,
+    luthas_name: String,
+    luthas_anchor: WorldTile,
+    crate_tile: WorldTile,
+    grove_tile: WorldTile,
+    crate_capacity: i32,
+    coin_payout: i32,
+    crate_search: String,
+    preferences: [String; 3],
+}
+
+impl BoatFacts {
+    fn selected() -> Result<Rc<Self>, String> {
+        let data = supply_v2::selected_data()
+            .ok_or_else(|| supply_v2::GAME_DATA_UNAVAILABLE.to_string())?;
+        let facts = data.karamja().ok_or_else(|| {
+            "Karamja recovery facts are unavailable for selected content".to_string()
+        })?;
+        let coins = data
+            .item_by_alias("coins")
+            .ok_or_else(|| "selected content has no coins item".to_string())?
+            .id;
+        let banana = data
+            .item_by_alias("banana")
+            .ok_or_else(|| "selected content has no banana item".to_string())?
+            .id;
+        let luthas = data
+            .npc_by_config(&facts.luthas_spawn.config)
+            .ok_or_else(|| "selected content has no Karamja plantation NPC".to_string())?;
+        if !luthas
+            .ops
+            .iter()
+            .any(|action| action.eq_ignore_ascii_case("Talk-to"))
+        {
+            return Err("selected Luthas has no Talk-to operation".to_string());
+        }
+        let luthas_name = luthas
+            .display
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| "selected Luthas has no display name".to_string())?
+            .to_string();
+        let crate_loc = data
+            .loc_by_config(&facts.crate_spawn.config)
+            .ok_or_else(|| "selected content has no Karamja crate loc".to_string())?;
+        let crate_search = crate_loc
+            .ops
+            .first()
+            .cloned()
+            .ok_or_else(|| "selected Karamja crate has no operation".to_string())?;
+        let mut tree_actions: Vec<TreeAction> = Vec::with_capacity(facts.banana_tree_configs.len());
+        for config in &facts.banana_tree_configs {
+            let loc = data
+                .loc_by_config(config)
+                .ok_or_else(|| format!("selected content has no banana tree loc {config}"))?;
+            let action = loc
+                .ops
+                .first()
+                .cloned()
+                .ok_or_else(|| format!("selected banana tree {config} has no operation"))?;
+            if let Some(existing) = tree_actions.iter().find(|tree| tree.id == loc.id) {
+                if existing.action != action {
+                    return Err(
+                        "selected banana tree states disagree on their operation".to_string()
+                    );
+                }
+            } else {
+                tree_actions.push(TreeAction { id: loc.id, action });
+            }
+        }
+        let tile = |spawn: &api::game_data::KaramjaSpawn| WorldTile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        };
+        let grove_tile = grove_anchor(&facts.banana_tree_spawns)
+            .ok_or_else(|| "selected content has no banana tree placement".to_string())?;
+        Ok(Rc::new(Self {
+            coins,
+            banana,
+            crate_loc: crate_loc.id,
+            tree_actions,
+            luthas_name,
+            luthas_anchor: tile(&facts.luthas_spawn),
+            crate_tile: tile(&facts.crate_spawn),
+            grove_tile,
+            crate_capacity: facts.crate_capacity,
+            coin_payout: facts.coin_payout,
+            crate_search,
+            preferences: [
+                facts.dialogue.employment.clone(),
+                facts.dialogue.paid.clone(),
+                facts.dialogue.incomplete.clone(),
+            ],
+        }))
+    }
+
+    fn is_fruiting_tree(&self, row: &observed::SceneRow) -> bool {
+        self.tree_actions
+            .iter()
+            .any(|tree| row.id == tree.id && has_op(row, &tree.action))
+    }
+
+    fn tree_action(&self, id: i32) -> Option<&str> {
+        self.tree_actions
+            .iter()
+            .find(|tree| tree.id == id)
+            .map(|tree| tree.action.as_str())
+    }
+}
 
 /// Frozen `Inventory.countById(id)` from the posted backpack.
 fn held(id: i32) -> i32 {
@@ -165,22 +279,40 @@ fn inventory_full() -> bool {
     })
 }
 
-/// Frozen `missingBoatFare` over the host's posted walk shorts.
-pub(crate) fn missing_boat_fare(dest: WorldTile) -> bool {
-    let Some(from) = here() else {
-        return false;
-    };
-    on_island(from)
-        && !on_island(dest)
-        && held(COINS) < BOAT_FARE
-        && observed::with(|scene| {
-            scene
-                .since_login()
-                .walk_missing_carry()
-                .is_some_and(|rows| {
-                    matches!(rows.as_slice(), [row] if row.id == COINS && row.count == BOAT_FARE)
-                })
-        })
+/// Whether the current failed walk reports the exact selected boat fare.
+fn missing_boat_fare(facts: &BoatFacts) -> bool {
+    let coins_held = held(facts.coins);
+    observed::with(|scene| {
+        scene
+            .since_login()
+            .walk_missing_carry()
+            .is_some_and(|rows| {
+                matches!(
+                    rows.as_slice(),
+                    [row] if row.id == facts.coins
+                        && row.count == facts.coin_payout
+                        && row.count > coins_held
+                )
+            })
+    })
+}
+
+/// Cheap frozen island gate, checked before resolving selected game facts.
+fn is_island_exit(dest: WorldTile) -> bool {
+    here().is_some_and(|from| on_island(from) && !on_island(dest))
+}
+fn recovery_facts(
+    dest: WorldTile,
+    logs: &mut VecDeque<String>,
+) -> Result<Option<Rc<BoatFacts>>, bool> {
+    if !is_island_exit(dest) {
+        return Ok(None);
+    }
+    let facts = BoatFacts::selected().map_err(|error| {
+        logs.push_back(format!("boat fare recovery facts unavailable: {error}"));
+        false
+    })?;
+    Ok(missing_boat_fare(&facts).then_some(facts))
 }
 
 /// One posted loc the frozen query picked: its op target.
@@ -214,13 +346,13 @@ fn has_op(row: &observed::SceneRow, op: &str) -> bool {
     row.actions.iter().any(|have| have.eq_ignore_ascii_case(op))
 }
 
-/// Frozen `loc.interact('Search')`: the op on this exact row.
-fn search(loc: &LocHit, cx: &mut Cx<'_>) {
+/// Frozen `loc.interact` against the operation exposed by selected loc data.
+fn search(loc: &LocHit, action: &str, cx: &mut Cx<'_>) {
     cx.emit(InteractReq::Loc {
         x: loc.x,
         z: loc.z,
         level: loc.level,
-        action: "Search".into(),
+        action: action.into(),
         id: Some(loc.id),
     });
 }
@@ -233,7 +365,7 @@ struct CrateState {
 }
 
 /// Frozen `readCrateMessages` (`crate.ts:16–33`).
-fn read_crate_messages(text: &str) -> Option<CrateState> {
+fn read_crate_messages(text: &str, capacity: i32) -> Option<CrateState> {
     let text = text.to_lowercase();
     let rum = text.contains("there is some rum in here")
         || text.contains("there is also some rum stashed in here");
@@ -246,7 +378,7 @@ fn read_crate_messages(text: &str) -> Option<CrateState> {
     if text.contains("the crate is full of bananas") {
         return Some(CrateState {
             rum,
-            bananas: CRATE_FULL,
+            bananas: capacity,
         });
     }
     // `/the crate has (\d+) bananas? inside/`
@@ -322,10 +454,10 @@ struct Pages {
 }
 
 impl Pages {
-    fn new(strict: bool, prefer: &'static [&'static str]) -> Self {
+    fn new(strict: bool, prefer: &[String]) -> Self {
         Self {
             strict,
-            prefer: prefer.iter().map(|line| (*line).to_string()).collect(),
+            prefer: prefer.to_vec(),
             pages: 0,
             phase: PagePhase::Head,
         }
@@ -416,7 +548,7 @@ impl Pages {
     }
 }
 
-/// Frozen `talkStrict(LUTHAS.npc, LUTHAS.prefer, log)`.
+/// Frozen strict Luthas dialogue using selected NPC identity and choices.
 enum Talk {
     Open(Box<NpcReach>),
     Drive(Pages),
@@ -424,17 +556,17 @@ enum Talk {
 
 impl Talk {
     /// Frozen `openDialogue`'s synchronous head (`primitives.ts:228–237`).
-    fn start(logs: &mut VecDeque<String>) -> Result<Self, bool> {
+    fn start(facts: &BoatFacts, logs: &mut VecDeque<String>) -> Result<Self, bool> {
         let (modal, cont) = chat_state();
         if modal != -1 || cont {
-            return Ok(Self::Drive(Pages::new(true, LUTHAS_PREFER)));
+            return Ok(Self::Drive(Pages::new(true, &facts.preferences)));
         }
-        if !npc_talkable(LUTHAS) {
-            logs.push_back(format!("no '{LUTHAS}' nearby to talk to"));
+        if !npc_talkable(&facts.luthas_name) {
+            logs.push_back(format!("no '{}' nearby to talk to", facts.luthas_name));
             return Err(false);
         }
         Ok(Self::Open(Box::new(NpcReach::new(
-            LUTHAS,
+            &facts.luthas_name,
             NpcReachOpts {
                 expect: TalkExpect::DialogReady,
                 expect_ms: crate::dialog::DIALOGUE_OPEN_MS,
@@ -445,7 +577,12 @@ impl Talk {
         ))))
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
+    fn step(
+        &mut self,
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Option<bool> {
         match self {
             Self::Open(reach) => {
                 let status = reach.step(cx);
@@ -454,11 +591,11 @@ impl Talk {
                 }
                 match status? {
                     "done" => {
-                        *self = Self::Drive(Pages::new(true, LUTHAS_PREFER));
-                        self.step(cx, logs)
+                        *self = Self::Drive(Pages::new(true, &facts.preferences));
+                        self.step(facts, cx, logs)
                     }
                     _ => {
-                        logs.push_back(format!("'{LUTHAS}' never opened a dialogue"));
+                        logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
                         Some(false)
                     }
                 }
@@ -476,8 +613,12 @@ enum SearchCrate {
 }
 
 impl SearchCrate {
-    fn start(cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Self, Option<CrateState>> {
-        match leg(CRATE_TILE, 2, cx) {
+    fn start(
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Self, Option<CrateState>> {
+        match leg(facts.crate_tile, 2, cx) {
             Ok(walk) => Ok(Self::Walk(walk)),
             Err(true) => Ok(Self::Settle(SETTLE_TICKS)),
             Err(false) => {
@@ -487,7 +628,12 @@ impl SearchCrate {
         }
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<Option<CrateState>> {
+    fn step(
+        &mut self,
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Option<Option<CrateState>> {
         match self {
             Self::Walk(walk) => match step_leg(walk, cx, logs)? {
                 true => {
@@ -504,21 +650,21 @@ impl SearchCrate {
                 None
             }
             Self::Settle(_) => {
-                let Some(crate_loc) =
-                    nearest_loc(6, |row| row.id == BANANA_CRATE && has_op(row, "Search"))
-                else {
+                let Some(crate_loc) = nearest_loc(6, |row| {
+                    row.id == facts.crate_loc && has_op(row, &facts.crate_search)
+                }) else {
                     logs.push_back("no searchable Crate at the plantation".into());
                     return Some(None);
                 };
                 let mark = chat_mark();
-                search(&crate_loc, cx);
+                search(&crate_loc, &facts.crate_search, cx);
                 cx.clock().arm(CRATE_READ_MS);
                 *self = Self::Read { mark };
                 None
             }
             Self::Read { mark } => {
                 let said = said_since(*mark);
-                let state = read_crate_messages(&said);
+                let state = read_crate_messages(&said, facts.crate_capacity);
                 if state.is_none() && !cx.clock().bound_reached() {
                     return None;
                 }
@@ -564,16 +710,21 @@ enum PickPhase {
 }
 
 impl Pick {
-    fn start(want: i32, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Self, i32> {
-        if held(BANANA) >= want {
-            return Err(held(BANANA));
+    fn start(
+        facts: &BoatFacts,
+        want: i32,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Self, i32> {
+        if held(facts.banana) >= want {
+            return Err(held(facts.banana));
         }
-        let phase = match leg(GROVE_TILE, 4, cx) {
+        let phase = match leg(facts.grove_tile, 4, cx) {
             Ok(walk) => PickPhase::Walk(walk),
             Err(true) => PickPhase::Settle(SETTLE_TICKS),
             Err(false) => {
                 logs.push_back("could not reach the banana grove".into());
-                return Err(held(BANANA));
+                return Err(held(facts.banana));
             }
         };
         let mut pick = Self {
@@ -582,7 +733,7 @@ impl Pick {
             phase,
         };
         if matches!(pick.phase, PickPhase::Settle(_)) {
-            if let Some(done) = pick.next(logs) {
+            if let Some(done) = pick.next(facts, logs) {
                 return Err(done);
             }
         }
@@ -590,27 +741,32 @@ impl Pick {
     }
 
     /// The loop head: `Some(picked)` once the loop ends.
-    fn next(&mut self, logs: &mut VecDeque<String>) -> Option<i32> {
-        if self.attempt >= PICK_ATTEMPTS || held(BANANA) >= self.want || inventory_full() {
-            return Some(self.finish(logs));
+    fn next(&mut self, facts: &BoatFacts, logs: &mut VecDeque<String>) -> Option<i32> {
+        if self.attempt >= PICK_ATTEMPTS || held(facts.banana) >= self.want || inventory_full() {
+            return Some(self.finish(facts, logs));
         }
         self.phase = PickPhase::Settle(SETTLE_TICKS);
         None
     }
 
-    fn finish(&self, logs: &mut VecDeque<String>) -> i32 {
-        let picked = held(BANANA);
+    fn finish(&self, facts: &BoatFacts, logs: &mut VecDeque<String>) -> i32 {
+        let picked = held(facts.banana);
         logs.push_back(format!("picked {picked} bananas"));
         picked
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<i32> {
+    fn step(
+        &mut self,
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Option<i32> {
         match &mut self.phase {
             PickPhase::Walk(walk) => match step_leg(walk, cx, logs)? {
-                true => self.next(logs),
+                true => self.next(facts, logs),
                 false => {
                     logs.push_back("could not reach the banana grove".into());
-                    Some(held(BANANA))
+                    Some(held(facts.banana))
                 }
             },
             PickPhase::Settle(left) if *left > 1 => {
@@ -618,33 +774,34 @@ impl Pick {
                 None
             }
             PickPhase::Settle(_) => {
-                let Some(tree) = nearest_loc(20, |row| {
-                    BANANA_TREE_IDS.contains(&row.id) && has_op(row, "Search")
-                }) else {
+                let Some(tree) = nearest_loc(20, |row| facts.is_fruiting_tree(row)) else {
                     logs.push_back("no bearing Banana Tree in range of the grove anchor".into());
-                    return Some(self.finish(logs));
+                    return Some(self.finish(facts, logs));
                 };
-                let before = held(BANANA);
-                search(&tree, cx);
+                let Some(action) = facts.tree_action(tree.id) else {
+                    logs.push_back("selected banana tree has no content operation".into());
+                    return Some(self.finish(facts, logs));
+                };
+                let before = held(facts.banana);
+                search(&tree, action, cx);
                 cx.clock().arm(PICK_MS);
                 self.phase = PickPhase::Wait { before };
                 None
             }
             PickPhase::Wait { before } => {
-                if held(BANANA) <= *before && !cx.clock().bound_reached() {
+                if held(facts.banana) <= *before && !cx.clock().bound_reached() {
                     return None;
                 }
                 cx.clock().deadline = None;
                 self.attempt += 1;
-                self.next(logs)
+                self.next(facts, logs)
             }
         }
     }
 }
 
 /// Frozen `driveUntil(expect, [], log)` (`prompts.ts:73–93`) with the
-/// `useOnLoc` goal `held(BANANA) < before`. Each step is one pass of the
-/// loop after its `delayTicks(1)`.
+/// selected banana item as its `useOnLoc` goal.
 struct DriveUntil {
     before: i32,
     deadline: std::time::Instant,
@@ -652,34 +809,39 @@ struct DriveUntil {
 }
 
 impl DriveUntil {
-    fn expect(&self) -> bool {
-        held(BANANA) < self.before
+    fn expect(&self, facts: &BoatFacts) -> bool {
+        held(facts.banana) < self.before
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
+    fn step(
+        &mut self,
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Option<bool> {
         if let Some(choice) = self.choice.as_mut() {
             if !choice.step(cx, logs)? {
-                return Some(self.expect());
+                return Some(self.expect(facts));
             }
             self.choice = None;
             return None;
         }
         if cx.clock().now() >= self.deadline {
-            return Some(self.expect());
+            return Some(self.expect(facts));
         }
-        if self.expect() {
+        if self.expect(facts) {
             return Some(true);
         }
         let (modal, cont) = chat_state();
         if modal != -1 || cont {
             self.choice = Some(Pages::new(false, &[]));
-            return self.step(cx, logs);
+            return self.step(facts, cx, logs);
         }
         None
     }
 }
 
-/// Frozen `useOnLoc(BANANA, crate, [], held < before)` (`prompts.ts:316–345`).
+/// Frozen `useOnLoc` over selected banana and crate facts (`prompts.ts:316–345`).
 enum PackOne {
     Walk { before: i32, walk: Resilient },
     Settle { before: i32, left: u32 },
@@ -687,9 +849,9 @@ enum PackOne {
 }
 
 impl PackOne {
-    fn start(cx: &mut Cx<'_>) -> Result<Self, bool> {
-        let before = held(BANANA);
-        match leg(CRATE_TILE, 2, cx) {
+    fn start(facts: &BoatFacts, cx: &mut Cx<'_>) -> Result<Self, bool> {
+        let before = held(facts.banana);
+        match leg(facts.crate_tile, 2, cx) {
             Ok(walk) => Ok(Self::Walk { before, walk }),
             Err(true) => Ok(Self::Settle {
                 before,
@@ -699,7 +861,12 @@ impl PackOne {
         }
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
+    fn step(
+        &mut self,
+        facts: &BoatFacts,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Option<bool> {
         match self {
             Self::Walk { before, walk } => {
                 if !step_leg(walk, cx, logs)? {
@@ -717,12 +884,10 @@ impl PackOne {
             }
             Self::Settle { before, .. } => {
                 let before = *before;
-                let target = nearest_loc(6, |row| {
-                    row.id == BANANA_CRATE && row.name_or_empty().eq_ignore_ascii_case("Crate")
-                });
+                let target = nearest_loc(6, |row| row.id == facts.crate_loc);
                 let item = observed::with(|scene| {
                     scene.since_login().inv().and_then(|rows| {
-                        rows.iter().find(|row| row.id == BANANA).map(|row| {
+                        rows.iter().find(|row| row.id == facts.banana).map(|row| {
                             (
                                 row.name.as_deref().unwrap_or_default().to_string(),
                                 row.slot,
@@ -732,8 +897,8 @@ impl PackOne {
                 });
                 let (Some(target), Some((name, slot))) = (target, item) else {
                     logs.push_back(format!(
-                        "no 'Crate' id {BANANA_CRATE} or no item {BANANA} to use on it near ({},{})",
-                        CRATE_TILE.x, CRATE_TILE.z
+                        "no crate id {} or item {} near ({},{})",
+                        facts.crate_loc, facts.banana, facts.crate_tile.x, facts.crate_tile.z
                     ));
                     return Some(false);
                 };
@@ -745,7 +910,7 @@ impl PackOne {
                     z: target.z,
                     level: target.level,
                     index: None,
-                    source_item_id: Some(BANANA),
+                    source_item_id: Some(facts.banana),
                     source_item_slot: slot,
                     target_item_id: None,
                     target_item_slot: None,
@@ -757,13 +922,14 @@ impl PackOne {
                 });
                 None
             }
-            Self::Drive(drive) => drive.step(cx, logs),
+            Self::Drive(drive) => drive.step(facts, cx, logs),
         }
     }
 }
 
 /// Frozen `fillCrate` (`karamja.ts:79–113`).
 struct Fill {
+    facts: Rc<BoatFacts>,
     pass: i32,
     want: i32,
     packed: i32,
@@ -780,8 +946,13 @@ enum FillPhase {
 }
 
 impl Fill {
-    fn start(cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Self, bool> {
+    fn start(
+        facts: Rc<BoatFacts>,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Self, bool> {
         let mut fill = Self {
+            facts,
             pass: 0,
             want: 0,
             packed: 0,
@@ -793,10 +964,10 @@ impl Fill {
         }
     }
 
-    /// The `for (pass < CRATE_FULL)` head, else the closing read.
+    /// The `for (pass < crate_capacity)` head, else the closing read.
     fn pass_head(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
-        let start = SearchCrate::start(cx, logs);
-        if self.pass >= CRATE_FULL {
+        let start = SearchCrate::start(&self.facts, cx, logs);
+        if self.pass >= self.facts.crate_capacity {
             return match start {
                 Ok(search) => {
                     self.phase = FillPhase::Final(search);
@@ -820,11 +991,11 @@ impl Fill {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Option<bool> {
-        if state.bananas >= CRATE_FULL {
+        if state.bananas >= self.facts.crate_capacity {
             return Some(true);
         }
-        self.want = CRATE_FULL - state.bananas;
-        match Pick::start(self.want, cx, logs) {
+        self.want = self.facts.crate_capacity - state.bananas;
+        match Pick::start(&self.facts, self.want, cx, logs) {
             Ok(pick) => {
                 self.phase = FillPhase::Pick(pick);
                 None
@@ -843,7 +1014,7 @@ impl Fill {
             logs.push_back("the grove gave up no bananas".into());
             return Some(false);
         }
-        match leg(CRATE_TILE, 2, cx) {
+        match leg(self.facts.crate_tile, 2, cx) {
             Ok(walk) => {
                 self.phase = FillPhase::WalkCrate(walk);
                 None
@@ -856,10 +1027,10 @@ impl Fill {
         }
     }
 
-    /// The pack loop head (`packed < want && held(BANANA) > 0`).
+    /// The pack loop head (`packed < want && held(banana) > 0`).
     fn pack_head(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
-        if self.packed < self.want && held(BANANA) > 0 {
-            if let Ok(pack) = PackOne::start(cx) {
+        if self.packed < self.want && held(self.facts.banana) > 0 {
+            if let Ok(pack) = PackOne::start(&self.facts, cx) {
                 self.phase = FillPhase::Pack(pack);
                 return None;
             }
@@ -870,17 +1041,17 @@ impl Fill {
 
     fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
         match &mut self.phase {
-            FillPhase::Search(search) => match search.step(cx, logs)? {
+            FillPhase::Search(search) => match search.step(&self.facts, cx, logs)? {
                 None => Some(false),
                 Some(state) => self.after_read(state, cx, logs),
             },
             FillPhase::Final(search) => Some(
                 search
-                    .step(cx, logs)?
-                    .is_some_and(|state| state.bananas >= CRATE_FULL),
+                    .step(&self.facts, cx, logs)?
+                    .is_some_and(|state| state.bananas >= self.facts.crate_capacity),
             ),
             FillPhase::Pick(pick) => {
-                let picked = pick.step(cx, logs)?;
+                let picked = pick.step(&self.facts, cx, logs)?;
                 self.after_pick(picked, cx, logs)
             }
             FillPhase::WalkCrate(walk) => {
@@ -899,7 +1070,7 @@ impl Fill {
                 self.pack_head(cx, logs)
             }
             FillPhase::Pack(pack) => {
-                if !pack.step(cx, logs)? {
+                if !pack.step(&self.facts, cx, logs)? {
                     self.packed = self.want;
                 } else {
                     self.packed += 1;
@@ -919,6 +1090,7 @@ enum Stage {
 /// Frozen `recoverBoatFare(dest, missing, log)` (`karamjaRecovery.ts:24–58`).
 /// `Some(true)` once the pack holds the fare.
 pub(crate) struct Recover {
+    facts: Rc<BoatFacts>,
     stage: Stage,
     _guard: Guard,
 }
@@ -931,32 +1103,44 @@ impl Recover {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Self, bool> {
-        if RECOVERING.with(Cell::get) || interrupted(cx) || !missing_boat_fare(dest) {
+        if RECOVERING.with(Cell::get) || interrupted(cx) {
             return Err(false);
         }
-        if inventory_full() && held(BANANA) == 0 {
+        let Some(facts) = recovery_facts(dest, logs)? else {
+            return Err(false);
+        };
+        if inventory_full() && held(facts.banana) == 0 {
             logs.push_back("boat fare recovery needs one free inventory slot".into());
             return Err(false);
         }
         let guard = Guard::take().ok_or(false)?;
-        logs.push_back("no boat fare: earning 30 coins at Luthas's plantation".into());
-        let stage = Self::talk(false, cx, logs)?;
+        logs.push_back(format!(
+            "no boat fare: earning {} coins at {}'s plantation",
+            facts.coin_payout, facts.luthas_name
+        ));
+        let stage = Self::talk(&facts, false, cx, logs)?;
         Ok(Self {
+            facts,
             stage,
             _guard: guard,
         })
     }
 
     /// Frozen `talk()` (`karamjaRecovery.ts:36–41`).
-    fn talk(second: bool, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Stage, bool> {
+    fn talk(
+        facts: &BoatFacts,
+        second: bool,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Stage, bool> {
         if interrupted(cx) {
             return Err(false);
         }
-        match Walk::begin(LUTHAS_ANCHOR, 2, TALK_WALK_MS, false, cx) {
+        match Walk::begin(facts.luthas_anchor, 2, TALK_WALK_MS, false, cx) {
             Ok(walk) => Ok(Stage::TalkWalk { second, walk }),
             Err(true) => Ok(Stage::Talk {
                 second,
-                talk: Talk::start(logs)?,
+                talk: Talk::start(facts, logs)?,
             }),
             Err(false) => Err(false),
         }
@@ -1000,23 +1184,24 @@ impl Recover {
                 }
                 Stage::Talk {
                     second: *second,
-                    talk: match Talk::start(logs) {
+                    talk: match Talk::start(&self.facts, logs) {
                         Ok(talk) => talk,
                         Err(done) => return Some(done),
                     },
                 }
             }
             Stage::Talk { second, talk } => {
-                if !talk.step(cx, logs)? {
+                if !talk.step(&self.facts, cx, logs)? {
                     return Some(false);
                 }
-                if *second || held(COINS) >= BOAT_FARE {
-                    return Some(held(COINS) >= BOAT_FARE);
+                let coins = held(self.facts.coins);
+                if *second || coins >= self.facts.coin_payout {
+                    return Some(coins >= self.facts.coin_payout);
                 }
                 if interrupted(cx) {
                     return Some(false);
                 }
-                match Fill::start(cx, logs) {
+                match Fill::start(self.facts.clone(), cx, logs) {
                     Ok(fill) => Stage::Fill(fill),
                     Err(_) => return Some(false),
                 }
@@ -1025,7 +1210,7 @@ impl Recover {
                 if !fill.step(cx, logs)? {
                     return Some(false);
                 }
-                match Self::talk(true, cx, logs) {
+                match Self::talk(&self.facts, true, cx, logs) {
                     Ok(stage) => stage,
                     Err(done) => return Some(done),
                 }
@@ -1335,7 +1520,8 @@ mod crate_message_tests {
 
     #[test]
     fn crate_messages_read_as_banana_crate_rs2_prints_them() {
-        let read = |text: &str| read_crate_messages(text);
+        let capacity = 13;
+        let read = |text: &str| read_crate_messages(text, capacity);
         assert_eq!(
             read("The crate is completely empty."),
             Some(CrateState {
@@ -1361,7 +1547,7 @@ mod crate_message_tests {
             read("The crate is full of bananas."),
             Some(CrateState {
                 rum: false,
-                bananas: 10
+                bananas: capacity
             })
         );
         assert_eq!(
