@@ -9,6 +9,9 @@ use crate::collision::{bake_from_maps, WorldCollision};
 use client::config::{Cache, LocType};
 use client::io::JagFile;
 
+const RUNE_JOURNAL_NAME: &str = "Fixture Rune Journal";
+const TREE_JOURNAL_NAME: &str = "Fixture Tree Journal";
+const SHILO_JOURNAL_NAME: &str = "Fixture Cart Journal";
 const JOURNAL_GREEN_SOURCE: &str = "\
 [proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
 if ($progress = 0) {
@@ -36,10 +39,7 @@ fn derive_transports_emits_essence_mine_entries() {
         .edges
         .iter()
         .filter(|e| {
-            e.kind == TransportKind::Npc
-                && e.quest_req.iter().any(|q| {
-                    q.to_ascii_lowercase().contains("rune mysteries") || q == "runemysteries"
-                })
+            e.kind == TransportKind::Npc && e.quest_req.iter().any(|q| q == RUNE_JOURNAL_NAME)
         })
         .cloned()
         .collect();
@@ -56,10 +56,8 @@ fn derive_transports_emits_essence_mine_entries() {
             "every wizard lands on the mine pad: {e:?}"
         );
         assert!(
-            e.quest_req
-                .iter()
-                .any(|q| q.to_ascii_lowercase().contains("rune mysteries")),
-            "Rune Mysteries on the entry: {e:?}"
+            e.quest_req.iter().any(|q| q == RUNE_JOURNAL_NAME),
+            "content-derived Rune journal row on the entry: {e:?}"
         );
     }
     // The five known wizards pin their mined placement tiles.
@@ -146,8 +144,8 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
     for e in &elk {
         assert_eq!(e.option, 1, "Talk-to: {e:?}");
         assert!(
-            e.quest_req.iter().any(|q| q == "Tree Gnome Village"),
-            "Tree Gnome Village on the escort: {e:?}"
+            e.quest_req.iter().any(|q| q == TREE_JOURNAL_NAME),
+            "content-derived Tree journal row on the escort: {e:?}"
         );
     }
     let into_maze = elk
@@ -187,6 +185,48 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
             z: 3192,
             level: 0
         }
+    );
+}
+#[test]
+fn unresolved_quest_journal_names_count_skipped_transport_hops() {
+    let fx = Fixture::new();
+    write_static_route_journal(&fx);
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[rune]\n[tree]\n[cart]\n",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+
+    assert_eq!(
+        skipped.get(SKIP_ESSENCE_JOURNAL_NAME).copied(),
+        Some(ESSENCE_WIZARDS.len())
+    );
+    assert_eq!(
+        skipped.get(SKIP_ELKOY_JOURNAL_NAME).copied(),
+        Some(ELKOY_ESCORTS.len())
+    );
+    assert_eq!(
+        skipped.get(SKIP_HAJEDY_JOURNAL_NAME).copied(),
+        Some(1),
+        "the single journal-gated Hajedy cart hop is counted"
+    );
+    for npc in [553, 300, 462, 844, 171, 473, 474, 510] {
+        assert!(
+            !graph
+                .edges
+                .iter()
+                .any(|edge| { edge.kind == TransportKind::Npc && edge.loc_id == npc }),
+            "unresolved journal name must not emit gated NPC hop {npc}"
+        );
+    }
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == TransportKind::Npc && edge.loc_id == 511),
+        "the ungated return cart remains available"
     );
 }
 
@@ -733,10 +773,34 @@ fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
     derive_transports(fx.path(), &defs, &wc)
 }
 
-/// The graph derived from an empty content root: only the explicit route
-/// tables (boats, carts, essence-mine wizards, Elkoy) that read no content.
+fn write_static_route_journal(fx: &Fixture) {
+    fx.write(
+        "pack/varp.pack",
+        "115=runemysteries\n116=treequest\n117=zombiequeen\n",
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^runemysteries_complete = 6\n^tree_complete = 9\n^zombiequeen_complete = 15\n",
+    );
+    fx.write(
+        "scripts/general/scripts/quests.rs2",
+        &format!(
+            "{JOURNAL_GREEN_SOURCE}\
+~send_quest_progress_colour(questlist:rune, %runemysteries, ^runemysteries_complete);\n\
+~send_quest_progress_colour(questlist:tree, %treequest, ^tree_complete);\n\
+~send_quest_progress_colour(questlist:cart, %zombiequeen, ^zombiequeen_complete);\n"
+        ),
+    );
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[rune]\ntext=Fixture Rune Journal\n[tree]\ntext=Fixture Tree Journal\n[cart]\ntext=Fixture Cart Journal\n",
+    );
+}
+/// The graph derived from a small content fixture: route geometry is static,
+/// while gated quest journal names come from its quest scripts and interface.
 fn derive_static_routes() -> TransportGraph {
     let fx = Fixture::new();
+    write_static_route_journal(&fx);
     let defs = loc_defs(&[]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     derive_transports(fx.path(), &defs, &wc)
@@ -1671,10 +1735,16 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
             .all(|edge| edge.consumed_req == [(995, 10)]),
         "the live cart's minimum is 10 coins; its 5% debit is balance-dependent"
     );
-    assert!(
-        carts.iter().any(|e| !e.quest_req.is_empty()),
-        "Shilo complete on Brim→Shilo"
-    );
+    let shilo = carts
+        .iter()
+        .find(|edge| edge.loc_id == 510)
+        .expect("Brimhaven → Shilo cart");
+    assert_eq!(shilo.quest_req, [SHILO_JOURNAL_NAME]);
+    let return_cart = carts
+        .iter()
+        .find(|edge| edge.loc_id == 511)
+        .expect("Shilo → Brimhaven cart");
+    assert!(return_cart.quest_req.is_empty());
 }
 
 /// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /
@@ -2878,6 +2948,7 @@ p_arrivedelay;
 #[test]
 fn derive_transports_skips_script_names_missing_from_pack() {
     let fx = Fixture::new();
+    write_static_route_journal(&fx);
     fx.write("pack/loc.pack", "");
     fx.write(
         "maps/m44_53.jm2",
