@@ -7,7 +7,7 @@ import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertT
 import { parsePack } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
-import { extractGatheringFamily, compareCodepoint, gatherResources, miningHazards } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, miningHazards, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
@@ -62,6 +62,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/gam
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
 const publishedTrioGivers = new Map<number, PublishedTrioGivers>();
+const publishedSiteIds = new Map<number, string[]>();
 export type DebugVerifyStatus = { status: 'verified'; commands: number } | { status: 'source-rejected'; reason: string };
 /** The debug family's own verification: a debug-only mismatch withholds only the Debug catalog. */
 async function verifyDebugArtifact(revision: number, manifestRow: any, pin: { engine: string; content: string; engineRoot: string; contentRoot: string; cache: unknown }): Promise<DebugVerifyStatus> {
@@ -531,6 +532,50 @@ async function verifyRevision(revision: number) {
         ...bankPlacements.inputs,
     }), `${revision} bank catalog and placement inputs`);
     assertEqual(fs.readFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), 'utf8'), bankCatalogRust(bankCatalog), `${revision} compiled bank roster matches frozen AST`);
+    // Named sites (§2.3 P-sites): the core table is the family's site slice and the manifest carries its report.
+    const siteResult = gatherSites(gathering.payload, gatherRows, pin.contentRoot, bankCatalog);
+    assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
+    assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
+    const expectedSiteReport = revision === 289
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+    assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 310 : 307, `${revision} gather_sites row count`);
+    const siteRows = payload.gather_sites as GatherSiteWire[];
+    const siteRow = (id: string) => {
+        const found = siteRows.find((row) => row.id === id);
+        if (!found) throw new Error(`${revision}: missing gather site ${id}`);
+        return found;
+    };
+    const assertSite = (id: string, label: string, region: { min_x: number; min_z: number; max_x: number; max_z: number; level: number }) => {
+        const found = siteRow(id);
+        assertEqual(found.label, label, `${revision} ${id} label`);
+        assertEqual(JSON.stringify(found.region), JSON.stringify(region), `${revision} ${id} region`);
+    };
+    assertSite('fishing.musa_point', 'Musa Point · Bait, Cage, Harpoon, Net', { min_x: 2923, min_z: 3179, max_x: 2926, max_z: 3181, level: 0 });
+    assertSite('fishing.barbarian_village', 'Barbarian Village · Bait, Lure', { min_x: 3104, min_z: 3424, max_x: 3110, max_z: 3434, level: 0 });
+    assertSite('fishing.catherby', 'Catherby · Harpoon, Net, Bait, Cage', { min_x: 2836, min_z: 3423, max_x: 2859, max_z: 3431, level: 0 });
+    assertSite('fishing.baxtorian_falls', 'Baxtorian Falls · Bait, Lure', { min_x: 2527, min_z: 3403, max_x: 2537, max_z: 3412, level: 0 });
+    assertSite('fishing.baxtorian_falls.2', 'Baxtorian Falls (2) · Bait, Lure', { min_x: 2508, min_z: 3421, max_x: 2508, max_z: 3421, level: 0 });
+    assertSite('fishing.agility_training_area.sw', 'Agility Training Area SW19 · Bait, Lure', revision === 289
+        ? { min_x: 2501, min_z: 3498, max_x: 2520, max_z: 3518, level: 0 }
+        : { min_x: 2498, min_z: 3498, max_x: 2520, max_z: 3518, level: 0 });
+    assertSite('fishing.rimmington', 'Rimmington · Bait, Net', { min_x: 2986, min_z: 3176, max_x: 2986, max_z: 3176, level: 0 });
+    assertSite('fishing.rimmington.2', 'Rimmington (2) · Bait, Net', { min_x: 2996, min_z: 3158, max_x: 2996, max_z: 3158, level: 0 });
+    assertSite('mining.varrock_east.se', 'Varrock East SE50 · Copper ore 9, Tin ore 6, Iron ore 4', { min_x: 3282, min_z: 3361, max_x: 3290, max_z: 3370, level: 0 });
+    assertSite('mining.lumbridge.ne', 'Lumbridge NE54 · Iron ore 9, Silver ore 5, Coal 3 +5', { min_x: 3293, min_z: 3284, max_x: 3305, max_z: 3318, level: 0 });
+    assertSite('mining.al_kharid.w', 'Al Kharid W26 · Coal 7, Mithril ore 5, Adamantite ore 2', { min_x: 3233, min_z: 3157, max_x: 3243, max_z: 3167, level: 0 });
+    assertSite('mining.river_lum', 'River Lum · Tin ore 8, Clay 3, Iron ore 3 +1', { min_x: 3172, min_z: 3365, max_x: 3183, max_z: 3377, level: 0 });
+    assertSite('woodcutting.draynor', 'Draynor · Logs 25, Willow logs 5, Oak logs 4', { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
+    for (const gone of ['fishing.rimmington.sw', 'fishing.cooks_guild.w']) {
+        if (siteRows.some((row) => row.id === gone)) throw new Error(`${revision}: round-2 site ${gone} is not a row`);
+    }
+    // The published wire shape: exactly the TS GatherSiteWire fields, with region keys in writer order.
+    for (const row of siteRows) {
+        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(['id', 'keys', 'label', 'region', 'skill']), `${revision} ${row.id} wire fields`);
+        assertEqual(JSON.stringify(Object.keys(row.region).sort()), JSON.stringify(['level', 'max_x', 'max_z', 'min_x', 'min_z']), `${revision} ${row.id} region fields`);
+    }
+    publishedSiteIds.set(revision, siteRows.map((row) => row.id));
     const cookFiles = ['src/bot/data/cookLocations.ts', 'src/bot/data/cookingRanges.ts', 'tools/cooking/gen-cooksurfaces.ts'];
     const [cookLocations, cookingRanges, genCookSurfaces] = cookFiles.map((file) => fs.readFileSync(path.join(rs2b0tRoot, file), 'utf8'));
     const cookCatalog = await extractCookCatalog(pin.engineRoot, { cookLocations, cookingRanges, genCookSurfaces });
@@ -562,6 +607,13 @@ for (const revision of requested) {
 const pinnedGivers274 = publishedTrioGivers.get(274); const pinnedGivers289 = publishedTrioGivers.get(289);
 const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked: both revisions did not verify';
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
+const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
+if (pinnedSites274 && pinnedSites289) {
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 307, 'gather_sites shared ids across revisions');
+    const extra289 = pinnedSites289.filter((id) => !pinnedSites274.includes(id));
+    assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw']), 'gather_sites 289-only rows');
+    assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');
+}
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results, refused, cross_pin: crossPin };
 const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json');
 fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
