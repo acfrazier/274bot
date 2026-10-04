@@ -1309,7 +1309,7 @@ fn open_npc_bank_at_here<D: Driver>(
             );
         }
         if snapshot.chat_continue_component_id() >= 0 {
-            return matches!(ix.continue_dialog(), SendResult::Sent { .. });
+            return matches!(ix.continue_dialog(None), SendResult::Sent { .. });
         }
     }
     let wanted = name.trim();

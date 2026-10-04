@@ -40,7 +40,10 @@ fn start(modal: i32) -> (LoadIsolate, SnapshotInput<'static>) {
     let mut snap = common::ingame_snapshot();
     page(&mut snap, modal, true);
     post_tick(&iso, &mut snap, 1);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
     (iso, snap)
 }
 

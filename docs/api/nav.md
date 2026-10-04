@@ -431,6 +431,11 @@ transitions on the source-reachable frontier, including separately blocked
 alternatives, rather than naming only a shortest relaxed witness. It does
 not claim a minimal cut; incomplete or budget-limited frontier searches
 return no diagnosis.
+Script bank-fetch refusal hints probe at most eight candidate goals, each
+through the existing bounded router searches, rather than running a separate
+bank/zone diagnosis for every Area tile. This optional hint budget does not
+truncate the route's goals or authorize a route; targets beyond it may have
+no bank-fetch zone attribution.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
@@ -512,8 +517,8 @@ cancelled receipts surface promptly. Motion is carried explicitly through
 the isolate snapshot; old snapshots report it unavailable, not stationary.
 The existing active walk deadline bounds the wait, without relaxing reach.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
-Quester Stops with a `needs-evidence` failure and retains those gates for its
-caller through `unresolved_walk_gates()`.
+Quester Stops with a `needs-evidence` failure; it does not retain an unused
+copy of the gates after reporting that terminal block.
 
 Manual movement takes ownership before frontend or script follow. A matching
 native walk completes once with the normal `WalkEnd::UserInput` receipt
