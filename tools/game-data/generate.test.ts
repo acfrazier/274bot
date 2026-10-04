@@ -3245,6 +3245,31 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
     assert.deepEqual(result.rows.map((row) => [row.id, row.label]), [['woodcutting.p.e', 'P E20 · Oak logs 2'], ['woodcutting.p.e.2', 'P E40 (2) · Oak logs 3']]);
 }
+
+// Place names sort before their bearing siblings, independently of the label separator.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
+    const oak = synMethod(
+        'woodcutting.oak',
+        'woodcutting',
+        ['oak'],
+        synKnownIds([{ item: 1521, level: 15 }]),
+        synKnownIds([]),
+        { targets: { state: 'known', value: [synTarget(7), synTarget(8)] } },
+    );
+    const facts = synSiteFacts(
+        [oak],
+        [],
+        [],
+        [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l7 0', '2 0 50 10 l8 0'])],
+    );
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    assert.deepEqual(
+        result.rows.map((row) => row.label),
+        ['Test Water · Oak logs 1', 'Test Water E40 · Oak logs 1'],
+    );
+}
+
 // A category-suffixed enum stem is not a direct name.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[coalfish]\nparam=fishing_movement_enum,fishing_movement_coalfish_enum');
