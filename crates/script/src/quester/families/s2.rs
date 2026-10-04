@@ -169,34 +169,18 @@ pub(super) fn compile_quantity(
 }
 
 fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileError> {
-    if let Ok(item) = item(cx, name) {
-        return Ok(item);
-    }
     let item = cx
         .selected
-        .items()
-        .iter()
-        .find(|item| {
-            item.name
-                .as_deref()
-                .is_some_and(|known| known.eq_ignore_ascii_case(name))
-        })
+        .resolve_item_name(name)
+        .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
+    let display = item
+        .name
+        .as_deref()
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     Ok(BankItem {
         id: item.id,
-        name: Arc::from(item.name.as_deref().unwrap_or(name)),
+        name: Arc::from(display),
     })
-}
-
-fn metal_family_rank(name: &str) -> Option<(usize, &str)> {
-    const METALS: [&str; 8] = [
-        "bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon",
-    ];
-    let (metal, suffix) = name.trim().split_once(' ')?;
-    METALS
-        .iter()
-        .position(|known| metal.eq_ignore_ascii_case(known))
-        .map(|rank| (rank, suffix))
 }
 
 fn anchor(tile: [i32; 3]) -> WorldTile {
@@ -284,9 +268,17 @@ pub fn compile_bank(
             }
         }
         BankOp::DepositAll => {
-            let mut keep = args.keep_ids;
+            let mut keep = cx.keep_ids.to_vec();
+            for id in args.keep_ids {
+                if !keep.contains(&id) {
+                    keep.push(id);
+                }
+            }
             for alias in args.keep {
-                keep.push(item(cx, &alias)?.id);
+                let id = item(cx, &alias)?.id;
+                if !keep.contains(&id) {
+                    keep.push(id);
+                }
             }
             actions.push(BankAction::DepositAll {
                 keep: Arc::from(keep),
@@ -900,7 +892,9 @@ fn compile_equipment(
     let args: EquipArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let request = if !wear && args.all && args.obj.is_none() {
-        EquipmentRequest::Strip
+        EquipmentRequest::Strip {
+            keep: Arc::from(cx.keep_ids),
+        }
     } else {
         let obj = args.obj.ok_or_else(|| CompileError::code("missing-obj"))?;
         let item = item(cx, &obj)?;
@@ -985,33 +979,52 @@ pub fn compile_loadout(
         .resolve(&qualified)
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
-    for carry in &row.carry {
-        let _ = named_item(cx, &carry.item)?;
+    let mut resolved_row = row.clone();
+    let mut carry_ids = Vec::with_capacity(resolved_row.carry.len());
+    for carry in &mut resolved_row.carry {
+        let item = named_item(cx, &carry.item)?;
+        if carry.item.as_str() != item.name.as_ref() {
+            carry.item = item.name.to_string();
+        }
+        carry_ids.push(item.id);
     }
-    for name in row.worn.values() {
-        let _ = named_item(cx, name)?;
+    let mut worn_items = Vec::with_capacity(row.worn.len());
+    for (slot, wanted) in &row.worn {
+        let item = named_item(cx, wanted)?;
+        if wanted != item.name.as_ref() {
+            resolved_row
+                .worn
+                .insert(slot.clone(), item.name.to_string());
+        }
+        worn_items.push((slot.clone(), item));
     }
+    let melee_family: Arc<[api::game_data::EquipmentNameEntry]> = Arc::from(
+        cx.selected
+            .equipment_names()
+            .map(|facts| facts.melee_weapons.clone())
+            .unwrap_or_default(),
+    );
     let mut resolved = Vec::new();
     for candidate in cx.selected.items() {
         let Some(name) = candidate.name.as_deref() else {
             continue;
         };
-        let relevant = row
-            .carry
-            .iter()
-            .any(|entry| entry.item.eq_ignore_ascii_case(name))
-            || row.worn.values().any(|wanted| {
-                wanted.eq_ignore_ascii_case(name)
-                    || (wanted.eq_ignore_ascii_case("dragon longsword")
-                        && name.eq_ignore_ascii_case("rune sword"))
-                    || (wanted.eq_ignore_ascii_case("rune platebody")
-                        && name.eq_ignore_ascii_case("rune chainbody"))
-                    || metal_family_rank(wanted).is_some_and(|(wanted_rank, wanted_suffix)| {
-                        metal_family_rank(name).is_some_and(|(rank, suffix)| {
-                            rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix)
-                        })
-                    })
-            });
+        let canonical = cx
+            .selected
+            .resolve_item_name(name)
+            .is_some_and(|item| item.id == candidate.id);
+        let relevant = canonical
+            && (carry_ids.contains(&candidate.id)
+                || worn_items.iter().any(|(slot, wanted)| {
+                    wanted.id == candidate.id
+                        || (wanted.name.eq_ignore_ascii_case("dragon longsword")
+                            && name.eq_ignore_ascii_case("rune sword"))
+                        || (wanted.name.eq_ignore_ascii_case("rune platebody")
+                            && name.eq_ignore_ascii_case("rune chainbody"))
+                        || crate::melee_weapons::same_or_lower_metal_item(name, &wanted.name)
+                        || (slot.eq_ignore_ascii_case("righthand")
+                            && crate::melee_weapons::same_or_lower_melee_weapon(name, &wanted.name))
+                }));
         if relevant {
             resolved.push(BankItem {
                 id: candidate.id,
@@ -1023,8 +1036,10 @@ pub fn compile_loadout(
         bank: cx.bank,
         bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
-        row: row.clone(),
+        row: resolved_row,
         resolved: Arc::from(resolved),
+        melee_family,
+        keep_ids: Arc::from(cx.keep_ids),
         allow_lower_tier: args.allow_lower_tier,
         strip: args.strip,
         exclusive: args.exclusive,
@@ -1037,10 +1052,13 @@ struct LoadoutPlan {
     memo_ids: Arc<[i32]>,
     row: crate::loadouts_store::Loadout,
     resolved: Arc<[BankItem]>,
+    melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
+    keep_ids: Arc<[i32]>,
     allow_lower_tier: bool,
     strip: bool,
     exclusive: bool,
 }
+
 impl StepPlan for LoadoutPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let snapshot = cx.tick.cx.snapshot();
@@ -1101,7 +1119,13 @@ impl StepPlan for LoadoutPlan {
             }
             for (slot, name) in &self.row.worn {
                 let names = if self.allow_lower_tier {
-                    crate::quester::loadouts::tier_candidates(slot, name, &available, facts)
+                    crate::quester::loadouts::tier_candidates(
+                        slot,
+                        name,
+                        &available,
+                        facts,
+                        &self.melee_family,
+                    )
                 } else {
                     vec![name.clone()]
                 };
@@ -1154,6 +1178,7 @@ impl StepPlan for LoadoutPlan {
                 })
             },
             worn: Arc::from(worn),
+            keep_ids: Arc::clone(&self.keep_ids),
             worn_index: 0,
             equipment: None,
             strip: self.strip,
@@ -1170,6 +1195,7 @@ struct LoadoutRun {
     worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
+    keep_ids: Arc<[i32]>,
     strip: bool,
     stripped: bool,
     exclusive: bool,
@@ -1262,7 +1288,9 @@ impl StepRun for LoadoutRun {
         }
         let request = loop {
             if self.strip && !self.stripped {
-                break Some(EquipmentRequest::Strip);
+                break Some(EquipmentRequest::Strip {
+                    keep: Arc::clone(&self.keep_ids),
+                });
             }
             let Some(items) = self.worn.get(self.worn_index) else {
                 break None;
@@ -1407,29 +1435,30 @@ pub fn compile_loadout_ready(
         .collect::<Result<Vec<_>, CompileError>>()?;
     let worn = row
         .worn
-        .values()
-        .map(|wanted| {
+        .iter()
+        .map(|(slot, wanted)| {
             let wanted_item = named_item(cx, wanted)?;
-            let wanted_family = metal_family_rank(wanted);
             let mut ids = vec![wanted_item.id];
             if args.allow_lower_tier {
                 ids.extend(cx.selected.items().iter().filter_map(|candidate| {
                     let name = candidate.name.as_deref()?;
-                    let (wanted_rank, wanted_suffix) = wanted_family?;
-                    let (rank, suffix) = metal_family_rank(name)?;
-                    (rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix))
-                        .then_some(candidate.id)
+                    let canonical = cx
+                        .selected
+                        .resolve_item_name(name)
+                        .is_some_and(|item| item.id == candidate.id);
+                    let same_tier =
+                        crate::melee_weapons::same_or_lower_metal_item(name, &wanted_item.name)
+                            || (slot.eq_ignore_ascii_case("righthand")
+                                && crate::melee_weapons::same_or_lower_melee_weapon(
+                                    name,
+                                    &wanted_item.name,
+                                ));
+                    let special = (wanted_item.name.eq_ignore_ascii_case("dragon longsword")
+                        && name.eq_ignore_ascii_case("rune sword"))
+                        || (wanted_item.name.eq_ignore_ascii_case("rune platebody")
+                            && name.eq_ignore_ascii_case("rune chainbody"));
+                    (canonical && (same_tier || special)).then_some(candidate.id)
                 }));
-                if wanted.eq_ignore_ascii_case("dragon longsword") {
-                    if let Ok(item) = named_item(cx, "Rune sword") {
-                        ids.push(item.id);
-                    }
-                }
-                if wanted.eq_ignore_ascii_case("rune platebody") {
-                    if let Ok(item) = named_item(cx, "Rune chainbody") {
-                        ids.push(item.id);
-                    }
-                }
                 ids.sort_unstable();
                 ids.dedup();
             }
@@ -1439,6 +1468,7 @@ pub fn compile_loadout_ready(
     Ok(Arc::new(LoadoutReady {
         carry: Arc::from(carry),
         worn: Arc::from(worn),
+        keep_ids: Arc::from(cx.keep_ids),
         strip: args.strip,
         exclusive: args.exclusive,
     }))
@@ -1448,6 +1478,7 @@ struct LoadoutReady {
     carry: Arc<[(i32, i32)]>,
     worn: Arc<[Arc<[i32]>]>,
     strip: bool,
+    keep_ids: Arc<[i32]>,
     exclusive: bool,
 }
 impl PredicatePlan for LoadoutReady {
@@ -1469,7 +1500,10 @@ impl PredicatePlan for LoadoutReady {
                 >= *qty
         });
         let worn_ready = if self.strip {
-            equipment.value.is_empty()
+            equipment
+                .value
+                .iter()
+                .all(|row| row.count <= 0 || self.keep_ids.contains(&row.def.id))
         } else {
             self.worn.iter().all(|ids| {
                 equipment

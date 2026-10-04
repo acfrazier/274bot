@@ -1308,3 +1308,57 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
         );
     }
 }
+
+#[test]
+fn operator_item_names_use_the_native_alias_then_case_insensitive_name_rule() {
+    let data = for_revision(crate::selected::ClientRevision::R289).unwrap();
+    let item = data
+        .items()
+        .iter()
+        .find(|item| item.alias.is_some() && item.name.is_some())
+        .unwrap();
+    let alias = item.alias.as_deref().unwrap();
+    let display = item.name.as_deref().unwrap();
+
+    assert!(std::ptr::eq(data.resolve_item_name(alias).unwrap(), item));
+    assert_eq!(
+        data.resolve_item_name(&display.to_ascii_uppercase())
+            .map(|resolved| resolved.id),
+        Some(item.id)
+    );
+    assert!(data.resolve_item_name(&format!(" {display} ")).is_none());
+    assert!(data.resolve_item_name("").is_none());
+}
+
+#[test]
+fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
+    fn item(alias: &str, id: i32, name: &str) -> GameItem {
+        GameItem {
+            alias: Some(alias.to_string()),
+            id,
+            name: Some(name.to_string()),
+            cost: 0,
+            stackable: false,
+            members: false,
+            certificate_link: 0,
+            certificate_template: 0,
+            wear_position: 0,
+            wear_position_2: 0,
+            wear_position_3: 0,
+            tradeable: true,
+            stack_variant: false,
+        }
+    }
+    let mut data =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R289).unwrap();
+    data.items = vec![
+        item("high", 20, "Duplicate"),
+        item("low", 10, "Duplicate"),
+        item("Collision", 30, "Alias winner"),
+        item("other", 1, "Collision"),
+    ];
+
+    assert_eq!(data.resolve_item_name("DUPLICATE").unwrap().id, 20);
+    assert_eq!(data.resolve_item_name("Collision").unwrap().id, 30);
+    assert_eq!(data.resolve_item_name("collision").unwrap().id, 1);
+}

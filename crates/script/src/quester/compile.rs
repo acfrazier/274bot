@@ -31,6 +31,7 @@ pub struct CompileContext<'a> {
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
     pub bank_items: &'a [i32],
+    pub keep_ids: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
 }
 #[derive(Debug, Clone)]
@@ -119,12 +120,11 @@ pub struct CompiledProvisioning {
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
     pub tools: Arc<[BankItem]>,
-    pub tool_ids: Arc<[i32]>,
+    pub keep_ids: Arc<[i32]>,
     pub coin_float: i32,
     pub coin: Option<CompiledCarry>,
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
-    pub loadout_spillover_keep: HashMap<Arc<str>, Arc<[i32]>>,
     pub recipes: HashMap<Arc<str>, Arc<[CompiledAcquireStep]>>,
     pub memo_ids: Arc<[i32]>,
 }
@@ -445,17 +445,15 @@ fn compile_uncached(
             qty: coin_float,
             latch_index: u8::MAX,
         });
+    let keep_ids = protected_item_ids(selected, &tools, &loadouts);
     let mut bank_items = Vec::new();
-    let mut base_spillover_keep = Vec::new();
-    let mut tool_ids = Vec::new();
+    let mut base_spillover_keep = keep_ids.clone();
     for item in compiled_items.iter() {
         push_unique_id(&mut bank_items, item.id);
         push_unique_id(&mut base_spillover_keep, item.id);
     }
     for item in &tools {
         push_unique_id(&mut bank_items, item.id);
-        push_unique_id(&mut base_spillover_keep, item.id);
-        push_unique_id(&mut tool_ids, item.id);
     }
     if let Some(coin) = &coin {
         push_unique_id(&mut bank_items, coin.item.id);
@@ -467,16 +465,8 @@ fn compile_uncached(
     if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
         return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
     }
-    let mut loadout_spillover_keep = HashMap::new();
-    for (name, carry) in &loadout_carry {
-        let mut keep = base_spillover_keep.clone();
-        for row in carry.iter() {
-            push_unique_id(&mut keep, row.item.id);
-        }
-        loadout_spillover_keep.insert(Arc::clone(name), Arc::from(keep));
-    }
     let base_spillover_keep = Arc::from(base_spillover_keep);
-    let tool_ids = Arc::from(tool_ids);
+    let keep_ids = Arc::from(keep_ids);
     let eligibility = CompiledEligibility {
         members: header.members,
         requirements: Arc::from(header.requirements.clone()),
@@ -494,6 +484,7 @@ fn compile_uncached(
         bank_required,
         bank_items: &bank_items,
         loadouts: &loadouts,
+        keep_ids: &keep_ids,
     };
     let mut recipes = HashMap::with_capacity(header.acquire.len());
     let mut bindings = HashMap::with_capacity(header.acquire.len());
@@ -583,12 +574,11 @@ fn compile_uncached(
         bank_required,
         items: compiled_items,
         tools: Arc::from(tools),
-        tool_ids,
+        keep_ids,
         coin_float,
         coin,
         loadout_carry,
         base_spillover_keep,
-        loadout_spillover_keep,
         recipes: recipes
             .into_iter()
             .map(|(name, steps)| (Arc::from(name.as_str()), Arc::from(steps)))
@@ -619,6 +609,39 @@ fn push_unique_id(ids: &mut Vec<i32>, id: i32) {
     }
 }
 
+pub(crate) fn protected_item_ids(
+    selected: &SelectedGameData,
+    path_tools: &[BankItem],
+    loadouts: &super::loadouts::LoadoutOverlay,
+) -> Vec<i32> {
+    let mut ids = Vec::with_capacity(path_tools.len());
+    for item in path_tools {
+        push_unique_id(&mut ids, item.id);
+    }
+    for tool in api::gather_tools::AXES
+        .iter()
+        .chain(api::gather_tools::PICKAXES)
+    {
+        if let Some(item) = selected.item_by_alias(tool.alias) {
+            push_unique_id(&mut ids, item.id);
+        }
+    }
+    for loadout in loadouts.list() {
+        let row = loadout.row();
+        for name in row
+            .worn
+            .values()
+            .chain(row.unassigned.iter())
+            .chain(row.carry.iter().map(|carry| &carry.item))
+        {
+            if let Some(item) = selected.resolve_item_name(name) {
+                push_unique_id(&mut ids, item.id);
+            }
+        }
+    }
+    ids
+}
+
 fn compile_quest_item(
     selected: &SelectedGameData,
     item: &QuestItemDocument,
@@ -641,14 +664,7 @@ fn compile_quest_item(
 
 fn resolve_bank_item(selected: &SelectedGameData, name: &str) -> Result<BankItem, CompileError> {
     let item = selected
-        .item_by_alias(name)
-        .or_else(|| {
-            selected.items().iter().find(|item| {
-                item.name
-                    .as_deref()
-                    .is_some_and(|known| known.eq_ignore_ascii_case(name))
-            })
-        })
+        .resolve_item_name(name)
         .ok_or_else(|| CompileError::code("unresolved-obj"))?;
     let display = item
         .name
@@ -1047,6 +1063,55 @@ mod tests {
         assert_eq!(first.id.0.as_ref(), "cook");
         assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
         assert_ne!(first.digest, miss.digest);
+    }
+
+    #[test]
+    fn protected_items_union_path_gather_tools_and_every_loadout_field() {
+        let data = selected();
+        let gather_ids: std::collections::BTreeSet<_> = api::gather_tools::AXES
+            .iter()
+            .chain(api::gather_tools::PICKAXES)
+            .filter_map(|tool| data.item_by_alias(tool.alias).map(|item| item.id))
+            .collect();
+        let mut loadout_items = Vec::new();
+        let mut seen = gather_ids.clone();
+        for item in data.items() {
+            let Some(name) = item.name.as_deref() else {
+                continue;
+            };
+            if data.item_by_alias(name).is_some() {
+                continue;
+            }
+            let Some(resolved) = data.resolve_item_name(name) else {
+                continue;
+            };
+            if seen.insert(resolved.id) {
+                loadout_items.push((resolved.id, resolved.name.as_deref().unwrap().to_string()));
+                if loadout_items.len() == 3 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(loadout_items.len(), 3);
+        let row = crate::loadouts_store::Loadout::new("operator/protected")
+            .with_slot("hat", loadout_items[0].1.clone())
+            .with_slot("unassigned", loadout_items[1].1.clone())
+            .with_carry(loadout_items[2].1.clone(), 1);
+        let loadouts = super::super::loadouts::LoadoutOverlay::new(Arc::from([row]), Arc::from([]));
+        let path_tool = BankItem {
+            id: i32::MAX,
+            name: Arc::from("Path tool"),
+        };
+        let ids = protected_item_ids(&data, &[path_tool], &loadouts);
+        let expected: std::collections::BTreeSet<_> = gather_ids
+            .into_iter()
+            .chain([i32::MAX])
+            .chain(loadout_items.into_iter().map(|(id, _)| id))
+            .collect();
+        assert_eq!(
+            ids.into_iter().collect::<std::collections::BTreeSet<_>>(),
+            expected
+        );
     }
 
     #[test]

@@ -415,19 +415,9 @@ fn resolve_loadout_item(
     cx: &CompileContext<'_>,
     name: &str,
 ) -> Result<(i32, Arc<str>), CompileError> {
-    if let Some(item) = cx.selected.item_by_alias(name) {
-        let display = item.name.as_deref().unwrap_or(name);
-        return Ok((item.id, Arc::from(display)));
-    }
     let item = cx
         .selected
-        .items()
-        .iter()
-        .find(|item| {
-            item.name
-                .as_deref()
-                .is_some_and(|known| known.eq_ignore_ascii_case(name))
-        })
+        .resolve_item_name(name)
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     Ok((item.id, Arc::from(item.name.as_deref().unwrap_or(name))))
 }
