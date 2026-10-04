@@ -68,7 +68,7 @@ pub(super) struct CombatArgs {
     /// Danger-zone permissions for this step's return and abort walks.
     #[serde(default)]
     cross: Vec<String>,
-    /// Use protect to permit the declared danger-zone crossings.
+    /// Use protect to enable WalkGuard protection on this step's own walks.
     #[serde(default)]
     guard: Option<String>,
     /// Optional named or inline search area.
@@ -222,11 +222,6 @@ pub(super) fn compile(
             );
         }
     };
-    if !args.cross.is_empty() && !protect {
-        return Err(
-            CompileError::code("invalid-args").with_detail("combat: cross needs protected walk")
-        );
-    }
     if args
         .spells
         .as_ref()

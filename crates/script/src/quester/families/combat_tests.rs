@@ -71,7 +71,7 @@ fn open_tactic_defaults_auto_retaliate_on() {
 }
 
 #[test]
-fn combat_owned_walk_permissions_require_explicit_protection() {
+fn combat_owned_walk_crossing_and_protection_compile_independently() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -101,24 +101,31 @@ fn combat_owned_walk_permissions_require_explicit_protection() {
         "cross": ["draynor-jail-guards"],
         "guard": "protect"
     });
-    compile(&args, &cx).unwrap();
-    for guard in [
-        serde_json::Value::Null,
-        serde_json::json!(""),
-        serde_json::json!("off"),
-    ] {
-        let mut invalid = args.clone();
-        invalid["guard"] = guard;
-        assert_eq!(
-            compile(&invalid, &cx).err().unwrap().code.as_ref(),
-            "invalid-args"
-        );
+    for cross in [false, true] {
+        for guard in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!("")),
+            Some(serde_json::json!("protect")),
+        ] {
+            let mut input = args.clone();
+            if !cross {
+                input.as_object_mut().unwrap().remove("cross");
+            }
+            if let Some(guard) = guard {
+                input["guard"] = guard;
+            } else {
+                input.as_object_mut().unwrap().remove("guard");
+            }
+            compile(&input, &cx).unwrap();
+        }
     }
-    let mut defaults = args;
-    let fields = defaults.as_object_mut().unwrap();
-    fields.remove("cross");
-    fields.remove("guard");
-    compile(&defaults, &cx).unwrap();
+    let mut invalid = args;
+    invalid["guard"] = serde_json::json!("off");
+    assert_eq!(
+        compile(&invalid, &cx).err().unwrap().code.as_ref(),
+        "invalid-args"
+    );
 }
 
 fn fixture_compile_context<'a>(
@@ -777,7 +784,7 @@ fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
         z: 3242,
         level: 0,
     }));
-    for protect in [false, true] {
+    for (cross, protect) in [(false, false), (true, false), (false, true), (true, true)] {
         for end in [
             CombatEnd::TargetGone,
             CombatEnd::Aborted(AbortReason::Unprotected(crate::combat::Unprotected::NoFood)),
@@ -789,10 +796,10 @@ fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
                 Some(Arc::new(NeverStop)),
                 Vec::new(),
             );
-            if protect {
+            if cross {
                 run.cross = Arc::from([Arc::from("draynor-jail-guards")]);
-                run.protect = true;
             }
+            run.protect = protect;
             assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
                 run.on_combat_report(report(end), cx)
             })
@@ -805,7 +812,7 @@ fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
             assert_eq!(request.target, stand);
             assert_eq!(request.radius, 1);
             assert_eq!(request.protect, protect);
-            if protect {
+            if cross {
                 assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
             } else {
                 assert!(request.cross.is_empty());
