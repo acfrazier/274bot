@@ -432,6 +432,9 @@ may enter and move within an active zone containing its selected goal but
 cannot leave it for transit. Inactive portions of a level-rule zone do not
 grant permission across its active portions. The same transition predicate
 applies to walking, transport and teleport landings.
+The filter queries goal membership only for an active, unexempted landing;
+ordinary safe tiles do not perform a target lookup. A pass without a selected
+completion destination does not scan source zones for destination exit rules.
 
 A goal-side reverse proof uses that predicate for deep zone goals, capped at
 64 reverse expansions. A closed proof skips the impossible safe pass; an
