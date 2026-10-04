@@ -2,7 +2,7 @@
 // map placements, all joined from the pinned content tree. Unknown constructs become explicit gaps, never guesses.
 import fs from 'node:fs';
 import path from 'node:path';
-import { indexContent, parseDbRows, parseCoord, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
+import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
@@ -1472,4 +1472,482 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
         throw new Error(`gather_resources: fishing keys are not unique: ${keys.join(', ')}`);
     }
     return rows;
+}
+
+// ---- gather sites (design-gatherer-settings-ux §2.3) ---------------------------------------------------------
+//
+// Named gathering camps, generated at build time into the selected core next
+// to `gather_resources`. Surface placements cluster per skill (Chebyshev gap
+// 12; sprawling woodcutting components split by nearest place and re-cluster);
+// each site is named by a direct fishing movement-enum stem, else the nearest
+// world-map label or bank-catalog row within 16 tiles, else that place with a
+// bearing+distance suffix, capped at 64. Every check below fails closed like
+// the fishing labels: a content bump that breaks a join throws, never guesses.
+
+/** One published row of the selected core's `gather_sites` slice. Rows carry no source field. */
+export type GatherSiteKeyWire = { key: string; count: number };
+export type GatherSiteWire = {
+    id: string;
+    skill: SkillName;
+    label: string;
+    region: RegionWire;
+    keys: GatherSiteKeyWire[];
+};
+
+/** Per-skill generator report, recorded on the manifest and pinned by verify. */
+export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number };
+export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
+export type GatherSitesResult = { rows: GatherSiteWire[]; report: GatherSiteReport };
+
+/** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
+export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
+
+const SITE_GAP = 12;
+const SITE_SPRAWL_EXTENT = 48;
+const SITE_NEAR = 16;
+const SITE_CAP = 64;
+const SITE_SURFACE_Z = 6400;
+const SITE_LABELS = 'maps/labels.txt';
+const SITE_PLACEMENT_FILE = /^maps\/m(\d+)_(\d+)\.jm2$/;
+
+type SiteTile = { x: number; z: number; level: number; keys: Set<string>; ents: Set<string> };
+type SitePlace = { src: string; display: string; x: number; z: number; level: number };
+type SiteBox = { minX: number; minZ: number; maxX: number; maxZ: number };
+type DirectName = { name: string; stem: string; movement: string; npc: number; alias: string };
+
+const siteNorm = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '');
+const siteSlug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+/** World-map labels plus the bank-catalog rows, with the spelling vocabulary for direct names. */
+function readSitePlaces(content: string, banks: GatherSiteBank[]): { places: SitePlace[]; spelling: Map<string, string> } {
+    const text = fs.readFileSync(path.join(content, SITE_LABELS), 'utf8');
+    const rows: { src: string; raw: string; display: string; x: number; z: number; type: number }[] = [];
+    let seen = 0;
+    text.split(/\r?\n/).forEach((line, index) => {
+        if (!line.startsWith('=')) return;
+        seen += 1;
+        const cells = line.slice(1).split(',');
+        const raw = cells[0];
+        const x = Number(cells[1]);
+        const z = Number(cells[2]);
+        const type = Number(cells[3]);
+        if (raw === undefined || raw === '' || !Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(type)) {
+            throw new Error(`gather_sites: ${SITE_LABELS}:${index + 1} is not a label row`);
+        }
+        // The walk-map display rule: `/` becomes a space and a trailing ` (...)` clause is dropped.
+        rows.push({ src: `label:${seen}`, raw, display: raw.replace(/\//g, ' ').replace(/\s*\(.*\)$/, ''), x, z, type });
+    });
+    const spelling = new Map<string, string>();
+    for (const row of [...rows, ...banks.map((bank, index) => ({ src: `bank:${index}`, raw: bank.name, display: bank.name, x: bank.tile.x, z: bank.tile.z, type: -1 }))]) {
+        const key = siteNorm(row.display);
+        if (!spelling.has(key)) spelling.set(key, row.display);
+    }
+    const places: SitePlace[] = rows
+        .filter((row) => row.type <= 1 && !/^\(/.test(row.raw))
+        .map((row) => ({ src: row.src, display: row.display, x: row.x, z: row.z, level: 0 }));
+    banks.forEach((bank, index) => {
+        if (!Number.isInteger(bank.tile.x) || !Number.isInteger(bank.tile.z) || !Number.isInteger(bank.tile.level)) {
+            throw new Error(`gather_sites: bank ${bank.name} has no integer tile`);
+        }
+        places.push({ src: `bank:${index}`, display: bank.name, x: bank.tile.x, z: bank.tile.z, level: bank.tile.level });
+    });
+    return { places, spelling };
+}
+
+/** `alias -> fishing_movement_enum` plus every fishing NPC alias suffix, read with the shared section parser. */
+function readFishingEnums(content: string): { enumOf: Map<string, string>; suffixes: Set<string> } {
+    const sections = parseSections(FISHING_NPC, fs.readFileSync(path.join(content, FISHING_NPC), 'utf8'));
+    if (sections.length === 0) throw new Error(`gather_sites: ${FISHING_NPC} has no fishing npc types`);
+    const enumOf = new Map<string, string>();
+    const suffixes = new Set<string>();
+    for (const section of sections) {
+        suffixes.add(section.name.replace(/^\d+_\d+_\d+_/, ''));
+        const movement = section.params.get('fishing_movement_enum')?.[0];
+        if (movement === undefined) continue;
+        const prev = enumOf.get(section.name);
+        if (prev !== undefined && prev !== movement) throw new Error(`gather_sites: ${FISHING_NPC} names ${section.name} twice with different movement enums`);
+        enumOf.set(section.name, movement);
+    }
+    return { enumOf, suffixes };
+}
+
+const movementStem = (movement: string): string | null => /^fishing_movement_(.+)_enum$/.exec(movement)?.[1] ?? null;
+
+/**
+ * The geographic-stem rule (never a table): the identifier without its fixed
+ * wrapper and one trailing digit must be letters and underscores only and
+ * must contain no fishing NPC category suffix, which refuses coordinate-only
+ * (`0_34_50`, `0_41_57_saltfish`) and resource/direction (`slimey_eel_east`)
+ * identifiers without listing either.
+ */
+function geographicStem(stem: string, suffixes: ReadonlySet<string>): string | null {
+    const bare = stem.replace(/\d$/, '');
+    if (!/^[a-z]+(_[a-z]+)*$/.test(bare)) return null;
+    for (const suffix of suffixes) if (bare.includes(suffix)) return null;
+    return bare;
+}
+
+/** Capitalised words, taking the world-map or bank spelling when the letters match. */
+function humanizeStem(stem: string, spelling: ReadonlyMap<string, string>): string {
+    const words = stem.split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    return spelling.get(siteNorm(words)) ?? words;
+}
+
+const siteExtent = (box: SiteBox) => Math.max(box.maxX - box.minX, box.maxZ - box.minZ);
+const siteEdgeDist = (place: SitePlace, box: SiteBox) => Math.max(0, box.minX - place.x, place.x - box.maxX, box.minZ - place.z, place.z - box.maxZ);
+const siteInBox = (tile: SiteTile, box: RegionWire) => tile.level === box.level && tile.x >= box.min_x && tile.x <= box.max_x && tile.z >= box.min_z && tile.z <= box.max_z;
+
+/** 8-way bearing from a place point to a box centre. */
+function siteBearing(place: SitePlace, centre: { x: number; z: number }): string {
+    const dx = centre.x - place.x;
+    const dz = centre.z - place.z;
+    if (dx === 0 && dz === 0) return '';
+    const degrees = (Math.atan2(dz, dx) * 180) / Math.PI;
+    return ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'][Math.round(((degrees + 360) % 360) / 45) % 8]!;
+}
+
+/** Union-find at a Chebyshev gap, joined on the same level only. */
+function clusterTiles(tiles: SiteTile[], gap: number): SiteTile[][] {
+    const parent = tiles.map((_, index) => index);
+    const find = (index: number): number => {
+        const next = parent[index];
+        if (next === undefined || next === index) return index;
+        const root = find(next);
+        parent[index] = root;
+        return root;
+    };
+    const cells = new Map<string, number[]>();
+    tiles.forEach((tile, index) => {
+        const key = `${tile.level}:${tile.x >> 5}:${tile.z >> 5}`;
+        const cell = cells.get(key);
+        if (cell === undefined) cells.set(key, [index]);
+        else cell.push(index);
+    });
+    tiles.forEach((tile, index) => {
+        for (let dx = -1; dx <= 1; dx += 1) {
+            for (let dz = -1; dz <= 1; dz += 1) {
+                const cell = cells.get(`${tile.level}:${(tile.x >> 5) + dx}:${(tile.z >> 5) + dz}`) ?? [];
+                for (const other of cell) {
+                    const peer = tiles[other];
+                    if (peer !== undefined && other > index && peer.level === tile.level && Math.max(Math.abs(tile.x - peer.x), Math.abs(tile.z - peer.z)) <= gap) {
+                        parent[find(index)] = find(other);
+                    }
+                }
+            }
+        }
+    });
+    const comps = new Map<number, SiteTile[]>();
+    tiles.forEach((tile, index) => {
+        const root = find(index);
+        const comp = comps.get(root);
+        if (comp === undefined) comps.set(root, [tile]);
+        else comp.push(tile);
+    });
+    return [...comps.values()];
+}
+
+function siteBoxOf(tiles: SiteTile[]): SiteBox {
+    let minX = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (const tile of tiles) {
+        minX = Math.min(minX, tile.x);
+        minZ = Math.min(minZ, tile.z);
+        maxX = Math.max(maxX, tile.x);
+        maxZ = Math.max(maxZ, tile.z);
+    }
+    return { minX, minZ, maxX, maxZ };
+}
+
+/**
+ * The pinned per-skill named-site rows plus the per-skill report, computed
+ * from the family, the `gather_resources` rows (a site's keys are exactly the
+ * picker values), the content label and fishing-NPC inputs, and the bank
+ * catalog. The family wire is untouched: movement boxes are reused, never
+ * re-derived.
+ */
+export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[]): GatherSitesResult {
+    const keyMeta = new Map<string, { skill: SkillName; label: string }>();
+    for (const row of resources) {
+        if (keyMeta.has(row.key)) throw new Error(`gather_sites: duplicate resource key ${row.key}`);
+        keyMeta.set(row.key, { skill: row.skill, label: row.label });
+    }
+    const methodKeys = new Map<string, string[]>();
+    for (const row of resources) {
+        for (const method of row.methods) {
+            const keys = methodKeys.get(method);
+            if (keys === undefined) methodKeys.set(method, [row.key]);
+            else if (!keys.includes(row.key)) keys.push(row.key);
+        }
+    }
+    const methodById = new Map(facts.methods.map((method) => [method.id, method]));
+    const keyOps = new Map<string, string[]>();
+    for (const row of resources) {
+        if (row.skill !== 'fishing') continue;
+        const ops: string[] = [];
+        for (const id of row.methods) {
+            const op = methodById.get(id)?.op?.label ?? '?';
+            if (!ops.includes(op)) ops.push(op);
+        }
+        keyOps.set(row.key, ops.length > 0 ? ops : ['?']);
+    }
+    const npcAlias = new Map<number, string>();
+    for (const line of facts.entities) {
+        const cells = line.split(' ');
+        if (cells[0] === 'npc' && cells[1] !== undefined && cells[2] !== undefined) npcAlias.set(Number(cells[1]), cells[2]);
+    }
+    const movementBox = new Map<number, Know<RegionWire | null>>();
+    for (const movement of facts.movements) {
+        if (movementBox.has(movement.npc)) throw new Error(`gather_sites: duplicate movement row for npc ${movement.npc}`);
+        movementBox.set(movement.npc, movement.region);
+    }
+    const { places, spelling } = readSitePlaces(content, banks);
+    const { enumOf, suffixes } = readFishingEnums(content);
+    const directCache = new Map<number, DirectName | null>();
+    const directNameOf = (npc: number): DirectName | null => {
+        const cached = directCache.get(npc);
+        if (cached !== undefined) return cached;
+        const alias = npcAlias.get(npc);
+        if (alias === undefined) throw new Error(`gather_sites: npc ${npc} has no family entity alias`);
+        const movement = enumOf.get(alias) ?? null;
+        const stem = movement === null ? null : movementStem(movement);
+        const geo = stem === null ? null : geographicStem(stem, suffixes);
+        const direct = geo === null || movement === null ? null : { name: humanizeStem(geo, spelling), stem: geo, movement, npc, alias };
+        directCache.set(npc, direct);
+        return direct;
+    };
+    // Every direct name resolves: each method-target fishing NPC whose enum
+    // stem is geographic has a known, non-null movement box and a non-empty
+    // name, and distinct stems humanise to distinct names. This enumerates
+    // method targets, so an NPC with an entirely missing movement row throws.
+    const targetNpcs = new Set<number>();
+    for (const method of facts.methods) {
+        if (method.skill !== 'fishing' || method.targets.state === 'unknown') continue;
+        for (const target of method.targets.value) if (target.kind === 'npc' && target.class === 'resource') targetNpcs.add(target.id);
+    }
+    const resolvedStems = new Map<string, string>();
+    for (const npc of [...targetNpcs].sort((a, b) => a - b)) {
+        const direct = directNameOf(npc);
+        if (direct === null) continue;
+        const region = movementBox.get(npc);
+        if (region === undefined || region.state !== 'known' || region.value === null) {
+            throw new Error(`gather_sites: direct name ${direct.movement} for npc ${npc} (${direct.alias}) has no known movement box`);
+        }
+        if (direct.name === '') throw new Error(`gather_sites: direct name ${direct.movement} humanizes to nothing`);
+        const prev = resolvedStems.get(direct.name);
+        if (prev !== undefined && prev !== direct.stem) throw new Error(`gather_sites: direct names collide: ${prev} and ${direct.stem} both humanize to ${direct.name}`);
+        resolvedStems.set(direct.name, direct.stem);
+    }
+    // Placements per picker key over the union of that key's methods: surface
+    // only, one tile row per level, remembering the entity tags on each tile.
+    const entityKeys = new Map<string, { skill: SkillName; key: string }[]>();
+    for (const method of facts.methods) {
+        if (method.spots.state !== 'known' || method.targets.state === 'unknown') continue;
+        const keys = methodKeys.get(method.id) ?? [];
+        if (keys.length === 0) continue;
+        for (const target of method.targets.value) {
+            if (target.class !== 'resource' || !isKnownGatherTarget(target)) continue;
+            const tag = `${target.kind === 'loc' ? 'l' : 'n'}${target.id}`;
+            const list = entityKeys.get(tag);
+            if (list === undefined) entityKeys.set(tag, keys.map((key) => ({ skill: method.skill, key })));
+            else for (const key of keys) if (!list.some((entry) => entry.skill === method.skill && entry.key === key)) list.push({ skill: method.skill, key });
+        }
+    }
+    const perKey = new Map<string, Map<string, { x: number; z: number; level: number; ents: Set<string> }>>();
+    for (const file of facts.placements) {
+        const fileMatch = SITE_PLACEMENT_FILE.exec(file.file);
+        if (fileMatch?.[1] === undefined || fileMatch?.[2] === undefined) throw new Error(`gather_sites: unexpected placement file ${file.file}`);
+        const mx = Number(fileMatch[1]);
+        const mz = Number(fileMatch[2]);
+        for (const row of file.rows) {
+            const cells = row.split(' ');
+            const ent = cells[4];
+            const plane = Number(cells[1]);
+            const lx = Number(cells[2]);
+            const lz = Number(cells[3]);
+            if (cells.length < 5 || ent === undefined || (ent[0] !== 'l' && ent[0] !== 'n') || !Number.isInteger(plane) || !Number.isInteger(lx) || !Number.isInteger(lz)) {
+                throw new Error(`gather_sites: malformed placement row ${row}`);
+            }
+            const tile = { x: mx * 64 + lx, z: mz * 64 + lz, level: plane };
+            if (tile.z >= SITE_SURFACE_Z) continue;
+            for (const entry of entityKeys.get(ent) ?? []) {
+                let tiles = perKey.get(entry.key);
+                if (tiles === undefined) {
+                    tiles = new Map();
+                    perKey.set(entry.key, tiles);
+                }
+                const id = `${tile.level}:${tile.x}:${tile.z}`;
+                const placed = tiles.get(id);
+                if (placed === undefined) tiles.set(id, { ...tile, ents: new Set([ent]) });
+                else placed.ents.add(ent);
+            }
+        }
+    }
+    const rows: GatherSiteWire[] = [];
+    const report: GatherSiteReport = {
+        woodcutting: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
+        mining: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
+        fishing: { sites: 0, direct: 0, dropped: 0, outside_box: 0 },
+    };
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const members = new Map<string, SiteTile>();
+        for (const [key, tiles] of perKey) {
+            if (keyMeta.get(key)?.skill !== skill) continue;
+            for (const tile of tiles.values()) {
+                const id = `${tile.level}:${tile.x}:${tile.z}`;
+                const member = members.get(id);
+                if (member === undefined) members.set(id, { x: tile.x, z: tile.z, level: tile.level, keys: new Set([key]), ents: new Set(tile.ents) });
+                else {
+                    member.keys.add(key);
+                    for (const ent of tile.ents) member.ents.add(ent);
+                }
+            }
+        }
+        type Draft = { d: number; label: string; idbase: string; minX: number; minZ: number; maxX: number; maxZ: number; level: number; n: number; keys: GatherSiteKeyWire[] };
+        const drafts: Draft[] = [];
+        let dropped = 0;
+        let direct = 0;
+        let outsideBox = 0;
+        const nearestBox = (box: SiteBox, level: number): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of places) {
+                if (place.level !== level) continue;
+                const d = siteEdgeDist(place, box);
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        const nearestPoint = (tile: SiteTile): { place: SitePlace; d: number } | null => {
+            let best: { place: SitePlace; d: number } | null = null;
+            for (const place of places) {
+                if (place.level !== tile.level) continue;
+                const d = Math.max(Math.abs(tile.x - place.x), Math.abs(tile.z - place.z));
+                if (best === null || d < best.d || (d === best.d && compareCodepoint(place.src, best.place.src) < 0)) best = { place, d };
+            }
+            return best;
+        };
+        // The direct name of one site: the one geographic movement-enum name
+        // its NPC spawns carry, each spawn inside its own box on the same
+        // level. Loc placements carry no enum and never borrow a nearby NPC's
+        // name; a spawn outside its own box is counted, not named; two names
+        // in one site throw.
+        const directOf = (comp: SiteTile[]): DirectName | null => {
+            if (skill !== 'fishing') return null;
+            const names = new Map<string, DirectName>();
+            for (const tile of comp) {
+                for (const ent of tile.ents) {
+                    if (!ent.startsWith('n')) continue;
+                    const named = directNameOf(Number(ent.slice(1)));
+                    if (named === null) continue;
+                    const box = movementBox.get(named.npc);
+                    if (box?.state !== 'known' || box.value === null || !siteInBox(tile, box.value)) {
+                        outsideBox += 1;
+                        continue;
+                    }
+                    names.set(named.name, named);
+                }
+            }
+            if (names.size > 1) throw new Error(`gather_sites: ambiguous direct names in one site: ${[...names.keys()].join(' / ')}`);
+            return names.size === 1 ? [...names.values()][0]! : null;
+        };
+        const draftOf = (comp: SiteTile[], place: SitePlace, d: number, named: DirectName | null): Draft => {
+            const box = siteBoxOf(comp);
+            const centre = { x: Math.round((box.minX + box.maxX) / 2), z: Math.round((box.minZ + box.maxZ) / 2) };
+            const counts = new Map<string, number>();
+            for (const tile of comp) for (const key of tile.keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+            const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || compareCodepoint(a[0], b[0]));
+            const name = named === null ? place.display : named.name;
+            const bearing = named === null && d > SITE_NEAR ? siteBearing(place, centre) : '';
+            const br = bearing === '' ? '' : `${bearing}${d}`;
+            let contents: string;
+            if (skill === 'fishing') {
+                const ops: string[] = [];
+                for (const [key] of ordered) for (const op of keyOps.get(key) ?? ['?']) if (!ops.includes(op)) ops.push(op);
+                contents = ops.join(', ');
+            } else {
+                const parts = ordered.map(([key, count]) => `${keyMeta.get(key)?.label ?? key} ${count}`);
+                contents = parts.slice(0, 3).join(', ') + (parts.length > 3 ? ` +${parts.length - 3}` : '');
+            }
+            return {
+                d: named === null ? d : 0, label: `${name}${br === '' ? '' : ` ${br}`} · ${contents}`,
+                idbase: `${skill}.${siteSlug(name)}${bearing === '' ? '' : `.${bearing.toLowerCase()}`}`,
+                minX: box.minX, minZ: box.minZ, maxX: box.maxX, maxZ: box.maxZ, level: comp[0]!.level, n: comp.length,
+                keys: ordered.map(([key, count]) => ({ key, count })),
+            };
+        };
+        for (const comp of clusterTiles([...members.values()], SITE_GAP)) {
+            const box = siteBoxOf(comp);
+            if (siteExtent(box) <= SITE_SPRAWL_EXTENT) {
+                const near = nearestBox(box, comp[0]!.level);
+                if (near === null || near.d > SITE_CAP) {
+                    dropped += comp.length;
+                    continue;
+                }
+                const named = directOf(comp);
+                if (named !== null) direct += 1;
+                drafts.push(draftOf(comp, near.place, near.d, named));
+                continue;
+            }
+            const cells = new Map<string, { place: SitePlace; pts: SiteTile[] }>();
+            for (const tile of comp) {
+                const near = nearestPoint(tile);
+                if (near === null || near.d > SITE_CAP) {
+                    dropped += 1;
+                    continue;
+                }
+                const cell = cells.get(near.place.src);
+                if (cell === undefined) cells.set(near.place.src, { place: near.place, pts: [tile] });
+                else cell.pts.push(tile);
+            }
+            for (const { place, pts } of cells.values()) {
+                for (const part of clusterTiles(pts, SITE_GAP)) {
+                    if (part.length < 3) {
+                        dropped += part.length;
+                        continue;
+                    }
+                    drafts.push(draftOf(part, place, siteEdgeDist(place, siteBoxOf(part)), null));
+                }
+            }
+        }
+        const byBase = new Map<string, Draft[]>();
+        for (const draft of drafts) {
+            const group = byBase.get(draft.idbase);
+            if (group === undefined) byBase.set(draft.idbase, [draft]);
+            else group.push(draft);
+        }
+        for (const group of byBase.values()) {
+            group.sort((a, b) => a.d - b.d || b.n - a.n || a.minX - b.minX || a.minZ - b.minZ);
+            group.forEach((draft, index) => {
+                const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
+                const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
+                rows.push({
+                    id, skill, label,
+                    region: { min_x: draft.minX, min_z: draft.minZ, max_x: draft.maxX, max_z: draft.maxZ, level: draft.level },
+                    keys: draft.keys,
+                });
+            });
+        }
+        report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox };
+    }
+    rows.sort((a, b) => compareCodepoint(a.label, b.label));
+    const ids = rows.map((row) => row.id);
+    if (new Set(ids).size !== ids.length) throw new Error(`gather_sites: duplicate ids ${ids.filter((id, index) => ids.indexOf(id) !== index).join(', ')}`);
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const labels = rows.filter((row) => row.skill === skill).map((row) => row.label);
+        if (new Set(labels).size !== labels.length) {
+            throw new Error(`gather_sites: duplicate ${skill} labels ${labels.filter((label, index) => labels.indexOf(label) !== index).join(' | ')}`);
+        }
+    }
+    for (const row of rows) {
+        if (/\d{4}/.test(row.label)) throw new Error(`gather_sites: ${row.id} label leaks a number: ${row.label}`);
+        if (row.region.min_z >= SITE_SURFACE_Z || row.region.max_z >= SITE_SURFACE_Z) throw new Error(`gather_sites: ${row.id} is not a surface site`);
+        if (row.region.min_x > row.region.max_x || row.region.min_z > row.region.max_z) throw new Error(`gather_sites: ${row.id} has an inverted region`);
+        if (row.keys.length === 0) throw new Error(`gather_sites: ${row.id} offers no keys`);
+        for (const entry of row.keys) {
+            if (entry.count <= 0) throw new Error(`gather_sites: ${row.id} has an empty key ${entry.key}`);
+            if (keyMeta.get(entry.key)?.skill !== row.skill) throw new Error(`gather_sites: ${row.id} offers ${entry.key}, not a ${row.skill} key`);
+        }
+    }
+    return { rows, report };
 }
