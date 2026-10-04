@@ -942,6 +942,8 @@ pub struct Session {
     /// Shared durable walk-policy projection; `ui.nav` is only an edit/render buffer.
     pub(crate) walk_permissions: frontend_core::WalkGlobalsView,
     pub(crate) walk_permissions_path: PathBuf,
+    /// Last observed metadata for the shared policy projection.
+    walk_permissions_stamp: Option<WalkPermissionsFileStamp>,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1292,6 +1294,36 @@ fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::Wal
     nav.script_scope_notice_ack = view.script_scope_notice_ack;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WalkPermissionsFileStamp {
+    modified: Option<std::time::SystemTime>,
+    /// Also detects writes when a filesystem's modification-time precision is coarse.
+    len: u64,
+}
+
+fn walk_permissions_file_stamp_at(path: &Path) -> Option<WalkPermissionsFileStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(WalkPermissionsFileStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
+}
+
+fn read_walk_permissions_if_changed_at(
+    path: &Path,
+    cached_stamp: &mut Option<WalkPermissionsFileStamp>,
+    read: impl FnOnce(&Path) -> frontend_core::WalkGlobalsView,
+) -> Option<frontend_core::WalkGlobalsView> {
+    let stamp = walk_permissions_file_stamp_at(path);
+    if stamp == *cached_stamp {
+        return None;
+    }
+    // Store the observed stamp before reading. A peer write racing with this
+    // read will have a newer stamp on the next frame and be read then.
+    *cached_stamp = stamp;
+    Some(read(path))
+}
+
 impl Session {
     /// Empty session for tests. Product startup uses [`Self::with_instance`].
     #[cfg(test)]
@@ -1306,6 +1338,7 @@ impl Session {
         script::IsolatedEnv::ensure_thread();
         let mut ui = crate::ui_state::load();
         let walk_permissions_path = crate::ui_state::path();
+        let walk_permissions_stamp = walk_permissions_file_stamp_at(&walk_permissions_path);
         let walk_permissions = frontend_core::WalkGlobalsView::read_at(&walk_permissions_path);
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
@@ -1369,6 +1402,7 @@ impl Session {
             route_through_zones: false,
             walk_permissions,
             walk_permissions_path,
+            walk_permissions_stamp,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -1485,8 +1519,14 @@ impl Session {
 
     /// Refresh the durable policy before rendering or admitting a manual walk.
     pub(crate) fn refresh_walk_permissions(&mut self) {
-        let view = frontend_core::WalkGlobalsView::read_at(&self.walk_permissions_path);
-        self.walk_permissions = view;
+        if let Some(view) = read_walk_permissions_if_changed_at(
+            &self.walk_permissions_path,
+            &mut self.walk_permissions_stamp,
+            frontend_core::WalkGlobalsView::read_at,
+        ) {
+            self.walk_permissions = view;
+        }
+        let view = self.walk_permissions;
         apply_walk_permissions_to_nav(&mut self.ui.nav, view);
         self.route_through_zones = view.danger_this_walk(self.route_through_zones);
         self.core.set_walk_globals(view.globals);

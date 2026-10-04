@@ -328,8 +328,8 @@ impl Provisioner {
                     .acquire
                     .clone()
                     .map(MissingKind::Acquire)
-                    // Schema-2 Paths may acquire through their authored
-                    // sequence (Sheep), rather than a synthetic recipe.
+                    // Paths may acquire through their authored sequence
+                    // (Sheep), rather than a synthetic recipe.
                     .unwrap_or(MissingKind::Optional),
             };
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
@@ -438,7 +438,7 @@ impl Provisioner {
             };
             let acquire = AcquirePlan {
                 recipe: Arc::clone(&recipe.recipe),
-                steps: steps.to_vec(),
+                steps: Arc::clone(steps),
             };
             match acquire.begin(cx) {
                 Ok(run) => {

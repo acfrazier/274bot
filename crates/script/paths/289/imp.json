@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "imp",
   "display_name": "Imp Catcher",
   "required": [],
@@ -52,6 +53,7 @@
           "id": "take-red-bead-drop",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": { "target": { "ground": "red_bead" }, "op": "Take", "radius": 12 },
           "skip_if": { "Any": [
             { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } },
@@ -63,6 +65,7 @@
           "id": "take-yellow-bead-drop",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": { "target": { "ground": "yellow_bead" }, "op": "Take", "radius": 12 },
           "skip_if": { "Any": [
             { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } },
@@ -74,6 +77,7 @@
           "id": "take-black-bead-drop",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": { "target": { "ground": "black_bead" }, "op": "Take", "radius": 12 },
           "skip_if": { "Any": [
             { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } },
@@ -85,6 +89,7 @@
           "id": "take-white-bead-drop",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": { "target": { "ground": "white_bead" }, "op": "Take", "radius": 12 },
           "skip_if": { "Any": [
             { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } },
@@ -96,6 +101,7 @@
           "id": "farm-imps",
           "kind": "combat",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "npc": "imp", "not_targeting_others": true, "pick": "random" },
             "lost_radius": 12,

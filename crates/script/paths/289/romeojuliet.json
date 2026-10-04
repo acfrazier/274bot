@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "romeojuliet",
   "display_name": "Romeo & Juliet",
   "required": [],
@@ -90,6 +91,7 @@
           },
           {
             "id": "replace-message", "kind": "talk", "version": 1,
+            "advances": false,
             "args": {
               "npc": "juliet",
               "anchor": { "tile": [3158, 3425, 1], "source": "A defs/romeojuliet.ts:199-218" },
@@ -169,6 +171,7 @@
           },
           {
             "id": "take-berries", "kind": "interact", "version": 1,
+            "advances": false,
             "args": {
               "target": { "ground": "cadavaberries" }, "op": "Take",
               "anchor": { "tile": [3272, 3369, 0], "source": "A defs/romeojuliet.ts:57-58,147-197" },
@@ -182,6 +185,7 @@
           },
           {
             "id": "make-potion", "kind": "talk", "version": 1,
+            "advances": false,
             "args": {
               "npc": "apothecary",
               "anchor": { "tile": [3195, 3404, 0], "source": "A defs/romeojuliet.ts:220-252" },

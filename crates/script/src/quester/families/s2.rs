@@ -1,5 +1,5 @@
 //! Bank, shop, production, equipment and loadout compiled families.
-use super::{reach, walk_step_evidence};
+use super::{reach, walk_step_evidence, NoArgs};
 use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkOptions};
@@ -29,7 +29,7 @@ fn item(cx: &CompileContext<'_>, alias: &str) -> Result<BankItem, CompileError> 
     let item = cx
         .selected
         .item_by_alias(alias)
-        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))?;
     let name = item
         .name
         .as_deref()
@@ -40,25 +40,72 @@ fn item(cx: &CompileContext<'_>, alias: &str) -> Result<BankItem, CompileError> 
     })
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "path-schema", serde(untagged))]
 pub(super) enum QuantityDocument {
-    Fixed(i32),
+    /// Fixed item quantity; values below 1 are rejected by the compiler.
+    Fixed(#[cfg_attr(feature = "path-schema", schemars(range(min = 1)))] i32),
+    /// Count of a declared journal flag, optionally reduced by held items.
     Progress(ProgressQuantityDocument),
 }
 
+impl<'de> serde::Deserialize<'de> for QuantityDocument {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct QuantityVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for QuantityVisitor {
+            type Value = QuantityDocument;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an integer quantity or a progress quantity object")
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(QuantityDocument::Fixed)
+                    .map_err(E::custom)
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(QuantityDocument::Fixed)
+                    .map_err(E::custom)
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> Result<Self::Value, M::Error> {
+                ProgressQuantityDocument::deserialize(serde::de::value::MapAccessDeserializer::new(
+                    map,
+                ))
+                .map(QuantityDocument::Progress)
+            }
+        }
+
+        deserializer.deserialize_any(QuantityVisitor)
+    }
+}
+
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProgressQuantityDocument {
+    /// Journal flag which supplies the current item count.
     progress: ProgressCountDocument,
+    /// Optional held item subtracted from the journal count.
     #[serde(default)]
     minus_item: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ProgressCountDocument {
+    /// Symbolic quest key whose journal is read.
     quest: String,
+    /// Declared counted flag in that journal.
     flag: String,
 }
 
@@ -191,18 +238,23 @@ fn anchor(tile: [i32; 3]) -> WorldTile {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ItemQty {
+    /// Symbolic item config name.
     obj: String,
+    /// Requested quantity; omitted uses 1 and values below 1 are rejected.
     #[serde(default = "one")]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
 }
 fn one() -> i32 {
     1
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum BankOp {
     Scan,
@@ -211,28 +263,33 @@ enum BankOp {
     DepositAll,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct BankArgs {
+pub(super) struct BankArgs {
+    /// Bank action to perform.
     op: BankOp,
+    /// Bank selector: `quest_bank` or `nearest`; omitted uses the Path bank.
     #[serde(default)]
     at: Option<String>,
+    /// Item quantities for withdraw/deposit operations.
     #[serde(default)]
     items: Vec<ItemQty>,
+    /// Symbolic items to retain on `deposit_all`.
     #[serde(default)]
     keep: Vec<String>,
+    /// Raw item ids to retain on `deposit_all`.
     #[serde(default)]
     keep_ids: Vec<i32>,
+    /// Allow a partial result when requested bank operations cannot complete.
     #[serde(default)]
     partial_ok: bool,
 }
 
-pub fn compile_bank(
-    args: &serde_json::Value,
+pub(super) fn compile_bank(
+    args: BankArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: BankArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args
         .at
         .as_deref()
@@ -553,44 +610,45 @@ impl StepRun for BankRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ShopArg {
+    /// Symbolic shopkeeper NPC config name.
     npc: String,
-    anchor: Anchor,
+    /// Authored shop approach anchor and its source citation.
+    anchor: super::AnchorArg,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct Anchor {
-    tile: [i32; 3],
-    #[serde(default)]
-    source: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BuyArgs {
+pub(super) struct BuyArgs {
+    /// Shopkeeper and approach location.
     shop: ShopArg,
+    /// Symbolic item config name to buy.
     obj: String,
+    /// Number of items to buy; must be at least 1.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
+    /// Estimated coin budget; currently informational.
     #[serde(default)]
     est_gp: u32,
+    /// Optional shop menu choice; currently informational.
     #[serde(default)]
     option: Option<String>,
 }
 
-pub fn compile_buy(
-    args: &serde_json::Value,
+pub(super) fn compile_buy(
+    args: BuyArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: BuyArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args.qty < 1 || args.shop.anchor.source.trim().is_empty() {
         return Err(CompileError::code("invalid-buy"));
     }
     let npc = cx
         .selected
         .npc_by_config(&args.shop.npc)
-        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+        .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(args.shop.npc.as_str()))?;
     let item = item(cx, &args.obj)?;
     let _ = (args.est_gp, args.option);
     Ok(Arc::new(BuyPlan {
@@ -676,36 +734,47 @@ impl StepRun for BuyRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MakeLoc {
+    /// Symbolic location config name.
     name: String,
+    /// Location operation used to start production.
     op: String,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MakeMenu {
+    /// Symbolic item config name shown in the production menu.
     obj: String,
+    /// Source citation for the menu option.
     source: String,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct MakeArgs {
+pub(super) struct MakeArgs {
+    /// Location action used to start production.
     loc: MakeLoc,
-    anchor: Anchor,
+    /// Authored approach anchor with a source citation.
+    anchor: super::AnchorArg,
+    /// Symbolic product item config name.
     product: String,
+    /// Optional production menu choice.
     #[serde(default)]
     menu: Option<MakeMenu>,
+    /// Fixed or journal-count-backed production quantity.
     qty: QuantityDocument,
+    /// Use the game's make-X option when available.
     #[serde(default)]
     make_x: bool,
 }
-pub fn compile_make(
-    args: &serde_json::Value,
+pub(super) fn compile_make(
+    args: MakeArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: MakeArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let qty = compile_quantity(args.qty, cx)?;
     if qty.fixed().is_some_and(|qty| qty < 1) || args.anchor.source.trim().is_empty() {
         return Err(CompileError::code("invalid-make"));
@@ -713,7 +782,7 @@ pub fn compile_make(
     let loc = cx
         .selected
         .loc_by_config(&args.loc.name)
-        .ok_or_else(|| CompileError::code("unresolved-loc"))?;
+        .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(args.loc.name.as_str()))?;
     if !loc
         .ops
         .iter()
@@ -864,33 +933,34 @@ impl StepRun for MakeRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct EquipArgs {
+pub(super) struct EquipArgs {
+    /// Symbolic item config name; omitted only when stripping all equipment.
     #[serde(default)]
     obj: Option<String>,
+    /// Strip all worn items when `obj` is omitted.
     #[serde(default)]
     all: bool,
 }
-pub fn compile_equip(
-    args: &serde_json::Value,
+pub(super) fn compile_equip(
+    args: EquipArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     compile_equipment(args, cx, true)
 }
-pub fn compile_unequip(
-    args: &serde_json::Value,
+pub(super) fn compile_unequip(
+    args: EquipArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     compile_equipment(args, cx, false)
 }
 fn compile_equipment(
-    args: &serde_json::Value,
+    args: EquipArgs,
     cx: &CompileContext<'_>,
     wear: bool,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: EquipArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let request = if !wear && args.all && args.obj.is_none() {
         EquipmentRequest::Strip {
             keep: Arc::from(cx.keep_ids),
@@ -939,13 +1009,18 @@ impl StepRun for EquipmentRun {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(super) struct LoadoutArgs {
+    /// Name or Path-qualified name of the loadout to apply.
     loadout: String,
+    /// Bank selector: `quest_bank` or `nearest`.
     #[serde(default)]
     at: Option<String>,
+    /// Allow lower-tier alternatives when resolving the loadout.
     #[serde(default)]
     allow_lower_tier: bool,
+    /// Remove worn equipment that is not in the loadout.
     #[serde(default)]
     strip: bool,
     /// Require exactly the listed worn items; remove other worn items into inventory.
@@ -953,12 +1028,10 @@ pub(super) struct LoadoutArgs {
     exclusive: bool,
 }
 
-pub fn compile_loadout(
-    args: &serde_json::Value,
+pub(super) fn compile_loadout(
+    args: LoadoutArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: LoadoutArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args.exclusive && (args.strip || args.allow_lower_tier) {
         return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
     }
@@ -1344,13 +1417,10 @@ impl StepRun for LoadoutRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-pub fn compile_bank_known(
-    args: &serde_json::Value,
+pub(super) fn compile_bank_known(
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(BankKnown))
 }
 
@@ -1365,20 +1435,21 @@ impl PredicatePlan for BankKnown {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct BankHasArgs {
+pub(super) struct BankHasArgs {
+    /// Symbolic item config name.
     obj: String,
+    /// Minimum count; omitted or below 1 uses 1.
     #[serde(default = "one")]
     qty: i32,
 }
 
-pub fn compile_bank_has(
-    args: &serde_json::Value,
+pub(super) fn compile_bank_has(
+    args: BankHasArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: BankHasArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(BankHas {
         id: item(cx, &args.obj)?.id,
         qty: args.qty.max(1),
@@ -1404,12 +1475,10 @@ impl PredicatePlan for BankHas {
     }
 }
 
-pub fn compile_loadout_ready(
-    args: &serde_json::Value,
+pub(super) fn compile_loadout_ready(
+    args: LoadoutArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: LoadoutArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args.exclusive && (args.strip || args.allow_lower_tier) {
         return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
     }
@@ -1525,18 +1594,17 @@ impl PredicatePlan for LoadoutReady {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(super) struct EquipmentOnlyArgs {
     /// Exact set of object aliases that must be worn; an empty list requires no equipment.
     objs: Vec<String>,
 }
 
-pub fn compile_equipment_only(
-    args: &serde_json::Value,
+pub(super) fn compile_equipment_only(
+    args: EquipmentOnlyArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: EquipmentOnlyArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let mut ids = args
         .objs
         .iter()
