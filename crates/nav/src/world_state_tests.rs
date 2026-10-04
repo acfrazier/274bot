@@ -38,6 +38,8 @@ fn client() -> Client {
 /// test covers all five vectors.
 fn gated_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -292,6 +294,7 @@ fn allows_requires_every_req_kind() {
     let mut s = WorldState {
         inv: HashMap::from([(995, 10)]),
         worn: HashSet::from([1712]),
+        allow_fetchable_worn: false,
         stats: HashMap::from([(6, 25)]),
         varps: HashMap::from([(150, 160)]),
         quests: HashSet::from(["Rune Mysteries".to_string()]),
@@ -385,6 +388,78 @@ fn worn_req_passes_when_any_listed_obj_is_worn() {
     );
 }
 
+/// `worn_all_req` is conjunctive and observes only currently equipped gear.
+#[test]
+fn worn_all_req_requires_every_item_to_be_equipped() {
+    let mut edge = gated_edge();
+    edge.skill_req.clear();
+    edge.item_req.clear();
+    edge.consumed_req.clear();
+    edge.quest_req.clear();
+    edge.varp_req.clear();
+    edge.worn_req.clear();
+    edge.worn_all_req = vec![1277, 1321];
+
+    let mut state = WorldState {
+        inv: HashMap::from([(1277, 1), (1321, 1)]),
+        allow_fetchable_worn: true,
+        ..WorldState::empty()
+    };
+    assert!(
+        !state.allows(&edge),
+        "carried or bank-fetchable items are not equipped"
+    );
+    assert!(
+        !state.allows_without_carry_worn(&edge),
+        "carry/wear diagnosis keeps worn_all_req strict"
+    );
+
+    state.worn.insert(1277);
+    assert!(!state.allows(&edge), "one equipped piece is not enough");
+    state.worn.insert(1321);
+    assert!(state.allows(&edge), "every listed piece is now equipped");
+}
+
+#[test]
+fn fetchable_worn_capability_uses_only_positive_available_counts() {
+    let mut edge = gated_edge();
+    edge.skill_req.clear();
+    edge.item_req.clear();
+    edge.consumed_req.clear();
+    edge.quest_req.clear();
+    edge.varp_req.clear();
+    edge.worn_all_req.clear();
+    edge.worn_req = vec![1277, 1321];
+    let mut state = WorldState {
+        inv: HashMap::from([(1321, 1)]),
+        ..WorldState::empty()
+    };
+    assert!(
+        !state.allows(&edge),
+        "ordinary carried gear is not equipped"
+    );
+    state.allow_fetchable_worn = true;
+    assert!(
+        state.allows(&edge),
+        "BankBudget can supply a positive stack"
+    );
+    for count in [0, -1] {
+        state.inv.insert(1321, count);
+        assert!(!state.allows(&edge), "unavailable counts cannot be worn");
+    }
+    state.inv = HashMap::from([(946, 1)]);
+    assert!(
+        !state.allows(&edge),
+        "unlisted gear cannot satisfy the gate"
+    );
+    edge.worn_all_req = vec![946];
+    edge.worn_req.clear();
+    assert!(
+        !state.allows(&edge),
+        "strict worn gates ignore the capability"
+    );
+}
+
 /// An empty state proves nothing: even a req-free edge passes, every
 /// gated edge is refused.
 #[test]
@@ -392,6 +467,7 @@ fn empty_state_allows_nothing_gated() {
     let e = gated_edge();
     assert!(!WorldState::empty().allows(&e));
     let free = TransportEdge {
+        takeoff: None,
         skill_req: vec![],
         item_req: vec![],
         consumed_req: vec![],
@@ -526,6 +602,7 @@ fn from_snapshot_builds_inv_worn_stats_varps_and_quests() {
     // completed "Lost City", not the in-progress "Rune Mysteries")
     // passes; the same edge with a missing coin does not.
     let e = TransportEdge {
+        takeoff: None,
         quest_req: vec!["Lost City".to_string()],
         ..gated_edge()
     };

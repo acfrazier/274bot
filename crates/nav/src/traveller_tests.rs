@@ -968,6 +968,8 @@ fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
 /// blocked, so the far-side walk-out lands 2 out).
 fn door_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -1037,6 +1039,8 @@ fn web_route(edge: TransportEdge) -> Route {
 /// A ladder edge standing at (3202, 3204) → (3202, 3205).
 fn ladder_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: WorldTile {
@@ -1069,6 +1073,8 @@ fn ladder_edge() -> TransportEdge {
 
 fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::AgilityShortcut,
         player_delta: None,
         at,
@@ -1147,6 +1153,8 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
         "unrelated far loc must not match"
     );
     let closed = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -1186,6 +1194,8 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
 /// adjacent stand, Chebyshev 1 off that dest.
 fn trapdoor_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: WorldTile {
@@ -1220,6 +1230,8 @@ fn trapdoor_edge() -> TransportEdge {
 /// 3201) carries the player to (3300, 3200).
 fn cart_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -1654,6 +1666,41 @@ fn follow_transport_leg_interacts_and_arrives() {
         TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
     ));
     assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
+}
+
+#[test]
+fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
+    let mut client = scene_client();
+    plant_ladder(&mut client, Some("Climb"));
+    plant_inv_item(&mut client, 946);
+    let snapshot = snap_at(&mut client, 2, 3);
+    assert!(snapshot
+        .inv()
+        .iter()
+        .any(|&(id, count)| id == 946 && count > 0));
+    assert!(snapshot.equipment().is_empty());
+
+    let mut edge = ladder_edge();
+    edge.worn_all_req = vec![946];
+    let route = Route {
+        dest: edge.to,
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        ticks: 2.0,
+    };
+    let mut rec = FollowRec {
+        route: Some((2, 3)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let outcome = traveller.follow(&mut rec, &snapshot, route, &mut TravelOptions::default());
+    assert!(matches!(
+        outcome,
+        Some(TravelOutcome::Blocked { detail, .. })
+            if detail.contains("worn_all_req item 946")
+    ));
+    assert_eq!(rec.loc_ops, 0, "a carried item does not authorize the hop");
 }
 
 #[test]
@@ -2614,6 +2661,8 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
         level: 0,
     };
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: WorldTile {
@@ -2675,6 +2724,8 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
         level: 0,
     };
     let tree = |to| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::SpiritTree,
         player_delta: None,
         at: WorldTile {
@@ -2905,6 +2956,8 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
         level: 0,
     };
     let tree = |to| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::SpiritTree,
         player_delta: None,
         at,
@@ -3711,6 +3764,8 @@ fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
 
 fn rangingguild_enter_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: RANGING_OUTSIDE,
@@ -3735,6 +3790,7 @@ fn rangingguild_enter_edge() -> TransportEdge {
 
 fn rangingguild_exit_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
         skill_req: vec![],
         at: RANGING_INSIDE,
         to: RANGING_OUTSIDE,
@@ -3744,6 +3800,8 @@ fn rangingguild_exit_edge() -> TransportEdge {
 
 fn shantay_north_short_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: SHANTAY_NORTH_AT,
@@ -3785,6 +3843,8 @@ fn follow_still_pending<D: Driver>(
 /// through — `to` the `[queue,shantay_pass_enter]` landing.
 fn shantay_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -3914,6 +3974,8 @@ const TEST_TOLL_COIN_OBJ: i32 = 4242;
 
 fn alkharid_toll_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -4433,6 +4495,8 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
         level: 0,
     };
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -4610,6 +4674,8 @@ fn follow_npc_edge_answers_choice_one_not_the_op_index() {
     };
     let mut t = Traveller::new();
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         option: 3, // essence-style op index, not a dialog choice
         ..cart_edge()
     };
@@ -4687,6 +4753,8 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
     };
     let mut t = Traveller::new();
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -4769,6 +4837,8 @@ fn follow_essence_entry_accepts_any_mine_landing() {
     };
     let mut t = Traveller::new();
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -4835,6 +4905,8 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
     };
     let mut t = Traveller::new();
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::EssenceExit,
         player_delta: None,
         at: WorldTile {
@@ -4896,6 +4968,8 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
 /// Arena. `at` is the any-tile placeholder — never indexed.
 fn ring_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -4933,6 +5007,8 @@ fn ring_edge() -> TransportEdge {
 /// differ only in `to`, exactly as the bake emits them.
 fn glory_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -4968,6 +5044,8 @@ fn glory_edge() -> TransportEdge {
 /// traveller resolves the spellbook button from the landing tile.
 fn varrock_spell_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -5003,6 +5081,8 @@ fn varrock_spell_edge() -> TransportEdge {
 /// traveller resolves the spellbook button from the landing tile.
 fn lumbridge_spell_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -5360,6 +5440,8 @@ fn follow_jewellery_teleport_answers_the_second_dest_choice() {
     };
     let glory = [
         TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             to: WorldTile {
                 x: 3087,
                 z: 3496,
@@ -5368,6 +5450,8 @@ fn follow_jewellery_teleport_answers_the_second_dest_choice() {
             ..glory_edge()
         },
         TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             to: karamja,
             ..glory_edge()
         },
@@ -5843,6 +5927,112 @@ fn follow_approaches_a_transport_loc_before_interacting() {
         "diagnostics must not add movement sends"
     );
     assert_eq!(rec.loc_ops, 1, "diagnostics must not add transport sends");
+}
+
+#[test]
+fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 1, "Ladder", "Climb", 2, 4);
+    let mut snap = snap_at(&mut c, 2, 0);
+    // Exact takeoffs require the real footprint predicate, not the legacy
+    // wall fixture's unknown-geometry/radius fallback.
+    let mut footprint = snap.locs()[0].clone();
+    footprint.shape = 10;
+    snap.seed_locs(vec![footprint.clone()]);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let mut edge = ladder_edge();
+    let required = WorldTile {
+        x: 3202,
+        z: 3203,
+        level: 0,
+    };
+    edge.takeoff = Some(required);
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: WorldTile {
+            x: 3202,
+            z: 3205,
+            level: 0,
+        },
+        ticks: 2.0,
+    };
+
+    assert!(t
+        .follow(
+            &mut rec,
+            &snap,
+            route.clone(),
+            &mut TravelOptions::default()
+        )
+        .is_none());
+    assert_eq!(rec.walked, vec![(2, 3)]);
+    assert_eq!(rec.loc_ops, 0);
+
+    // A different stand is still adjacent to the loc, but it is not the
+    // content-required starting tile and must never trigger the op.
+    plant_player(&mut c, 1, 4);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(
+            &footprint,
+            snap.scene(),
+            WorldTile {
+                x: 3201,
+                z: 3204,
+                level: 0
+            },
+        ),
+        Some(true),
+        "the substitute really is another operable stand"
+    );
+    assert!(t
+        .follow(
+            &mut rec,
+            &snap,
+            route.clone(),
+            &mut TravelOptions::default()
+        )
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+
+    plant_player(&mut c, 2, 3);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
+    assert!(t
+        .follow(
+            &mut rec,
+            &snap,
+            route.clone(),
+            &mut TravelOptions::default()
+        )
+        .is_none());
+    assert_eq!(rec.loc_ops, 1);
+
+    plant_player(&mut c, 2, 4);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
+    assert!(t
+        .follow(
+            &mut rec,
+            &snap,
+            route.clone(),
+            &mut TravelOptions::default()
+        )
+        .is_none());
+    plant_player(&mut c, 2, 5);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint]);
+    assert!(matches!(
+        t.follow(&mut rec, &snap, route, &mut TravelOptions::default()),
+        Some(TravelOutcome::Arrived { .. })
+    ));
 }
 
 #[test]
@@ -6493,6 +6683,8 @@ fn follow_cheap_hop_walks_when_the_open_leaf_is_offset() {
     };
     let mut t = Traveller::new();
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         open_loc_id: Some(1531),
         dir: Some(DoorDir::E),
         ..door_edge()
@@ -7400,6 +7592,8 @@ fn follow_blocks_when_the_transport_loc_is_missing() {
     let mut t = Traveller::new();
     // Loc id 99 is never planted in the scene.
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         loc_id: 99,
         ..ladder_edge()
     };
@@ -7861,6 +8055,8 @@ fn level_change_transport_requires_proximity_to_to() {
     c.minusedlevel = 1;
     let snap = snap_at(&mut c, 100, 100);
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: WorldTile {
@@ -7966,6 +8162,8 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         level: 0,
     };
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: Some(WorldTile {
             x: 10,

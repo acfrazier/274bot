@@ -1,8 +1,8 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
-//! the Server content, and write the v15 nav pack (magic `274V`, version
-//! byte 15; `encode`) to `$NAV_PACK` or
+//! the Server content, and write the v16 nav pack (magic `274V`, version
+//! byte 16; `encode`) to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
 //! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
 //! path with its extension swapped to `.navflags` (default
@@ -34,7 +34,7 @@
 //! ([`nav::pack::derive_banks`]) bakes from the same content tree: every
 //! `bankbooth` loc placement with the Use-quickly op, plus NPC tellers
 //! (`category=bank_teller`) from jm2 NPC placements. Rebake whenever the
-//! Server content changes — packs older than v15 are rejected with `BadVersion`.
+//! Server content changes — packs older than v16 are rejected with `BadVersion`.
 //! The derivation itself lives in [`nav::bake`], shared with the ordinary
 //! application build (`host-play`'s build script), which bakes and stages the
 //! selected revision automatically; this CLI stays for deliberate
