@@ -580,7 +580,7 @@ pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
     ]
 }
 
-pub(super) fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
+pub(crate) fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
     Step {
         name,
         kind: StepKind::Perform {
