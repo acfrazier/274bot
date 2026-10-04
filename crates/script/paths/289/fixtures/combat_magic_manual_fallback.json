@@ -1,0 +1,63 @@
+{
+  "schema": 2,
+  "id": "imp",
+  "display_name": "Combat Magic Manual Fallback Fixture",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:imp",
+      "progress": {
+        "colour": { "not_started": "imp:0", "in_progress": "imp:0", "complete": "imp:2" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "imp:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fight-warlord",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": { "npc": "khazard_warlord", "not_targeting_others": true, "pick": "nearest" },
+                "tactic": { "kind": "open", "style": "mage", "engage_radius": 6, "auto_retaliate": false },
+                "spells": ["fire_bolt"],
+                "fallback_spells": true,
+                "loadout": null,
+                "stand": null,
+                "lost_radius": 12,
+                "kill_budget_ticks": 450,
+                "loot": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "All": [] }
+            }
+          ]
+        },
+        { "stage": "imp:2", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}
