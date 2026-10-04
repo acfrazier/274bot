@@ -134,7 +134,7 @@ export default class T extends LoopingBot {
         Loadout::new("Range").with_slot("righthand", "Oak shortbow"),
     ]);
     let mut bag = serde_json::Map::new();
-    bag.insert("loadout".into(), serde_json::json!(" range "));
+    bag.insert("loadout".into(), serde_json::json!("Range"));
     iso.post_settings_bag(&bag);
     iso.on_game_tick(2);
     assert_eq!(
@@ -145,8 +145,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(3);
     assert_eq!(
         iso.probe("__picked").unwrap(),
-        serde_json::json!([null, "Range", "Mage"]),
-        "nothing posted, then the named row, then the re-post's first row"
+        serde_json::json!([null, "Range", null]),
+        "no selection, then the exact named row, then no match after the re-post"
     );
     iso.join();
 }

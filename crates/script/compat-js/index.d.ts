@@ -2533,7 +2533,7 @@ export const LOADOUT_SETTING: {
     "label": SettingDef["label"];
     "help": SettingDef["help"];
 };
-/** The chosen loadout, the first as a fallback, null when none are defined. */
+/** The loadout whose exact, case-sensitive name is selected, or null when none matches. */
 export function selectedLoadout(bag: SettingsBag): Loadout | null;
 
 }

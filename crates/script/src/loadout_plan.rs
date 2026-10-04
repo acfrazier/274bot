@@ -45,18 +45,23 @@ pub fn held_count(n: f64) -> Option<f64> {
     (n.is_finite() && n >= 0.0).then_some(n)
 }
 
-/// First `fixed_food_heals` carry name, or `None` when no selected match.
-///
-/// Names are compared as supplied (no trim), matching the current v1 helper.
+/// First fixed-heal food named by alias or display name, or `None` when no
+/// selected match exists. The result uses the selected display name.
 pub fn food_of_name<'a, I>(data: Option<&SelectedGameData>, names: I) -> Option<String>
 where
     I: IntoIterator<Item = &'a str>,
 {
     let data = data?;
     for name in names {
+        let Some(item) = data.resolve_item_name(name) else {
+            continue;
+        };
+        let Some(display) = item.name.as_deref() else {
+            continue;
+        };
         if let Some((known, _)) = data
             .fixed_food_heals()
-            .find(|(known, _)| known.eq_ignore_ascii_case(name))
+            .find(|(known, _)| known.eq_ignore_ascii_case(display))
         {
             return Some(known.to_string());
         }
@@ -139,6 +144,24 @@ mod tests {
             "Trout"
         );
         assert_eq!(food_of(None, ["Lobster"], "Trout"), "Trout");
+    }
+
+    #[test]
+    fn food_names_accept_item_aliases_and_return_selected_display_names() {
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let (food, alias) = data
+            .fixed_food_heals()
+            .find_map(|(name, _)| {
+                data.items()
+                    .iter()
+                    .find(|item| item.name.as_deref() == Some(name))
+                    .and_then(|item| item.alias.as_deref().map(|alias| (name, alias)))
+            })
+            .unwrap();
+        assert_eq!(
+            food_of_name(Some(data.as_ref()), [alias]),
+            Some(food.to_string())
+        );
     }
 
     #[test]

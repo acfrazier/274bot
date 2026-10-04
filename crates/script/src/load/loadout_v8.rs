@@ -28,9 +28,9 @@ pub(super) fn post(rows: Vec<Loadout>) {
     POSTED.with(|posted| *posted.borrow_mut() = rows);
 }
 
-/// `selectedLoadout(bag)`: the posted loadout the `loadout` setting names
-/// (case-insensitive, trimmed), else the first one, else `null`, in the
-/// persisted shape (`{ name, worn, carry, unassigned? }`).
+/// `selectedLoadout(bag)`: the exact case-sensitive name the `loadout`
+/// setting names, else `null`, in the persisted shape
+/// (`{ name, worn, carry, unassigned? }`).
 pub(super) fn selected_compat(wanted: &str) -> serde_json::Value {
     POSTED.with(|posted| {
         crate::loadouts_store::selected_compat_loadout(&posted.borrow(), wanted)

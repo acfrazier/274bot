@@ -88,6 +88,7 @@ fn fixture_compile_context<'a>(
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids: &[],
         areas,
         loadouts,
         recipes,

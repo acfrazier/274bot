@@ -552,6 +552,9 @@ export default class T extends LoopingBot {
     iso.post_loadouts(&[script::Loadout::new("Food")
         .with_carry("Coins", 1)
         .with_carry("Lobster", 1)]);
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!("Food"));
+    iso.post_settings_bag(&bag);
     iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true")
         .unwrap();
     iso.on_game_tick(1);
