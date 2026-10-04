@@ -20,9 +20,7 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
-use api::snapshot::{
-    ActorKind, ActorTargetView, ProjectileView, WorldTile, MAX_PROJECTILES_PER_SNAPSHOT,
-};
+use api::snapshot::{ActorKind, ProjectileView, MAX_PROJECTILES_PER_SNAPSHOT};
 use flatbuffers::{
     root_with_opts, FlatBufferBuilder, InvalidFlatbuffer, VerifierOptions, WIPOffset,
 };
@@ -5052,6 +5050,7 @@ fn interact_off<'b>(
 pub(crate) mod tests {
     use super::*;
     use crate::shim::InteractReq;
+    use api::snapshot::{ActorTargetView, WorldTile};
 
     pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {

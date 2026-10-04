@@ -35,13 +35,16 @@ pub(crate) fn selected_data() -> Option<Arc<SelectedGameData>> {
 /// Cache both the selected combat index and an actionable build failure until
 /// this isolate's selected content is reconfigured.
 #[cfg(feature = "load")]
-pub(crate) fn combat_tables() -> Result<Arc<crate::combat::tables::CombatTables>, crate::native::ActionError> {
+pub(crate) fn combat_tables(
+) -> Result<Arc<crate::combat::tables::CombatTables>, crate::native::ActionError> {
     COMBAT.with(|slot| {
         let mut cached = slot.borrow_mut();
         cached
             .get_or_insert_with(|| {
                 selected_data()
-                    .ok_or_else(|| crate::native::ActionError::Unavailable(GAME_DATA_UNAVAILABLE.into()))
+                    .ok_or_else(|| {
+                        crate::native::ActionError::Unavailable(GAME_DATA_UNAVAILABLE.into())
+                    })
                     .and_then(crate::combat::tables::CombatTables::build)
             })
             .clone()

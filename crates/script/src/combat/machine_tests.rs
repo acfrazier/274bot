@@ -1182,6 +1182,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         target: scene.local.player.actor.tile,
         loc_id: None,
         radius: 1,
+        arrival: nav::arrival::ArrivalKind::Reach,
         options: crate::FindOptions::default(),
         required_after: evidence,
         evidence: None,

@@ -50,7 +50,11 @@ impl HoldRuntime {
             Some(tables) => tables,
             None => self.tables.insert(hunt_combat_tables()?),
         };
-        Ok(protect_button(&mut self.threats, &mut self.pending_protect, tables))
+        Ok(protect_button(
+            &mut self.threats,
+            &mut self.pending_protect,
+            tables,
+        ))
     }
 
     fn now(&self) -> Instant {
@@ -407,7 +411,11 @@ mod tests {
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::Waiting;
-        runtime.dest = Some(Tile { x: 1, z: 1, level: 0 });
+        runtime.dest = Some(Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
         runtime.clock.arm(RETURN_MS);
         let projection = parse_projection(&json!({}));
 
@@ -415,11 +423,17 @@ mod tests {
         assert_eq!(effect["kind"], "if-button");
         assert_eq!(effect["component_id"], button);
         assert_eq!(runtime.mode, HoldMode::Waiting);
-        assert!(runtime.after_sustain, "the mode produced, but has not emitted, sustain");
+        assert!(
+            runtime.after_sustain,
+            "the mode produced, but has not emitted, sustain"
+        );
         let resumed = hold_next_effect(&mut runtime, &projection, Some(&json!({ "queued": true })));
         assert_eq!(resumed["kind"], "sustain");
         assert_eq!(runtime.mode, HoldMode::Waiting);
-        assert_eq!(hold_next_effect(&mut runtime, &projection, None)["kind"], "delay-ticks");
+        assert_eq!(
+            hold_next_effect(&mut runtime, &projection, None)["kind"],
+            "delay-ticks"
+        );
     }
 
     #[test]
@@ -427,11 +441,19 @@ mod tests {
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::NeedAck;
-        runtime.dest = Some(Tile { x: 1, z: 1, level: 0 });
+        runtime.dest = Some(Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
         runtime.clock.arm(RETURN_MS);
         let projection = parse_projection(&json!({}));
 
-        let effect = hold_next_effect(&mut runtime, &projection, Some(&json!({ "walkToken": 991 })));
+        let effect = hold_next_effect(
+            &mut runtime,
+            &projection,
+            Some(&json!({ "walkToken": 991 })),
+        );
         assert_eq!(effect["kind"], "if-button");
         assert_eq!(effect["component_id"], button);
         assert_eq!(runtime.walk_token, Some(991));
@@ -441,7 +463,10 @@ mod tests {
             "sustain"
         );
         assert_eq!(runtime.walk_token, Some(991));
-        assert_eq!(hold_next_effect(&mut runtime, &projection, None)["kind"], "delay-ticks");
+        assert_eq!(
+            hold_next_effect(&mut runtime, &projection, None)["kind"],
+            "delay-ticks"
+        );
     }
 
     #[test]
@@ -451,7 +476,10 @@ mod tests {
         let mut runtime = HoldRuntime::new(23);
         let effect = hold_next_effect(&mut runtime, &parse_projection(&json!({})), None);
         assert_eq!(effect["kind"], "failed");
-        assert!(effect["reason"].as_str().unwrap().contains("game data unavailable"));
+        assert!(effect["reason"]
+            .as_str()
+            .unwrap()
+            .contains("game data unavailable"));
         assert_eq!(effect["notes"][0]["message"], effect["reason"]);
     }
 }
