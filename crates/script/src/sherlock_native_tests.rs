@@ -227,6 +227,7 @@ impl World {
                 actor: actor(stand),
                 combat_level: 60,
                 skill_level: 0,
+                headicons: 0,
                 weapon: None,
             },
             energy: 100,
@@ -298,12 +299,69 @@ impl World {
         }
         self.refresh();
     }
+
+    fn set_prayer(&mut self, varp: i32, on: bool) {
+        self.varps
+            .iter_mut()
+            .find(|row| row.index == varp)
+            .expect("selected prayer varp")
+            .value = i32::from(on);
+        self.refresh();
+    }
+
+    fn prayer_is_on(&self, varp: i32) -> bool {
+        self.varps
+            .iter()
+            .find(|row| row.index == varp)
+            .is_some_and(|row| row.value != 0)
+    }
+
+    fn prepare_policy_s2_combat(&mut self) {
+        let imp = self.data.npc_by_config("imp").expect("selected imp");
+        self.npcs[0].r#type = Some(usize::try_from(imp.id).expect("positive imp id"));
+        self.npcs[0].name = imp.display.clone();
+        self.npcs[0].target = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: self.local.player.index,
+        });
+        self.npcs[0].in_combat = true;
+        self.local.player.actor.target = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: self.npcs[0].index,
+        });
+        self.local.player.actor.in_combat = true;
+        self.refresh();
+        self.snapshot
+            .seed_projectiles(vec![api::snapshot::ProjectileView {
+                spotanim: 9,
+                level: 0,
+                src: self.npcs[0].tile,
+                target: Some(ActorTargetView {
+                    kind: ActorKind::Player,
+                    index: self.local.player.index,
+                }),
+                t1: 0,
+                t2: 30,
+            }]);
+    }
 }
 
 fn script(world: &World, hygiene_pending: bool) -> Sherlock {
+    let mut hygiene_owned = RaisedPrayers::empty();
+    if hygiene_pending {
+        if let Some(prayer) = world
+            .data
+            .prayers()
+            .iter()
+            .find(|prayer| world.prayer_is_on(prayer.varp))
+        {
+            hygiene_owned.accepted(prayer.varp, true, 0);
+        }
+    }
     Sherlock {
         tables: Some(CombatTables::build(Arc::clone(&world.data)).expect("tables")),
-        hygiene_pending,
+        hygiene_pending: !hygiene_owned.is_empty(),
+        hygiene_owned,
         dirty: true,
         ..Default::default()
     }
@@ -358,6 +416,31 @@ fn with_tick<R>(
     f(&mut native)
 }
 
+fn begin_policy_s2_combat(
+    script: &mut Sherlock,
+    world: &World,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) {
+    let npc_type =
+        i32::try_from(world.npcs[0].r#type.expect("combat npc type")).expect("selected npc type");
+    let request = CombatRequest {
+        target: crate::combat::Target::Npc {
+            types: Arc::from([npc_type]),
+            pick: crate::combat::Pick::Nearest,
+            not_targeting_others: true,
+        },
+        ..CombatRequest::default()
+    };
+    let tables = Arc::clone(script.tables.as_ref().expect("combat tables"));
+    let handle = with_tick(world, ledger, 0, |tick| {
+        tick.actions
+            .begin::<Combat>((Arc::new(request), tables), &mut tick.cx)
+            .expect("begin policy Combat")
+    });
+    script.fight = Some(Fight::Combat(handle));
+    script.combat_id = Some(700);
+}
+
 fn drive(
     script: &mut Sherlock,
     world: &World,
@@ -378,7 +461,7 @@ fn live_owner(ledger: &Option<Box<ledger::Ledger>>) -> bool {
         .is_some_and(|owner| owner.live())
 }
 
-fn accept_outbox(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+fn complete_outbox(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
     let Some(ledger) = ledger.as_mut() else {
         return;
     };
@@ -394,12 +477,16 @@ fn accept_outbox(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
                         tick,
                         sequence: tick,
                     },
-                    accepted: true,
+                    accepted,
                     chat_since: 0,
                 },
             );
         }
     }
+}
+
+fn accept_outbox(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    complete_outbox(ledger, tick, true);
 }
 
 fn until_combat(
@@ -448,7 +535,7 @@ fn pause_delivers_the_cancelled_outcome_instead_of_parking() {
         script.outcome
     );
     assert!(script.fight.is_none());
-    assert!(script.hygiene_pending);
+    assert!(!script.hygiene_pending);
 
     let mut resumed_combat = false;
     for tick in begun + 1..begun + 8 {
@@ -485,7 +572,7 @@ fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
     flow.expect("hygiene begin");
     assert!(
         matches!(script.fight, Some(Fight::ClearPrayers(_))),
-        "startup hygiene must begin ClearPrayers"
+        "scoped hygiene must begin ClearPrayers"
     );
     assert!(script.hygiene_pending);
 
@@ -530,20 +617,16 @@ fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
 }
 
 #[test]
-fn startup_hygiene_clears_prayers_before_the_first_pump() {
+fn policy_s2_startup_preserves_user_prayers() {
     let world = World::new(1);
-    let mut script = script(&world, true);
+    let thick_skin = world.data.prayer_by_name("Thick Skin").unwrap();
+    let mut script = script(&world, false);
     let mut ledger = None;
-    let (flow, interacts) = drive(&mut script, &world, &mut ledger, 1);
+    let (flow, _) = drive(&mut script, &world, &mut ledger, 1);
     flow.expect("startup");
-    assert!(
-        matches!(script.fight, Some(Fight::ClearPrayers(_))),
-        "prayer bit on at card start is cleared before the first pump"
-    );
-    assert!(
-        interacts.is_empty(),
-        "no Dig/walk while startup hygiene is live: {interacts:?}"
-    );
+    assert!(!matches!(script.fight, Some(Fight::ClearPrayers(_))));
+    assert!(!script.hygiene_pending);
+    assert!(world.prayer_is_on(thick_skin.varp));
 }
 
 #[test]
@@ -636,20 +719,222 @@ fn ready_ok_lands_as_the_next_combat_page() {
 }
 
 #[test]
-fn pause_with_a_prayer_bit_runs_hygiene_before_the_cancelled_report() {
+fn policy_s2_pause_clears_only_accepted_combat_raise_before_poll() {
     let mut world = World::new(0);
+    let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
+    let displaced = world
+        .data
+        .prayer_by_name("Protect from Melee")
+        .unwrap()
+        .clone();
+    let raised = world
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .unwrap()
+        .clone();
+    world.set_prayer(skin.varp, true);
+    world.set_prayer(displaced.varp, true);
+    world.stats[5].effective = 43;
+    world.stats[5].base = 43;
+    world.prepare_policy_s2_combat();
     let mut script = script(&world, false);
     let mut ledger = None;
-    let begun = until_combat(&mut script, &mut world, &mut ledger, 1);
-    world.set_prayers(1);
-    script.interrupt(Interrupt::Pause);
-    let (flow, interacts) = drive(&mut script, &world, &mut ledger, begun + 1);
-    flow.expect("hygiene after pause");
-    assert!(
-        matches!(script.fight, Some(Fight::ClearPrayers(_))),
-        "Ready(Err(Cancelled)) runs the hygiene step when a prayer bit is on"
-    );
+    begin_policy_s2_combat(&mut script, &world, &mut ledger);
+
+    let (flow, interacts) = drive(&mut script, &world, &mut ledger, 1);
+    flow.expect("Combat prayer raise");
     assert!(interacts.is_empty());
+    let prayer_buttons: Vec<i32> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            HostEffect::Interaction(InteractReq::IfButton { component_id }) => Some(*component_id),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        prayer_buttons.contains(&raised.button_com),
+        "Combat's accepted batch must contain Protect from Missiles: {prayer_buttons:?}"
+    );
+    accept_outbox(&mut ledger, 1);
+
+    world.set_prayer(displaced.varp, false);
+    world.set_prayer(raised.varp, true);
+    script.interrupt(Interrupt::Pause);
+    assert_eq!(script.outcome, Some(Outcome::cancelled(700)));
+
+    let (flow, interacts) = drive(&mut script, &world, &mut ledger, 2);
+    flow.expect("begin scoped prayer cleanup");
+    assert!(interacts.is_empty());
+    assert!(matches!(script.fight, Some(Fight::ClearPrayers(_))));
+    let (flow, _) = drive(&mut script, &world, &mut ledger, 3);
+    flow.expect("poll scoped prayer cleanup");
+    let cleanup_buttons: Vec<i32> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            HostEffect::Interaction(InteractReq::IfButton { component_id }) => Some(*component_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cleanup_buttons, vec![raised.button_com]);
+    accept_outbox(&mut ledger, 3);
+
+    world.set_prayer(raised.varp, false);
+    drive(&mut script, &world, &mut ledger, 4)
+        .0
+        .expect("finish scoped prayer cleanup");
+    assert!(world.prayer_is_on(skin.varp));
+    assert!(!world.prayer_is_on(displaced.varp));
+    assert!(!world.prayer_is_on(raised.varp));
+    let cancelled = super::take_combat_page().expect("resume receives cancellation");
+    assert_eq!(cancelled.get("id").and_then(Value::as_u64), Some(700));
+    assert_eq!(
+        cancelled.get("end").and_then(Value::as_str),
+        Some("cancelled")
+    );
+}
+
+#[test]
+fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
+    for refused in [false, true] {
+        let mut world = World::new(0);
+        let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
+        let original = world
+            .data
+            .prayer_by_name("Protect from Melee")
+            .unwrap()
+            .clone();
+        let replacement = world
+            .data
+            .prayer_by_name("Protect from Missiles")
+            .unwrap()
+            .clone();
+        world.set_prayer(skin.varp, true);
+        world.set_prayer(original.varp, true);
+        world.stats[5].effective = 43;
+        world.stats[5].base = 43;
+        world.prepare_policy_s2_combat();
+        let mut script = script(&world, false);
+        let mut ledger = None;
+        begin_policy_s2_combat(&mut script, &world, &mut ledger);
+
+        let (flow, _) = drive(&mut script, &world, &mut ledger, 1);
+        flow.expect("Combat prayer raise");
+        let prayer_buttons: Vec<i32> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                HostEffect::Interaction(InteractReq::IfButton { component_id }) => {
+                    Some(*component_id)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(prayer_buttons.contains(&replacement.button_com));
+        if refused {
+            complete_outbox(&mut ledger, 1, false);
+        }
+
+        script.interrupt(Interrupt::Pause);
+        if !refused {
+            ledger.as_mut().unwrap().outbox.clear();
+        }
+        for tick in 2..=3 {
+            drive(&mut script, &world, &mut ledger, tick)
+                .0
+                .expect("cancelled Combat resumes without prayer cleanup");
+        }
+        let prayer_buttons: Vec<i32> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                HostEffect::Interaction(InteractReq::IfButton { component_id })
+                    if [skin.button_com, original.button_com, replacement.button_com]
+                        .contains(component_id) =>
+                {
+                    Some(*component_id)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            prayer_buttons.is_empty(),
+            "refused={refused}: {prayer_buttons:?}"
+        );
+        assert!(world.prayer_is_on(skin.varp));
+        assert!(world.prayer_is_on(original.varp));
+        assert!(!world.prayer_is_on(replacement.varp));
+    }
+}
+
+#[test]
+fn policy_s2_pause_does_not_retain_displaced_ownership() {
+    let mut world = World::new(0);
+    let ranged = world
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .unwrap()
+        .clone();
+    let magic = world
+        .data
+        .prayer_by_name("Protect from Magic")
+        .unwrap()
+        .clone();
+    world.stats[5].effective = 43;
+    world.stats[5].base = 43;
+    world.prepare_policy_s2_combat();
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    begin_policy_s2_combat(&mut script, &world, &mut ledger);
+    drive(&mut script, &world, &mut ledger, 1).0.unwrap();
+    accept_outbox(&mut ledger, 1);
+    world.set_prayer(ranged.varp, true);
+    world.prepare_policy_s2_combat();
+    drive(&mut script, &world, &mut ledger, 2).0.unwrap();
+    accept_outbox(&mut ledger, 2);
+    assert!(script.hygiene_owned.contains(ranged.varp));
+    world
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 88,
+            level: 0,
+            src: world.npcs[0].tile,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: world.local.player.index,
+            }),
+            t1: 0,
+            t2: 30,
+        }]);
+    drive(&mut script, &world, &mut ledger, 3).0.unwrap();
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(action.effect, HostEffect::Interaction(InteractReq::IfButton { component_id })
+            if component_id == magic.button_com)
+    }));
+    accept_outbox(&mut ledger, 3);
+    world.set_prayer(ranged.varp, false);
+    world.set_prayer(magic.varp, true);
+    script.interrupt(Interrupt::Pause);
+    assert!(!script.hygiene_owned.contains(ranged.varp));
+    assert!(script.hygiene_owned.contains(magic.varp));
+    // The user switches back while paused. That activation is not Combat's.
+    world.set_prayer(magic.varp, false);
+    world.set_prayer(ranged.varp, true);
+    for tick in 4..=5 {
+        drive(&mut script, &world, &mut ledger, tick).0.unwrap();
+    }
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(world.prayer_is_on(ranged.varp));
+    assert!(!script.hygiene_pending);
 }
 
 #[test]

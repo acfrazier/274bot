@@ -432,28 +432,56 @@ impl TargetPreference {
     }
 }
 
-/// Resolve selected settings to catalog method indices, applying the one
-/// admission rule from the G1 contract. The returned bitset is safe for the
-/// 40-method 289 catalog; an unexpectedly larger catalog refuses explicitly.
+/// Resolved method indices and any setting error deferred until Start.
+pub(super) struct PreparedMethods {
+    pub(super) bits: u64,
+    pub(super) indices: Arc<[usize]>,
+    pub(super) resource_error: Option<ConfigError>,
+}
+/// Resolve selected settings to catalog method indices for Start validation.
+#[cfg(test)]
 pub fn resolve_methods(
     settings: &GathererSettings,
     selected: &SelectedGameData,
     catalog: &GatherCatalog,
 ) -> Result<(u64, Arc<[usize]>), StartError> {
+    let prepared = resolve_methods_for_prepare(settings, selected, catalog)?;
+    if let Some(error) = prepared.resource_error {
+        return Err(StartError::Config(error));
+    }
+    if prepared.indices.is_empty() {
+        return Err(StartError::Config(ConfigError::new(
+            settings.resources_field(),
+            "required",
+            "no method selected",
+        )));
+    }
+    Ok((prepared.bits, prepared.indices))
+}
+
+/// Resolve every known option while retaining unknown setting values for the
+/// final Start refusal. Profile edits are field-local, so an unknown resource
+/// must not prevent an unrelated setting such as radius from being saved.
+pub(super) fn resolve_methods_for_prepare(
+    settings: &GathererSettings,
+    selected: &SelectedGameData,
+    catalog: &GatherCatalog,
+) -> Result<PreparedMethods, StartError> {
     let skill = settings.skill_kind().catalog();
     let skill_name = settings.skill_kind().stat_name();
-    let resources = settings.resources_for(settings.skill_kind());
     let mut indices = Vec::new();
-    for resource in resources {
-        let option = selected
-            .gather_option(skill_name, resource)
-            .ok_or_else(|| {
-                StartError::Config(ConfigError::new(
+    let mut resource_error = None;
+    for resource in settings.resources_for(settings.skill_kind()) {
+        let Some(option) = selected.gather_option(skill_name, resource) else {
+            resource_error.get_or_insert_with(|| {
+                ConfigError::new(
                     settings.resources_field(),
                     "unknown-resource",
                     format!("resource {resource} is not in the selected gathering family"),
-                ))
-            })?;
+                )
+            });
+            continue;
+        };
         if !option.selectable {
             return Err(StartError::Config(ConfigError::new(
                 settings.resources_field(),
@@ -461,25 +489,27 @@ pub fn resolve_methods(
                 option.gap.as_deref().unwrap_or("resource-not-selectable"),
             )));
         }
-        let method = catalog.method(&option.method).map_err(StartError::Facts)?;
-        if method.skill != skill {
-            return Err(StartError::Config(ConfigError::new(
-                settings.resources_field(),
-                "unknown-resource",
-                format!("resource {resource} resolved to another skill"),
-            )));
-        }
-        admit_method(settings.resources_field(), method)?;
-        let index = catalog
-            .methods()
-            .iter()
-            .position(|candidate| std::ptr::eq(candidate, method))
-            .ok_or_else(|| StartError::Unavailable("gather method index unavailable".into()))?;
-        if !indices.contains(&index) {
-            indices.push(index);
+        for method_id in &option.methods {
+            let method = catalog.method(method_id).map_err(StartError::Facts)?;
+            if method.skill != skill {
+                return Err(StartError::Config(ConfigError::new(
+                    settings.resources_field(),
+                    "unknown-resource",
+                    format!("resource {resource} resolved to another skill"),
+                )));
+            }
+            admit_method(settings.resources_field(), method)?;
+            let index = catalog
+                .methods()
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, method))
+                .ok_or_else(|| StartError::Unavailable("gather method index unavailable".into()))?;
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
         }
     }
-    if indices.is_empty() {
+    if indices.is_empty() && resource_error.is_none() {
         return Err(StartError::Config(ConfigError::new(
             settings.resources_field(),
             "required",
@@ -494,7 +524,11 @@ pub fn resolve_methods(
     let bits = indices
         .iter()
         .fold(0_u64, |bits, index| bits | (1_u64 << index));
-    Ok((bits, Arc::from(indices)))
+    Ok(PreparedMethods {
+        bits,
+        indices: Arc::from(indices),
+        resource_error,
+    })
 }
 
 fn admit_method(field: &str, method: &GatherMethod) -> Result<(), StartError> {
@@ -598,21 +632,21 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         ),
         setting_with(
             "woodcuttingResources",
-            "list",
-            Some("normal"),
+            "string[]",
+            Some("[\"normal\"]"),
             &[],
             Some("{ key: 'skill', anyOf: ['Woodcutting'] }"),
             Some("gather:woodcutting"),
         ),
         setting_with(
             "miningResources",
-            "list",
+            "string[]",
             Some("[\"copper\",\"tin\"]"),
             &[],
             Some("{ key: 'skill', anyOf: ['Mining'] }"),
             Some("gather:mining"),
         ),
-        setting(
+        setting_with(
             "fishingMethod",
             "string",
             Some("fishing.saltfish.op1"),
@@ -683,7 +717,7 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "{ key: 'skill', anyOf: ['Fishing'] }",
         ),
         setting_group(
-            setting("food", "string", Some(""), &[], None, None),
+            setting_with("food", "string", Some(""), &[], None, Some("gatherer-food")),
             "Safety",
         ),
         setting_group(number_setting("foodTarget", "0", "0", "28"), "Safety"),
@@ -794,6 +828,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn selected_catalog(
+        revision: api::selected::ClientRevision,
+    ) -> (
+        Arc<SelectedGameData>,
+        Arc<api::gather_methods::GatherCatalog>,
+    ) {
+        let selected = api::game_data::for_revision(revision).unwrap();
+        let worker_data = Arc::clone(&selected);
+        let catalog = api::selected::FamilyPreparation::run(move |worker| {
+            worker_data.prepare_gathering(worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        (selected, catalog)
+    }
+
     #[test]
     fn settings_accept_g3_defaults_and_reject_unsupported_modes() {
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
@@ -831,6 +883,67 @@ mod tests {
             GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
             "invalid-option"
         );
+    }
+
+    #[test]
+    fn gather_aliases_expand_without_rewriting_and_unknown_resource_does_not_block_radius() {
+        let (selected, catalog) = selected_catalog(api::selected::ClientRevision::R274);
+        let grouped = selected
+            .gather_resources_for("fishing")
+            .find(|row| row.methods.len() > 1)
+            .expect("a fishing option groups multiple method ids");
+        let legacy = grouped
+            .aliases
+            .first()
+            .expect("group has a legacy method id");
+        let mut bag = SettingsBag::new();
+        bag.insert("skill".into(), json!("Fishing"));
+        bag.insert("fishingMethod".into(), json!(legacy));
+        let settings = GathererSettings::from_bag(&bag).unwrap();
+        assert_eq!(&settings.fishing_method, legacy);
+        let PreparedMethods {
+            bits,
+            indices: methods,
+            resource_error,
+        } = resolve_methods_for_prepare(&settings, &selected, &catalog).unwrap();
+        assert!(resource_error.is_none());
+        assert_eq!(methods.len(), grouped.methods.len());
+        assert_eq!(bits.count_ones() as usize, grouped.methods.len());
+        assert_eq!(
+            methods
+                .iter()
+                .map(|index| catalog.methods()[*index].id.0.as_ref())
+                .collect::<Vec<_>>(),
+            grouped
+                .methods
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            &settings.fishing_method, legacy,
+            "read-time alias resolution never rewrites the bag"
+        );
+
+        let mut unknown_bag = SettingsBag::new();
+        unknown_bag.insert("woodcuttingResources".into(), json!(["removed-resource"]));
+        unknown_bag.insert("radius".into(), json!(20));
+        let unknown = GathererSettings::from_bag(&unknown_bag).unwrap();
+        assert_eq!(unknown.radius, 20);
+        assert_eq!(unknown.woodcutting_resources, ["removed-resource"]);
+        let PreparedMethods {
+            indices: methods,
+            resource_error,
+            ..
+        } = resolve_methods_for_prepare(&unknown, &selected, &catalog).unwrap();
+        assert!(methods.is_empty());
+        let resource_error = resource_error.expect("unknown resources are remembered for Start");
+        assert_eq!(resource_error.field.as_ref(), "woodcuttingResources");
+        assert_eq!(resource_error.code.as_ref(), "unknown-resource");
+        assert!(matches!(
+            resolve_methods(&unknown, &selected, &catalog),
+            Err(StartError::Config(error)) if error.code.as_ref() == "unknown-resource"
+        ));
     }
 
     #[test]

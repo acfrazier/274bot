@@ -324,6 +324,11 @@ is keyed exactly as the card publishes it (`gatherer::status::KEYS`, 24 keys:
 `last_progress`, `deaths`, `recoveries`, `recovery_step`, `absent`, `zone_gated` as numbers).
 `xp_per_hour` is -1 below five minutes elapsed.
 
+`woodcuttingResources` and `miningResources` are `string[]` options resolved
+from selected game data; `fishingMethod` is a grouped `string` option, with
+older fishing method ids accepted as read-time aliases. `food` is a selected
+food name, with the empty string representing None.
+
 | Method | OK | Errors |
 | --- | --- | --- |
 | `await api.gather.run(settings?)` | one `GatherOutcome` settlement | sync `invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`; host `refused`, `failed`, or a machine abort |

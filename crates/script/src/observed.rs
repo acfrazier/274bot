@@ -611,6 +611,8 @@ scene_pages! {
         animating: bool,
         /// The local player's primary animation id (`-1` idle).
         self_anim: i32,
+        /// Host-observed local motion; 0/omitted is unknown, not stationary.
+        local_player_motion: u8,
         in_combat: bool,
         self_slot: i32,
         self_target_kind: i32,
@@ -1027,6 +1029,9 @@ impl Scene {
         }
         if snap.has_self_anim() {
             p.self_anim(snap.self_anim());
+        }
+        if snap.has_local_player_motion() {
+            p.local_player_motion(snap.local_player_motion());
         }
         if snap.has_in_combat() {
             p.in_combat(snap.in_combat());

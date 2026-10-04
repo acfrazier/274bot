@@ -558,6 +558,10 @@ table Snapshot {
   // that from the vector length. Written on the keyframe and whenever it
   // changes; an omitted delta keeps the last root; old buffers read -1.
   side_modal_id: int = -1;
+  // Slot 286: local-player motion. 0 is unknown or unobserved (including old
+  // buffers), 1 is stationary, and 2 is moving. Omitted deltas keep the last
+  // reported state.
+  local_player_motion: ubyte = 0;
 }
 
 table Collision {

@@ -210,6 +210,39 @@ pub struct TransportEdge {
 }
 
 impl TransportEdge {
+    /// Supply consumed at this hop's carried balance. The Shilo carts
+    /// pack a minimum; their content charges five percent, clamped to
+    /// 10–200. Other edges use the packed fixed consumption.
+    pub fn consumption_count(&self, id: i32, packed_count: i32, carried: i32) -> i32 {
+        static_routes::cart_fare(self, id, carried).unwrap_or(packed_count)
+    }
+
+    /// Minimum pre-hop stack that leaves `needed_after` after consumption.
+    /// Backward route budgeting avoids underfetching when a larger coin
+    /// float itself raises the cart fare.
+    pub(crate) fn required_supply_before(
+        &self,
+        id: i32,
+        packed_count: i32,
+        needed_after: i32,
+    ) -> i32 {
+        if static_routes::cart_fare(self, id, 0).is_none() {
+            return needed_after.saturating_add(packed_count);
+        }
+        let mut low = needed_after.saturating_add(10);
+        let mut high = needed_after.saturating_add(200);
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let fare = self.consumption_count(id, packed_count, mid);
+            if mid.saturating_sub(fare) >= needed_after {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        low
+    }
+
     /// Resolve a landing from the actual takeoff, not the loc's anchor.
     /// Reconstructed route edges keep their exact planned `to` while retaining
     /// this content delta for live settlement from the stand used at send time.

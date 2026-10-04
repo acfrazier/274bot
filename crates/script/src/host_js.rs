@@ -869,7 +869,7 @@ fn gather_setting_ts(def: &SettingDef) -> String {
         "boolean" => "boolean".to_string(),
         "number" => "number".to_string(),
         "tile" => "WorldTile".to_string(),
-        "list" => "string[]".to_string(),
+        "string[]" => "string[]".to_string(),
         "string" if !def.options.is_empty() => def
             .options
             .iter()
@@ -887,7 +887,7 @@ fn gather_setting_doc(def: &SettingDef) -> String {
     }
     match def.default.as_deref() {
         Some(default) => {
-            if def.ty == "list" && !default.starts_with('[') {
+            if def.ty == "string[]" && !default.starts_with('[') {
                 parts.push(format!("default [\"{default}\"]"));
             } else if def.ty == "string" {
                 parts.push(format!("default \"{default}\""));

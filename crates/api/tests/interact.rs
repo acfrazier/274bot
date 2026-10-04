@@ -993,6 +993,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         },
         combat_level: 0,
         skill_level: 0,
+        headicons: 0,
         weapon: None,
     };
     let loc = LocView {

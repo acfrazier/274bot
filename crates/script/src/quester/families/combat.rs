@@ -7,11 +7,12 @@ use super::super::path::PredicateDocument;
 use super::reach::{self, Reach, ReachArgs, ReachKind};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, Style, Tactic, Target,
+    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
+    Tactic, Target,
 };
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
 use api::gather_methods::SceneRegionInput;
 use api::selected::Truth;
 use serde::Deserialize;
@@ -21,8 +22,6 @@ use std::time::Duration;
 
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
-static RETURN_TO_STAND_FAILED: std::sync::LazyLock<Arc<str>> =
-    std::sync::LazyLock::new(|| Arc::from("combat target-loss walk did not reach the stand"));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat abort walk did not reach a safe tile"));
 
@@ -476,6 +475,7 @@ impl StepPlan for CombatPlan {
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
+            raised_prayers: RaisedPrayers::empty(),
             walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
         };
         run.begin_combat(cx)?;
@@ -530,6 +530,7 @@ struct CombatRun {
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
+    raised_prayers: RaisedPrayers,
     walk_outcome_seq_at_begin: u64,
 }
 
@@ -551,6 +552,19 @@ fn user_walk_cancelled(_seq: u64) -> bool {
 }
 
 impl CombatRun {
+    fn capture_prayer_cleanup(&mut self) {
+        if let Some(Action::Combat(handle)) = self.action.as_ref() {
+            self.raised_prayers = handle.prayer_cleanup();
+        }
+    }
+
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        match self.action.as_ref() {
+            Some(Action::Combat(handle)) => handle.prayer_cleanup(),
+            _ => self.raised_prayers,
+        }
+    }
+
     fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
         let current_seq = cx.tick.cx.observed_walk_outcome_seq;
         if current_seq == self.walk_outcome_seq_at_begin {
@@ -682,23 +696,15 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        if receipt.end == WalkEnd::UserInput {
-            return Poll::Ready(Err(ActionError::UserInput));
-        }
-        if !matches!(receipt.end, WalkEnd::Arrived) {
-            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
-                &RETURN_TO_STAND_FAILED,
-            ))));
-        }
+        receipt.into_arrival()?;
         self.rebegin_combat(cx, true)
     }
 
     fn on_abort_walk(&mut self, receipt: WalkReceipt) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        let error = match receipt.end {
-            WalkEnd::UserInput => ActionError::UserInput,
-            WalkEnd::Arrived => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
-            _ => ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)),
+        let error = match receipt.into_arrival() {
+            Ok(_) => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
+            Err(error) => error,
         };
         Poll::Ready(Err(error))
     }
@@ -709,6 +715,7 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
+        self.raised_prayers = RaisedPrayers::empty();
         self.last_report = Some(report);
         self.refresh_outcome();
         match report.end {
@@ -752,7 +759,11 @@ impl CombatRun {
             }
             CombatEnd::Aborted(_) => match self.begin_abort_walk(report, cx) {
                 Ok(()) => Poll::Pending,
-                Err(ActionError::UserInput) => Poll::Ready(Err(ActionError::UserInput)),
+                Err(
+                    error @ (ActionError::UserInput
+                    | ActionError::Cancelled
+                    | ActionError::NeedsEvidence(_)),
+                ) => Poll::Ready(Err(error)),
                 Err(_) => Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))),
             },
         }
@@ -872,6 +883,7 @@ impl CombatRun {
 
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        self.capture_prayer_cleanup();
         if self.user_interrupted_since_begin(cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
@@ -912,13 +924,19 @@ impl StepRun for CombatRun {
         match polled {
             ActionPoll::Pending => Poll::Pending,
             ActionPoll::Failed(error) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
-                if matches!(error, ActionError::UserInput) {
-                    Poll::Ready(Err(ActionError::UserInput))
+                if matches!(
+                    error,
+                    ActionError::UserInput | ActionError::Cancelled | ActionError::NeedsEvidence(_)
+                ) {
+                    Poll::Ready(Err(error))
                 } else {
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
                 }
             }
-            ActionPoll::Failed(error) => Poll::Ready(Err(error)),
+            ActionPoll::Failed(error) => {
+                self.action = None;
+                Poll::Ready(Err(error))
+            }
             ActionPoll::Combat(report) => self.on_combat_report(report, cx),
             ActionPoll::Walk(receipt) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
                 self.on_abort_walk(receipt)
@@ -946,7 +964,11 @@ impl StepRun for CombatRun {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        self.capture_prayer_cleanup();
         self.action = None;
+    }
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        CombatRun::prayer_cleanup(self)
     }
 
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {

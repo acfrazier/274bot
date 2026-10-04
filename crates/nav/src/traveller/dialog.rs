@@ -360,25 +360,32 @@ fn is_shantay_disclaimer_choice(text: &str) -> bool {
     option_eq(text, "Yeah, that poster doesn't scare me!")
 }
 
-/// Honest refusal for the Al Kharid pay page when the inventory cannot
-/// cover `inv_total(inv, coins) < 10` in `border_gate.rs2`. Other Door
-/// pages (Shantay disclaimer) are not a coin charge.
+/// Check the live inventory before an affirmative fare answer. Routing
+/// proved supply at plan time; a previous hop or an intervening action may
+/// have spent it before this page opens.
 pub(super) fn door_hop_choice_blocked(
     edge: &TransportEdge,
     snapshot: &GameSnapshot,
     choice: i32,
 ) -> Option<String> {
-    if edge.kind != TransportKind::Door {
-        return None;
-    }
     let index = usize::try_from(choice.checked_sub(1)?).ok()?;
     let text = snapshot.chat_options().get(index)?.text.as_str();
-    if !is_alkharid_pay_choice(text) {
+    let pays = if edge.kind == TransportKind::Door {
+        is_alkharid_pay_choice(text)
+    } else {
+        npc_backed(edge) && is_affirmative_ride_choice(text)
+    };
+    if !pays {
         return None;
     }
-    for &(id, count) in &edge.consumed_req {
-        if snapshot.inv_count(id) < count {
-            return Some(format!("need {count} coins to pay the Al Kharid toll"));
+    for &(id, packed_count) in &edge.consumed_req {
+        let carried = snapshot.inv_count(id);
+        let count = edge.consumption_count(id, packed_count, carried);
+        if carried < count {
+            return Some(format!(
+                "transport {} needs {count} of item {id} to pay the fare; carrying {carried}",
+                edge.loc_id
+            ));
         }
     }
     None
@@ -390,14 +397,18 @@ pub(super) fn spirit_tree_choice(
     packed: Option<&[TransportEdge]>,
     chat_options: &[api::snapshot::ChatOptionView],
 ) -> i32 {
-    let n_dests = spirit_tree_dest_count(edge, packed);
-    if n_dests == 1 {
+    // The live gate determines the answer, not how many destinations
+    // survived packing: an adult tree may have just one routable sibling.
+    if let Some(index) = chat_options
+        .iter()
+        .position(|option| option_eq(&option.text, "Where can I go?"))
+    {
+        return index as i32 + 1;
+    }
+    if spirit_tree_dest_count(edge, packed) == 1 && chat_options.len() == 2 {
         return NPC_RIDE_CHOICE;
     }
-    if chat_options.len() >= 3 {
-        return dest_dialog_choice(leg, None, packed);
-    }
-    2
+    dest_dialog_choice(leg, None, packed)
 }
 
 pub(super) fn spirit_tree_dest_count(
@@ -485,13 +496,31 @@ pub(super) enum TeleportSend {
     Sent,
     /// The interact/press was refused by the driver.
     Refused(SendReason),
-    /// The hop cannot be worked yet (the charged item is not in the
-    /// loaded inventory, or the driver dropped the press): keep waiting,
-    /// bounded by the hop budget.
-    Wait,
+    /// A carried item has no bound inventory view yet, or the driver
+    /// dropped the spell-button press. The wait names the actual missing
+    /// control, never a scene loc that teleports do not use.
+    Wait(TeleportWait),
     /// The edge can never be executed (a spell landing outside the seven
     /// standard spellbook teleports).
     Blocked(String),
+}
+
+pub(super) enum TeleportWait {
+    InventoryItem(i32),
+    SpellButton(i32),
+}
+
+impl TeleportWait {
+    pub(super) fn detail(self) -> String {
+        match self {
+            Self::InventoryItem(id) => {
+                format!("charged teleport item {id} never acquired a usable inventory control")
+            }
+            Self::SpellButton(id) => {
+                format!("teleport spell button {id} was not accepted by the driver")
+            }
+        }
+    }
 }
 
 /// The magic-tab button of a spell teleport edge: the standard spell the
@@ -537,13 +566,33 @@ pub(super) fn teleport_send<D: Driver>(
     d: &mut D,
     edge: &TransportEdge,
 ) -> TeleportSend {
+    for &(skill, level) in &edge.skill_req {
+        let effective = snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.index == skill)
+            .map(|stat| stat.effective);
+        if effective.is_none_or(|effective| effective < level) {
+            return TeleportSend::Blocked(format!(
+                "teleport needs skill {skill} level {level}; observed {effective:?}"
+            ));
+        }
+    }
+    for &(id, count) in edge.item_req.iter().chain(&edge.consumed_req) {
+        let carried = snapshot.inv_count(id);
+        if carried < count {
+            return TeleportSend::Blocked(format!(
+                "teleport needs {count} of item {id} (runes or a charged item); carrying {carried}"
+            ));
+        }
+    }
     if edge.loc_id > 0 {
         let Some(item) = snapshot
             .inventory()
             .iter()
             .find(|it| it.def.id == edge.loc_id)
         else {
-            return TeleportSend::Wait;
+            return TeleportSend::Wait(TeleportWait::InventoryItem(edge.loc_id));
         };
         let mut ix = Interactions::new(snapshot, d);
         return match ix.interact(OpTarget::Item(item), ActionSpec::Operation(edge.option)) {
@@ -569,7 +618,7 @@ pub(super) fn teleport_send<D: Driver>(
             if press(d, com_id) {
                 TeleportSend::Sent
             } else {
-                TeleportSend::Wait
+                TeleportSend::Wait(TeleportWait::SpellButton(com_id))
             }
         }
     }
