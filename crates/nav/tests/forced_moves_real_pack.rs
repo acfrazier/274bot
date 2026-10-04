@@ -17,26 +17,42 @@ fn tile(x: i32, z: i32) -> WorldTile {
 fn planned_state(floor: i32, pickaxe: i32) -> WorldState {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
-    snapshot.seed_stats((0..25).map(|index| {
-        let level = match index {
-            0..=4 | 6 => floor,
-            5 => 43,
-            7 | 10 => 53,
-            14 => 50,
-            15 => 25,
-            _ => if stat_used(index) { 1 } else { 0 },
-        };
-        StatView {
-            index: index as i32,
-            name: stat_name(index).into(),
-            base: level,
-            effective: level,
-            xp: 0,
-            used: stat_used(index),
-        }
-    }).collect());
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| {
+                let level = match index {
+                    0..=4 | 6 => floor,
+                    5 => 43,
+                    7 | 10 => 53,
+                    14 => 50,
+                    15 => 25,
+                    _ => {
+                        if stat_used(index) {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                };
+                StatView {
+                    index: index as i32,
+                    name: stat_name(index).into(),
+                    base: level,
+                    effective: level,
+                    xp: 0,
+                    used: stat_used(index),
+                }
+            })
+            .collect(),
+    );
     let mut state = WorldState::from_snapshot(&snapshot).with_map_members(true);
     state.inv.insert(pickaxe, 1);
+    let selected =
+        api::game_data::for_revision(ClientRevision::R289).expect("selected 289 planned inventory");
+    state.inv.insert(
+        selected.item_by_alias("coins").expect("selected coins").id,
+        408,
+    );
     state
 }
 
@@ -53,7 +69,9 @@ fn rockslide_edges(world: &NavWorld) -> Vec<&nav::transport::TransportEdge> {
         .graph
         .edges
         .iter()
-        .filter(|edge| edge.loc_id == 2634 && edge.option == 2)
+        // This loc type is also placed elsewhere in the real map. The
+        // original Hero repro names this particular mountain rockslide.
+        .filter(|edge| edge.loc_id == 2634 && edge.option == 2 && edge.at == tile(2838, 3517))
         .collect()
 }
 
@@ -71,84 +89,102 @@ fn hero_ice_queen_routes_and_rockslide_require_real_mine_gates() {
     let unrelated = selected.item_by_alias("coins").expect("selected coins").id;
 
     let edges = rockslide_edges(&world);
-    assert_eq!(
-        edges.len(),
-        2,
-        "the real loc 2634 op2 Mine has both directed source crossings"
+    assert!(
+        !edges.is_empty(),
+        "real loc 2634 op2 Mine must have proved crossings"
     );
     for edge in &edges {
         assert_eq!(edge.kind, TransportKind::AgilityShortcut);
-        assert_eq!(edge.at, tile(2838, 3517), "retain the actual loc interaction anchor");
+        assert_eq!(
+            edge.at,
+            tile(2838, 3517),
+            "retain the actual loc interaction anchor"
+        );
         assert_eq!(
             edge.player_delta, None,
             "forced movement is represented by the exact landing"
         );
+        let start = edge
+            .takeoff
+            .expect("forced movement requires an exact operation stand");
+        let east = start.x > edge.at.x;
+        assert_eq!(edge.to.x - start.x, if east { -3 } else { 3 });
+        assert_eq!(edge.to.z - start.z, if east { 1 } else { -1 });
         assert_eq!(
-            edge.takeoff,
-            Some(edge_takeoff(edge)),
-            "forced move is tied to its source takeoff"
+            edge.ticks, 8,
+            "both force-walk steps and both p_delay(1) waits"
         );
-        assert!(edge.skill_req.contains(&(14, 50)), "Mine requires Mining 50");
         assert!(
-            edge.item_req
-                .iter()
-                .any(|(id, count)| *id == pickaxe && *count > 0)
-                || edge.worn_req.contains(&pickaxe),
-            "Mine must require the selected usable pickaxe"
+            edge.skill_req.contains(&(14, 50)),
+            "Mine requires Mining 50"
+        );
+        assert!(
+            edge.worn_req.is_empty(),
+            "a strict worn tool is never auto-equipped"
+        );
+        assert!(
+            matches!(edge.item_req.as_slice(), [(_, 1)]) && edge.worn_all_req.is_empty()
+                || edge.item_req.is_empty() && edge.worn_all_req.len() == 1,
+            "Mine requires one carried OR one strictly worn usable tool: {edge:?}"
         );
     }
-    assert!(edges.iter().any(|edge| {
-        edge.takeoff == Some(tile(2840, 3517)) && edge.to == tile(2837, 3518)
-    }), "east-side Mine movement must land at the source-derived (-3,+1) endpoint");
-    assert!(edges.iter().any(|edge| {
-        edge.takeoff == Some(tile(2837, 3518)) && edge.to == tile(2840, 3517)
-    }), "west-side Mine movement must land at the source-derived (+3,-1) endpoint");
+    assert!(
+        edges
+            .iter()
+            .any(|edge| { edge.takeoff == Some(tile(2840, 3517)) && edge.to == tile(2837, 3518) }),
+        "east-side Mine movement must land at the source-derived (-3,+1) endpoint"
+    );
+    assert!(
+        edges
+            .iter()
+            .any(|edge| { edge.takeoff == Some(tile(2837, 3518)) && edge.to == tile(2840, 3517) }),
+        "west-side Mine movement must land at the source-derived (+3,-1) endpoint"
+    );
 
+    let carried = planned_state(40, pickaxe);
+    let mut worn = carried.clone();
+    worn.inv.clear();
+    worn.worn.insert(pickaxe);
+    assert!(
+        edges.iter().any(|edge| carried.allows(edge)),
+        "a carried Bronze pickaxe is usable"
+    );
+    assert!(
+        edges.iter().any(|edge| worn.allows(edge)),
+        "a strictly worn Bronze pickaxe is usable"
+    );
     for edge in &edges {
-        let legal = planned_state(40, pickaxe);
-        assert!(
-            legal.allows(edge),
-            "carried selected pickaxe and Mining 50 authorize {edge:?}"
-        );
-
-        let mut mining_49 = legal.clone();
+        let mut mining_49 = carried.clone();
         mining_49.stats.insert(14, 49);
-        assert!(!mining_49.allows(edge), "Mining 49 cannot authorize {edge:?}");
-
+        assert!(
+            !mining_49.allows(edge),
+            "Mining 49 cannot authorize {edge:?}"
+        );
         let mut no_pickaxe = planned_state(40, unrelated);
         no_pickaxe.inv.clear();
-        no_pickaxe.inv.insert(unrelated, 1);
-        no_pickaxe.stats.insert(14, 50);
         assert!(
             !no_pickaxe.allows(edge),
-            "Mining 50 without a held or worn pickaxe cannot authorize {edge:?}"
+            "Mining 50 without a held or worn pickaxe: {edge:?}"
         );
-
-        let mut unrelated_item = planned_state(40, unrelated);
-        unrelated_item.stats.insert(14, 50);
+        let unrelated_item = planned_state(40, unrelated);
         assert!(
             !unrelated_item.allows(edge),
-            "an unrelated held item cannot authorize {edge:?}"
+            "an unrelated item cannot authorize {edge:?}"
         );
-
-        let mut unknown_mining = planned_state(40, pickaxe);
+        let mut unknown_mining = carried.clone();
         unknown_mining.stats.remove(&14);
         assert!(
             !unknown_mining.allows(edge),
             "unknown Mining cannot authorize {edge:?}"
         );
-
-        let mut worn_pickaxe = planned_state(40, pickaxe);
-        worn_pickaxe.inv.clear();
-        worn_pickaxe.worn.insert(pickaxe);
-        assert!(
-            worn_pickaxe.allows(edge),
-            "a worn selected usable pickaxe and Mining 50 authorize {edge:?}"
-        );
     }
 
     let stands = queen_stands(&world);
-    assert_eq!(stands.len(), 40, "preserve the original NPC795 radius-three stand candidates");
+    assert_eq!(
+        stands.len(),
+        40,
+        "preserve the original NPC795 radius-three stand candidates"
+    );
     let origins = [
         ("Varrock", tile(3253, 3420)),
         ("Heroes Guild", tile(2894, 3507)),
@@ -169,16 +205,10 @@ fn hero_ice_queen_routes_and_rockslide_require_real_mine_gates() {
                 FindOptions::default(),
                 &state,
             );
-            let route = result.route().unwrap_or_else(|error| {
-                panic!(
-                    "original {label} -> NPC795 route under normal zone policy, planned combat floor {floor}: {error:?}"
-                )
-            });
-            assert!(stands.contains(&route.dest), "route ends at an NPC795 stand candidate");
-            println!(
-                "Hero {label} -> Ice Queen, normal zones, planned floor {floor}: {} legs, {} ticks",
-                route.legs.len(),
-                route.ticks
+            assert_eq!(
+                result.route().err(),
+                Some(nav::router::RouteError::NoPath),
+                "the original {label} floor {floor} cannot bypass unsafe zones or the locked Guild"
             );
         }
     }
@@ -197,6 +227,14 @@ fn hero_ice_queen_routes_and_rockslide_require_real_mine_gates() {
                 FindOptions::default(),
                 &state,
             );
+            if label == "Heroes Guild" {
+                assert_eq!(
+                    result.route().err(),
+                    Some(nav::router::RouteError::NoPath),
+                    "the original interior Guild profile has not completed Hero's Quest"
+                );
+                continue;
+            }
             let route = result.route().unwrap_or_else(|error| {
                 panic!(
                     "geometry-only diagnostic {label} -> NPC795, planned combat floor {floor}: {error:?}"
@@ -211,22 +249,49 @@ fn hero_ice_queen_routes_and_rockslide_require_real_mine_gates() {
         }
     }
     world.graph.zones = saved_zones;
-}
 
-// The expected source takeoff is one of the two exact branches; this helper
-// makes the metadata assertion explicit without inferring a takeoff from `at`.
-fn edge_takeoff(edge: &nav::transport::TransportEdge) -> WorldTile {
-    match edge.to {
-        WorldTile {
-            x: 2837,
-            z: 3518,
-            level: 0,
-        } => tile(2840, 3517),
-        WorldTile {
-            x: 2840,
-            z: 3517,
-            level: 0,
-        } => tile(2837, 3518),
-        other => panic!("unexpected source-derived loc 2634 Mine landing: {other:?}"),
+    // Qualify the same three origins with honest permissions: max combat,
+    // completed Hero's Quest for the interior Guild, and the existing named
+    // mountain encounter grant. The zone table stays enabled.
+    let mut qualified = planned_state(99, pickaxe);
+    qualified.stats.insert(5, 99);
+    qualified.combat_level = Some(126);
+    qualified.quests.insert("Hero's Quest".to_owned());
+    let mut qualified_worn = qualified.clone();
+    qualified_worn.inv.remove(&pickaxe);
+    qualified_worn.worn.insert(pickaxe);
+    let zones = world.graph.zones.as_ref().expect("real danger zone table");
+    let options = FindOptions {
+        zones: nav::zones::ZoneExempt::named(&[zones
+            .resolve("white-wolf-mountain")
+            .expect("named mountain grant")])
+        .expect("one bounded encounter grant"),
+        ..FindOptions::default()
+    };
+    for (mode, state) in [("carried", qualified), ("strictly worn", qualified_worn)] {
+        for (label, from) in origins {
+            let result = find_first_with(
+                &world.collision,
+                &world.graph,
+                from,
+                &stands,
+                options,
+                &state,
+            );
+            let route = result.route().unwrap_or_else(|error| {
+                panic!("qualified {label} -> NPC795 with {mode} pickaxe: {error:?}")
+            });
+            assert!(stands.contains(&route.dest));
+            assert!(
+                route.legs.iter().any(|leg| matches!(leg,
+                    nav::router::Leg::Transport { edge }
+                        if edge.loc_id == 2634 && edge.option == 2
+                            && edge.at == tile(2838, 3517)
+                )),
+                "the qualified route must use the real gated Mine crossing"
+            );
+            println!("Hero qualified {label}, {mode} tool, normal table + named mountain grant: {} legs, {} ticks",
+                route.legs.len(), route.ticks);
+        }
     }
 }

@@ -5932,11 +5932,13 @@ fn follow_approaches_a_transport_loc_before_interacting() {
 #[test]
 fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
     let mut c = scene_client();
-    plant_ladder(&mut c, Some("Climb"));
-    // Start farther from the exact required stand so the first poll must
-    // exercise the approach walk rather than begin at a potentially operable
-    // stand due to the fixture's scene/player-coordinate setup.
+    plant_loc(&mut c, 1, "Ladder", "Climb", 2, 4);
     let mut snap = snap_at(&mut c, 2, 0);
+    // Exact takeoffs require the real footprint predicate, not the legacy
+    // wall fixture's unknown-geometry/radius fallback.
+    let mut footprint = snap.locs()[0].clone();
+    footprint.shape = 10;
+    snap.seed_locs(vec![footprint.clone()]);
     let mut rec = FollowRec {
         route: Some((0, 0)),
         ..FollowRec::default()
@@ -5974,8 +5976,22 @@ fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
 
     // A different stand is still adjacent to the loc, but it is not the
     // content-required starting tile and must never trigger the op.
-    plant_player(&mut c, 1, 3);
+    plant_player(&mut c, 1, 4);
     bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(
+            &footprint,
+            snap.scene(),
+            WorldTile {
+                x: 3201,
+                z: 3204,
+                level: 0
+            },
+        ),
+        Some(true),
+        "the substitute really is another operable stand"
+    );
     assert!(t
         .follow(
             &mut rec,
@@ -5988,6 +6004,7 @@ fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
 
     plant_player(&mut c, 2, 3);
     bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
     assert!(t
         .follow(
             &mut rec,
@@ -6000,6 +6017,7 @@ fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
 
     plant_player(&mut c, 2, 4);
     bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint.clone()]);
     assert!(t
         .follow(
             &mut rec,
@@ -6010,6 +6028,7 @@ fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
         .is_none());
     plant_player(&mut c, 2, 5);
     bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![footprint]);
     assert!(matches!(
         t.follow(&mut rec, &snap, route, &mut TravelOptions::default()),
         Some(TravelOutcome::Arrived { .. })

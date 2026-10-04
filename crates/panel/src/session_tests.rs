@@ -1638,6 +1638,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
             edges: vec![TransportEdge {
                 kind: TransportKind::Door,
                 player_delta: None,
+                takeoff: None,
                 at: WorldTile {
                     x: 3202,
                     z: 3202,
@@ -2107,6 +2108,7 @@ fn door_route() -> Route {
                 edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
+                    takeoff: None,
                     at: WorldTile {
                         x: 3202,
                         z: 3200,
@@ -2359,6 +2361,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                 edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
+                    takeoff: None,
                     at: tiles[300],
                     to: tiles[301],
                     loc_id: 1530,
@@ -3333,33 +3336,37 @@ fn toll_world() -> NavWorld {
         flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 1,
-        z: 2,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 2,
-        z: 2,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(995, 10)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(995, 10)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -3535,29 +3542,33 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         level: 0,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: dest,
-    loc_id: 0,
-    option: 0,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: dest,
+        loc_id: 0,
+        option: 0,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
@@ -3641,29 +3652,33 @@ fn picker_confirm_uses_find_with_options() {
         },
         ..TransportGraph::default()
     };
-    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: dest,
-    loc_id: 0,
-    option: 0,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: dest,
+        loc_id: 0,
+        option: 0,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {

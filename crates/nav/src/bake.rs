@@ -49,7 +49,7 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// derivation; reach bits also depend on `paint.rs` (`bake_reach`) and
 /// `router.rs` (`step_ok`). Traveller and grid-search changes do not decide
 /// those bytes.
-pub const GENERATOR_SOURCES: [&str; 45] = [
+pub const GENERATOR_SOURCES: [&str; 47] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -93,6 +93,8 @@ pub const GENERATOR_SOURCES: [&str; 45] = [
     "src/transport/rs2_syntax.rs",
     "src/transport/stage_doors.rs",
     "src/transport/engine_door_procs.rs2",
+    "src/transport/stage_doors_forced.rs",
+    "src/transport/engine_forced_procs.rs2",
     "src/zones.rs",
     "src/zones/curated.rs",
 ];
@@ -919,7 +921,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     );
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
-    require_members_guards(content_root, &graph)?;
+    require_members_guards(content_root, &graph, &audit)?;
     let derived_zones = derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
     let zone_count = u32::try_from(derived_zones.table.zones().len())
         .map_err(|_| "zone count exceeds the manifest range".to_string())?;

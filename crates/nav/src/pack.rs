@@ -1280,10 +1280,7 @@ fn validate_takeoff_admission(
     Ok(())
 }
 
-fn read_takeoff<R: PackRead>(
-    r: &mut R,
-    at: WorldTile,
-) -> Result<Option<WorldTile>, PackError> {
+fn read_takeoff<R: PackRead>(r: &mut R, at: WorldTile) -> Result<Option<WorldTile>, PackError> {
     let tag = read_u8(r)?;
     let tile = WorldTile {
         x: read_i32(r)?,

@@ -57,25 +57,29 @@ pub(super) fn shortcut_edges(
                     bump(skipped, SKIP_DEST_OUTSIDE, 1);
                     continue;
                 }
-                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
-                player_delta: None,
-                at,
-                to,
-                loc_id: id,
-                option: 1,
-                ticks,
-                dir: None,
-                open_loc_id: None,
-                skill_req: skill_req.clone(),
-                item_req: vec![],
-                consumed_req: vec![],
-                item_returns: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-                quest_gates: None, });
+                graph.edges.push(TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
+                    kind: TransportKind::AgilityShortcut,
+                    player_delta: None,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: skill_req.clone(),
+                    item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                    wildy_cap: None,
+                    quest_gates: None,
+                });
             }
         }
     }
@@ -250,25 +254,29 @@ pub(super) fn emit_island_rope_leaf(
     } else {
         vec![(SKILL_AGILITY, 10)]
     };
-    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
-    player_delta: None,
-    at: start,
-    to: end,
-    loc_id: id,
-    option: 1,
-    ticks: 1 + extra,
-    dir: None,
-    open_loc_id: None,
-    skill_req,
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.edges.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::AgilityShortcut,
+        player_delta: None,
+        at: start,
+        to: end,
+        loc_id: id,
+        option: 1,
+        ticks: 1 + extra,
+        dir: None,
+        open_loc_id: None,
+        skill_req,
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
 }
 
 pub(super) fn fullstyle_dests(loc: &Placement) -> Vec<WorldTile> {

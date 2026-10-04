@@ -88,25 +88,29 @@ pub fn in_essence_mine(t: WorldTile) -> bool {
 /// teleporting to the entry wizard's overworld anchor. Synthesized by the
 /// router from the live session — never packed.
 pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::EssenceExit,
-    player_delta: None,
-    at,
-    to: session.return_tile,
-    loc_id: ESSENCE_MINE_PORTAL_LOC_ID,
-    option: 1,
-    ticks: ESSENCE_MINE_EXIT_TICKS,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::EssenceExit,
+        player_delta: None,
+        at,
+        to: session.return_tile,
+        loc_id: ESSENCE_MINE_PORTAL_LOC_ID,
+        option: 1,
+        ticks: ESSENCE_MINE_EXIT_TICKS,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// `^essence_mine_to_<wizard>` return anchors from

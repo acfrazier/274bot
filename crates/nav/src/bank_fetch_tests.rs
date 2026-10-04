@@ -55,25 +55,29 @@ fn walled_5x5() -> WorldCollision {
 
 /// One door crossing the wall, gated on a worn knife.
 fn knife_graph() -> TransportGraph {
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: tile(1, 2, 0),
-    to: tile(2, 2, 0),
-    loc_id: 1530,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![KNIFE],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: tile(1, 2, 0),
+        to: tile(2, 2, 0),
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![KNIFE],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -578,11 +582,14 @@ fn bank_trip_keeps_worn_and_skill_facts() {
 #[test]
 fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
     let door = |item_req: Vec<(i32, i32)>, consumed_req: Vec<(i32, i32)>, worn_req: Vec<i32>| {
-        TransportEdge { takeoff: None, item_req,
-        consumed_req,
-        item_returns: vec![],
-        worn_req,
-        ..knife_graph().edges[0].clone() }
+        TransportEdge {
+            takeoff: None,
+            item_req,
+            consumed_req,
+            item_returns: vec![],
+            worn_req,
+            ..knife_graph().edges[0].clone()
+        }
     };
     let state = WorldState {
         inv: HashMap::from([(KNIFE, 1), (995, 4)]),

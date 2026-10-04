@@ -304,6 +304,7 @@ pub struct TransportGraph {
 
 impl TransportGraph {
     /// The same footprint/face predicate used by live loc interactions.
+    #[inline(always)]
     pub fn admissible_from(
         &self,
         collision: &WorldCollision,
@@ -311,20 +312,10 @@ impl TransportGraph {
         from: WorldTile,
     ) -> bool {
         let edge = &self.edges[index];
-        if let Some(takeoff) = edge.takeoff {
-            if from != takeoff || !collision.standable(from) || from.level != edge.at.level {
-                return false;
-            }
-            return match self.approaches.get(index).copied().flatten() {
-                Some(approach) => approach.can_operate(
-                    edge.at,
-                    from,
-                    collision.walkable_word(from.x, from.z, from.level) as i32,
-                ),
-                None => (from.x - edge.at.x).abs().max((from.z - edge.at.z).abs()) <= 1,
-            };
-        }
-        if !collision.standable(from) || from.level != edge.at.level {
+        if edge.takeoff.is_some_and(|takeoff| from != takeoff)
+            || !collision.standable(from)
+            || from.level != edge.at.level
+        {
             return false;
         }
         match self.approaches.get(index).copied().flatten() {
@@ -647,7 +638,13 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
                 &e.item_returns,
                 &e.quest_req,
             ),
-            (&e.varp_req, &e.worn_req, &e.worn_all_req, e.members_req, e.wildy_cap),
+            (
+                &e.varp_req,
+                &e.worn_req,
+                &e.worn_all_req,
+                e.members_req,
+                e.wildy_cap,
+            ),
             &e.quest_gates,
         )
     }

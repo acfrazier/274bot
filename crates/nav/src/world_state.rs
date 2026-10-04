@@ -36,9 +36,10 @@ pub struct WorldState {
     pub inv: HashMap<i32, i32>,
     /// obj ids currently worn (the snapshot's `equipment` family).
     pub worn: HashSet<i32>,
-    /// Items a bank-fetch probe may assume it can wear; never observed
-    /// equipment. Only the legacy any-of `worn_req` gate may use these.
-    pub fetchable_worn: HashSet<i32>,
+    /// BankBudget may satisfy the legacy any-of `worn_req` from positive
+    /// counts in its available inventory. Never observed equipment, and
+    /// never considered by the strict `worn_all_req` gate.
+    pub allow_fetchable_worn: bool,
     /// skill id → effective level (the snapshot's `stats` family).
     pub stats: HashMap<i32, i32>,
     /// Base-stat combat level; absent until all seven combat rows are ready.
@@ -120,7 +121,7 @@ impl WorldState {
             combat_level,
             varps,
             quests,
-            fetchable_worn: HashSet::new(),
+            allow_fetchable_worn: false,
             map_members: false,
             quest_evidence: None,
         }
@@ -184,14 +185,23 @@ impl WorldState {
     /// to a BankBudget route probe. `worn_all_req` deliberately does not.
     pub(crate) fn worn_req_allows(&self, e: &TransportEdge) -> bool {
         e.worn_req.is_empty()
-            || e.worn_req
-                .iter()
-                .any(|id| self.worn.contains(id) || self.fetchable_worn.contains(id))
+            || e.worn_req.iter().any(|id| {
+                self.worn.contains(id)
+                    || (self.allow_fetchable_worn
+                        && self.inv.get(id).is_some_and(|&count| count > 0))
+            })
     }
 
     /// Every item in the conjunctive equipment gate must be currently worn.
+    #[inline(always)]
     pub(crate) fn worn_all_req_allows(&self, e: &TransportEdge) -> bool {
-        e.worn_all_req.iter().all(|id| self.worn.contains(id))
+        e.worn_all_req.is_empty() || self.worn_all_items_allow(&e.worn_all_req)
+    }
+
+    // Keep the equipment lookup loop out of the common ungated edge predicate.
+    #[inline(never)]
+    fn worn_all_items_allow(&self, ids: &[i32]) -> bool {
+        ids.iter().all(|id| self.worn.contains(id))
     }
 
     /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`

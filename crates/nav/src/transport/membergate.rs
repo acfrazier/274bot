@@ -142,25 +142,29 @@ pub(super) fn membergate_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-                player_delta: None,
-                at,
-                to,
-                loc_id: id,
-                option: 1,
-                ticks: 1,
-                dir: Some(dir),
-                open_loc_id: Some(open),
-                skill_req: vec![],
-                item_req: vec![],
-                consumed_req: vec![],
-                item_returns: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: true,
-                wildy_cap: None,
-                quest_gates: None, });
+                graph.edges.push(TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
+                    kind: TransportKind::Door,
+                    player_delta: None,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: Some(open),
+                    skill_req: vec![],
+                    item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: true,
+                    wildy_cap: None,
+                    quest_gates: None,
+                });
             }
         }
     }

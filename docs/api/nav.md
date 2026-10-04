@@ -40,10 +40,14 @@ unconditional leading `@label` jumps) is the F2P refusal
 `if (map_members = ^false …) { …; return; }`. Members spells come from
 `magic_spells.dbrow` `data=members,true`. The bake fails if a free edge's
 handler, or any label, choice or queue it may continue into, reads
-`map_members`, unless that exact read is a listed non-gate branch. It also
-fails if a members-only edge's leading path does not refuse F2P, unless its
-handler carries a listed members arm (the glider, Zanaris and spirit-tree
-gates).
+`map_members`, unless that exact read is a listed non-gate branch or the shared
+source interpreter proved that edge's specific crossing path. A members-only
+edge must have a leading refusal, a listed members arm (the glider, Zanaris and
+spirit-tree gates), or that same path proof. Path witnesses bind every final
+edge field after observable-gate conversion, so changing the membership flag,
+disguise, landing or price invalidates them. These witnesses are ephemeral bake
+data, not a bypass token stored in the pack; the ordinary content fingerprint
+and before/after input-stability check still bind the whole bake.
 Only bundled packs are rebaked automatically: an external pack
 (`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the content and membership gates
 it was baked with. Rebake it after content changes or a format upgrade.
@@ -299,6 +303,26 @@ literal delays are allowed; branches, dialogs, queues, dynamic destinations,
 and additional gameplay side effects are not flattened into ungated edges.
 Existing specialized edges retain their requirements and measured prices.
 New direct climbs price literal script/helper delays plus the interaction.
+
+Named quest/guild door and secret-wall openers are interpreted from their
+RuneScript control flow. The generic engine crossing helpers must match their
+pinned content bodies. Conjunctive worn checks become strict `worn_all_req`
+gates, including exact primary-slot `inv_getobj` checks; carrying the disguise
+does not authorize the crossing. An untransmitted quest varp is admitted only
+with its unique completed-journal proof. Hidden bitfields, intermediate quest
+windows, dialogue/NPC choices and unresolved conditions stay impassable.
+
+Requirement-gated loc ops also derive deterministic force-walk and exact-move
+trajectories, following source proc/label calls, checked arithmetic, placement
+coordinates and scalar loc parameters. Each edge retains the actual menu op,
+loc anchor, exact operable `takeoff`, and the **final** coordinate after all
+sequential movement calls. Script delays and force-walk distance are priced;
+temporary loc replacements never become open-door settle tokens. Generic
+content tool selectors produce separate carried-tool and strictly-worn-tool
+variants with their source skill/use-level gates. The selected tool identity
+remains opaque, so priority-dependent tool choices cannot invent a trajectory.
+Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
+without a real requirement are refused rather than emitted as free shortcuts.
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked

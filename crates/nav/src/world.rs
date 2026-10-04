@@ -226,33 +226,37 @@ impl NavWorld {
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
             let i = graph.edges.len();
-            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-            player_delta: None,
-            at: WorldTile {
-                x: d.from.x,
-                z: d.from.z,
-                level: d.from.level,
-            },
-            to: WorldTile {
-                x: d.to.x,
-                z: d.to.z,
-                level: d.to.level,
-            },
-            loc_id: d.loc_id,
-            option: 1,
-            ticks: 1,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            consumed_req: vec![],
-            item_returns: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None, });
+            graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                kind: TransportKind::Door,
+                player_delta: None,
+                at: WorldTile {
+                    x: d.from.x,
+                    z: d.from.z,
+                    level: d.from.level,
+                },
+                to: WorldTile {
+                    x: d.to.x,
+                    z: d.to.z,
+                    level: d.to.level,
+                },
+                loc_id: d.loc_id,
+                option: 1,
+                ticks: 1,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None,
+            });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
         NavWorld {
