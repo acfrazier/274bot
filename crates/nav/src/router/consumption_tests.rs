@@ -461,3 +461,111 @@ fn unavailable_charge_returns_do_not_relax_reverse_held_gates() {
     assert_eq!(search.route().err(), Some(RouteError::NoPath));
     assert_eq!(search.proof(), ReverseProof::Unreachable);
 }
+
+fn vigroy_cart() -> TransportEdge {
+    let mut edge = door(tile(2834, 2954, 0), tile(2776, 3214, 0), 1)
+        .edges
+        .remove(0);
+    edge.kind = TransportKind::Npc;
+    edge.loc_id = 511;
+    // Existing packs stored the maximum; the native content rule must
+    // still charge the live balance rather than this fixed bound.
+    edge.consumed_req = vec![(995, 200)];
+    edge
+}
+
+fn cart_collision() -> WorldCollision {
+    let mut collision = WorldCollision {
+        origin: tile(2760, 2900, 0),
+        width: 128,
+        height: 384,
+        walk: vec![0; 128 * 384 * 4],
+        blocked: vec![0; 128 * 384 * 4 / 64],
+        flags: None,
+    };
+    // Seal the land route on every plane, leaving ordinary operable
+    // stands at the real driver and landing. Only the cart crosses.
+    for level in 0..4 {
+        for x in 0..128 {
+            let index = level * 128 * 384 + 200 * 128 + x;
+            collision.blocked[index / 64] |= 1 << (index % 64);
+        }
+    }
+    collision
+}
+
+#[test]
+fn shilo_cart_accepts_the_live_ten_coin_minimum_not_the_packed_maximum() {
+    let collision = cart_collision();
+    let edge = vigroy_cart();
+    let mut graph = TransportGraph::default();
+    graph.edges.push(edge.clone());
+    graph.rebuild_index(&collision);
+    let mut state = WorldState::empty();
+    state.inv.insert(995, 9);
+    assert_eq!(
+        find_with(
+            &collision,
+            &graph,
+            edge.at,
+            edge.to,
+            FindOptions::default(),
+            &state
+        ),
+        Err(RouteError::NoPath)
+    );
+    assert_eq!(
+        find_missing_item_reqs(
+            &collision,
+            &graph,
+            edge.at,
+            edge.to,
+            FindOptions::default(),
+            &state
+        ),
+        Some(vec![MissingReq::Carry { id: 995, count: 10 }])
+    );
+    state.inv.insert(995, 10);
+    assert!(state.allows(&edge));
+    assert!(find_with(
+        &collision,
+        &graph,
+        edge.at,
+        edge.to,
+        FindOptions::default(),
+        &state
+    )
+    .is_ok());
+}
+
+#[test]
+fn shilo_cart_fare_uses_the_balance_after_the_previous_payment() {
+    let collision = cart_collision();
+    let cart = vigroy_cart();
+    let from = tile(cart.at.x, cart.at.z, 1);
+    let to = tile(cart.to.x, cart.to.z, 1);
+    let mut previous = door(from, cart.at, 7).edges.remove(0);
+    previous.consumed_req = vec![(995, 30)];
+    let mut held_after = door(cart.to, to, 8).edges.remove(0);
+    held_after.item_req = vec![(995, 922)];
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([previous, cart, held_after]);
+    graph.rebuild_index(&collision);
+    let mut state = WorldState::empty();
+    state.inv.insert(995, 999);
+    assert_eq!(
+        find_with(&collision, &graph, from, to, FindOptions::default(), &state),
+        Err(RouteError::NoPath)
+    );
+    assert_eq!(
+        find_missing_item_reqs(&collision, &graph, from, to, FindOptions::default(), &state),
+        Some(vec![MissingReq::Carry {
+            id: 995,
+            count: 1000
+        }])
+    );
+    // 1000 - 30 = 970; floor(970 * 5 / 100) = 48; 922 remain.
+    state.inv.insert(995, 1000);
+    let route = find_with(&collision, &graph, from, to, FindOptions::default(), &state).unwrap();
+    assert!(missing_item_reqs(&route, &state).is_empty());
+}

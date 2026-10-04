@@ -77,6 +77,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::Failed(reason) | ActionError::Blocked(reason) => {
             format!("failed:{reason}").into()
         }
+        ActionError::NeedsEvidence(gates) => format!("needs-evidence:{gates:?}").into(),
     }
 }
 

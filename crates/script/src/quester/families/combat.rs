@@ -11,7 +11,7 @@ use crate::combat::{
 };
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
 use api::gather_methods::SceneRegionInput;
 use api::selected::Truth;
 use serde::Deserialize;
@@ -21,8 +21,6 @@ use std::time::Duration;
 
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
-static RETURN_TO_STAND_FAILED: std::sync::LazyLock<Arc<str>> =
-    std::sync::LazyLock::new(|| Arc::from("combat target-loss walk did not reach the stand"));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat abort walk did not reach a safe tile"));
 
@@ -682,23 +680,15 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        if receipt.end == WalkEnd::UserInput {
-            return Poll::Ready(Err(ActionError::UserInput));
-        }
-        if !matches!(receipt.end, WalkEnd::Arrived) {
-            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
-                &RETURN_TO_STAND_FAILED,
-            ))));
-        }
+        receipt.into_arrival()?;
         self.rebegin_combat(cx, true)
     }
 
     fn on_abort_walk(&mut self, receipt: WalkReceipt) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        let error = match receipt.end {
-            WalkEnd::UserInput => ActionError::UserInput,
-            WalkEnd::Arrived => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
-            _ => ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)),
+        let error = match receipt.into_arrival() {
+            Ok(_) => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
+            Err(error) => error,
         };
         Poll::Ready(Err(error))
     }
@@ -752,7 +742,11 @@ impl CombatRun {
             }
             CombatEnd::Aborted(_) => match self.begin_abort_walk(report, cx) {
                 Ok(()) => Poll::Pending,
-                Err(ActionError::UserInput) => Poll::Ready(Err(ActionError::UserInput)),
+                Err(
+                    error @ (ActionError::UserInput
+                    | ActionError::Cancelled
+                    | ActionError::NeedsEvidence(_)),
+                ) => Poll::Ready(Err(error)),
                 Err(_) => Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))),
             },
         }
@@ -912,8 +906,11 @@ impl StepRun for CombatRun {
         match polled {
             ActionPoll::Pending => Poll::Pending,
             ActionPoll::Failed(error) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
-                if matches!(error, ActionError::UserInput) {
-                    Poll::Ready(Err(ActionError::UserInput))
+                if matches!(
+                    error,
+                    ActionError::UserInput | ActionError::Cancelled | ActionError::NeedsEvidence(_)
+                ) {
+                    Poll::Ready(Err(error))
                 } else {
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
                 }
