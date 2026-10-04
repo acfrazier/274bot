@@ -260,9 +260,12 @@ pub enum InteractReq {
         level: i32,
         index: Option<i32>,
     },
-    /// Continue the open chat dialog.
+    /// Continue the open chat dialog or an explicitly selected visible pause button.
     #[serde(rename = "continue")]
-    ContinueDialog,
+    ContinueDialog {
+        #[serde(default)]
+        component_id: Option<i32>,
+    },
     /// Answer the chat modal's `option`-th choice (1-based).
     #[serde(rename = "answer")]
     Answer { option: i32 },

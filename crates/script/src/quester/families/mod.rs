@@ -1829,11 +1829,10 @@ impl StepRun for UseOnRun {
                         chat.value.root >= 0 && chat.value.continue_component_id >= 0
                     })
                 {
-                    self.interaction = Some(
-                        cx.tick
-                            .actions
-                            .begin::<UseOnAction>(InteractReq::ContinueDialog, &mut cx.tick.cx)?,
-                    );
+                    self.interaction = Some(cx.tick.actions.begin::<UseOnAction>(
+                        InteractReq::ContinueDialog { component_id: None },
+                        &mut cx.tick.cx,
+                    )?);
                     return Poll::Pending;
                 }
                 self.deadline

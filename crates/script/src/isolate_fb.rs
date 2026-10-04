@@ -4307,7 +4307,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 index: row.index(),
             }),
-            "continue" => out.push(crate::shim::InteractReq::ContinueDialog),
+            "continue" => out.push(crate::shim::InteractReq::ContinueDialog {
+                component_id: row.component_id(),
+            }),
             "answer" => out.push(crate::shim::InteractReq::Answer {
                 option: row
                     .stand_op()
@@ -4481,7 +4483,7 @@ fn interact_off<'b>(
         InteractReq::Player { .. } => "player",
         InteractReq::UseOn { .. } => "use-on",
         InteractReq::UseWidgetOn { .. } => "use-widget-on",
-        InteractReq::ContinueDialog => "continue",
+        InteractReq::ContinueDialog { .. } => "continue",
         InteractReq::Answer { .. } => "answer",
         InteractReq::AnswerCount { .. } => "answer-count",
         InteractReq::IfButton { .. } => "if-button",
@@ -4992,8 +4994,12 @@ fn interact_off<'b>(
                 table.add_index(*idx);
             }
         }
-        InteractReq::ContinueDialog
-        | InteractReq::CloseModal
+        InteractReq::ContinueDialog { component_id } => {
+            if let Some(component_id) = component_id {
+                table.add_component_id(*component_id);
+            }
+        }
+        InteractReq::CloseModal
         | InteractReq::NoteProgress
         | InteractReq::LoopSettled
         | InteractReq::WaitEnqueued
@@ -6067,6 +6073,32 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn continue_dialog_optional_component_round_trips() {
+        let requests = [
+            InteractReq::ContinueDialog { component_id: None },
+            InteractReq::ContinueDialog {
+                component_id: Some(0),
+            },
+            InteractReq::ContinueDialog {
+                component_id: Some(104),
+            },
+        ];
+        let bytes = encode_interact_batch(&requests);
+        assert_eq!(decode_interact_batch(&bytes).unwrap(), requests);
+        assert_eq!(
+            serde_json::from_value::<InteractReq>(serde_json::json!({ "op": "continue" })).unwrap(),
+            requests[0]
+        );
+        assert_eq!(
+            serde_json::from_value::<InteractReq>(serde_json::json!({
+                "op": "continue", "component_id": 104
+            }))
+            .unwrap(),
+            requests[2]
+        );
     }
 
     #[test]

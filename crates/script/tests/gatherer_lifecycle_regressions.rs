@@ -1164,7 +1164,7 @@ fn chained_level_up_pages_receive_separate_continues() {
         while let Some(action) = slot.take_native_action() {
             assert!(matches!(
                 action.effect,
-                HostEffect::Interaction(InteractReq::ContinueDialog)
+                HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
             ));
             continues += 1;
             let authority = action.authority();

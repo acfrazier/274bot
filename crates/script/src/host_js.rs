@@ -2697,7 +2697,12 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
     },
     InteractVariant {
         op: "continue",
-        fields: &[],
+        fields: &[TsField {
+            name: "component_id",
+            ty: "number",
+            optional: true,
+            doc: Some("Resume this currently visible pause button; omitted resumes the chat dialog."),
+        }],
     },
     InteractVariant {
         op: "answer",
