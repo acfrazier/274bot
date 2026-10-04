@@ -32,6 +32,92 @@ fn allow_onstop_completion(slot: &SlotScript) {
 }
 
 #[cfg(feature = "load")]
+fn ignored_randoms_load() -> (SlotScript, Arc<api::game_data::SelectedGameData>) {
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let source = r#"
+export default class T extends LoopingBot {
+    loop() { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }
+    ignoredRandoms() { return ["Maze", "Mime"]; }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts_and_game_data(
+        source.into(),
+        LoadShape::CompatClass,
+        vec![],
+        &[],
+        Some(Arc::clone(&selected)),
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+    )
+    .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+    (slot, selected)
+}
+
+#[cfg(feature = "load")]
+fn load_tick_at(
+    slot: &mut SlotScript,
+    selected: &api::game_data::SelectedGameData,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    hold: bool,
+) {
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, Some(selected));
+    ctx.tick = tick;
+    ctx.here = here;
+    ctx.compiled.hold = hold;
+    slot.on_game_tick(&mut ctx);
+}
+
+#[cfg(feature = "load")]
+fn wait_ignored_randoms(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut tick = 1;
+    while !["Maze", "Mime"]
+        .iter()
+        .all(|name| slot.ignored_randoms().iter().any(|ignored| ignored == name))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "Load isolate did not publish ignored randoms"
+        );
+        load_tick_at(slot, selected, tick, None, false);
+        tick += 1;
+        let _ = slot.drain_host_interacts();
+        std::thread::yield_now();
+    }
+}
+
+#[cfg(feature = "load")]
+fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
+    slot.restore_interacts(vec![crate::shim::InteractReq::GatherRun {
+        request_id: 1,
+        settings: Arc::new(crate::native::SettingsBag::new()),
+    }]);
+    let (policy, visible, owned) = slot.drain_host_interacts();
+    assert!(policy.is_none());
+    assert!(visible.is_empty());
+    assert!(owned, "the Load API seat owns delegated Gatherer work");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut tick = 10;
+    while slot.native_status().is_none() && Instant::now() < deadline {
+        load_tick_at(slot, selected, tick, None, false);
+        tick += 1;
+        let (_, visible, _) = slot.drain_host_interacts();
+        assert!(visible.is_empty());
+        std::thread::yield_now();
+    }
+    assert!(
+        slot.native_status().is_some(),
+        "the delegated Gatherer reaches its running status"
+    );
+    assert!(slot.api_owns_foreground());
+}
+#[cfg(feature = "load")]
 #[test]
 fn active_tick_error_clears_on_success_not_user_log_text() {
     let source = r#"
@@ -1676,4 +1762,92 @@ fn stop_ends_a_script_held_across_a_reconnect() {
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
     assert!(slot.load.is_none(), "the held isolate is gone");
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
+    use api::random::{DetectedRandom, RandomClaim, RandomKind};
+
+    let (mut slot, selected) = ignored_randoms_load();
+    wait_ignored_randoms(&mut slot, &selected);
+    for (kind, name) in [(RandomKind::Maze, "Maze"), (RandomKind::Mime, "Mime")] {
+        assert_eq!(
+            slot.on_random(&DetectedRandom {
+                kind,
+                name: name.into(),
+                ours: true,
+                npc_index: None,
+            }),
+            RandomClaim::Handle,
+            "Load ignored {name} random"
+        );
+    }
+
+    let maze = (2891, 4555, 0);
+    let mut held = crate::isolate_fb::tests::empty_input(20);
+    held.hold = true;
+    let held_packet = slot.encode_snapshot_delta(&held, false);
+    assert!(slot.post_snapshot(held_packet));
+    load_tick_at(&mut slot, &selected, 20, Some(maze), true);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(
+        slot.lifecycle_receipt().is_none(),
+        "guardian-held Maze remains frozen, not terminal"
+    );
+
+    slot.pause();
+    load_tick_at(&mut slot, &selected, 21, Some(maze), false);
+    assert_eq!(slot.state(), RunState::Paused);
+    assert!(
+        slot.lifecycle_receipt().is_none(),
+        "paused Load scripts are not trap-stopped"
+    );
+    slot.resume();
+
+    start_api_gather_and_wait(&mut slot, &selected);
+    load_tick_at(&mut slot, &selected, 22, Some(maze), false);
+    assert!(
+        !slot.api_owns_foreground(),
+        "terminal trap cleanup revokes delegated API work"
+    );
+    let receipt = slot.lifecycle_receipt().expect("terminal failure receipt");
+    assert_eq!(receipt.state, ScriptTerminalState::Failed);
+    assert!(receipt.reason.starts_with("random-trapped:"));
+    assert!(
+        receipt.reason.contains("Maze"),
+        "receipt retains the trapped event reason: {}",
+        receipt.reason
+    );
+    wait_state(&mut slot, RunState::Idle);
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn ignored_mime_still_terminal_stops_a_running_load() {
+    use api::random::{DetectedRandom, RandomClaim, RandomKind};
+
+    let (mut slot, selected) = ignored_randoms_load();
+    wait_ignored_randoms(&mut slot, &selected);
+    assert_eq!(
+        slot.on_random(&DetectedRandom {
+            kind: RandomKind::Mime,
+            name: "Mime".into(),
+            ours: true,
+            npc_index: None,
+        }),
+        RandomClaim::Handle
+    );
+
+    let mime = (31 * 64 + 10, 74 * 64 + 10, 0);
+    load_tick_at(&mut slot, &selected, 1, Some(mime), false);
+    let receipt = slot.lifecycle_receipt().expect("terminal failure receipt");
+    assert_eq!(receipt.state, ScriptTerminalState::Failed);
+    assert!(receipt.reason.starts_with("random-trapped:"));
+    assert!(
+        receipt.reason.contains("Mime"),
+        "receipt retains the trapped event reason: {}",
+        receipt.reason
+    );
+    wait_state(&mut slot, RunState::Idle);
 }
