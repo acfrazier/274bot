@@ -2059,14 +2059,17 @@ impl SlotScript {
             ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
         }
         self.ticks += 1;
-        let result = {
-            let mut retained = self
-                .retained
-                .as_ref()
-                .expect("compiled retention")
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(ctx, &mut retained, &mut self.native_runtime)
+        let result = match trapped_failure(ctx) {
+            Some(failure) => Ok(ScriptFlow::Blocked(failure)),
+            None => {
+                let mut retained = self
+                    .retained
+                    .as_ref()
+                    .expect("compiled retention")
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                run.tick(ctx, &mut retained, &mut self.native_runtime)
+            }
         };
         if result.is_ok() {
             self.watchdog.stamp_scheduler(Instant::now());
@@ -2298,6 +2301,31 @@ impl Drop for SlotScript {
             isolate.join_detached(tx);
         }
     }
+}
+
+/// An unheld native run standing on a random event's trap square (the Maze
+/// or the Mime stage). Only that event's own solution leads off the square,
+/// and an unheld frame means the host guardian is not running one (it gave
+/// up, or random events are off), so the card cannot make progress there:
+/// Blocked with the reason instead of ticking it against a world it was
+/// never placed in.
+fn trapped_failure(ctx: &ScriptCtx<'_>) -> Option<ScriptFailure> {
+    if ctx.compiled.hold {
+        return None;
+    }
+    let (x, z, level) = ctx.here?;
+    let event = match api::random::trapped_area(x, z, level)? {
+        api::random::RandomKind::Maze => "Maze",
+        _ => "Mime",
+    };
+    Some(ScriptFailure {
+        code: "random-trapped".into(),
+        message: format!(
+            "trapped in the {event} random event at ({x}, {z}, {level}) and the host is not solving it"
+        )
+        .into(),
+        retryable: true,
+    })
 }
 
 /// Best-effort panic payload to string. Downcasts the usual `&str` and
