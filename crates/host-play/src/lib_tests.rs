@@ -7399,6 +7399,97 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     script::observed::on_reset();
 }
 
+/// P-dispatch end to end: two bank-side rows share a name (a noted row
+/// first, then the item). Compat `Bank.deposit(name, 'Deposit-1')` in the
+/// isolate presses the first such row by id, slot and component, and the
+/// host dispatches exactly that row's Deposit-1: no name re-find, never an
+/// All on the other id.
+#[test]
+fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
+    use client::config::ObjType;
+    use client::io::ServerProt289;
+    let mut c = bank_client_289();
+    // A real (loopback) stream so `Interactions` sees an attached client.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    std::mem::forget(listener);
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs.resize(335, ObjType::default());
+        for id in [333, 334] {
+            cache.objs[id].id = id as i32;
+            cache.objs[id].name = "Trout".into();
+        }
+    }
+    // Side grid 701: noted trout (334) ×9 in slot 0, trout (333) ×2 in slot 1.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 2, 1, 79, 9, 1, 78, 2],
+    );
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 89, 0, 1, 0, 2, 5],
+    );
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_loaded(), "the main bank posted its stock");
+    let side: Vec<(i32, i32)> = snap
+        .bank_side()
+        .iter()
+        .map(|item| (item.def.id, item.slot))
+        .collect();
+    assert_eq!(side, vec![(334, 0), (333, 1)], "two same-name side rows");
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        None,
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
+    }
+}
+"#;
+    let iso =
+        script::LoadIsolate::spawn(src.into(), script::LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    let reqs = iso.drain_interacts();
+    let pressed = inv_button_req(334, 0, 701, 1, snap.bank_session_generation());
+    assert_eq!(
+        reqs,
+        vec![pressed.clone()],
+        "the selected row and its label"
+    );
+    iso.join();
+    let rec = dispatch_inv_button(&snap, pressed);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::INV_BUTTON1, 334, 0, 701)],
+        "the host presses that exact row, not the other trout"
+    );
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -8512,12 +8603,15 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Deposit-All reaches the driver");
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_some());
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_bank_op()
+            .is_none(),
+        "the exact-row press arms no host-owned name op"
+    );
     assert_eq!(
         script_slot(&scripts, "alice")
             .unwrap()
@@ -8528,6 +8622,10 @@ export default class T extends LoopingBot {
         "undefined"
     );
 
+    // The server's deposit: the backpack (500) and its bank-side mirror
+    // (701) empty, and the bank holds the bones.
+    let mut empty_pack = Packet::new(vec![1, 244, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_pack);
     let mut empty_side = Packet::new(vec![2, 189, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
     let mut deposited_bank = Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 2, 3]);
@@ -8563,9 +8661,9 @@ export default class T extends LoopingBot {
         .unwrap()
         .pending_bank_op()
         .is_none());
-    // The emptied side view is waited on for the frozen 1.2 s Rust deadline.
-    // Drive ticks until the script observes that transition rather than
-    // assuming one fixed sleep lands on the right isolate schedule.
+    // The pressed id left the pack and the side posted empty with its root
+    // up: the deposit settles without the 1.2 s not-ready wait. Drive ticks
+    // until the script observes it rather than assuming one isolate schedule.
     let before_withdraw = c.out.pos;
     let deadline = empty_side_observed_at + Duration::from_secs(10);
     let mut next_tick = 3;
@@ -8617,10 +8715,6 @@ export default class T extends LoopingBot {
         "the deposited bank snapshot must resolve the wait without reopening or timing out"
     );
     let settle_elapsed = empty_side_observed_at.elapsed();
-    assert!(
-        settle_elapsed >= Duration::from_millis(1_200),
-        "deposit settled before the 1.2 s empty-side deadline: {settle_elapsed:?}"
-    );
     assert!(
         settle_elapsed < Duration::from_secs(3),
         "deposit settlement exceeded the end-to-end 3 s bound: {settle_elapsed:?}"
@@ -10452,7 +10546,27 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .is_none(),
+        "the exact-row All press arms no host-owned fill"
+    );
+    assert_eq!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("typeof globalThis.__fill_result")
+            .unwrap(),
+        "undefined",
+        "the press is not the load"
+    );
 
+    // Frozen `withdrawLoad`'s posted observation: the row's bank count is 0.
     let mut empty_bank = Packet::new(vec![2, 89, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_bank);
     snap.rebuild(&c);
@@ -10463,43 +10577,7 @@ export default class T extends LoopingBot {
         true,
         2,
         Some((3205, 3205, 0)),
-        Some(&before_inv),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .probe("typeof globalThis.__fill_result")
-            .unwrap(),
-        "undefined",
-        "a vanished stock row alone cannot claim fill progress"
-    );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_withdraw_x()
-        .is_some());
-
-    let filled_inv = [(1, 3), (2, 20)];
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        3,
-        Some((3205, 3205, 0)),
-        Some(&filled_inv),
+        Some(&[(1, 3), (2, 20)]),
         None,
         Some(&snap),
         Some(&names),

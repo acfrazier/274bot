@@ -570,6 +570,8 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::boat_fare::WalkTo>(),
     entry::<crate::anchor_return::ReturnToAnchor>(),
     entry::<crate::bank_op::BankOp>(),
+    entry::<crate::bank_op::BankWithdrawLoad>(),
+    entry::<crate::bank_op::BankClose>(),
     entry::<crate::bank_op::BankNoteMode>(),
     entry::<crate::bank_deposit::BankDeposit>(),
     entry::<crate::bank_withdraw::WithdrawTo>(),

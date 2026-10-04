@@ -1162,6 +1162,7 @@ mod tests {
                 required_after,
                 bank: memo,
                 banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
             };
             provisioner.poll(&mut cx, plan, mode, active_loadout, not_started)
         })
@@ -1211,6 +1212,7 @@ mod tests {
                     required_after,
                     bank: &memo,
                     banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
                 };
                 run.poll(&mut cx)
             });
@@ -1262,6 +1264,7 @@ mod tests {
                     required_after,
                     bank: &memo,
                     banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
                 };
                 BankRun::new(
                     Some(NamedBank::new("Path bank", authored)),
@@ -1298,6 +1301,7 @@ mod tests {
                 required_after,
                 bank: &memo,
                 banks: &banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
             };
             BankRun::new_with_required(
                 Some(NamedBank::new("Path bank", draynor)),
@@ -1321,6 +1325,7 @@ mod tests {
                 required_after,
                 bank: &memo,
                 banks: &banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
             };
             BankRun::new_with_required(
                 Some(NamedBank::new("Path bank", draynor)),
@@ -1344,6 +1349,7 @@ mod tests {
                 required_after,
                 bank: &memo,
                 banks: &banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
             };
             BankRun::new_with_required(
                 Some(NamedBank::new("Path bank", unmatched)),

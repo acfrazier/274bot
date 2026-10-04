@@ -7,7 +7,7 @@
 //! frozen order; without one the count is `Inventory.count(name)` read from
 //! the posted backpack. Pack-full is read from the scene.
 
-use crate::bank::ops::same_name;
+use crate::bank::ops::{self, same_name};
 use crate::bank_op::{js_number, BankView, Closing, Op, Sent};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed::{self, Scene};
@@ -359,7 +359,7 @@ impl Family for CloseConfirm {
     type Output = bool;
 
     fn begin(args: CloseConfirmArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let closing = Closing::begin(&BankView::now(), cx);
+        let closing = Closing::begin(&BankView::now(), ops::close_deadline(None), cx);
         let phase = match closing {
             Some(closing) => ClosePhase::Closing(Some(closing)),
             None => ClosePhase::Tick(posted_tick()),
