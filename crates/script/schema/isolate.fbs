@@ -314,7 +314,8 @@ table ApiProgress {
 // Bounded cancellation reason for the retained host walk outcome.
 enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
 
-// One projectile observed for a live combat policy.
+// One live projectile's combat-classification inputs. Only the spotanim and
+// decoded local-player target are needed by Hunt's borrowed protect frame.
 table CombatProjectile {
   spotanim: int;
   target_player_index: int = null;
@@ -544,6 +545,8 @@ table Snapshot {
   user_move_intent_seq: ulong = 0;
   // Part of the walk_outcome family; replacement with None clears it.
   walk_outcome_cancel_reason: WalkCancelReason = None;
+  // At most 32 live projectiles aimed at the local player, in client order.
+  // Absent in a delta means keep; an empty vector is an observed clear.
   projectiles: [CombatProjectile];
   // Host hash of native modal body texts and option component/text pairs.
   // Unlike chat_text, unrelated chat-ring messages cannot change this page.

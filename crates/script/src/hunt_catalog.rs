@@ -8,6 +8,7 @@
 //!   `keyState`, `feePrepaid`). Bounded calculations over the caller's
 //!   arguments and the isolate scene; nothing here sends an action.
 
+use crate::combat::policy;
 use crate::hunt_fight::Tile;
 use crate::observed;
 use serde_json::{json, Value};
@@ -216,8 +217,6 @@ fn merge(base: &mut Value, over: Value) {
 
 const SAFESPOT_BLIND_MS: f64 = 20_000.0;
 const ANTIFIRE_MARGIN_TICKS: f64 = 20.0;
-const PRAYER_SIP_FLOOR: f64 = 8.0;
-const PRAYER_SIP_FRACTION: f64 = 0.15;
 const LOOT_GUARD: f64 = 4.0;
 const PROTECT_FROM_MELEE: &str = "Protect from Melee";
 const SHIELD_AT_RANGE: &str = "the metal dragons breathe fire at range, so every style here wears the Dragonfire shield, and there is none in the bank or worn. Duke Horacio in Lumbridge Castle hands one out free.";
@@ -440,8 +439,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
             }
         }
         "prayerSipDue" => {
-            let (points, max) = (num(a(0)), num(a(1)));
-            json!(max > 0.0 && points <= PRAYER_SIP_FLOOR.max((max * PRAYER_SIP_FRACTION).floor()))
+            let (points, max) = (num(a(0)) as i32, num(a(1)) as i32);
+            json!(policy::prayer_sip_due(points, max))
         }
         "lootReach" => json!(if flag(a(0)) { 14 } else { 10 }),
         "attackRangeFor" => attack_range(&text(0)),
@@ -545,4 +544,37 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         },
         _ => return Err(format!("not impl: hunting {name}")),
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::call;
+    use serde_json::json;
+
+    #[test]
+    fn prayer_sip_due_uses_the_native_c5_floor() {
+        for (points, base, due) in [
+            (26, 43, true),
+            (27, 43, false),
+            (17, 31, true),
+            (9, 43, true),
+            (8, 43, true),
+        ] {
+            assert_eq!(
+                call("prayerSipDue", &[json!(points), json!(base)]).unwrap(),
+                json!(due)
+            );
+        }
+    }
+
+    #[test]
+    fn prayer_for_keeps_its_site_advisory_meaning() {
+        assert_eq!(
+            call("prayerFor", &[json!("melee"), json!(true)]).unwrap(),
+            json!("Protect from Melee")
+        );
+        assert_eq!(
+            call("prayerFor", &[json!("mage"), json!(true)]).unwrap(),
+            json!(null)
+        );
+    }
 }

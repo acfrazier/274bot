@@ -18,6 +18,10 @@ pub(super) struct HoldRuntime {
     dest: Option<Tile>,
     walk_token: Option<u64>,
     after_sustain: bool,
+    threats: ThreatSet,
+    pending_protect: PendingProtect,
+    deferred_effect: Option<Value>,
+    tables: Option<Arc<CombatTables>>,
     rotate_index: Option<i32>,
 }
 
@@ -31,7 +35,26 @@ impl HoldRuntime {
             walk_token: None,
             after_sustain: false,
             rotate_index: None,
+            threats: ThreatSet::default(),
+            pending_protect: PendingProtect::default(),
+            deferred_effect: None,
+            tables: None,
         }
+    }
+
+    fn protect_click(&mut self) -> Result<Option<i32>, ActionError> {
+        if !protect_observed() {
+            return Ok(None);
+        }
+        let tables = match self.tables.as_ref() {
+            Some(tables) => tables,
+            None => self.tables.insert(hunt_combat_tables()?),
+        };
+        Ok(protect_button(
+            &mut self.threats,
+            &mut self.pending_protect,
+            tables,
+        ))
     }
 
     fn now(&self) -> Instant {
@@ -183,6 +206,35 @@ fn hold_emit_walk(rt: &mut HoldRuntime, proj: &Projection) -> Value {
 }
 
 fn hold_next_effect(rt: &mut HoldRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
+    if rt.clock.frozen() {
+        return rt.emit(json!({ "kind": "wait" }));
+    }
+    // Resume the deferred mode effect on the protect's ack. In particular,
+    // Waiting never sees queued, and NeedAck keeps its own walkToken reply.
+    if let Some(effect) = rt.deferred_effect.take() {
+        return effect;
+    }
+    let effect = hold_next_mode_effect(rt, proj, reply);
+    if matches!(effect["kind"].as_str(), Some("yield" | "aborted" | "wait")) {
+        return effect;
+    }
+    match rt.protect_click() {
+        Ok(Some(component_id)) => {
+            rt.deferred_effect = Some(effect);
+            rt.emit(json!({ "kind": "if-button", "component_id": component_id }))
+        }
+        Ok(None) => effect,
+        Err(error) => {
+            let reason = format!("Hunt protection unavailable: {error:?}");
+            let mut effect = rt.aborted(&reason);
+            effect["kind"] = json!("failed");
+            effect["notes"] = json!([{ "kind": "log", "message": reason }]);
+            effect
+        }
+    }
+}
+
+fn hold_next_mode_effect(rt: &mut HoldRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
     if rt.mode == HoldMode::Aborted {
         return rt.aborted("aborted");
     }
@@ -337,5 +389,97 @@ impl HuntKind for HoldKind {
 
     fn validate(_token: u64, proj: &Projection) -> bool {
         hold_validate_inner(proj, &observation())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_consumer_emits_the_native_missiles_if_button() {
+        let button_com = super::super::seed_protect_observation();
+        let mut runtime = HoldRuntime::new(23);
+        let projection = super::super::parse_projection(&serde_json::json!({}));
+
+        let effect = hold_next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button_com);
+    }
+
+    #[test]
+    fn hold_waiting_routes_the_protect_ack_without_aborting_or_advancing_the_mode() {
+        let button = seed_protect_observation();
+        let mut runtime = HoldRuntime::new(23);
+        runtime.mode = HoldMode::Waiting;
+        runtime.dest = Some(Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
+        runtime.clock.arm(RETURN_MS);
+        let projection = parse_projection(&json!({}));
+
+        let effect = hold_next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button);
+        assert_eq!(runtime.mode, HoldMode::Waiting);
+        assert!(
+            runtime.after_sustain,
+            "the mode produced, but has not emitted, sustain"
+        );
+        let resumed = hold_next_effect(&mut runtime, &projection, Some(&json!({ "queued": true })));
+        assert_eq!(resumed["kind"], "sustain");
+        assert_eq!(runtime.mode, HoldMode::Waiting);
+        assert_eq!(
+            hold_next_effect(&mut runtime, &projection, None)["kind"],
+            "delay-ticks"
+        );
+    }
+
+    #[test]
+    fn hold_need_ack_keeps_its_walk_token_when_protection_changes() {
+        let button = seed_protect_observation();
+        let mut runtime = HoldRuntime::new(23);
+        runtime.mode = HoldMode::NeedAck;
+        runtime.dest = Some(Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
+        runtime.clock.arm(RETURN_MS);
+        let projection = parse_projection(&json!({}));
+
+        let effect = hold_next_effect(
+            &mut runtime,
+            &projection,
+            Some(&json!({ "walkToken": 991 })),
+        );
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button);
+        assert_eq!(runtime.walk_token, Some(991));
+        assert_eq!(runtime.mode, HoldMode::Waiting);
+        assert_eq!(
+            hold_next_effect(&mut runtime, &projection, Some(&json!({ "queued": true })))["kind"],
+            "sustain"
+        );
+        assert_eq!(runtime.walk_token, Some(991));
+        assert_eq!(
+            hold_next_effect(&mut runtime, &projection, None)["kind"],
+            "delay-ticks"
+        );
+    }
+
+    #[test]
+    fn hold_reports_unavailable_protection_instead_of_silently_disabling_it() {
+        seed_protect_observation();
+        crate::supply_v2::configure(None);
+        let mut runtime = HoldRuntime::new(23);
+        let effect = hold_next_effect(&mut runtime, &parse_projection(&json!({})), None);
+        assert_eq!(effect["kind"], "failed");
+        assert!(effect["reason"]
+            .as_str()
+            .unwrap()
+            .contains("game data unavailable"));
+        assert_eq!(effect["notes"][0]["message"], effect["reason"]);
     }
 }

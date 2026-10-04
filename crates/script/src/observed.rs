@@ -380,6 +380,13 @@ pub struct VarpRow {
     pub index: i32,
     pub value: i32,
 }
+/// One projectile's immutable classification facts, retained from the
+/// verified isolate page for borrowed Hunt protection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectileRow {
+    pub spotanim: i32,
+    pub target_player_index: Option<i32>,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChatLine {
@@ -665,6 +672,8 @@ scene_pages! {
         locs: Vec<SceneRow>,
         ground: Vec<SceneRow>,
         players: Vec<SceneRow>,
+        /// Combat-classification inputs retained from the existing snapshot post.
+        projectiles: Vec<ProjectileRow>,
         varps: Vec<VarpRow>,
         chat_text: Text,
         chat_options: Vec<String>,
@@ -1155,6 +1164,17 @@ impl Scene {
         }
         if snap.has_players() {
             p.players(read_places(snap.players(), strings));
+        }
+        if let Some(projectiles) = snap.projectiles() {
+            p.projectiles(
+                projectiles
+                    .iter()
+                    .map(|row| ProjectileRow {
+                        spotanim: row.spotanim(),
+                        target_player_index: row.target_player_index(),
+                    })
+                    .collect(),
+            );
         }
         if snap.has_stats() {
             p.stats(Skills::read(snap.stats()));
