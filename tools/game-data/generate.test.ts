@@ -308,15 +308,19 @@ param=proj_launch,arrow_launch
 param=proj_travel,arrow_travel
 [dragon_npc]
 name=Dragon NPC
+wanderrange=0
 op1=Attack
 hitpoints=60
 param=attackrate,4
 [zamorak_like]
 name=Zamorak Like
+wanderrange=6
+maxrange=0
 op1=Attack
 hitpoints=80
 [saradomin_like]
 name=Saradomin Like
+wanderrange=9
 op1=Attack
 hitpoints=120
 `);
@@ -426,7 +430,19 @@ fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
 const combatScripts = parseCombatScripts(content);
 assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
-const npcFacts = extractNpcNamesFacts(content, combatScripts);
+const npcFacts274 = extractNpcNamesFacts(content, 274, combatScripts);
+const npcFacts = extractNpcNamesFacts(content, 289, combatScripts);
+for (const [facts, expected] of [
+    [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
+    [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],
+] as const) {
+    for (const [config, wanderrange, maxrange] of expected) {
+        const row = facts.rows.find((entry) => entry.config === config)!;
+        assert.equal(row.wanderrange, wanderrange, `${config}: runtime wander default`);
+        assert.equal(row.maxrange, maxrange, `${config}: pinned runtime maxrange derivation/clamp`);
+    }
+}
+assert.throws(() => extractNpcNamesFacts(content, 275, combatScripts), /unsupported revision 275/);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
 assert.equal(testNpc.headicon, 8);
@@ -449,13 +465,13 @@ const saradominLike = npcFacts.rows.find((row) => row.config === 'saradomin_like
 assert.equal(saradominLike.attack_kind, 'mixed');
 assert.equal(saradominLike.counter_protect, true);
 fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
-const changedDefaults = extractNpcNamesFacts(content, combatScripts);
+const changedDefaults = extractNpcNamesFacts(content, 289, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
 fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
-assert.throws(() => extractNpcNamesFacts(content, combatScripts), /attackrate is out of range/);
+assert.throws(() => extractNpcNamesFacts(content, 289, combatScripts), /attackrate is out of range/);
 fs.writeFileSync(npcSource, npcSourceBytes);
 // combat_axe is intentionally absent so a recognized but unresolved root must stay null.
 fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
