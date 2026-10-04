@@ -167,8 +167,11 @@ impl WorldState {
         self.fixed_reqs_allow(e)
             && e.item_req
                 .iter()
-                .chain(&e.consumed_req)
                 .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
+            && e.consumed_req.iter().all(|&(id, packed_count)| {
+                let carried = self.inv.get(&id).copied().unwrap_or(0);
+                carried >= e.consumption_count(id, packed_count, carried)
+            })
             && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
     }
 

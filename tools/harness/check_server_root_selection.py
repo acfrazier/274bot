@@ -46,13 +46,13 @@ def main() -> int:
         assert cli_b["provenance"].get("engine_git_head") == hb, "cliB engine_git_head != pureB"
 
     known_274_sha = "b17706857303ac4ac27b8fb5890dff22ea6146a83b86894b2827dbb7aa962183"
-    # pureA is the known default 274 fixture when using Server/engine thiever.
+    # pureA is the known 274 fixture when TEST_ROOT_A is the 274 engine thiever.
     if pure_a["sav_sha256"] != known_274_sha and pure_a["sav_bytes"] != 297:
         print(
             f"note: pureA not the pinned 297B/4c95 fixture (sha={pure_a['sav_sha256'][:16]} bytes={pure_a['sav_bytes']})",
             file=sys.stderr,
         )
-    assert cli_b["sav_sha256"] != known_274_sha, "cliB still 274 default fixture hash"
+    assert cli_b["sav_sha256"] != known_274_sha, "cliB still 274 fixture hash"
     assert pure_b["sav_bytes"] >= 8 and cli_b["sav_bytes"] >= 8
 
     # Pack path in receipt must sit under selected root.

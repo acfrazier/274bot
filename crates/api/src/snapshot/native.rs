@@ -803,6 +803,7 @@ mod tests {
                 },
                 combat_level: 3,
                 skill_level: 3,
+                headicons: 0,
                 weapon: Some(415),
             },
             energy: 77,

@@ -404,6 +404,29 @@ pub struct WalkReceipt {
     pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
 }
+impl WalkReceipt {
+    /// Accept a walk only when the adapter proved its requested arrival.
+    /// Route completion alone does not satisfy an area or reach goal.
+    pub fn into_arrival(self) -> Result<EvidenceStamp, ActionError> {
+        match self.end {
+            WalkEnd::Arrived => Ok(self.evidence),
+            WalkEnd::UserInput => Err(ActionError::UserInput),
+            WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
+            WalkEnd::Cancelled => Err(ActionError::Cancelled),
+            WalkEnd::RouteEnded => Err(ActionError::Blocked(self.detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> =
+                    LazyLock::new(|| Arc::from("walk route ended before arrival"));
+                Arc::clone(&REASON)
+            }))),
+            WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
+                Err(ActionError::Blocked(self.detail.unwrap_or_else(|| {
+                    static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
+                    Arc::clone(&REASON)
+                })))
+            }
+        }
+    }
+}
 
 /// Non-terminal evidence from a followed walk. The owner chooses whether to
 /// continue, cancel or replace the route; observing this never revokes it.
@@ -480,6 +503,8 @@ pub enum ActionError {
     Failed(Arc<str>),
     /// The step cannot continue safely without an explicit operator retry.
     Blocked(Arc<str>),
+    /// The action requires typed quest evidence before it can continue.
+    NeedsEvidence(Arc<[QuestGate]>),
 }
 
 pub trait NativeMachine: Send + 'static {

@@ -1,7 +1,7 @@
 //! Native reach/door loop extracted from isolate `reach_entity` / `reach`.
 //! Closed barriers open once; already-open passages use the shared native walk.
 
-use crate::native::{walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
+use crate::native::{walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest};
 use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
@@ -148,10 +148,12 @@ impl NativeMachine for Reach {
             Phase::WaitWalk { door } => {
                 match self.walk.as_mut().expect("door recovery walk").poll(cx) {
                     Poll::Pending => Poll::Pending,
-                    Poll::Ready(Ok(receipt))
-                        if matches!(receipt.end, WalkEnd::Arrived | WalkEnd::RouteEnded) =>
-                    {
+                    Poll::Ready(Ok(receipt)) => {
+                        let arrival = receipt.into_arrival();
                         self.walk = None;
+                        if let Err(error) = arrival {
+                            return Poll::Ready(Err(error));
+                        }
                         if let Some((id, tile)) = door {
                             if self.open_door(id, tile, cx).is_err() {
                                 return Poll::Ready(Ok(false));
@@ -161,7 +163,10 @@ impl NativeMachine for Reach {
                         }
                         Poll::Pending
                     }
-                    Poll::Ready(_) => Poll::Ready(Ok(false)),
+                    Poll::Ready(Err(error)) => {
+                        self.walk = None;
+                        Poll::Ready(Err(error))
+                    }
                 }
             }
         }

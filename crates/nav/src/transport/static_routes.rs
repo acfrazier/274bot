@@ -406,8 +406,8 @@ pub(super) struct CartRoute {
     npc: i32,
     at: WorldTile,
     to: WorldTile,
-    /// `(obj id, count)` fare: coins (`obj.pack` 995), count = the
-    /// `calc_shilocart_cost` clamp cap.
+    /// `(obj id, count)` minimum fare: the live percentage is evaluated
+    /// against the carried balance by [`cart_fare`].
     fare: Option<(i32, i32)>,
     /// The quest journal name gating the journey, if any.
     quest: Option<&'static str>,
@@ -418,10 +418,10 @@ pub(super) struct CartRoute {
 /// `content/scripts/areas/area_shilo/scripts/vigroy.rs2`, origin tiles from
 /// the `==== NPC ====` placements in `content/maps/*.jm2`, and ids from
 /// `pack/npc.pack`. The fare is `calc_shilocart_cost` in both scripts:
-/// `(coins carried * 5) / 100`, clamped to 10–200 coins — the table keeps
-/// the 200 cap. Hajedy refuses the ride until Shilo Village is complete
-/// (`%zombiequeen >= ^zombiequeen_complete`); Vigroy's block carries no
-/// gate.
+/// `(coins carried * 5) / 100`, clamped to 10–200 coins — packed supply
+/// holds the 10-coin minimum, not the maximum. Hajedy refuses the ride
+/// until Shilo Village is complete (`%zombiequeen >= ^zombiequeen_complete`);
+/// Vigroy's block carries no gate.
 pub(super) const CART_ROUTES: &[CartRoute] = &[
     // Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
     // (m43_50 local (27,11) = 2779,3211): `p_teleport(0_44_46_18_7)`
@@ -438,7 +438,7 @@ pub(super) const CART_ROUTES: &[CartRoute] = &[
             z: 2951,
             level: 0,
         },
-        fare: Some((995, 200)),
+        fare: Some((995, 10)),
         quest: Some("Shilo Village"),
     },
     // Vigroy (shilocartdriver, npc 511) at the Shilo Village cart
@@ -456,10 +456,28 @@ pub(super) const CART_ROUTES: &[CartRoute] = &[
             z: 3214,
             level: 0,
         },
-        fare: Some((995, 200)),
+        fare: Some((995, 10)),
         quest: None,
     },
 ];
+
+/// The live content's `calc_shilocart_cost`, for these exact route-table
+/// edges only. A static packed minimum must not become a fixed debit.
+pub(super) fn cart_fare(edge: &TransportEdge, id: i32, carried: i32) -> Option<i32> {
+    if edge.kind != TransportKind::Npc {
+        return None;
+    }
+    CART_ROUTES
+        .iter()
+        .any(|route| {
+            edge.kind == TransportKind::Npc
+                && edge.loc_id == route.npc
+                && edge.at == route.at
+                && edge.to == route.to
+                && route.fare.is_some_and(|(coin, _)| coin == id)
+        })
+        .then(|| ((i64::from(carried.max(0)) * 5) / 100).clamp(10, 200) as i32)
+}
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.

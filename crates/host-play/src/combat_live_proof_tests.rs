@@ -14,7 +14,7 @@ use api::game_data::SelectedGameData;
 use api::interact::{Interactions, SendResult};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, RunKey};
-use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
+use api::snapshot::{GameSnapshot, WorldTile};
 use host::{FrameBuf, Pump};
 use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScriptInjectValue, ScriptSettingInject, Step,
@@ -156,7 +156,7 @@ impl Case {
             Self::M2 => "combat_m2_melee_upkeep",
             Self::M3 => "combat_m3_melee_food_only",
             Self::M4 => "combat_m4_unattackable_tree",
-            Self::M5 => "combat_m5_random_interrupt_clear_prayers",
+            Self::M5 => "combat_m5_raised_prayer_interrupt_hygiene",
             Self::M6 => "combat_m6_melee_combo_eat",
         }
     }
@@ -352,83 +352,6 @@ impl LiveState {
             }
         }
 
-        // Startup ClearPrayers consumes the seed. Imp Path does not keep
-        // Protect through Engage, so the Maze hold freezes the live Attack
-        // owner and this staging click restores Protect before injection.
-        // A real IF_BUTTON on a later observed host tick, never a cheat or
-        // a second producer on the Attack plan's exclusive tick.
-        if self.case == Case::M5 && self.started {
-            let protect_on = combat_proof::protect_from_melee_active(&self.snapshot);
-            let host_tick =
-                combat_proof::host_tick_for_snapshot(&self.account, self.snapshot.tick());
-            let (pending, already, attack_tick) = {
-                let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    capture.maze_pending && !capture.maze_injected,
-                    capture.maze_prayer_restaged,
-                    capture
-                        .actions
-                        .iter()
-                        .rev()
-                        .find(|action| is_npc_attack(action))
-                        .and_then(|action| action["tick"].as_u64()),
-                )
-            };
-            if pending
-                && !protect_on
-                && !already
-                && host_tick
-                    .zip(attack_tick)
-                    .is_some_and(|(now, attack)| now > attack)
-            {
-                let mut staged = false;
-                if let Some(component_id) = self.selected.prayers().iter().find_map(|prayer| {
-                    prayer
-                        .name
-                        .eq_ignore_ascii_case("Protect from Melee")
-                        .then_some(prayer.button_com)
-                }) {
-                    if let Some(widget) = ReadContext::new(&self.snapshot).component(component_id) {
-                        use api::interact::Driver;
-                        let checkpoint = client.packet_checkpoint();
-                        if matches!(
-                            Interactions::new(&self.snapshot, client).if_button(widget),
-                            SendResult::Sent { .. }
-                        ) {
-                            combat_proof::record_other_request(
-                                &self.account,
-                                host_tick,
-                                &self.snapshot,
-                                "staging",
-                                "if-button Protect from Melee",
-                            );
-                            let mut opcodes = Vec::new();
-                            let decoded = checkpoint.is_some_and(|checkpoint| {
-                                client
-                                    .trace_packets(*checkpoint, &mut |opcode| opcodes.push(opcode))
-                            });
-                            let mut capture =
-                                self.capture.lock().unwrap_or_else(|e| e.into_inner());
-                            if let Some(action) = capture.actions.last_mut() {
-                                action["accepted"] = json!(true);
-                                action["wire_decoded"] = json!(decoded);
-                                action["wire_opcodes"] = json!(opcodes);
-                            }
-                            staged = true;
-                        }
-                    }
-                }
-                // No cheat fallback in the measured window (R4 §5 common
-                // fixture contract). A missing widget cannot manufacture proof.
-                if staged {
-                    self.capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .maze_prayer_restaged = true;
-                }
-            }
-        }
-
         if matches!(
             self.runner.status(),
             RunnerStatus::Passed | RunnerStatus::Failed(_)
@@ -533,7 +456,7 @@ impl EvidenceWriter {
                 }))
             }),
             "m4_conditional_eat": m4_eat,
-            "m5_clear_prayers_before_next_operation": m5_clear,
+            "m5_raised_protect_cleared_before_next_operation": m5_clear,
             "m1_content_deadline": m1_deadline,
             "combat_outcomes": combat_outcomes(&capture),
             "imp_corpse_classification": imp_corpse_classification(&capture),
@@ -763,10 +686,10 @@ fn preparation_steps(case: Case) -> Vec<Step> {
         Case::M5 => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
-                "seed Protect from Melee before Start",
-                // R289 setvar resolves debug names; varp.pack maps97 to prayer14.
-                "setvar prayer14 1".to_owned(),
-                Proof::VarpExact { id: 97, value: 1 },
+                "seed user Thick Skin before Start",
+                // R289 selected data maps prayer0 to varp83.
+                "setvar prayer0 1".to_owned(),
+                Proof::VarpExact { id: 83, value: 1 },
             ));
         }
         Case::M6 => steps.push(cheat_step(
@@ -955,13 +878,13 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
         }
         Case::M5 => {
             if stat_base(baseline, "prayer") != Some(43)
-                || baseline["prayer_varps"]
-                    .as_array()
-                    .and_then(|rows| rows.iter().find(|row| row["index"] == json!(97)))
-                    .and_then(|row| row["value"].as_i64())
-                    != Some(1)
+                || prayer_varp(baseline, 83) != Some(1)
+                || prayer_varp(baseline, 97) != Some(0)
             {
-                return Some("M5 did not observe Protect from Melee active before Start".into());
+                return Some(
+                    "M5 did not observe user Thick Skin active and Protect from Melee off before Start"
+                        .into(),
+                );
             }
         }
     }
@@ -1358,10 +1281,15 @@ fn m4_ready(capture: &CombatCapture) -> bool {
 }
 
 fn m5_ready(capture: &CombatCapture) -> bool {
-    // M5 is interrupt hygiene, not a terminal Imp Catcher stop. After
-    // ClearPrayers the Path may bank or attack again; those later ops must
-    // not un-prove the random-event prefix.
-    if !capture.maze_injected
+    // Thick Skin is user-owned and survives the interrupt; only Combat-raised
+    // Protect from Melee is cleaned up. Later Path operations do not unprove
+    // this random-event prefix.
+    let Some(baseline) = capture.start_baseline.as_ref() else {
+        return false;
+    };
+    if start_preflight(Case::M5, baseline).is_some()
+        || m5_selected_prayers(capture).is_none()
+        || !capture.maze_injected
         || capture.maze_owner_live_before != Some(true)
         || capture.maze_owner_live_after != Some(false)
     {
@@ -1403,17 +1331,11 @@ fn m5_prefix_contract(capture: &CombatCapture, injection: &Value) -> bool {
         .cloned()
         .collect();
     prefix.observations = capture.observations.clone();
-    // Unknown-clock old staging cannot establish exclusivity.
+    // Every measured prayer change must come from a native interaction.
     prefix.actions.iter().all(|action| {
         action["kind"] != json!("other-request")
-            || (action["origin"] == json!("staging")
-                && action["request"] == json!("if-button Protect from Melee")
-                && action["host_tick"].as_u64().is_some()
-                && accepted(action)
-                && action["wire_decoded"] == json!(true)
-                && wire_opcodes(action)
-                    == Some(vec![i64::from(client::io::ClientProt289::IF_BUTTON.id)])
-                && action["host_tick"] == action["tick"])
+            && (action["request"]["op"] != json!("if-button")
+                || action["kind"] == json!("interaction"))
     }) && native_interactions_wire_valid(&prefix)
         && prefix
             .actions
@@ -1935,6 +1857,19 @@ fn prayer_component(capture: &CombatCapture, name: &str) -> Option<i64> {
 
 fn prayer_varp_for_name(capture: &CombatCapture, name: &str) -> Option<i64> {
     prayer_fact(capture, name)?["varp"].as_i64()
+}
+
+fn m5_selected_prayers(capture: &CombatCapture) -> Option<(i64, i64, i64, i64)> {
+    let skin_varp = prayer_varp_for_name(capture, "Thick Skin")?;
+    let protect_varp = prayer_varp_for_name(capture, "Protect from Melee")?;
+    let skin_component = prayer_component(capture, "Thick Skin")?;
+    let protect_component = prayer_component(capture, "Protect from Melee")?;
+    (skin_varp == 83
+        && protect_varp == 97
+        && skin_component > 0
+        && protect_component > 0
+        && skin_component != protect_component)
+        .then_some((skin_varp, protect_varp, skin_component, protect_component))
 }
 
 fn prayer_action(action: &Value, component: i64) -> bool {
@@ -2715,58 +2650,111 @@ fn m4_conditional_eat_ok(capture: &CombatCapture, report: &Value) -> bool {
 
 fn m5_owner_preempted(capture: &CombatCapture, injection: &Value) -> bool {
     let owner = &injection["active_combat_owner"];
-    injection["active_combat_owner_live_before"] == json!(true)
-        && injection["active_combat_owner_live_after"] == json!(false)
-        && injection["active_combat_owner_liveness_basis"]
-            == json!("native action owner revocation bit")
-        && injection["delivery"] == json!("Play.observe -> PlaySlotScript.on_random")
-        && owner["action_id"].as_u64().is_some_and(|id| id > 0)
-        && capture.actions.iter().any(|action| {
-            is_npc_attack(action)
-                && accepted(action)
-                && action["run"] == owner["run"]
-                && action["action_id"] == owner["action_id"]
-                && action["request_id"] == owner["request_id"]
-                && action["sequence"]
-                    .as_u64()
-                    .zip(injection["action_sequence_at_injection"].as_u64())
-                    .is_some_and(|(attack, injection)| attack <= injection)
-        })
+    let Some(injection_sequence) = injection["action_sequence_at_injection"].as_u64() else {
+        return false;
+    };
+    if injection["active_combat_owner_live_before"] != json!(true)
+        || injection["active_combat_owner_live_after"] != json!(false)
+        || injection["active_combat_owner_liveness_basis"]
+            != json!("native action owner revocation bit")
+        || injection["delivery"] != json!("Play.observe -> PlaySlotScript.on_random")
+        || !owner["run"].as_str().is_some_and(|run| !run.is_empty())
+        || !owner["action_id"].as_u64().is_some_and(|id| id > 0)
+        || !owner["request_id"].as_u64().is_some_and(|id| id > 0)
+    {
+        return false;
+    }
+    let Some((skin_varp, _, _, _)) = m5_selected_prayers(capture) else {
+        return false;
+    };
+    let Some(attack) = capture.actions.iter().find(|action| {
+        is_imp_attack(action)
+            && action_wire_valid(action)
+            && action["run"] == owner["run"]
+            && action["action_id"] == owner["action_id"]
+            && action["request_id"] == owner["request_id"]
+            && action["sequence"]
+                .as_u64()
+                .is_some_and(|sequence| sequence <= injection_sequence)
+    }) else {
+        return false;
+    };
+    let Some(raise) = m5_protect_raise_action(capture, injection) else {
+        return false;
+    };
+    attack["sequence"] != raise["sequence"]
+        && prayer_varp(&attack["snapshot"], skin_varp) == Some(1)
+}
+
+fn is_imp_attack(action: &Value) -> bool {
+    let Some(index) = action["request"]["index"].as_i64() else {
+        return false;
+    };
+    is_npc_attack(action)
+        && action["request"]["name"]
+            .as_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case("imp"))
+        && action["snapshot"]["nearby_npcs"]
+            .as_array()
+            .is_some_and(|npcs| {
+                npcs.iter().any(|npc| {
+                    npc["index"].as_i64() == Some(index)
+                        && npc["name"]
+                            .as_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case("imp"))
+                })
+            })
+}
+
+fn m5_protect_raise_action<'a>(capture: &'a CombatCapture, injection: &Value) -> Option<&'a Value> {
+    let owner = &injection["active_combat_owner"];
+    let injection_sequence = injection["action_sequence_at_injection"].as_u64()?;
+    let (skin_varp, protect_varp, _, protect_component) = m5_selected_prayers(capture)?;
+    capture.actions.iter().find(|action| {
+        prayer_action(action, protect_component)
+            && action_wire_valid(action)
+            && action["run"] == owner["run"]
+            && action["action_id"] == owner["action_id"]
+            && action["request_id"].as_u64().is_some_and(|id| id > 0)
+            && action["sequence"]
+                .as_u64()
+                .is_some_and(|sequence| sequence <= injection_sequence)
+            && prayer_varp(&action["snapshot"], skin_varp) == Some(1)
+            && prayer_varp(&action["snapshot"], protect_varp) == Some(0)
+    })
 }
 
 fn clear_prayers_before_next_operation(capture: &CombatCapture, injection: &Value) -> bool {
     if injection["hold"] != json!(true) {
         return false;
     }
-    let Some(sequence) = injection["action_sequence_at_injection"].as_u64() else {
+    let Some(baseline) = capture.start_baseline.as_ref() else {
         return false;
     };
-    let Some(active_varps) = injection["prayer_varps_at_injection"].as_array() else {
+    let Some((skin_varp, protect_varp, _, protect_component)) = m5_selected_prayers(capture) else {
         return false;
     };
-    let expected_components = capture
-        .prayer_facts
-        .iter()
-        .filter(|fact| {
-            let Some(varp) = fact["varp"].as_i64() else {
-                return false;
-            };
-            active_varps
-                .iter()
-                .any(|row| row["index"] == json!(varp) && row["value"] == json!(1))
-        })
-        .filter_map(|fact| fact["button_com"].as_i64())
-        .collect::<Vec<_>>();
-    if expected_components.is_empty() {
+    if prayer_varp(baseline, skin_varp) != Some(1) || prayer_varp(baseline, protect_varp) != Some(0)
+    {
         return false;
     }
+    if !injection["prayer_varps_at_injection"].is_array()
+        || prayer_varp_rows(&injection["prayer_varps_at_injection"], skin_varp) != Some(1)
+        || prayer_varp_rows(&injection["prayer_varps_at_injection"], protect_varp) != Some(1)
+        || m5_protect_raise_action(capture, injection).is_none()
+    {
+        return false;
+    }
+    let Some(injection_sequence) = injection["action_sequence_at_injection"].as_u64() else {
+        return false;
+    };
     let after = capture
         .actions
         .iter()
         .filter(|action| {
             action["sequence"]
                 .as_u64()
-                .is_some_and(|seq| seq > sequence)
+                .is_some_and(|action_sequence| action_sequence > injection_sequence)
         })
         .collect::<Vec<_>>();
     let Some(next_operation_index) = after.iter().position(|action| {
@@ -2776,15 +2764,26 @@ fn clear_prayers_before_next_operation(capture: &CombatCapture, injection: &Valu
     };
     let cleanup = &after[..next_operation_index];
     let next_operation = after[next_operation_index];
-    cleanup.len() == expected_components.len()
-        && expected_components.iter().all(|component| {
-            cleanup
-                .iter()
-                .filter(|action| prayer_action(action, *component) && action_wire_valid(action))
-                .count()
-                == 1
-        })
-        && all_prayer_bits_off(&next_operation["snapshot"])
+    let Some(cleanup_action) = cleanup.first() else {
+        return false;
+    };
+    let combat_owner = &injection["active_combat_owner"];
+    cleanup.len() == 1
+        && prayer_action(cleanup_action, protect_component)
+        && action_wire_valid(cleanup_action)
+        && cleanup_action["run"].as_str().is_some()
+        && cleanup_action["action_id"]
+            .as_u64()
+            .is_some_and(|id| id > 0)
+        && cleanup_action["request_id"]
+            .as_u64()
+            .is_some_and(|id| id > 0)
+        && (cleanup_action["run"] != combat_owner["run"]
+            || cleanup_action["action_id"] != combat_owner["action_id"])
+        && prayer_varp(&cleanup_action["snapshot"], skin_varp) == Some(1)
+        && prayer_varp(&cleanup_action["snapshot"], protect_varp) == Some(1)
+        && prayer_varp(&next_operation["snapshot"], skin_varp) == Some(1)
+        && prayer_varp(&next_operation["snapshot"], protect_varp) == Some(0)
 }
 
 fn no_attack_after_report(capture: &CombatCapture, report: &Value) -> bool {
@@ -2848,7 +2847,11 @@ fn all_prayer_bits_off(frame: &Value) -> bool {
 }
 
 fn prayer_varp(frame: &Value, id: i64) -> Option<i64> {
-    frame["prayer_varps"]
+    prayer_varp_rows(&frame["prayer_varps"], id)
+}
+
+fn prayer_varp_rows(prayer_varps: &Value, id: i64) -> Option<i64> {
+    prayer_varps
         .as_array()?
         .iter()
         .find(|row| row["index"] == json!(id))?["value"]
@@ -3244,7 +3247,7 @@ fn live_combat_m4_static_nasty_tree_unattackable() {
 
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
-fn live_combat_m5_random_interrupt_clears_prayers() {
+fn live_combat_m5_random_interrupt_clears_only_combat_raised_protect() {
     run_case(Case::M5);
 }
 
@@ -3443,142 +3446,192 @@ fn every_imp_corpse_episode_requires_its_own_exact_killed_outcome() {
     assert!(!every_imp_corpse_has_outcome(&capture));
 }
 
-#[test]
-fn hygiene_clear_prefix_rejects_missing_clear_empty_prayers_and_other_clicks() {
-    let varps = |active| {
+fn m5_oracle_capture() -> CombatCapture {
+    use client::io::ClientProt289;
+
+    let prayer_varps = |skin_on, protect_on| {
         (83..=97)
-            .map(|index| json!({"index": index, "value": i32::from(active && index == 97)}))
+            .map(|index| {
+                json!({
+                    "index": index,
+                    "value": i32::from((index == 83 && skin_on) || (index == 97 && protect_on))
+                })
+            })
             .collect::<Vec<_>>()
     };
-    let injection = json!({
-        "hold": true, "action_sequence_at_injection": 1,
-        "prayer_varps_at_injection": varps(true)
+    let snapshot = |skin_on, protect_on| {
+        json!({
+            "prayer_varps": prayer_varps(skin_on, protect_on),
+            "nearby_npcs": [{"index": 42, "name": "Imp", "type": 708}]
+        })
+    };
+    let attack = json!({
+        "kind": "interaction", "sequence": 1, "tick": 10, "host_tick": 10,
+        "snapshot_tick": 10, "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC2.id],
+        "run": "run-1", "action_id": 7, "request_id": 9, "batch": 9,
+        "request": {"op": "npc", "name": "Imp", "action": "Attack", "index": 42},
+        "snapshot": snapshot(true, false)
     });
-    let clear = json!({
-        "kind": "interaction", "sequence": 2,
+    let protect_raise = json!({
+        "kind": "interaction", "sequence": 2, "tick": 11, "host_tick": 11,
+        "snapshot_tick": 11, "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+        "run": "run-1", "action_id": 7, "request_id": 10, "batch": 10,
         "request": {"op": "if-button", "component_id": 5623},
-        "accepted": true, "wire_decoded": true,
-        "wire_opcodes": [client::io::ClientProt289::IF_BUTTON.id],
+        "snapshot": snapshot(true, false)
+    });
+    let cleanup = json!({
+        "kind": "interaction", "sequence": 3, "tick": 12, "host_tick": 12,
+        "snapshot_tick": 12, "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+        "run": "run-1", "action_id": 12, "request_id": 11, "batch": 11,
+        "request": {"op": "if-button", "component_id": 5623},
+        "snapshot": snapshot(true, true)
     });
     let next = json!({
-        "kind": "walk", "sequence": 3,
-        "snapshot": {"prayer_varps": varps(false)}
+        "kind": "walk", "sequence": 4, "tick": 14,
+        "request": {"target": {"x": 2632, "z": 3222, "level": 0}, "radius": 2},
+        "snapshot": snapshot(true, false)
     });
-    let mut capture = CombatCapture::default();
-    capture
-        .prayer_facts
-        .push(json!({"varp": 97, "button_com": 5623}));
-    capture.actions = vec![clear.clone(), next.clone()];
-    assert!(clear_prayers_before_next_operation(&capture, &injection));
-    capture.actions[0]["request"]["component_id"] = json!(999);
-    assert!(!clear_prayers_before_next_operation(&capture, &injection));
-    capture.actions[0] = clear.clone();
-    let mut empty = injection.clone();
-    empty["prayer_varps_at_injection"] = json!(varps(false));
-    assert!(!clear_prayers_before_next_operation(&capture, &empty));
-    capture.actions = vec![next.clone()];
-    assert!(!clear_prayers_before_next_operation(&capture, &injection));
-    capture.actions = vec![next.clone(), clear.clone()];
-    assert!(!clear_prayers_before_next_operation(&capture, &injection));
-    capture.actions = vec![clear.clone(), next.clone()];
-    capture.actions[1]["snapshot"]["prayer_varps"][14]["value"] = json!(1);
-    assert!(!clear_prayers_before_next_operation(&capture, &injection));
-    capture.actions = vec![clear.clone(), next];
-    let mut unrelated = clear;
-    unrelated["request"]["component_id"] = json!(999);
-    capture.actions.insert(1, unrelated);
-    assert!(
-        !clear_prayers_before_next_operation(&capture, &injection),
-        "an unrelated if-button is not part of ClearPrayers"
-    );
-}
-
-#[test]
-fn hygiene_owner_oracle_requires_the_same_live_then_revoked_combat_owner() {
-    let mut capture = CombatCapture::default();
-    capture.actions.push(json!({
-        "kind": "interaction", "sequence": 1, "accepted": true,
-        "run": "run-1", "action_id": 7, "request_id": 9,
-        "request": {"op": "npc", "action": "Attack"}
-    }));
-    let mut injection = json!({
+    let later_attack = json!({
+        "kind": "interaction", "sequence": 5, "tick": 40, "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC2.id],
+        "request": {"op": "npc", "name": "Imp", "action": "Attack"}
+    });
+    let bank = json!({
+        "kind": "interaction", "sequence": 6, "tick": 50, "accepted": true,
+        "wire_decoded": true, "wire_opcodes": [195, 67, 45],
+        "request": {"debug": "OpenStand"}
+    });
+    let injection = json!({
+        "kind": "Maze", "hold": true, "action_sequence_at_injection": 2,
+        "prayer_varps_at_injection": prayer_varps(true, true),
         "active_combat_owner": {"run": "run-1", "action_id": 7, "request_id": 9},
         "active_combat_owner_live_before": true,
         "active_combat_owner_live_after": false,
         "active_combat_owner_liveness_basis": "native action owner revocation bit",
-        "delivery": "Play.observe -> PlaySlotScript.on_random",
-        "action_sequence_at_injection": 1
+        "delivery": "Play.observe -> PlaySlotScript.on_random"
     });
+
+    let mut capture = CombatCapture::default();
+    capture.start_baseline = Some(json!({
+        "ingame": true,
+        "scene_state": 2,
+        "stats": [{"name": "prayer", "base": 43, "effective": 43}],
+        "prayer_varps": prayer_varps(true, false)
+    }));
+    capture.maze_injected = true;
+    capture.maze_owner_live_before = Some(true);
+    capture.maze_owner_live_after = Some(false);
+    capture.prayer_facts = vec![
+        json!({"name": "Thick Skin", "varp": 83, "button_com": 5609}),
+        json!({"name": "Protect from Melee", "varp": 97, "button_com": 5623}),
+    ];
+    capture.random_events.push(injection);
+    capture.actions = vec![attack, protect_raise, cleanup, next, later_attack, bank];
+    capture.observations = vec![
+        json!({"tick": 10, "exclusive": true}),
+        json!({"tick": 11, "exclusive": true}),
+        json!({"tick": 12, "exclusive": true}),
+    ];
+    capture
+}
+
+#[test]
+fn hygiene_cleanup_requires_user_skin_and_only_combat_raised_protect_off() {
+    let mut capture = m5_oracle_capture();
+    let injection = capture.random_events[0].clone();
+    assert!(clear_prayers_before_next_operation(&capture, &injection));
+
+    let cleanup = capture.actions[2].clone();
+    capture.actions.remove(2);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions.insert(2, cleanup.clone());
+
+    capture.actions[2]["accepted"] = json!(false);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[2] = cleanup.clone();
+    capture.actions[2]["request"]["component_id"] = json!(5609);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[2] = cleanup.clone();
+    capture.actions[2]["action_id"] = json!(7);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[2] = cleanup.clone();
+    capture.actions[2]["kind"] = json!("other-request");
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[2] = cleanup.clone();
+
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(0);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(1);
+
+    let mut skin_off_at_injection = injection.clone();
+    skin_off_at_injection["prayer_varps_at_injection"][0]["value"] = json!(0);
+    assert!(!clear_prayers_before_next_operation(
+        &capture,
+        &skin_off_at_injection
+    ));
+
+    capture.actions[3]["snapshot"]["prayer_varps"][14]["value"] = json!(1);
+    assert!(
+        !clear_prayers_before_next_operation(&capture, &injection),
+        "Protect from Melee must be off before the next non-prayer operation"
+    );
+    capture.actions[3]["snapshot"]["prayer_varps"][14]["value"] = json!(0);
+    capture.actions[3]["snapshot"]["prayer_varps"][0]["value"] = json!(0);
+    assert!(
+        !clear_prayers_before_next_operation(&capture, &injection),
+        "user Thick Skin must survive through the next operation"
+    );
+}
+
+#[test]
+fn hygiene_owner_oracle_requires_a_valid_protect_raise_from_the_imp_combat_owner() {
+    let mut capture = m5_oracle_capture();
+    let mut injection = capture.random_events[0].clone();
     assert!(m5_owner_preempted(&capture, &injection));
+
+    let protect_raise = capture.actions[1].clone();
+    capture.actions[1]["kind"] = json!("other-request");
+    capture.actions[1]["request"] = json!("if-button Protect from Melee");
+    assert!(!m5_owner_preempted(&capture, &injection));
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["accepted"] = json!(false);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["wire_decoded"] = json!(false);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["wire_opcodes"] = json!([0]);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["action_id"] = json!(8);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    capture.actions[1] = protect_raise;
+
     injection["active_combat_owner_live_before"] = json!(false);
     assert!(!m5_owner_preempted(&capture, &injection));
     injection["active_combat_owner_live_before"] = json!(true);
     injection["active_combat_owner_live_after"] = json!(true);
     assert!(!m5_owner_preempted(&capture, &injection));
     injection["active_combat_owner_live_after"] = json!(false);
-    injection["active_combat_owner"]["action_id"] = json!(8);
+    injection["action_sequence_at_injection"] = json!(1);
     assert!(!m5_owner_preempted(&capture, &injection));
-    injection["active_combat_owner"]["action_id"] = json!(7);
+    injection["action_sequence_at_injection"] = json!(2);
     injection["active_combat_owner_liveness_basis"] = json!("request reservation");
     assert!(!m5_owner_preempted(&capture, &injection));
 }
 
 #[test]
-fn m5_ready_accepts_interrupt_hygiene_while_the_path_continues() {
-    use client::io::ClientProt289;
-    let varps = |active| {
-        (83..=97)
-            .map(|index| json!({"index": index, "value": i32::from(active && index == 97)}))
-            .collect::<Vec<_>>()
-    };
-    let attack_opcodes = json!([ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC2.id]);
-    let attack = json!({
-        "kind": "interaction", "sequence": 1, "tick": 10, "accepted": true,
-        "wire_decoded": true, "wire_opcodes": attack_opcodes,
-        "run": "run-1", "action_id": 7, "request_id": 9,
-        "batch": 9,
-        "request": {"op": "npc", "action": "Attack"}
-    });
-    let clear = json!({
-        "kind": "interaction", "sequence": 2, "tick": 12, "accepted": true,
-        "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
-        "request": {"op": "if-button", "component_id": 5623},
-    });
-    let next = json!({
-        "kind": "walk", "sequence": 3, "tick": 14,
-        "snapshot": {"prayer_varps": varps(false)}
-    });
-    let later_attack = json!({
-        "kind": "interaction", "sequence": 4, "tick": 40, "accepted": true,
-        "wire_decoded": true, "wire_opcodes": attack_opcodes,
-        "request": {"op": "npc", "action": "Attack"}
-    });
-    let bank = json!({
-        "kind": "interaction", "sequence": 5, "tick": 50, "accepted": true,
-        "wire_decoded": true, "wire_opcodes": [195, 67, 45],
-        "request": {"debug": "OpenStand"}
-    });
-    let injection = json!({
-        "kind": "Maze", "hold": true, "action_sequence_at_injection": 1,
-        "prayer_varps_at_injection": varps(true),
-        "active_combat_owner": {"run": "run-1", "action_id": 7, "request_id": 9},
-        "active_combat_owner_live_before": true,
-        "active_combat_owner_live_after": false,
-        "active_combat_owner_liveness_basis": "native action owner revocation bit",
-        "delivery": "Play.observe -> PlaySlotScript.on_random",
-    });
-    let mut capture = CombatCapture::default();
-    capture.maze_injected = true;
-    capture.maze_owner_live_before = Some(true);
-    capture.maze_owner_live_after = Some(false);
-    capture.prayer_facts = vec![json!({"varp": 97, "button_com": 5623})];
-    capture.random_events = vec![injection.clone()];
-    capture.actions = vec![attack, clear, next, later_attack, bank];
-    capture.observations = vec![json!({"tick": 10, "exclusive": true})];
+fn m5_ready_accepts_raised_prayer_hygiene_while_the_path_continues() {
+    let mut capture = m5_oracle_capture();
     assert!(
         m5_ready(&capture),
-        "later Imp attacks and a bank OpenStand must not un-prove interrupt hygiene"
+        "later Imp attacks and bank operations must not unprove raised-only hygiene"
     );
+
     let duplicate = capture.actions[0].clone();
     capture.actions.insert(1, duplicate);
     assert!(
@@ -3586,37 +3639,70 @@ fn m5_ready_accepts_interrupt_hygiene_while_the_path_continues() {
         "duplicate Attack breaks the admitted prefix"
     );
     capture.actions.remove(1);
-    capture.actions.insert(
-        1,
-        json!({
-            "kind": "other-request", "origin": "staging", "sequence": 1,
-            "tick": 11, "host_tick": 11, "request": "setvar prayer14 1"
-        }),
-    );
-    assert!(
-        !m5_ready(&capture),
-        "a measured-window cheat cannot stage proof"
-    );
+
+    let protect_raise = capture.actions[1].clone();
+    capture.actions[1]["kind"] = json!("other-request");
+    capture.actions[1]["origin"] = json!("staging");
     capture.actions[1]["request"] = json!("if-button Protect from Melee");
-    capture.actions[1]["accepted"] = json!(true);
-    capture.actions[1]["wire_decoded"] = json!(true);
-    capture.actions[1]["wire_opcodes"] = json!([ClientProt289::IF_BUTTON.id]);
-    assert!(
-        m5_ready(&capture),
-        "a captured real prayer click on its own later tick is admissible"
-    );
-    capture.actions[1]["tick"] = json!(10);
-    capture.actions[1]["host_tick"] = json!(10);
     assert!(
         !m5_ready(&capture),
-        "a staging click cannot share the exclusive Attack tick"
+        "manual harness prayer staging cannot stand in for Combat's raise"
     );
-    capture.actions.remove(1);
-    capture.random_events[0]["prayer_varps_at_injection"] = json!(varps(false));
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["accepted"] = json!(false);
     assert!(
         !m5_ready(&capture),
-        "an all-off injection snapshot is not a Protect-from-Melee interrupt"
+        "an unaccepted Combat raise is not owned"
     );
+    capture.actions[1] = protect_raise.clone();
+    capture.actions[1]["action_id"] = json!(8);
+    assert!(
+        !m5_ready(&capture),
+        "an unrelated owner cannot raise the prayer"
+    );
+    capture.actions[1] = protect_raise;
+
+    let cleanup = capture.actions[2].clone();
+    capture.actions.remove(2);
+    assert!(!m5_ready(&capture), "missing cleanup cannot pass");
+    capture.actions.insert(2, cleanup);
+
+    capture.random_events[0]["prayer_varps_at_injection"][14]["value"] = json!(0);
+    assert!(
+        !m5_ready(&capture),
+        "Protect from Melee must be observed on at injection"
+    );
+    capture.random_events[0]["prayer_varps_at_injection"][14]["value"] = json!(1);
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(0);
+    assert!(!m5_ready(&capture), "off user Thick Skin cannot pass");
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(1);
+
+    capture.random_events[0]["prayer_varps_at_injection"][0]["value"] = json!(0);
+    assert!(
+        !m5_ready(&capture),
+        "off user Thick Skin at injection cannot pass"
+    );
+    capture.random_events[0]["prayer_varps_at_injection"][0]["value"] = json!(1);
+
+    capture.actions[3]["snapshot"]["prayer_varps"][14]["value"] = json!(1);
+    assert!(
+        !m5_ready(&capture),
+        "still-on Protect from Melee cannot pass"
+    );
+}
+
+#[test]
+fn m5_start_requires_the_user_prayer_and_protect_off_baseline() {
+    let mut capture = m5_oracle_capture();
+    assert_eq!(
+        start_preflight(Case::M5, capture.start_baseline.as_ref().unwrap()),
+        None
+    );
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(0);
+    assert!(start_preflight(Case::M5, capture.start_baseline.as_ref().unwrap()).is_some());
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][0]["value"] = json!(1);
+    capture.start_baseline.as_mut().unwrap()["prayer_varps"][14]["value"] = json!(1);
+    assert!(start_preflight(Case::M5, capture.start_baseline.as_ref().unwrap()).is_some());
 }
 
 #[test]
