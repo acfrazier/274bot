@@ -346,15 +346,18 @@ impl Guardian {
             // redemption gave up with the lamp still held.
             self.acting = false;
         }
-        // A Maze the host gave up on, or will not solve with the toggle off,
-        // is inert like a stalled lamp: the square stays detected, but
-        // nothing holds the slot on a trap the guardian is not walking out of.
+        // A trap square the host will not solve (random events off, or a Maze
+        // visit it gave up) is inert like a stalled lamp: the square stays
+        // detected, but nothing holds the slot on a trap the guardian is not
+        // walking out of.
         let on_maze = ev.as_ref().is_some_and(|e| e.kind == RandomKind::Maze);
         if !on_maze {
             self.maze_ticks = 0;
             self.maze_stalled = false;
         }
-        let inert_maze = on_maze && (self.maze_stalled || !settings.random_events);
+        let on_trap_square = on_maze || ev.as_ref().is_some_and(|e| e.kind == RandomKind::Mime);
+        let inert_trap =
+            on_trap_square && (!settings.random_events || (on_maze && self.maze_stalled));
 
         if fresh
             && active
@@ -362,7 +365,7 @@ impl Guardian {
             && self.claim == RandomClaim::Host
             && !inert_lamp
             && !inert_tool
-            && !inert_maze
+            && !inert_trap
         {
             let plant_before_act = self.plant.clone();
             let ignored_before_act = self.plant_ignored.len();
@@ -393,7 +396,7 @@ impl Guardian {
                 && ev
                     .as_ref()
                     .is_some_and(|event| event.kind == RandomKind::LostTool));
-        let inert_maze = inert_maze || (on_maze && self.maze_stalled);
+        let inert_trap = inert_trap || (on_maze && self.maze_stalled);
         let cooldown = ev
             .as_ref()
             .and_then(|e| e.npc_index)
@@ -405,12 +408,12 @@ impl Guardian {
             // must not publish ours — EventSignal.pending is hold OR ours.
             ours: !inert_lamp
                 && !inert_tool
-                && !inert_maze
+                && !inert_trap
                 && ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
             hold: settings.random_events
                 && self.claim == RandomClaim::Host
-                && !inert_maze
+                && !inert_trap
                 && (self.in_flight
                     || self.acting
                     || ev.as_ref().is_some_and(|e| is_trapped(e.kind))),

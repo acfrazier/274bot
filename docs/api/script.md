@@ -11,9 +11,10 @@ WalkTo is **host nav** (panel picker / TUI map), not a script card.
 `native::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
 While the host guardian holds a trapped random (Maze, Mime, Strange box) the
 native run is frozen. The guardian gives one Maze visit 1,000 game ticks (twice
-the content's 500-tick reward clock); after that, or with random events off, the
-Maze is inert and an unheld native run standing on the Maze or Mime square blocks
-with retryable `random-trapped` instead of staying `Working` there.
+the content's 500-tick reward clock); after that, and for the Maze or Mime
+square with random events off, the square is inert and an unheld native run
+standing on it blocks with retryable `random-trapped` instead of staying
+`Working` there.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,

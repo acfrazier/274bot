@@ -924,6 +924,16 @@ fn maze_square_holds_without_any_send() {
         !status.ours,
         "toggle off the host solves no Maze, so the trap must not freeze the script"
     );
+
+    // The Mime stage is the other trap square: the same with the toggle off.
+    plant_player(&mut c, "Test", 31 * 64, 74 * 64);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(status.kind, Some(RandomKind::Mime));
+    assert!(
+        !status.hold && !status.ours,
+        "toggle off: the Mime is inert too"
+    );
 }
 
 #[test]
