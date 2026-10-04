@@ -7628,6 +7628,11 @@
         "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
       },
       {
+        "path": "scripts/skill_magic/interfaces/magic.if",
+        "bytes": 119831,
+        "sha256": "9331d8b3bb1b062b1ed5446934d8338dc5f59906f5053e3fbcded06a22b75d92"
+      },
+      {
         "path": "scripts/skill_magic/scripts/magic.rs2",
         "bytes": 5171,
         "sha256": "90cadc39eeb448d1810fb8741f1a7da7df5ce7224019588355b09761d258ce90"
@@ -87642,11 +87647,15 @@
       "name": "Wind Strike",
       "source_row": "magic_spell_wind_strike",
       "ssb": 0,
+      "component_id": 1152,
+      "autocast_selectable": true,
       "spellcom": "magic:wind_strike",
       "level": 1,
       "maxhit": 2,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 92,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87667,11 +87676,15 @@
       "name": "Water Strike",
       "source_row": "magic_spell_water_strike",
       "ssb": 1,
+      "component_id": 1154,
+      "autocast_selectable": true,
       "spellcom": "magic:water_strike",
       "level": 5,
       "maxhit": 4,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 95,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87698,11 +87711,15 @@
       "name": "Earth Strike",
       "source_row": "magic_spell_earth_strike",
       "ssb": 2,
+      "component_id": 1156,
+      "autocast_selectable": true,
       "spellcom": "magic:earth_strike",
       "level": 9,
       "maxhit": 6,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 98,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87729,11 +87746,15 @@
       "name": "Fire Strike",
       "source_row": "magic_spell_fire_strike",
       "ssb": 3,
+      "component_id": 1158,
+      "autocast_selectable": true,
       "spellcom": "magic:fire_strike",
       "level": 13,
       "maxhit": 8,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 101,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87760,11 +87781,15 @@
       "name": "Wind Bolt",
       "source_row": "magic_spell_wind_bolt",
       "ssb": 4,
+      "component_id": 1160,
+      "autocast_selectable": true,
       "spellcom": "magic:wind_bolt",
       "level": 17,
       "maxhit": 9,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 119,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87785,11 +87810,15 @@
       "name": "Water Bolt",
       "source_row": "magic_spell_water_bolt",
       "ssb": 5,
+      "component_id": 1163,
+      "autocast_selectable": true,
       "spellcom": "magic:water_bolt",
       "level": 23,
       "maxhit": 10,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 122,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87816,11 +87845,15 @@
       "name": "Earth Bolt",
       "source_row": "magic_spell_earth_bolt",
       "ssb": 6,
+      "component_id": 1166,
+      "autocast_selectable": true,
       "spellcom": "magic:earth_bolt",
       "level": 29,
       "maxhit": 11,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 125,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87847,11 +87880,15 @@
       "name": "Fire Bolt",
       "source_row": "magic_spell_fire_bolt",
       "ssb": 7,
+      "component_id": 1169,
+      "autocast_selectable": true,
       "spellcom": "magic:fire_bolt",
       "level": 35,
       "maxhit": 12,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 128,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87878,11 +87915,15 @@
       "name": "Wind Blast",
       "source_row": "magic_spell_wind_blast",
       "ssb": 8,
+      "component_id": 1172,
+      "autocast_selectable": true,
       "spellcom": "magic:wind_blast",
       "level": 41,
       "maxhit": 13,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 134,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87903,11 +87944,15 @@
       "name": "Water Blast",
       "source_row": "magic_spell_water_blast",
       "ssb": 9,
+      "component_id": 1175,
+      "autocast_selectable": true,
       "spellcom": "magic:water_blast",
       "level": 47,
       "maxhit": 14,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 137,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87934,11 +87979,15 @@
       "name": "Earth Blast",
       "source_row": "magic_spell_earth_blast",
       "ssb": 10,
+      "component_id": 1177,
+      "autocast_selectable": true,
       "spellcom": "magic:earth_blast",
       "level": 53,
       "maxhit": 15,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 140,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87965,11 +88014,15 @@
       "name": "Fire Blast",
       "source_row": "magic_spell_fire_blast",
       "ssb": 11,
+      "component_id": 1181,
+      "autocast_selectable": true,
       "spellcom": "magic:fire_blast",
       "level": 59,
       "maxhit": 16,
       "members": false,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 131,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -87996,11 +88049,15 @@
       "name": "Wind Wave",
       "source_row": "magic_spell_wind_wave",
       "ssb": 12,
+      "component_id": 1183,
+      "autocast_selectable": true,
       "spellcom": "magic:wind_wave",
       "level": 62,
       "maxhit": 17,
       "members": true,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 160,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -88021,11 +88078,15 @@
       "name": "Water Wave",
       "source_row": "magic_spell_water_wave",
       "ssb": 13,
+      "component_id": 1185,
+      "autocast_selectable": true,
       "spellcom": "magic:water_wave",
       "level": 65,
       "maxhit": 18,
       "members": true,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 163,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -88052,11 +88113,15 @@
       "name": "Earth Wave",
       "source_row": "magic_spell_earth_wave",
       "ssb": 14,
+      "component_id": 1188,
+      "autocast_selectable": true,
       "spellcom": "magic:earth_wave",
       "level": 70,
       "maxhit": 19,
       "members": true,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 166,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -88083,11 +88148,15 @@
       "name": "Fire Wave",
       "source_row": "magic_spell_fire_wave",
       "ssb": 15,
+      "component_id": 1189,
+      "autocast_selectable": true,
       "spellcom": "magic:fire_wave",
       "level": 75,
       "maxhit": 20,
       "members": true,
       "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 157,
       "continue_by_autocast": true,
       "runes": [
         {
@@ -88107,6 +88176,175 @@
           "id": 556,
           "name": "Air rune",
           "count": 5
+        }
+      ]
+    },
+    {
+      "name": "Crumble undead",
+      "source_row": "magic_spell_crumble_undead",
+      "ssb": -1,
+      "component_id": 1171,
+      "autocast_selectable": false,
+      "spellcom": "magic:crumble_undead",
+      "level": 39,
+      "maxhit": 8,
+      "members": false,
+      "wornrequired": null,
+      "worn_reqmessage": null,
+      "impact_spotanim": 147,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 2
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "Saradomin strike",
+      "source_row": "magic_spell_saradomin_strike",
+      "ssb": -1,
+      "component_id": 1190,
+      "autocast_selectable": false,
+      "spellcom": "magic:saradomin_strike",
+      "level": 60,
+      "maxhit": 20,
+      "members": true,
+      "wornrequired": "saradomin_staff",
+      "worn_reqmessage": "You must be wielding the Staff of Saradomin to cast this spell.",
+      "impact_spotanim": 76,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 2
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 2
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "name": "Claws of Guthix",
+      "source_row": "magic_spell_claws_of_guthix",
+      "ssb": -1,
+      "component_id": 1191,
+      "autocast_selectable": false,
+      "spellcom": "magic:claws_of_guthix",
+      "level": 60,
+      "maxhit": 20,
+      "members": true,
+      "wornrequired": "guthix_staff",
+      "worn_reqmessage": "You must be wielding the Staff of Guthix to cast this spell.",
+      "impact_spotanim": 77,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 1
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 2
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "name": "Flames of Zamorak",
+      "source_row": "magic_spell_flames_of_zamorak",
+      "ssb": -1,
+      "component_id": 1192,
+      "autocast_selectable": false,
+      "spellcom": "magic:flames_of_zamorak",
+      "level": 60,
+      "maxhit": 20,
+      "members": true,
+      "wornrequired": "zamorak_staff",
+      "worn_reqmessage": "You must be wielding the Staff of Zamorak to cast this spell.",
+      "impact_spotanim": 78,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 4
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 2
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "Iban blast",
+      "source_row": "magic_spell_iban_blast",
+      "ssb": -1,
+      "component_id": 1539,
+      "autocast_selectable": false,
+      "spellcom": "magic:iban_blast",
+      "level": 50,
+      "maxhit": 25,
+      "members": true,
+      "wornrequired": "ibanstaff",
+      "worn_reqmessage": "You must wield Iban's staff to cast this spell.",
+      "impact_spotanim": 89,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 5
+        },
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune",
+          "count": 1
         }
       ]
     }
@@ -88291,6 +88529,7 @@
       ]
     }
   ],
+  "failed_spell_impact": 85,
   "herbs": [
     {
       "key": "guam",
