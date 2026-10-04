@@ -157,17 +157,20 @@ fn validate_config(config: &PreparedConfig) -> Result<(), ConfigError> {
 fn create(
     run: RunKey,
     config: Arc<PreparedConfig>,
-    _retained: &mut RetainedMemory,
+    retained: &mut RetainedMemory,
 ) -> Result<Box<dyn Script>, StartError> {
     validate_config(&config).map_err(StartError::Config)?;
     let tables = config
         .get::<Prepared>()
         .map(|prepared| Arc::clone(&prepared.tables));
+    let retained = retained.sherlock();
     Ok(Box::new(Sherlock {
         run: Some(run),
         revision: config.revision(),
         dirty: true,
         hygiene_pending: false,
+        death: crate::native::death::DeathLatch::from_watermark(retained.death_seq),
+        death_pending: retained.death_pending,
         tables,
         ..Default::default()
     }))
@@ -215,8 +218,8 @@ pub struct Sherlock {
     revision: u64,
     status: Option<Arc<str>>,
     dirty: bool,
-    /// Sequence-aware chat death observation. Kept across reconnect session
-    /// changes so the latch can reconcile a replacement chat ring.
+    /// Sequence-aware chat death observation. The slot retains its watermark
+    /// across watchdog recreation so a death in the gap is still observed.
     death: crate::native::death::DeathLatch,
     /// A latched death waiting for the interaction sink to become available.
     death_pending: bool,
@@ -246,6 +249,7 @@ impl Script for Sherlock {
             } else {
                 // Do not start a new clue on the same frame as a death signal.
                 self.cancel_for_death(tick.actions);
+                self.persist_death_state(tick);
                 self.publish(tick.output);
                 return Ok(self
                     .blocked
@@ -260,12 +264,14 @@ impl Script for Sherlock {
             if self.tick_frame(tick, true) && self.token.is_none() {
                 self.death_pending = false;
             }
+            self.persist_death_state(tick);
             self.publish(tick.output);
             return Ok(self
                 .blocked
                 .clone()
                 .map_or(ScriptFlow::Continue, ScriptFlow::Blocked));
         }
+        self.persist_death_state(tick);
         if let Some(failure) = self.blocked.clone() {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(failure));
@@ -397,6 +403,12 @@ impl Script for Sherlock {
 }
 
 impl Sherlock {
+    fn persist_death_state(&self, tick: &mut NativeTick<'_>) {
+        let retained = tick.cx.retained().sherlock();
+        retained.death_seq = self.death.watermark();
+        retained.death_pending = self.death_pending;
+    }
+
     fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
         if let Some(Fight::Combat(handle)) = self.fight.as_ref() {
             self.hygiene_owned = handle.prayer_cleanup();

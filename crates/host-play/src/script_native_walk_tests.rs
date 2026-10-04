@@ -829,6 +829,27 @@ fn seed_missile_launch(snapshot: &mut GameSnapshot) {
     }]);
 }
 
+fn seed_melee_attack(snapshot: &mut GameSnapshot) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let melee_npc = data.npc_by_config("khazard_warlord").unwrap();
+    let melee_sequence = data
+        .style_seqs()
+        .iter()
+        .find(|row| row.style & 0x01 != 0)
+        .unwrap()
+        .seq_id;
+    seed_missile_launch(snapshot);
+    let mut npcs = snapshot.npcs().to_vec();
+    let npc = &mut npcs[0];
+    npc.r#type = Some(melee_npc.id as usize);
+    npc.name = melee_npc.display.clone();
+    npc.in_combat = false;
+    npc.animation = melee_sequence;
+    npc.animation_frame = 0;
+    snapshot.seed_npcs(npcs);
+    snapshot.seed_projectiles(Vec::new());
+}
+
 fn seed_protect_state(snapshot: &mut GameSnapshot, varp: Option<i32>) {
     let mut rows = snapshot.varps().to_vec();
     for row in &mut rows {
@@ -1228,6 +1249,198 @@ fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user
 }
 
 #[test]
+fn a_dropped_switch_retires_the_guard_owned_old_protect() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623],
+        "the guard admits a switch from its owned Missiles style to Melee"
+    );
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    for tick in 5..=7 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623, 5622],
+        "when the server drops Melee, cleanup turns off the still-on owned Missiles"
+    );
+}
+
+#[test]
+fn a_dropped_switch_cleanup_does_not_restart_navigation_deferral() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623]);
+    abort_script_walk(&rig.navs, "alice");
+    rig.shared.lock().protect = false;
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    rig.observe(5);
+    rig.snapshot.seed_tick(6);
+    rig.step();
+    rig.observe(6);
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(7);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623, 5622]);
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    assert!(
+        rig.driver.move_calls > moves,
+        "retiring the fallback must not start a second navigation deferral window"
+    );
+}
+
+#[test]
+fn a_dropped_switch_does_not_turn_off_a_user_owned_old_protect() {
+    let mut rig = protected_rig();
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5623]);
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    for tick in 3..=5 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5623],
+        "the old Missiles style was user-owned, so expiry cannot click it off"
+    );
+}
+
+#[test]
+fn a_real_switch_retires_the_new_protect_without_restoring_the_old_one() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623]);
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let melee_varp = data.prayer_by_name("Protect from Melee").unwrap().varp;
+    seed_protect_state(&mut rig.snapshot, Some(melee_varp));
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623, 5623],
+        "a real switch transfers cleanup to Melee without clicking old Missiles"
+    );
+}
+
+#[test]
+fn a_long_hold_gives_unavailable_owned_on_debt_a_fresh_cleanup_window() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+
+    rig.snapshot.seed_ingame(1);
+    rig.snapshot.seed_tick(40);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "the first cleanup pump starts a new clock instead of expiring at stale guard time"
+    );
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(41);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "a newly readable on-varp is still retired within the fresh attempt window"
+    );
+}
+
+#[test]
+fn a_long_hold_gives_a_refused_cleanup_click_a_fresh_attempt_window() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+
+    rig.snapshot.seed_main_modal(-1, Vec::new());
+    rig.snapshot.seed_tick(40);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "a refused first-pump dispatch keeps the newly started debt alive"
+    );
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(41);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "the cleanup click is admitted when its widget resolves on the next pump"
+    );
+}
+
+#[test]
+fn timed_guard_cleanup_drops_report_unavailable_varps_and_refused_clicks() {
+    for (missing_varps, reason) in [
+        (true, "owned protect varp unavailable within cleanup window"),
+        (false, "off click refused within cleanup window"),
+    ] {
+        let mark = crate::walk_map::test_log::mark();
+        let mut rig = protected_rig();
+        raise_owned_missiles(&mut rig);
+        rig.slot().lock().unwrap().stop();
+        reset_script_nav(&rig.navs, "alice", None);
+        if missing_varps {
+            rig.snapshot.seed_ingame(1);
+        } else {
+            rig.snapshot.seed_main_modal(-1, Vec::new());
+        }
+        rig.snapshot.seed_tick(4);
+        rig.step();
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+
+        rig.snapshot.seed_tick(7);
+        rig.step();
+        assert!(
+            rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none(),
+            "unresolved cleanup remains bounded"
+        );
+        assert_eq!(rig.driver.if_button_components, vec![5622]);
+        assert!(
+            crate::walk_map::test_log::records_since(mark)
+                .iter()
+                .any(|(slot, message)| slot == "alice"
+                    && message.starts_with("prayer cleanup drops protect debt component=5622 ")
+                    && message.contains(reason)),
+            "timed cleanup drop must explain its unresolved cause: {reason}"
+        );
+    }
+}
+
+#[test]
 fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry() {
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
@@ -1279,7 +1492,7 @@ fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
     assert_eq!(rig.shared.lock().begun, 2);
     rig.wait_routed();
     let moves = rig.driver.move_calls;
-    rig.snapshot.seed_tick(6);
+    rig.snapshot.seed_tick(7);
     rig.step();
     assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
     assert!(
