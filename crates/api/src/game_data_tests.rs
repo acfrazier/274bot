@@ -1292,8 +1292,10 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
         }
     }
     let mut data =
-        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R289).unwrap();
-    data.items = vec![
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    std::sync::Arc::get_mut(&mut data)
+        .expect("freshly decoded data is uniquely owned")
+        .items = vec![
         item("high", 20, "Duplicate"),
         item("low", 10, "Duplicate"),
         item("Collision", 30, "Alias winner"),
