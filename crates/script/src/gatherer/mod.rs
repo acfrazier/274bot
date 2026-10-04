@@ -1,6 +1,6 @@
 //! Rust-native gathering for woodcutting, mining and fishing.
 //!
-//! Start, Custom and bounded Auto use observed resource identity and content
+//! Start, Site, Custom and bounded Auto use observed resource identity and content.
 //! Power drops selected products; Bank mode deposits products and maintains
 //! supplies from loaded bank observations. Death recovery verifies respawn,
 //! reprovisioning, equipment, return and fresh yield; combat is not admitted.
@@ -43,6 +43,32 @@ pub fn test_bank_deposit_ids(
         tool_id,
         snapshot.inventory(),
     ))
+}
+
+/// Live-proof admission check for the anchor published by the Site work area.
+#[cfg(feature = "test-hooks")]
+pub fn test_site_anchor_selected(
+    config: &crate::native::PreparedConfig,
+    anchor: api::snapshot::WorldTile,
+) -> bool {
+    let Some(prepared) = config.get::<std::sync::Arc<card::Prepared>>() else {
+        return false;
+    };
+    let Some(site) = prepared.site() else {
+        return false;
+    };
+    prepared.methods.iter().any(|&index| {
+        let method = &prepared.catalog.methods()[index];
+        prepared
+            .catalog
+            .spots(method, &site.region)
+            .is_ok_and(|mut spots| {
+                spots.any(|spot| {
+                    spot.origin == anchor
+                        && widen::usable_candidate(&prepared.catalog, method, spot, &[], 0)
+                })
+            })
+    })
 }
 
 #[cfg(test)]

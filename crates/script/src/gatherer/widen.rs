@@ -1,5 +1,7 @@
 use super::select::AvoidedTile;
-use api::gather_methods::{known_rows, GatherCatalog, SceneRegionInput, TargetClass};
+use api::gather_methods::{
+    known_rows, GatherCatalog, GatherMethod, GatherSpot, SceneRegionInput, TargetClass,
+};
 use api::selected::{Knowledge, Truth};
 use api::snapshot::WorldTile;
 
@@ -73,15 +75,7 @@ impl WidenCursor {
             for spot in spots {
                 let d = distance(start, spot.origin);
                 if (self.ring > 1 && d <= inner)
-                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-                    || !known_rows(&method.targets).iter().any(|target| {
-                        target.entity == spot.entity
-                            && target.class == TargetClass::Resource
-                            && matches!(target.respawn, Knowledge::Known(_))
-                    })
-                    || avoided
-                        .iter()
-                        .any(|entry| u64::from(entry.until) > now && entry.tile == spot.origin)
+                    || !usable_candidate(catalog, method, spot, avoided, now)
                     || tried.iter().any(|entry| {
                         u64::from(entry.until) > now
                             && distance(entry.tile, spot.origin) <= i32::from(radius)
@@ -116,15 +110,7 @@ impl WidenCursor {
                     continue;
                 };
                 for spot in spots {
-                    if catalog.access(method, spot).unwrap_or(Truth::False) == Truth::True
-                        && known_rows(&method.targets).iter().any(|target| {
-                            target.entity == spot.entity
-                                && target.class == TargetClass::Resource
-                                && matches!(target.respawn, Knowledge::Known(_))
-                        })
-                        && !avoided
-                            .iter()
-                            .any(|entry| u64::from(entry.until) > now && entry.tile == spot.origin)
+                    if usable_candidate(catalog, method, spot, avoided, now)
                         && !tried.iter().any(|entry| {
                             u64::from(entry.until) > now
                                 && distance(entry.tile, spot.origin) <= i32::from(radius)
@@ -153,6 +139,60 @@ impl WidenCursor {
         self.square = 0;
         SearchResult::Pending
     }
+}
+
+/// Resource admission shared by Auto and named-site anchor selection.
+pub(super) fn usable_candidate(
+    catalog: &GatherCatalog,
+    method: &GatherMethod,
+    spot: &GatherSpot,
+    avoided: &[AvoidedTile],
+    now: u64,
+) -> bool {
+    catalog.access(method, spot).unwrap_or(Truth::False) == Truth::True
+        && known_rows(&method.targets).iter().any(|target| {
+            target.entity == spot.entity
+                && target.class == TargetClass::Resource
+                && matches!(target.respawn, Knowledge::Known(_))
+        })
+        && !avoided
+            .iter()
+            .any(|entry| u64::from(entry.until) > now && entry.tile == spot.origin)
+}
+
+/// Choose a selected resource placement, not the box centre or an unselected
+/// rock/tree. Two lazy passes avoid collecting placements. Comparing against
+/// the exact centroid avoids rounding away distance ties.
+pub(super) fn site_anchor(
+    catalog: &GatherCatalog,
+    methods: &[usize],
+    region: &SceneRegionInput,
+    avoided: &[AvoidedTile],
+    now: u64,
+) -> Option<WorldTile> {
+    let candidates = || {
+        methods.iter().flat_map(|&index| {
+            let method = &catalog.methods()[index];
+            catalog
+                .spots(method, region)
+                .into_iter()
+                .flatten()
+                .filter(move |spot| usable_candidate(catalog, method, spot, avoided, now))
+                .map(|spot| spot.origin)
+        })
+    };
+    let (x, z, n) = candidates().fold((0i64, 0i64, 0i64), |(x, z, n), tile| {
+        (x + i64::from(tile.x), z + i64::from(tile.z), n + 1)
+    });
+    candidates().min_by_key(|tile| {
+        (
+            (i64::from(tile.x) * n - x)
+                .abs()
+                .max((i64::from(tile.z) * n - z).abs()),
+            tile.x,
+            tile.z,
+        )
+    })
 }
 
 pub fn remember_group(tried: &mut [TriedGroup; 4], tile: WorldTile, now: u64, until: u64) -> bool {
@@ -214,6 +254,162 @@ fn ring_slice(start: WorldTile, ring: u8, square: u8) -> (SceneRegionInput, bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn site_anchor_is_selected_accessible_resource_nearest_exact_centroid() {
+        for revision in [
+            api::selected::ClientRevision::R274,
+            api::selected::ClientRevision::R289,
+        ] {
+            let selected = api::game_data::for_revision(revision).unwrap();
+            let worker_selected = selected.clone();
+            let catalog = api::selected::FamilyPreparation::run(move |worker| {
+                worker_selected.prepare_gathering(worker)
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+            for (skill, site_id, wanted) in [
+                (
+                    "woodcutting",
+                    "woodcutting.draynor",
+                    &["woodcutting.willow"][..],
+                ),
+                (
+                    "mining",
+                    "mining.varrock_east.se",
+                    &["mining.copper", "mining.tin"][..],
+                ),
+            ] {
+                let region = selected.gather_site(skill, site_id).unwrap().region;
+                let methods: Vec<_> = catalog
+                    .methods()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, method)| wanted.contains(&method.id.0.as_ref()).then_some(i))
+                    .collect();
+                assert_eq!(methods.len(), wanted.len());
+                let tiles: Vec<_> = methods
+                    .iter()
+                    .flat_map(|&i| {
+                        let method = &catalog.methods()[i];
+                        catalog
+                            .spots(method, &region)
+                            .unwrap()
+                            .filter(|spot| usable_candidate(&catalog, method, spot, &[], 1))
+                            .map(|spot| spot.origin)
+                    })
+                    .collect();
+                assert!(!tiles.is_empty());
+                let n = tiles.len() as i64;
+                let x: i64 = tiles.iter().map(|tile| i64::from(tile.x)).sum();
+                let z: i64 = tiles.iter().map(|tile| i64::from(tile.z)).sum();
+                let expected = tiles
+                    .iter()
+                    .min_by_key(|tile| {
+                        (
+                            (i64::from(tile.x) * n - x)
+                                .abs()
+                                .max((i64::from(tile.z) * n - z).abs()),
+                            tile.x,
+                            tile.z,
+                        )
+                    })
+                    .copied()
+                    .unwrap();
+                let mut anchor = None;
+                let allocations = allocation_counter::measure(|| {
+                    anchor = site_anchor(&catalog, &methods, &region, &[], 1);
+                });
+                assert_eq!(allocations.count_total, 0);
+                assert_eq!(anchor, Some(expected));
+                assert!(
+                    tiles.contains(&anchor.unwrap()),
+                    "anchor is a selected placement, not an iron-only rock or normal tree"
+                );
+                let avoided: Vec<_> = tiles
+                    .iter()
+                    .map(|&tile| AvoidedTile { tile, until: 100 })
+                    .collect();
+                assert!(site_anchor(&catalog, &methods, &region, &avoided, 1).is_none());
+                assert_eq!(
+                    site_anchor(&catalog, &methods, &region, &avoided, 100),
+                    Some(expected)
+                );
+                let first = tiles[0];
+                let second = *tiles.iter().find(|tile| **tile != first).unwrap();
+                let excluded: Vec<_> = tiles
+                    .iter()
+                    .filter(|&&tile| tile != first && tile != second)
+                    .map(|&tile| AvoidedTile { tile, until: 100 })
+                    .collect();
+                assert_eq!(
+                    site_anchor(&catalog, &methods, &region, &excluded, 1),
+                    Some(if (first.x, first.z) < (second.x, second.z) {
+                        first
+                    } else {
+                        second
+                    }),
+                    "two placements tie about their exact centroid; x then z breaks the tie"
+                );
+                let empty = SceneRegionInput {
+                    min_x: 1,
+                    max_x: 1,
+                    min_z: 1,
+                    max_z: 1,
+                    level: 0,
+                };
+                assert!(site_anchor(&catalog, &methods, &empty, &[], 1).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn site_candidate_admission_rejects_false_and_unknown_content_access() {
+        use api::gather_methods::ZoneEffect;
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let catalog =
+            api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
+                .unwrap()
+                .join()
+                .unwrap()
+                .unwrap();
+        let gold = catalog.method("mining.gold").unwrap();
+        let crest = SceneRegionInput {
+            min_x: 2736,
+            max_x: 2740,
+            min_z: 9684,
+            max_z: 9693,
+            level: 0,
+        };
+        let spot = catalog.spots(gold, &crest).unwrap().next().unwrap();
+        assert_eq!(catalog.access(gold, spot).unwrap(), Truth::False);
+        assert!(!usable_candidate(&catalog, gold, spot, &[], 1));
+        // Gems has the quest-state gate without the overlapping yield-interception gate.
+        let method = catalog.method("mining.gems").unwrap();
+        let zone = catalog
+            .zones(method)
+            .unwrap()
+            .find(|zone| zone.effect == ZoneEffect::StateGated)
+            .unwrap();
+        let mut gated = known_rows(&method.spots)
+            .iter()
+            .find(|spot| {
+                known_rows(&method.targets).iter().any(|target| {
+                    target.entity == spot.entity && target.class == TargetClass::Resource
+                })
+            })
+            .unwrap()
+            .clone();
+        gated.origin = WorldTile {
+            x: zone.min_x,
+            z: zone.min_z,
+            level: zone.level,
+        };
+        assert_eq!(catalog.access(method, &gated).unwrap(), Truth::Unknown);
+        assert!(!usable_candidate(&catalog, method, &gated, &[], 1));
+    }
 
     #[test]
     fn offset_ring_slices_do_not_admit_far_parts_of_touched_squares() {

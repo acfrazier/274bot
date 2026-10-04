@@ -6,6 +6,7 @@ use api::snapshot::WorldTile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AreaMode {
     Start,
+    Site,
     Custom,
     Auto,
 }
@@ -18,6 +19,8 @@ impl AreaMode {
             Some(Self::Custom)
         } else if value.eq_ignore_ascii_case("auto") {
             Some(Self::Auto)
+        } else if value.eq_ignore_ascii_case("site") {
+            Some(Self::Site)
         } else {
             None
         }
@@ -26,6 +29,7 @@ impl AreaMode {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Start => "start",
+            Self::Site => "site",
             Self::Custom => "custom",
             Self::Auto => "auto",
         }
@@ -51,7 +55,7 @@ impl WorkArea {
         let anchor = match mode {
             AreaMode::Start => retained_anchor.or(here).ok_or(AreaError::NotReady)?,
             AreaMode::Custom => settings.custom_tile.ok_or(AreaError::Invalid)?,
-            AreaMode::Auto => retained_anchor.ok_or(AreaError::NotReady)?,
+            AreaMode::Auto | AreaMode::Site => retained_anchor.ok_or(AreaError::NotReady)?,
         };
         Ok(Self {
             mode,
@@ -102,6 +106,7 @@ impl From<Location> for AreaMode {
     fn from(value: Location) -> Self {
         match value {
             Location::Start => Self::Start,
+            Location::Site => Self::Site,
             Location::Custom => Self::Custom,
             Location::Auto => Self::Auto,
         }
@@ -112,6 +117,37 @@ impl From<Location> for AreaMode {
 mod tests {
     use super::*;
     use crate::gatherer::settings::GathererSettings;
+
+    #[test]
+    fn site_requires_and_retains_resource_anchor_with_operator_radius() {
+        let settings = GathererSettings {
+            location: "Site".into(),
+            site: "fishing.catherby".into(),
+            radius: 12,
+            ..GathererSettings::default()
+        };
+        let bank = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        assert_eq!(
+            WorkArea::resolve(&settings, None, Some(bank)),
+            Err(AreaError::NotReady)
+        );
+        let resource = WorldTile {
+            x: 2848,
+            z: 3426,
+            level: 0,
+        };
+        let area = WorkArea::resolve(&settings, Some(resource), Some(bank)).unwrap();
+        assert_eq!(area.mode, AreaMode::Site);
+        assert_eq!(AreaMode::parse("SiTe"), Some(AreaMode::Site));
+        assert_eq!(area.mode.name(), "site");
+        assert_eq!(area.anchor, resource);
+        assert_eq!(area.radius, 12);
+        assert_eq!((area.region().min_x, area.region().max_x), (2836, 2860));
+    }
 
     #[test]
     fn start_captures_once_and_custom_is_position_independent() {
