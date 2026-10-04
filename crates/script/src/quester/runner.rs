@@ -52,6 +52,7 @@ pub struct Quester {
     selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
+    choices: super::choices::QuestChoices,
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
@@ -360,6 +361,7 @@ impl Quester {
             selected,
             quests,
             banks,
+            choices: super::choices::QuestChoices::default(),
             stage: None,
             progress: None,
             journal: None,
@@ -429,6 +431,7 @@ impl Quester {
             required_after,
             bank: &self.bank,
             banks: &self.banks,
+            choices: &self.choices,
         };
         let result = self.provisioner.poll(
             &mut cx,
@@ -1555,6 +1558,7 @@ impl Script for Quester {
                 required_after,
                 bank: &self.bank,
                 banks: &self.banks,
+                choices: &self.choices,
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
@@ -1587,6 +1591,7 @@ impl Script for Quester {
                 required_after,
                 bank: &self.bank,
                 banks: &self.banks,
+                choices: &self.choices,
             };
             self.step
                 .as_mut()
@@ -1787,6 +1792,7 @@ pub struct QueuedQuester {
     selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
+    choices: super::choices::QuestChoices,
     queue: super::queue::Queue<'static>,
     active: Option<Box<Quester>>,
     active_index: Option<usize>,
@@ -1827,6 +1833,7 @@ impl QueuedQuester {
             selected,
             quests,
             banks,
+            choices: super::choices::QuestChoices::default(),
             queue,
             active: None,
             active_index: None,
@@ -1844,6 +1851,13 @@ impl QueuedQuester {
         };
         this.refresh_fields();
         this
+    }
+    /// Apply account input before activation. Cached Paths remain shared.
+    pub fn set_choices(&mut self, choices: super::choices::QuestChoices) {
+        self.choices = choices;
+        if let Some(active) = &mut self.active {
+            active.choices = choices;
+        }
     }
 
     pub(super) fn restore(&mut self, retained: &super::QuesterRetained) {
@@ -2040,6 +2054,7 @@ impl QueuedQuester {
                     Arc::clone(&self.quests),
                     Arc::clone(&self.banks),
                 );
+                active.choices = self.choices;
                 active.prior_deaths = self.deaths;
                 active.max_deaths = self.max_deaths;
                 active.anchor = self.anchor;
@@ -2621,6 +2636,7 @@ mod tests {
                     required_after,
                     bank: &script.bank,
                     banks: &script.banks,
+                    choices: &script.choices,
                 };
                 super::super::families::combat::tests::no_food_abort_run_for_runner(
                     &mut step_cx,

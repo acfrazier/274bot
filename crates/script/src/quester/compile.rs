@@ -163,6 +163,8 @@ pub struct StepContext<'a, 'frame> {
     pub required_after: EvidenceStamp,
     pub bank: &'a super::bank_memo::BankMemo,
     pub banks: &'a Arc<api::named_banks::NamedBankFacts>,
+    /// Runtime account choices; never captured by a shared compiled plan.
+    pub choices: &'a super::choices::QuestChoices,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;

@@ -822,6 +822,7 @@ fn with_step_banks<R>(
         required_after,
         bank: &bank,
         banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 
@@ -2430,6 +2431,7 @@ fn with_sheep_step<R>(
         required_after: evidence,
         bank: &bank,
         banks: &banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 

@@ -137,6 +137,11 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 and `gang` are per-account settings, not bulk-copy settings; partner quest
 execution remains separate from this release slice.
 
+`crest_gauntlets` is also per-account: `chaos` (the default), `cooking`, or
+`goldsmith`. Runtime account choices are available to quest handlers when a step
+begins, without specializing the shared compiled Path. Omitted saved values use
+`chaos`, and unknown or random values are refused.
+
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
 For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
 The other released IDs are `sheep`, `runemysteries`, `romeojuliet`, and `imp`.
