@@ -1354,10 +1354,10 @@ fn many_search<'a>(
     }
 }
 
-/// Diagnose a refused route with every active zone on the reachable search
-/// frontier. An all-zone-exempt search is used only to establish that the
-/// same hard gates admit a route; its shortest witness does not determine the
-/// reported zones.
+/// Diagnose a refused single-target route with zones active along the best
+/// route after lifting zone restrictions. The strict search must fail with
+/// `NoPath`, and an all-zone-exempt search must find a route before its
+/// transitions can serve as the witness.
 #[allow(clippy::too_many_arguments)]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
@@ -1375,24 +1375,49 @@ pub fn find_blocking_zones(
     ) {
         return None;
     }
-    let relaxed = FindOptions {
-        zones: ZoneExempt::all(),
-        ..opts
-    };
-    find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
-    let mut blockers = HashSet::new();
-    if !blocking_frontier(
+    // The strict call has already exhausted its safe and completion stages;
+    // run only the final no-zone search instead of repeating those stages.
+    let route = run_single_search(
         collision,
         graph,
         from,
-        &[to],
-        opts,
+        to,
+        CostModel::running(),
+        NODE_BUDGET,
+        opts.allow_teleports,
+        opts.allow_wilderness,
         state,
+        opts.essence.as_ref(),
         avoid,
-        &filter,
-        &mut blockers,
-    ) {
-        return None;
+        None,
+    )
+    .ok()?;
+    let mut blockers = HashSet::new();
+    let mut previous = from;
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles } => {
+                for &arrival in tiles.iter().skip(1) {
+                    blockers.extend(filter.blocking_transition_at(
+                        &graph.wilderness,
+                        previous,
+                        arrival,
+                        &|| arrival == to,
+                    ));
+                    previous = arrival;
+                }
+            }
+            Leg::Transport { edge } => {
+                let arrival = edge.to;
+                blockers.extend(filter.blocking_transition_at(
+                    &graph.wilderness,
+                    previous,
+                    arrival,
+                    &|| arrival == to,
+                ));
+                previous = arrival;
+            }
+        }
     }
     blocking_zone_keys(graph.zones.as_ref()?, blockers)
 }
@@ -1500,8 +1525,9 @@ fn blocking_zone_keys(table: &ZoneTable, blockers: HashSet<u16>) -> Option<Vec<Z
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
 /// supply before a strict [`find_with`] can route: an `item_req` stack
 /// count the state cannot prove, or a `worn_req` list (any-of) with no
-/// worn alternative. [`missing_item_reqs`] names them for a route;
-/// [`find`]/[`find_with`] never relax an edge.
+/// worn alternative. A missing `worn_all_req` is not fetchable and remains
+/// strict in every diagnostic search. [`missing_item_reqs`] names only the
+/// carryable facts; [`find`]/[`find_with`] never relax an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
     /// The edge needs `count` of obj `id` carried (`item_req`).
@@ -1513,22 +1539,23 @@ pub enum MissingReq {
 
 /// Diagnose a strict [`find_with`] `NoPath`: run the same search with
 /// only the `item_req`/`worn_req` gates ignored, and collect every such
-/// fact on the relaxed route that `state` could not prove. When that
-/// search fails too, a crossing may need a fetched item *and* a quest-stage
-/// gate the evidence leaves `Unknown`: the search runs once more also
-/// crossing `Unknown` gates, and names only the carry/wear facts on that
-/// route ([`find_unresolved_quest_gates`] names its gates), so neither
-/// diagnosis hides behind the other's gate. Returns `None` when no relaxed
-/// search routes, or the one that does needs no item — a
-/// skill/quest/varp gate, a `False` stage gate or a plain hole in the graph
-/// blocks, or only a journal read can help, and no fetch-and-wear session
-/// can. This is the BankBudget session's diagnosis arm
-/// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
-/// themselves never ignore an item gate — missing facts still fail
-/// closed. The relaxed search carries the backward [`ReverseProof`], so an
-/// unreachable diagnosis target (a solid tile no transport lands on, a
-/// sealed pocket) costs about its own backward region instead of a relaxed
-/// flood of everything reachable from `from`.
+/// fact on the relaxed route that `state` could not prove. `worn_all_req`
+/// stays strict: an inventory or bank alternative cannot satisfy a
+/// conjunctive equipment prerequisite. When that search fails too, a
+/// crossing may need a fetched item *and* a quest-stage gate the evidence
+/// leaves `Unknown`: the search runs once more also crossing `Unknown`
+/// gates, and names only the carry/wear facts on that route
+/// ([`find_unresolved_quest_gates`] names its gates), so neither diagnosis
+/// hides behind the other's gate. Returns `None` when no relaxed search
+/// routes, or the one that does needs no item — a skill/quest/varp gate, a
+/// `False` stage gate or a plain hole in the graph blocks, or only a journal
+/// read can help, and no fetch-and-wear session can. This is the BankBudget
+/// session's diagnosis arm ([`crate::bank_fetch::plan_bank_fetch`]);
+/// [`find`] and [`find_with`] themselves never ignore an item gate — missing
+/// facts still fail closed. The relaxed search carries the backward
+/// [`ReverseProof`], so an unreachable diagnosis target (a solid tile no
+/// transport lands on, a sealed pocket) costs about its own backward region
+/// instead of a relaxed flood of everything reachable from `from`.
 pub fn find_missing_item_reqs(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2227,15 +2254,15 @@ enum Relax {
     /// Every requirement holds, quest-stage gates only when `True`.
     Strict,
     /// The BankBudget diagnosis ([`find_missing_item_reqs`]): only the
-    /// `item_req`/`worn_req` gates are ignored.
+    /// `item_req`/`worn_req` gates are ignored; `worn_all_req` stays strict.
     CarryWorn,
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
-    /// Both diagnosis arms' fallback: carry/wear gates are ignored and
-    /// `Unknown` stage gates crossed, so a crossing that needs a fetched item
-    /// and a journal read together is visible to each arm. Each arm still
-    /// reports only its own kind of gate from the route.
+    /// Both diagnosis arms' fallback: `item_req`/`worn_req` gates are ignored
+    /// and `Unknown` stage gates crossed, so a crossing that needs a fetched
+    /// item and a journal read together is visible to each arm. Every other
+    /// requirement, including `worn_all_req`, stays strict.
     CarryWornUnknownQuest,
 }
 
@@ -2248,7 +2275,9 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
         }
         Relax::CarryWornUnknownQuest => {
-            state.fixed_reqs_allow(edge) && state.quest_gates(edge) != Truth::False
+            state.fixed_reqs_allow(edge)
+                && state.worn_all_req_allows(edge)
+                && state.quest_gates(edge) != Truth::False
         }
     }
 }
@@ -2522,6 +2551,9 @@ impl<'a> ReverseClosure<'a> {
         if self.use_teleports
             && graph.teleports.iter().any(|edge| {
                 self.seen.contains(&edge.to)
+                    && edge
+                        .takeoff
+                        .is_none_or(|takeoff| self.seen.contains(&takeoff))
                     && proof_edge_allowed(state, edge, self.relax, self.inventory_can_grow)
             })
         {
@@ -2605,6 +2637,57 @@ impl<'a> ReverseClosure<'a> {
     }
 }
 
+/// Run one single-target kernel with the supplied zone filter and rebuild
+/// its route when the selected goal settles.
+#[allow(clippy::too_many_arguments)]
+fn run_single_search(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    model: CostModel,
+    budget: usize,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    state: &WorldState,
+    essence: Option<&EssenceSession>,
+    avoid: &[AvoidRect],
+    zones: Option<&ZoneFilter<'_>>,
+) -> Result<Route, RouteError> {
+    let mut goals = Goals::Single { to, cost: None };
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        model,
+        budget,
+        use_teleports,
+        allow_wilderness,
+        state,
+        essence,
+        Relax::Strict,
+        avoid,
+        zones,
+        &mut goals,
+        None,
+    );
+    match goals {
+        Goals::Single {
+            cost: Some(cost), ..
+        } => {
+            let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
+            debug_assert_eq!(ticks, cost.ticks);
+            Ok(Route {
+                legs,
+                dest: to,
+                ticks,
+            })
+        }
+        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        _ => Err(RouteError::NoPath),
+    }
+}
+
 /// The shared single-target Dijkstra behind [`find`]/[`find_with`]:
 /// `use_teleports` unions the any-tile teleport layer into the relaxation
 /// from every settled node. Transport edges are relaxed from any standable
@@ -2636,41 +2719,23 @@ fn find_bounded_impl(
             ticks: 0.0,
         });
     }
-
     let zones = zone_filter(graph, state, &[from], &ZoneExempt::NONE);
+
     let run = |zones: Option<&ZoneFilter<'_>>| {
-        let mut goals = Goals::Single { to, cost: None };
-        let search = search_kernel(
+        run_single_search(
             collision,
             graph,
             from,
+            to,
             model,
             budget,
             use_teleports,
             allow_wilderness,
             state,
             essence,
-            Relax::Strict,
             avoid,
             zones,
-            &mut goals,
-            None,
-        );
-        match goals {
-            Goals::Single {
-                cost: Some(cost), ..
-            } => {
-                let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
-                debug_assert_eq!(ticks, cost.ticks);
-                Ok(Route {
-                    legs,
-                    dest: to,
-                    ticks,
-                })
-            }
-            _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
-            _ => Err(RouteError::NoPath),
-        }
+        )
     };
     let safe_impossible = zones.as_ref().is_some_and(|filter| {
         zone_goal_proof(
@@ -3082,6 +3147,9 @@ fn search_kernel_budget<B: Budget>(
             let wildy_level = graph.wilderness.level(cur);
             for &ti in &allowed_teleports {
                 let edge = &graph.teleports[ti];
+                if edge.takeoff.is_some_and(|takeoff| takeoff != cur) {
+                    continue;
+                }
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }

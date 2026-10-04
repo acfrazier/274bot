@@ -1638,6 +1638,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
             edges: vec![TransportEdge {
                 kind: TransportKind::Door,
                 player_delta: None,
+                takeoff: None,
                 at: WorldTile {
                     x: 3202,
                     z: 3202,
@@ -1660,6 +1661,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
+                worn_all_req: vec![],
                 members_req: false,
                 wildy_cap: None,
                 quest_gates: None,
@@ -2106,6 +2108,7 @@ fn door_route() -> Route {
                 edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
+                    takeoff: None,
                     at: WorldTile {
                         x: 3202,
                         z: 3200,
@@ -2128,6 +2131,7 @@ fn door_route() -> Route {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    worn_all_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
@@ -2357,6 +2361,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                 edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
+                    takeoff: None,
                     at: tiles[300],
                     to: tiles[301],
                     loc_id: 1530,
@@ -2371,6 +2376,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    worn_all_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
@@ -3432,6 +3438,8 @@ fn toll_world() -> NavWorld {
         flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
     }
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -3637,6 +3645,8 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     };
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -3771,6 +3781,8 @@ fn picker_confirm_uses_find_with_options() {
         ..TransportGraph::default()
     };
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {

@@ -1,5 +1,5 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
-//! transport graph, the bank stand table, the v15 pack bytes, the raw flags
+//! transport graph, the bank stand table, the v16 pack bytes, the raw flags
 //! sidecar, the paint-reach sidecar, the static canlight sidecar and the bound
 //! manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
@@ -49,7 +49,7 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// derivation; reach bits also depend on `paint.rs` (`bake_reach`) and
 /// `router.rs` (`step_ok`). Traveller and grid-search changes do not decide
 /// those bytes.
-pub const GENERATOR_SOURCES: [&str; 45] = [
+pub const GENERATOR_SOURCES: [&str; 47] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -93,6 +93,8 @@ pub const GENERATOR_SOURCES: [&str; 45] = [
     "src/transport/rs2_syntax.rs",
     "src/transport/stage_doors.rs",
     "src/transport/engine_door_procs.rs2",
+    "src/transport/stage_doors_forced.rs",
+    "src/transport/engine_forced_procs.rs2",
     "src/zones.rs",
     "src/zones/curated.rs",
 ];
@@ -919,7 +921,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     );
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
-    require_members_guards(content_root, &graph)?;
+    require_members_guards(content_root, &graph, &audit)?;
     let derived_zones = derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
     let zone_count = u32::try_from(derived_zones.table.zones().len())
         .map_err(|_| "zone count exceeds the manifest range".to_string())?;
@@ -969,7 +971,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let canlight_bits =
         canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
 
-    // The raw baked flags ride in the sidecar; the v15 pack carries only
+    // The raw baked flags ride in the sidecar; the v16 pack carries only
     // the packed walk surface (the router's resident form).
     let flags = collision
         .flags

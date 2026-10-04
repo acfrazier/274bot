@@ -101,6 +101,8 @@ pub(super) fn push_glider_flight(
     members_req: bool,
 ) {
     graph.edges.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Glider,
         player_delta: None,
         at,

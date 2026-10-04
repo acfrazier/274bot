@@ -132,6 +132,8 @@ pub(super) fn toll_edges(
                     continue;
                 };
                 let edge = |consumed_req, quest_req| TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
                     kind: TransportKind::Door,
                     player_delta: None,
                     at,
@@ -232,6 +234,8 @@ pub(super) fn toll_shantay_henge_edges(
             level: p.level,
         };
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
             at,
@@ -253,6 +257,8 @@ pub(super) fn toll_shantay_henge_edges(
             quest_gates: None,
         });
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
             at: WorldTile {
