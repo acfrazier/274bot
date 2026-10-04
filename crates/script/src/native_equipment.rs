@@ -11,7 +11,7 @@ const SETTLE_BOUND: Duration = Duration::from_secs(5);
 pub enum EquipmentRequest {
     Wear { id: i32, name: Arc<str> },
     Unequip { id: i32, name: Arc<str> },
-    Strip,
+    Strip { keep: Arc<[i32]> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +47,7 @@ impl NativeMachine for EquipmentMachine {
         if let Some(id) = self.pending_id {
             let landed = match self.request {
                 EquipmentRequest::Wear { .. } => worn.value.iter().any(|row| row.def.id == id),
-                EquipmentRequest::Unequip { .. } | EquipmentRequest::Strip => {
+                EquipmentRequest::Unequip { .. } | EquipmentRequest::Strip { .. } => {
                     !worn.value.iter().any(|row| row.def.id == id)
                 }
             };
@@ -95,11 +95,11 @@ impl NativeMachine for EquipmentMachine {
                 })?;
                 self.pending_id = Some(*id);
             }
-            EquipmentRequest::Strip => {
+            EquipmentRequest::Strip { keep } => {
                 let row = worn
                     .value
                     .iter()
-                    .find(|row| row.count > 0)
+                    .find(|row| row.count > 0 && !keep.contains(&row.def.id))
                     .and_then(|row| row.def.name.clone().map(|name| (row.def.id, name)));
                 let Some((id, name)) = row else {
                     return Poll::Ready(Ok(EquipmentReceipt {

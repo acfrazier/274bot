@@ -4,7 +4,7 @@ export const LOADOUT_SETTING = {
     options: [],
     optionsFrom: 'loadouts',
     label: 'Loadout',
-    help: 'gear and supplies to wear, defined in the Loadouts panel; blank uses the first one',
+    help: 'Use an exact name first. Otherwise, match one loadout name after trimming both names and ignoring ASCII case. A blank setting selects the first loadout. The host refuses unknown or ambiguous names.',
 };
 
 export function selectedLoadout(bag) {
