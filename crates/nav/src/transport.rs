@@ -146,13 +146,10 @@ pub enum DoorDir {
     W,
 }
 
-/// One directed transport hop: stand on or near `at`, use `option` on the
-/// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
-/// target — the loc tile (door/web/ladder/stairs/agility/glider) or the
-/// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
-/// crossing direction for doors and slashable webs (`None` for every
-/// other edge kind until steps 3/4 fill them); `open_loc_id` names the
-/// door's open leaf or the web's slashed loc.
+/// One directed transport hop. `at` remains the loc/NPC interaction anchor
+/// and `to` the resolved landing; optional `takeoff` pins conditional or
+/// multi-step content to its exact required game-plane starting tile. A
+/// pinned takeoff is the only admissible stand, rather than a nearby approach.
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs and spell/quest names and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare. `item_req` is a
@@ -162,13 +159,18 @@ pub enum DoorDir {
 /// spend, derived only when the source proves an inventory transformation.
 /// `worn_req` is the obj ids of which **any one** must be equipped (a Dramen
 /// staff is a one-id list; slashable webs list every blade whose
-/// `slashattack_anim` is not unarmed). `option` 0 on a loc hop means use the
-/// first `item_req` obj on the loc (`oplocu`); option 1 is `oploc1`.
+/// `slashattack_anim` is not unarmed). `worn_all_req` is a conjunctive
+/// equipment gate: every listed obj id must currently be equipped. `option` 0
+/// on a loc hop means use the first `item_req` obj on the loc (`oplocu`);
+/// option 1 is `oploc1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
     pub at: WorldTile,
     pub to: WorldTile,
+    /// Exact required starting tile; `None` preserves radius/footprint
+    /// admission for existing transports.
+    pub takeoff: Option<WorldTile>,
     /// Content `movecoord(coord, ...)` displacement from the actual operable
     /// takeoff stand. `None` is an absolute landing. Packed in the kind byte's
     /// high bit; the canonical graph's `to - at` supplies the displacement.
@@ -188,6 +190,10 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
+    /// Conjunctive equipment prerequisites: every obj id must be equipped.
+    /// Unlike `worn_req`, this cannot be satisfied by an alternative, a
+    /// carried item, or a banked item.
+    pub worn_all_req: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
     /// handler (see `members_guard`): an F2P refusal on its leading path
     /// gates every edge through it; gliders, Zanaris, spirit trees, stage
@@ -269,8 +275,8 @@ impl TransportEdge {
     }
 }
 
-/// Transport edges indexed by operable footprint stands or radius-one
-/// interact anchors (`graph.at[tile]` lists indexes into `edges`).
+/// Transport edges indexed by exact pinned takeoff tiles, operable footprint
+/// stands, or radius-one interact anchors (`graph.at` lists edge indexes).
 #[derive(Debug, Default)]
 pub struct TransportGraph {
     pub edges: Vec<TransportEdge>,
@@ -298,6 +304,7 @@ pub struct TransportGraph {
 
 impl TransportGraph {
     /// The same footprint/face predicate used by live loc interactions.
+    #[inline(always)]
     pub fn admissible_from(
         &self,
         collision: &WorldCollision,
@@ -305,7 +312,10 @@ impl TransportGraph {
         from: WorldTile,
     ) -> bool {
         let edge = &self.edges[index];
-        if !collision.standable(from) || from.level != edge.at.level {
+        if edge.takeoff.is_some_and(|takeoff| from != takeoff)
+            || !collision.standable(from)
+            || from.level != edge.at.level
+        {
             return false;
         }
         match self.approaches.get(index).copied().flatten() {
@@ -319,7 +329,11 @@ impl TransportGraph {
     }
 
     pub(crate) fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
-        let at = self.edges[index].at;
+        let edge = &self.edges[index];
+        if let Some(takeoff) = edge.takeoff {
+            return (takeoff, takeoff);
+        }
+        let at = edge.at;
         let approach = self.approaches.get(index).copied().flatten();
         (
             WorldTile {
@@ -335,11 +349,17 @@ impl TransportGraph {
         )
     }
 
-    /// Index footprint edges at their operable stands; other transports keep
-    /// their target anchor. This index is shared by all router callers.
+    /// Index pinned transports only at their exact admissible takeoff;
+    /// footprint edges use operable stands and the rest keep their anchor.
     pub fn rebuild_index(&mut self, collision: &WorldCollision) {
         self.at.clear();
         for (index, edge) in self.edges.iter().enumerate() {
+            if let Some(takeoff) = edge.takeoff {
+                if self.admissible_from(collision, index, takeoff) {
+                    self.at.entry(takeoff).or_default().push(index);
+                }
+                continue;
+            }
             if self.approaches.get(index).copied().flatten().is_none() {
                 self.at.entry(edge.at).or_default().push(index);
                 continue;
@@ -552,6 +572,7 @@ fn derive_transports_with_audit(
         content_root,
         &ids,
         &positions,
+        loc_defs,
         &mut graph,
         collision,
         &mut skipped,
@@ -624,6 +645,7 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
     fn rest(e: &TransportEdge) -> impl Ord + '_ {
         (
             tile(e.to),
+            e.takeoff.map(tile),
             (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
             (
                 &e.skill_req,
@@ -632,7 +654,13 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
                 &e.item_returns,
                 &e.quest_req,
             ),
-            (&e.varp_req, &e.worn_req, e.members_req, e.wildy_cap),
+            (
+                &e.varp_req,
+                &e.worn_req,
+                &e.worn_all_req,
+                e.members_req,
+                e.wildy_cap,
+            ),
             &e.quest_gates,
         )
     }

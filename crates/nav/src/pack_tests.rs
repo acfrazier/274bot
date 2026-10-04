@@ -6,8 +6,8 @@ use super::{
     derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_grid,
     encode_reach_sidecar, merge_squares, parse_door_config, parse_door_config_ids,
     parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, read_canlight_sidecar,
-    read_flags_sidecar, read_reach_sidecar, sha256_hex, walkable_dots, BankAccess, BankStand,
-    Mapsquare, SQUARE, VERSION,
+    read_flags_sidecar, read_reach_sidecar, read_takeoff, sha256_hex, walkable_dots, BankAccess,
+    BankStand, Mapsquare, SQUARE, VERSION,
 };
 use api::query::loc_approach::LocApproach;
 use api::selected::{FactKey, QuestGate};
@@ -92,7 +92,7 @@ fn pack_walk_roundtrips_step_ok_vs_u32_flags() {
 }
 
 #[test]
-fn v15_pack_has_no_resident_flags() {
+fn v16_pack_has_no_resident_flags() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -115,7 +115,7 @@ fn v15_pack_has_no_resident_flags() {
 }
 
 #[test]
-fn v15_decode_rejects_older_versions() {
+fn v16_decode_rejects_older_versions() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -131,6 +131,8 @@ fn v15_decode_rejects_older_versions() {
         flags: None,
     };
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    bytes[4] = 15;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(15))));
     bytes[4] = 7;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(7))));
     bytes[4] = 6;
@@ -683,6 +685,8 @@ fn roundtrip_collision_and_transport_graph() {
     };
     let mut graph = TransportGraph::default();
     let door = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -712,6 +716,8 @@ fn roundtrip_collision_and_transport_graph() {
         quest_gates: None,
     };
     let ladder = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Stairs,
         player_delta: None,
         at: WorldTile {
@@ -745,6 +751,8 @@ fn roundtrip_collision_and_transport_graph() {
     let li = graph.edges.len();
     graph.edges.push(ladder);
     let glider = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Glider,
         player_delta: None,
         at: WorldTile {
@@ -778,6 +786,8 @@ fn roundtrip_collision_and_transport_graph() {
     // A spirit-tree edge (kind 7) and the reserved NPC kind (8) ride
     // the same wire byte without a version bump.
     let spirit = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::SpiritTree,
         player_delta: None,
         at: WorldTile {
@@ -809,6 +819,8 @@ fn roundtrip_collision_and_transport_graph() {
     let si = graph.edges.len();
     graph.edges.push(spirit);
     let npc = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -842,6 +854,8 @@ fn roundtrip_collision_and_transport_graph() {
     // The any-tile teleport layer (Varrock spell): stored as a kind-4
     // edge in the same array, split back out on decode.
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -955,18 +969,20 @@ fn roundtrip_collision_and_transport_graph() {
 }
 
 #[test]
-fn v15_roundtrips_consumed_and_returned_resources() {
+fn v16_roundtrips_consumed_returned_and_worn_all_requirements() {
     let collision = tiny_collision();
     let mut edge = gated_door(None);
     edge.kind = TransportKind::Teleport;
     edge.item_req = vec![(1351, 1)];
     edge.consumed_req = vec![(995, 5)];
     edge.item_returns = vec![(386, 1)];
+    edge.worn_all_req = vec![1277, 1321];
     let mut graph = TransportGraph::default();
     graph.teleports.push(edge.clone());
 
     let bytes = encode(&collision, &graph, &[]).unwrap();
     let (_, decoded, _) = decode(&bytes).unwrap();
+    assert_eq!(decoded.teleports[0].worn_all_req, vec![1277, 1321]);
     assert_eq!(decoded.teleports, vec![edge]);
 }
 
@@ -1351,6 +1367,8 @@ fn v8_roundtrips_worn_req() {
         flags: None,
     };
     let door = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -1383,7 +1401,7 @@ fn v8_roundtrips_worn_req() {
     graph.edges.push(door.clone());
     graph.at.entry(door.at).or_default().push(0);
     let bytes = encode(&collision, &graph, &[]).unwrap();
-    // The version byte sits right after the 4-byte magic: v15 now.
+    // The version byte sits right after the 4-byte magic: v16 now.
     assert_eq!(bytes[4], VERSION);
     let (c, g, _) = decode(&bytes).unwrap();
     assert_eq!(g.edges, graph.edges);
@@ -1410,6 +1428,8 @@ fn v9_roundtrips_members_req_true_and_false() {
         flags: None,
     };
     let edge = |members_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -1449,7 +1469,7 @@ fn v9_roundtrips_members_req_true_and_false() {
 }
 
 #[test]
-fn v15_decode_rejects_older_version_bytes() {
+fn v16_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -1465,6 +1485,9 @@ fn v15_decode_rejects_older_version_bytes() {
         flags: None,
     };
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    // v15 predates the conjunctive worn-all item list.
+    bytes[4] = 15;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(15))));
     // v14 predates the consumed-resource and replacement-item vectors.
     bytes[4] = 14;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(14))));
@@ -1503,6 +1526,8 @@ fn v9_decode_rejects_invalid_members_req_flag() {
         flags: None,
     };
     let door = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -1535,9 +1560,9 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     graph.edges.push(door);
     let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
-    // count (u32), bank-stand count (u32), wilderness rules (12 B), and
-    // the five zero-count zone tables (20 B).
-    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 1;
+    // count (u32), the takeoff field (13 B), bank-stand count (u32),
+    // wilderness rules (12 B), and the five zero-count zone tables (20 B).
+    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 13 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -2210,6 +2235,8 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
         ..TransportGraph::default()
     };
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -2245,6 +2272,50 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
     assert_eq!(g.teleports[0].wildy_cap, Some(20));
 }
 
+#[test]
+fn exact_takeoff_roundtrips_and_invalid_planes_are_rejected() {
+    let collision = tiny_collision();
+    let mut edge = gated_door(None);
+    let takeoff = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    edge.takeoff = Some(takeoff);
+    let mut graph = TransportGraph::default();
+    graph.edges.push(edge);
+    let bytes = encode(&collision, &graph, &[]).unwrap();
+    let (_, decoded, _) = decode(&bytes).unwrap();
+    assert_eq!(decoded.edges[0].takeoff, Some(takeoff));
+
+    let mut malformed = graph;
+    malformed.edges[0].takeoff = Some(WorldTile {
+        level: 1,
+        ..takeoff
+    });
+    assert!(matches!(
+        encode(&collision, &malformed, &[]),
+        Err(PackError::BadLength(_))
+    ));
+}
+
+#[test]
+fn malformed_exact_takeoff_tag_is_rejected() {
+    let mut bytes = [0; 13];
+    bytes[0] = 2;
+    assert!(matches!(
+        read_takeoff(
+            &mut std::io::Cursor::new(&bytes[..]),
+            WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            }
+        ),
+        Err(PackError::BadLength(_))
+    ));
+}
+
 /// A 2×2 open collision: the smallest pack body the gate tests append to.
 fn tiny_collision() -> WorldCollision {
     let (walk, blocked) = pack_walk(&[0u32; 4 * 2 * 2]);
@@ -2265,6 +2336,8 @@ fn tiny_collision() -> WorldCollision {
 /// One door crossing carrying `quest_gates`.
 fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -2415,6 +2488,7 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
     graph.edges.push(gated_door(Some(gates.clone())));
     let completed = QuestGates::new(family, [QuestGate::Complete(FactKey::new("tbwt"))]).unwrap();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
         kind: TransportKind::Teleport,
         player_delta: None,
         ..gated_door(Some(completed))
@@ -2559,13 +2633,13 @@ fn every_constructible_quest_family_encodes_a_decodable_pack() {
 /// as inconsistent; nothing loads as silently ungated.
 #[test]
 fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
-    // The geometry tag follows its gate list, before the bank count,
-    // Wilderness trailer, and zone counts.
+    // The takeoff field and geometry tag follow the gate list, before the
+    // bank count, Wilderness trailer, and zone counts.
     const TRAILER: usize = 4 + 12 + 20;
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
     let unbound = encode(&tiny_collision(), &graph, &[]).unwrap();
-    let count_at = unbound.len() - TRAILER - 1 - 4;
+    let count_at = unbound.len() - TRAILER - 1 - 13 - 4;
     let mut spliced = unbound[..count_at].to_vec();
     spliced.extend_from_slice(&1u32.to_le_bytes());
     spliced.push(0); // a completed-quest gate
@@ -2595,7 +2669,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
     schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
     assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
     // The window's bounds close the record: min flag + i32, max flag + i32.
-    let max_at = bytes.len() - TRAILER - 1 - 4;
+    let max_at = bytes.len() - TRAILER - 1 - 13 - 4;
     let min_at = max_at - 1 - 4;
     let mut empty_window = bytes.clone();
     empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());

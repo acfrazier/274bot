@@ -54,7 +54,7 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
 fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
     StampExpectation {
         revision: 289,
-        format: "274V15",
+        format: "274V16",
         generator: "gen-1",
         cache_id: "cache-1",
         inputs,
@@ -76,7 +76,7 @@ fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
 
 #[test]
 fn a_matching_stamp_covers_and_every_change_is_stale() {
-    let baked = stamp("gen-1", "274V15", "cache-1", 11);
+    let baked = stamp("gen-1", "274V16", "cache-1", 11);
     let inputs = baked.inputs.clone();
     assert!(baked.covers(&expectation(&inputs)).is_ok());
 
@@ -219,7 +219,7 @@ fn legacy_v8_stamp_without_manifest_or_input_hashes_is_stale() {
 fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
     // The legacy v8 literal above asserts on the first gate (`format`), so
     // these stamp-side None/empty checks need a current-format stamp to run.
-    let baked = stamp("gen-1", "274V15", "cache-1", 11);
+    let baked = stamp("gen-1", "274V16", "cache-1", 11);
     let inputs = baked.inputs.clone();
 
     let mut no_pois = baked.clone();

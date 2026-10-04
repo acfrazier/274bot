@@ -104,6 +104,7 @@ mod tests {
 
     fn door(at: WorldTile, to: WorldTile) -> nav::transport::TransportEdge {
         nav::transport::TransportEdge {
+            takeoff: None,
             kind: nav::transport::TransportKind::Door,
             player_delta: None,
             at,
@@ -120,6 +121,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            worn_all_req: vec![],
             members_req: false,
             wildy_cap: None,
             quest_gates: None,

@@ -4,6 +4,8 @@
 //! first (cold-search) duration separately from warm repetitions. Search
 //! scratch is reported as allocated entry capacities, not invented byte
 //! precision for `HashMap` buckets.
+//! `NAV_PERF_COUNTERS_ONLY=1` disables every clock read and reports only
+//! deterministic outcomes, settled nodes and scratch capacities.
 
 use api::snapshot::WorldTile;
 use nav::router::{
@@ -73,15 +75,22 @@ fn percentile(sorted: &[f64], percentile: f64) -> Option<f64> {
     Some(sorted[index])
 }
 
+fn counters_only() -> bool {
+    std::env::var("NAV_PERF_COUNTERS_ONLY").as_deref() == Ok("1")
+}
+
 fn measure_case(name: &str, iterations: usize, mut run: impl FnMut() -> Observation) -> Value {
-    let mut times_ms = Vec::with_capacity(iterations);
+    let timed = !counters_only();
+    let mut times_ms = Vec::with_capacity(if timed { iterations } else { 0 });
     let mut outcomes = Vec::with_capacity(iterations);
     let mut settled_peak = 0usize;
     let mut scratch = PeakScratch::default();
     for _ in 0..iterations {
-        let started = Instant::now();
+        let started = timed.then(Instant::now);
         let observation = run();
-        times_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        if let Some(started) = started {
+            times_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
         outcomes.push(observation.outcome);
         settled_peak = settled_peak.max(observation.settled);
         scratch.observe(observation.scratch);
@@ -156,9 +165,9 @@ fn parse_args() -> Result<(PathBuf, usize), String> {
 
 fn main() -> Result<(), String> {
     let (pack, iterations) = parse_args()?;
-    let decode_started = Instant::now();
+    let decode_started = (!counters_only()).then(Instant::now);
     let mut world = NavWorld::load_pack(&pack).map_err(|error| format!("load pack: {error:?}"))?;
-    let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
+    let decode_ms = decode_started.map(|started| started.elapsed().as_secs_f64() * 1000.0);
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)?;
     world
         .bind_named_bank_facts(&game_data)
@@ -381,15 +390,12 @@ fn main() -> Result<(), String> {
             )
             .expect("zone refusal witness");
             let table = world.graph.zones.as_ref().expect("v12 zones");
-            let names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
-            // NAV-N1 attributes the full frontier, not just a shortest exempt witness.
-            assert!(
-                names.iter().any(|name| name == "white-wolf-mountain"),
-                "{names:?}"
-            );
-            assert!(
-                names.iter().any(|name| name == "wolf@2647,3584,0"),
-                "{names:?}"
+            let mut names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
+            names.sort_unstable();
+            assert_eq!(
+                names,
+                vec!["white-wolf-mountain", "wolf@2647,3584,0"],
+                "single-target refusal reports only the best relaxed-route witness"
             );
             Observation {
                 outcome: format!("NoPath blocked:{names:?}"),

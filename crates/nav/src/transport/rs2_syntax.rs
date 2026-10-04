@@ -31,9 +31,20 @@ pub(super) enum Expr {
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
+    /// Checked integer arithmetic used by deterministic movement expressions.
+    Arithmetic(ArithmeticOp, Box<Expr>, Box<Expr>),
     /// Arithmetic or another form the evaluator does not model, with every
     /// call it makes.
     Other(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArithmeticOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +67,8 @@ pub(super) enum Stmt {
     /// `return;` or `return(<expr>);`, with every call and `@label` the
     /// returned expression makes (they run before the script ends).
     Return(Vec<String>),
+    /// A value-returning proc retains its expression for content tool selectors.
+    ReturnValue(Expr),
     Jump(String, Vec<Expr>),
     Def(String, Option<Expr>),
     Assign(Vec<String>, Expr),
@@ -78,6 +91,7 @@ impl Stmt {
             Stmt::Block(body) | Stmt::While(_, body) => body.iter().any(Stmt::has_unstructured),
             Stmt::Switch(_, arms) => arms.iter().flat_map(|(_, b)| b).any(Stmt::has_unstructured),
             Stmt::Return(_)
+            | Stmt::ReturnValue(_)
             | Stmt::Jump(..)
             | Stmt::Def(..)
             | Stmt::Assign(..)
@@ -97,6 +111,7 @@ impl Stmt {
             }
             Stmt::Block(body) => body.iter().for_each(|s| s.calls(out)),
             Stmt::Return(calls) => out.extend(calls.iter().cloned()),
+            Stmt::ReturnValue(value) => expr_calls(value, out),
             Stmt::Jump(name, args) => {
                 out.push(format!("@{name}"));
                 args.iter().for_each(|a| expr_calls(a, out));
@@ -129,7 +144,7 @@ fn expr_calls(expr: &Expr, out: &mut Vec<String>) {
             out.push(name.clone());
             args.iter().for_each(|a| expr_calls(a, out));
         }
-        Expr::Cmp(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) => {
+        Expr::Cmp(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Arithmetic(_, a, b) => {
             expr_calls(a, out);
             expr_calls(b, out);
         }
@@ -330,14 +345,14 @@ impl Parser<'_> {
             "if" => self.if_stmt(),
             "return" => {
                 self.i += 1;
-                let calls = if self.is_punct("(") {
+                let stmt = if self.is_punct("(") {
                     let (start, end) = self.balanced_group()?;
-                    calls_in(&self.toks[start..end])
+                    Stmt::ReturnValue(parse_expr(&self.toks[start..end])?)
                 } else {
-                    vec![]
+                    Stmt::Return(vec![])
                 };
                 self.eat_punct(";")?;
-                Some(Stmt::Return(calls))
+                Some(stmt)
             }
             "while" => {
                 self.i += 1;
@@ -581,6 +596,22 @@ pub(super) fn parse_expr(toks: &[Tok]) -> Option<Expr> {
             Box::new(parse_expr(&toks[k + 1..])?),
         ));
     }
+    for ops in [&["+", "-"][..], &["*", "/", "%"][..]] {
+        if let Some(k) = arithmetic_split(toks, ops) {
+            let op = match toks[k] {
+                Tok::Punct("+") => ArithmeticOp::Add,
+                Tok::Punct("-") => ArithmeticOp::Subtract,
+                Tok::Punct("*") => ArithmeticOp::Multiply,
+                Tok::Punct("/") => ArithmeticOp::Divide,
+                _ => ArithmeticOp::Modulo,
+            };
+            return Some(Expr::Arithmetic(
+                op,
+                Box::new(parse_expr(&toks[..k])?),
+                Box::new(parse_expr(&toks[k + 1..])?),
+            ));
+        }
+    }
     primary(toks)
 }
 
@@ -592,6 +623,25 @@ fn split_at_depth0(toks: &[Tok], ops: &[&str]) -> Option<usize> {
             Tok::Punct("(") => depth += 1,
             Tok::Punct(")") => depth -= 1,
             Tok::Punct(p) if depth == 0 && ops.contains(p) => return Some(k),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Rightmost binary operator keeps arithmetic left-associative. A leading
+/// sign or a sign following another operator is unary, not a split.
+fn arithmetic_split(toks: &[Tok], ops: &[&str]) -> Option<usize> {
+    let mut depth = 0i32;
+    for k in (0..toks.len()).rev() {
+        match &toks[k] {
+            Tok::Punct(")") => depth += 1,
+            Tok::Punct("(") => depth -= 1,
+            Tok::Punct(op) if depth == 0 && ops.contains(op) && k > 0 => {
+                if matches!(&toks[k - 1], Tok::Word(_) | Tok::Num(_) | Tok::Punct(")")) {
+                    return Some(k);
+                }
+            }
             _ => {}
         }
     }

@@ -1,6 +1,8 @@
 //! BankBudget (Task 8): the fetch-and-wear session that unblocks a
 //! [`crate::router::find_with`] `NoPath` whose only missing gates are
-//! `item_req`, `consumed_req`, or `worn_req`. `find` stays fail-closed:
+//! `item_req`, `consumed_req`, or the legacy any-of `worn_req`. `worn_all_req`
+//! remains strict in both route searches: a fetched or carried piece cannot
+//! stand in for currently equipped gear. `find` stays fail-closed:
 //! the router never inserts a virtual bank leg or relaxes an edge; this
 //! session is the only thing that may fetch, and the host re-runs the
 //! strict search after the steps land.
@@ -11,7 +13,7 @@
 //! those steps leave behind for the post-session re-find. A `worn_req`
 //! alternative already carried plans a bare [`BankStep::Wear`] — no
 //! bank walk. Anything the plan cannot supply (neither carried nor
-//! bankable, or the relaxed diagnosis shows a skill/quest/varp gate) is
+//! bankable, or the relaxed diagnosis shows a skill/quest/varp/worn-all gate) is
 //! `None`: the caller reports `NoPath`.
 
 use std::collections::HashSet;
@@ -161,8 +163,9 @@ pub struct BankFetch {
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to that access tile, opens
 /// the bank, withdraws only each Carry or worn-item deficit, closes, and
-/// then wears each selected `worn_req` item. Existing carried inventory
-/// is never deposited or cleared. Every required amount must be covered
+/// then wears each selected `worn_req` item. `worn_all_req` is never
+/// synthesized or worn by this session. Existing carried inventory is
+/// never deposited or cleared. Every required amount must be covered
 /// by bank + carried stacks combined. `None` when the plan cannot be
 /// built — the caller reports [`crate::router::RouteError::NoPath`].
 pub fn plan_bank_fetch(
@@ -322,9 +325,9 @@ pub fn plan_bank_fetch(
 /// route it serves: exactly the supply [`plan_bank_fetch`] checks. Every
 /// carried obj can be worn in place; with a bank stand to walk to, every
 /// obj in the open bank's rows (an obj's first row, as the planner reads
-/// it) plus the backpack can be carried at their combined count (saturated
-/// at a full stack, so a bank row never takes a carried fact away), and
-/// worn.
+/// it) plus the backpack can be carried at their combined count, and made
+/// available to the legacy `worn_req` any-of gate. These are candidate
+/// items, not observed equipment, so `worn_all_req` stays exact.
 /// A strict search under this state reaches only goals whose `item_req`,
 /// `consumed_req`, or `worn_req` gates a session can meet, and
 /// [`plan_bank_fetch`] budgets the whole route's missing facts. A goal
@@ -337,20 +340,13 @@ pub fn fetchable_state(
     stands: &[BankStand],
 ) -> WorldState {
     let mut fetchable = state.clone();
-    fetchable.worn.extend(
-        state
-            .inv
-            .iter()
-            .filter(|&(_, &n)| n >= 1)
-            .map(|(&id, _)| id),
-    );
+    fetchable.allow_fetchable_worn = true;
     if !stands.is_empty() {
         let mut read = HashSet::new();
         for &(id, count) in bank {
             if read.insert(id) && count >= 1 {
                 let held = fetchable.inv.entry(id).or_insert(0);
                 *held = held.saturating_add(count);
-                fetchable.worn.insert(id);
             }
         }
     }

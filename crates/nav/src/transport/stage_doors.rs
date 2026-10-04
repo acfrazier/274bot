@@ -3,6 +3,9 @@ use std::cell::RefCell;
 use super::rs2_syntax::{lex, parse_body, CmpOp, Expr, Stmt, Tok};
 use super::*;
 
+#[path = "stage_doors_forced.rs"]
+mod forced;
+
 // ---------------------------------------------------------------------------
 // Quest-stage and guild doors, and guarded ladders: named openers evaluated
 // per crossing.
@@ -29,8 +32,10 @@ use super::*;
 //   player assumed past every threshold (quests complete, levels and
 //   items high, a members world), and each comparison the taken path
 //   reads records the minimum that keeps its outcome: `>=`/`<` c → c;
-//   `>`/`<=`/`=`/`!` c → c + 1. The emitted edge carries those minimums
-//   (`varp_req`/`skill_req`/`item_req`/`worn_req`/`members_req`), so any
+//   `>`/`<=`/`=`/`!` c → c + 1. Exact `inv_getobj(worn, <slot>) =|! <obj>`
+//   tests assume that obj is equipped only when its content wear position
+//   matches the slot. The emitted edge carries those minimums
+//   (`varp_req`/`skill_req`/`item_req`/`worn_all_req`/`members_req`), so any
 //   state that meets them takes the same path. Varp minimums then go
 //   through [`ObservableGates::admit_edge`]: a transmitted varp stays a
 //   raw gate, an untransmitted one becomes its unique completed quest
@@ -115,7 +120,7 @@ const OPEN_PROCS: [OpenProc; 10] = [
 
 /// Pure builtins an opener may bind or print (strings and arithmetic);
 /// their value is not modelled.
-const PURE_OPAQUE: [&str; 14] = [
+const PURE_OPAQUE: [&str; 15] = [
     "lowercase",
     "uppercase",
     "tostring",
@@ -130,6 +135,7 @@ const PURE_OPAQUE: [&str; 14] = [
     "multiply",
     "divide",
     "modulo",
+    "oc_param",
 ];
 
 /// Statements an opener may run before the crossing without changing
@@ -160,6 +166,7 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "p_arrivedelay",
     "facesquare",
     "anim",
+    "stat_advance",
     "spotanim_pl",
     "obj_add",
     // Pure values.
@@ -184,6 +191,7 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "movecoord",
     "loc_param",
     "lc_param",
+    "oc_param",
     "stat",
     "stat_base",
     "inv_total",
@@ -271,19 +279,24 @@ const STATS: [&str; 21] = [
 /// Jumps followed before an opener is refused (label cycles).
 const MAX_JUMPS: usize = 16;
 
-/// One proc definition: its identity ([`proc_identity`]) and parsed body.
-type ProcDef = (String, Option<Vec<Stmt>>);
+/// One proc definition: comparable identity plus declared locals and parsed body.
+struct ProcDef {
+    identity: String,
+    block: Option<Block>,
+}
 
 /// One `[kind,name]` block: its declared parameters (labels) and body.
 #[derive(Debug, Clone)]
 struct Block {
     params: Vec<String>,
     body: Vec<Stmt>,
+    /// Conservative read marker used only to retain membership provenance.
+    reads_members: bool,
 }
 
 /// The script facts an opener evaluation reads.
 struct Sources {
-    oploc1: HashMap<String, Vec<Option<Block>>>,
+    oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     labels: HashMap<String, Vec<Option<Block>>>,
     /// Proc name → each definition's normalized header parameters + body,
     /// and its parsed body.
@@ -294,41 +307,65 @@ struct Sources {
     varps: HashMap<String, i32>,
     objs: HashMap<String, i32>,
     ids: HashMap<String, i32>,
+    /// Obj id → unambiguous primary equipment slot from its content config.
+    worn_slots: HashMap<i32, i32>,
 }
 
 impl Sources {
     fn read(content_root: &Path, ids: &HashMap<String, i32>) -> Self {
-        let mut oploc1: HashMap<String, Vec<Option<Block>>> = HashMap::new();
+        let mut oplocs: [HashMap<String, Vec<Option<Block>>>; 5] =
+            std::array::from_fn(|_| HashMap::new());
         let mut labels: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         visit_rs2(&content_root.join("scripts"), &mut |text| {
             for (kind, name, params, body) in header_blocks(text) {
+                let reads_members = body.contains("map_members");
+                if let Some(option) = oploc_option(&kind).filter(|op| (1..=5).contains(op)) {
+                    oplocs[(option - 1) as usize].entry(name).or_default().push(
+                        parse_body(&body).map(|body| Block {
+                            params,
+                            body,
+                            reads_members,
+                        }),
+                    );
+                    continue;
+                }
                 match kind.as_str() {
-                    "oploc1" => oploc1
-                        .entry(name)
-                        .or_default()
-                        .push(parse_body(&body).map(|body| Block { params, body })),
-                    "label" => labels
-                        .entry(name)
-                        .or_default()
-                        .push(parse_body(&body).map(|body| Block { params, body })),
-                    "proc" => procs
-                        .entry(name)
-                        .or_default()
-                        .push((proc_identity(&params, &body), parse_body(&body))),
+                    "label" => {
+                        labels
+                            .entry(name)
+                            .or_default()
+                            .push(parse_body(&body).map(|body| Block {
+                                params,
+                                body,
+                                reads_members,
+                            }))
+                    }
+                    "proc" => procs.entry(name).or_default().push(ProcDef {
+                        identity: proc_identity(&params, &body),
+                        block: parse_body(&body).map(|body| Block {
+                            params,
+                            body,
+                            reads_members,
+                        }),
+                    }),
                     _ => {}
                 }
             }
         });
+        let constants = script_constants(content_root);
+        let objs = obj_ids_by_name(content_root);
+        let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
-            oploc1,
+            oplocs,
             labels,
             procs,
             non_moving: RefCell::new(HashMap::new()),
-            constants: script_constants(content_root),
+            constants,
             varps: varp_ids_by_name(content_root),
-            objs: obj_ids_by_name(content_root),
+            objs,
             ids: ids.clone(),
+            worn_slots,
         }
     }
 
@@ -339,7 +376,7 @@ impl Sources {
         let pinned = pinned_procs();
         let matches = |name: &str| match (self.procs.get(name).map(Vec::as_slice), pinned.get(name))
         {
-            (Some([(body, _)]), Some((want, _))) => body == want,
+            (Some([definition]), Some((want, _))) => &definition.identity == want,
             _ => false,
         };
         let drifted = pinned
@@ -370,6 +407,32 @@ impl Sources {
         (supported, drifted)
     }
 
+    fn has_member_reads(&self, block: &Block) -> bool {
+        if block.reads_members {
+            return true;
+        }
+        forced::reachable_calls(block, self).iter().any(|call| {
+            let block = if let Some(name) = call.strip_prefix('~') {
+                match self.procs.get(name).map(Vec::as_slice) {
+                    Some(
+                        [ProcDef {
+                            block: Some(block), ..
+                        }],
+                    ) => Some(block),
+                    _ => None,
+                }
+            } else if let Some(name) = call.strip_prefix('@') {
+                match Self::one(&self.labels, name) {
+                    Lookup::Found(block) => Some(block),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            block.is_some_and(|block| block.reads_members)
+        })
+    }
+
     /// Whether a proc provably never moves the player: defined once, parsed,
     /// and every statement of it certified ([`Sources::certified`]). A proc
     /// on a call cycle is unproven.
@@ -379,7 +442,11 @@ impl Sources {
         }
         self.non_moving.borrow_mut().insert(name.to_string(), false);
         let proven = match self.procs.get(name).map(Vec::as_slice) {
-            Some([(_, Some(body))]) => body.iter().all(|s| self.certified(s)),
+            Some(
+                [ProcDef {
+                    block: Some(block), ..
+                }],
+            ) => block.body.iter().all(|s| self.certified(s)),
             _ => false,
         };
         self.non_moving
@@ -413,6 +480,64 @@ impl Sources {
             Some(_) => Lookup::Unusable,
         }
     }
+}
+
+/// A named object's primary `wearpos` determines where the engine equips
+/// it. Slot-sensitive gates are representable by equipped ids only when
+/// this declaration agrees with the script's slot. Missing, unresolved or
+/// conflicting declarations prove nothing; secondary coverage slots do
+/// not contain the object and are deliberately not admitted.
+fn worn_slot_facts(
+    content_root: &Path,
+    objs: &HashMap<String, i32>,
+    constants: &HashMap<String, i32>,
+) -> HashMap<i32, i32> {
+    let mut out = HashMap::new();
+    let mut conflicted = HashSet::new();
+    visit_configs(&content_root.join("scripts"), "obj", &mut |text| {
+        let mut row: Option<(i32, Option<i32>, bool)> = None;
+        let mut flush = |row: &mut Option<(i32, Option<i32>, bool)>| {
+            let Some((id, slot, valid)) = row.take() else {
+                return;
+            };
+            match (out.get(&id).copied(), slot.filter(|_| valid)) {
+                (_, None) => {
+                    out.remove(&id);
+                    conflicted.insert(id);
+                }
+                (Some(previous), Some(value)) if previous != value => {
+                    out.remove(&id);
+                    conflicted.insert(id);
+                }
+                (_, Some(value)) if !conflicted.contains(&id) => {
+                    out.insert(id, value);
+                }
+                _ => {}
+            }
+        };
+        for raw in text.lines() {
+            let line = raw.split("//").next().unwrap_or("").trim();
+            if let Some(name) = config_header(line) {
+                flush(&mut row);
+                row = objs.get(name).map(|&id| (id, None, true));
+            } else if let (Some((_, previous, valid)), Some(slot)) =
+                (row.as_mut(), line.strip_prefix("wearpos="))
+            {
+                // Config equip enum names and script constants use different
+                // spellings for the two hand slots; their values stay content-derived.
+                let slot = match slot.trim() {
+                    "righthand" => "rhand",
+                    "lefthand" => "lhand",
+                    slot => slot,
+                };
+                let slot = constants.get(&format!("wearpos_{slot}")).copied();
+                *valid &= slot.is_some() && previous.is_none_or(|value| slot == Some(value));
+                *previous = slot;
+            }
+        }
+        flush(&mut row);
+    });
+    out
 }
 
 enum Lookup<'s> {
@@ -556,6 +681,8 @@ enum Val {
     Coord(WorldTile),
     /// A loc id, the loc's own `next_loc_stage`, or the loc itself.
     Loc(LocRef),
+    /// A proved usable held tool, whose priority-selected identity is opaque.
+    Tool,
     /// A plain script name (synth, obj, category, …) or a string.
     Name(String),
     /// A tile relative to the player, for an opener run without a stand
@@ -630,7 +757,7 @@ impl Eval<'_> {
                             return Flow::Refused;
                         }
                         self.relative_landing_safe &= !relative_landing_side_effect(rest);
-                        if matches!(rest, Stmt::Return(_)) {
+                        if matches!(rest, Stmt::Return(_) | Stmt::ReturnValue(_)) {
                             return Flow::Crossed(leaf, true);
                         }
                     }
@@ -648,6 +775,15 @@ impl Eval<'_> {
             // A returned value computed by a call is not modelled.
             Stmt::Return(calls) if calls.is_empty() => Flow::Return,
             Stmt::Return(_) => Flow::Refused,
+            Stmt::ReturnValue(_) => {
+                let mut calls = Vec::new();
+                stmt.calls(&mut calls);
+                if calls.is_empty() {
+                    Flow::Return
+                } else {
+                    Flow::Refused
+                }
+            }
             // A branch that only prints or drops items cannot change the
             // crossing, so its condition is not a requirement — provided
             // nothing in it (the condition, an argument, an interpolation)
@@ -864,7 +1000,11 @@ impl Eval<'_> {
             Expr::Str(_) => None,
             Expr::Word(w) => self.word(w, env),
             Expr::Call(name, args) => self.call_value(name, args, env),
-            Expr::Cmp(..) | Expr::And(..) | Expr::Or(..) | Expr::Other(_) => None,
+            Expr::Cmp(..)
+            | Expr::And(..)
+            | Expr::Or(..)
+            | Expr::Arithmetic(..)
+            | Expr::Other(_) => None,
         }
     }
 
@@ -1005,6 +1145,33 @@ impl Eval<'_> {
                     value: Some(value),
                     needs: Needs {
                         skills: vec![(skill, min)],
+                        ..Needs::default()
+                    },
+                }
+            }
+            Expr::Call(f, args) if f == "inv_getobj" => {
+                let [Expr::Word(inv), slot] = args.as_slice() else {
+                    return Cond::unknown();
+                };
+                let (Some(Val::Int(slot)), Val::Name(obj)) = (self.value(slot, env), rhs_val)
+                else {
+                    return Cond::unknown();
+                };
+                let Some(&obj) = self.src.objs.get(&obj) else {
+                    return Cond::unknown();
+                };
+                if inv != "worn" || self.src.worn_slots.get(&obj) != Some(&slot) {
+                    return Cond::unknown();
+                }
+                let value = match op {
+                    CmpOp::Eq => true,
+                    CmpOp::Ne => false,
+                    _ => return Cond::unknown(),
+                };
+                Cond {
+                    value: Some(value),
+                    needs: Needs {
+                        worn: vec![(obj, 1)],
                         ..Needs::default()
                     },
                 }
@@ -1235,6 +1402,7 @@ pub(super) fn stage_door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
     graph: &mut TransportGraph,
     collision: &WorldCollision,
     skipped: &mut HashMap<&'static str, usize>,
@@ -1242,6 +1410,18 @@ pub(super) fn stage_door_edges(
     audit: &mut VarpGateAudit,
 ) {
     let src = Sources::read(content_root, ids);
+    forced::forced_move_edges(
+        content_root,
+        &src,
+        ids,
+        positions,
+        loc_defs,
+        graph,
+        collision,
+        skipped,
+        observable,
+        audit,
+    );
     let (supported, drifted) = src.supported_procs();
     bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
     if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
@@ -1291,12 +1471,12 @@ pub(super) fn stage_door_edges(
             .get(&id)
             .into_iter()
             .flatten()
-            .map(|n| Sources::one(&src.oploc1, n))
+            .map(|n| Sources::one(&src.oplocs[0], n))
             .filter(|l| !matches!(l, Lookup::Missing))
             .collect();
         let handler = match own.as_slice() {
             [Lookup::Found(block)] => *block,
-            [] => match category.map(|c| Sources::one(&src.oploc1, &format!("_{c}"))) {
+            [] => match category.map(|c| Sources::one(&src.oplocs[0], &format!("_{c}"))) {
                 Some(Lookup::Found(block)) => block,
                 Some(Lookup::Unusable) => {
                     bump(skipped, SKIP_STAGE_DOOR_CONFLICT, 1);
@@ -1312,6 +1492,7 @@ pub(super) fn stage_door_edges(
         if !names_terminal(&src, handler) {
             continue;
         }
+        let member_path = src.has_member_reads(handler);
         let emitted = graph.edges.len();
         let mut proven = false;
         for p in placements {
@@ -1365,14 +1546,13 @@ pub(super) fn stage_door_edges(
                         let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                             continue;
                         };
-                        let Some(mut edge) = gated_edge(TransportKind::Door, id, at, to, needs)
-                        else {
-                            continue;
-                        };
+                        let mut edge = gated_edge(TransportKind::Door, id, at, to, needs);
                         edge.dir = Some(dir);
                         edge.open_loc_id = leaf;
                         proven = true;
-                        observable.admit_edge(graph, edge, audit);
+                        if observable.admit_edge(graph, edge, audit) && member_path {
+                            audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                        }
                     }
                 }
                 Some(Role::Ladder) => {
@@ -1398,17 +1578,16 @@ pub(super) fn stage_door_edges(
                     } else {
                         None
                     };
-                    let Some(mut edge) = gated_edge(TransportKind::Ladder, id, at, to, needs)
-                    else {
-                        continue;
-                    };
+                    let mut edge = gated_edge(TransportKind::Ladder, id, at, to, needs);
                     // Guarded, dialog-driven, or side-effectful handlers
                     // retain their anchor landing; only unguarded direct
                     // `coord` climbs use the existing relative wire mode.
                     edge.player_delta = relative;
                     edge.ticks = ticks;
                     proven = true;
-                    observable.admit_edge(graph, edge, audit);
+                    if observable.admit_edge(graph, edge, audit) && member_path {
+                        audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                    }
                 }
                 None => {}
             }
@@ -1458,24 +1637,22 @@ fn placement_role(p: &Placement) -> Option<Role> {
 }
 
 /// An edge carrying the evaluated requirements (option 1, one tick; the
-/// caller fills `dir`/`open_loc_id`/`ticks`), or `None` when its worn gate
-/// needs two different objs at once (`worn_req` is any-one-of).
+/// caller fills `dir`/`open_loc_id`/`ticks`). Every worn condition on this
+/// path is conjunctive, separate from the graph's any-blade worn gates.
 fn gated_edge(
     kind: TransportKind,
     id: i32,
     at: WorldTile,
     to: WorldTile,
     needs: Needs,
-) -> Option<TransportEdge> {
+) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
-    if worn.len() > 1 {
-        return None;
-    }
-    Some(TransportEdge {
+    TransportEdge {
         kind,
         player_delta: None,
         at,
         to,
+        takeoff: None,
         loc_id: id,
         option: 1,
         ticks: 1,
@@ -1487,9 +1664,14 @@ fn gated_edge(
         item_returns: vec![],
         quest_req: vec![],
         varp_req: max_per_key(&needs.varps),
-        worn_req: worn.into_iter().map(|(obj, _)| obj).collect(),
+        worn_req: vec![],
+        worn_all_req: worn
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(obj, _)| obj)
+            .collect(),
         members_req: needs.members,
         wildy_cap: None,
         quest_gates: None,
-    })
+    }
 }

@@ -51,6 +51,8 @@ pub(super) fn web_edges(
                 continue;
             };
             graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
                 kind: TransportKind::Door,
                 player_delta: None,
                 at,
@@ -73,6 +75,8 @@ pub(super) fn web_edges(
             });
             if !slash_blades.is_empty() {
                 graph.edges.push(TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
                     kind: TransportKind::Door,
                     player_delta: None,
                     at,

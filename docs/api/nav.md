@@ -40,33 +40,48 @@ unconditional leading `@label` jumps) is the F2P refusal
 `if (map_members = ^false …) { …; return; }`. Members spells come from
 `magic_spells.dbrow` `data=members,true`. The bake fails if a free edge's
 handler, or any label, choice or queue it may continue into, reads
-`map_members`, unless that exact read is a listed non-gate branch. It also
-fails if a members-only edge's leading path does not refuse F2P, unless its
-handler carries a listed members arm (the glider, Zanaris and spirit-tree
-gates).
+`map_members`, unless that exact read is a listed non-gate branch or the shared
+source interpreter proved that edge's specific crossing path. A members-only
+edge must have a leading refusal, a listed members arm (the glider, Zanaris and
+spirit-tree gates), or that same path proof. Path witnesses bind every final
+edge field after observable-gate conversion, so changing the membership flag,
+disguise, landing or price invalidates them. These witnesses are ephemeral bake
+data, not a bypass token stored in the pack; the ordinary content fingerprint
+and before/after input-stability check still bind the whole bake.
 Only bundled packs are rebaked automatically: an external pack
 (`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the content and membership gates
 it was baked with. Rebake it after content changes or a format upgrade.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **15**. Each
-edge's reusable `item_req` remains a held-item gate; v15 adds count-prefixed
-`(id, count)` `consumed_req` and `item_returns` vectors after it. Resource
-counts must be positive, and a returned item requires consumed resources.
-Version 15 retains v11's selected quest-family binding — its
+the derived `TransportGraph`. Magic `b"274V"`, version byte **16**. Each
+edge's reusable `item_req` remains a held-item gate; v15 added count-prefixed
+`(id, count)` `consumed_req` and `item_returns` vectors after it. Version 16
+adds a count-prefixed `worn_all_req` ID vector after the existing any-of
+`worn_req`; every listed item must be equipped at traversal time. It also
+stores an optional exact `takeoff` tile after quest gates and before approach
+geometry. `at` remains the loc/NPC interaction anchor and `to` remains the
+final landing. An absent takeoff preserves legacy radius/footprint admission;
+an exact takeoff admits only that stand, on the same valid game plane as `at`,
+and must pass the edge's standable/footprint admission predicate. Travellers
+walk to that planned tile before interacting and never send from a nearby
+substitute. Requirement counts must be positive, and returned items require
+consumed resources.
+Version 16 retains v11's selected quest-family binding — its
 `quest_facts_sha256` and `quest_extractor_schema` — and typed per-edge
 quest-stage gates; it keeps the content-derived bank-stand table after the
 edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
 wilderness-level formula after the banks, the content-derived zone table, and
-v13's approach geometry after each edge's quest gates. Geometry is tag `0`
-by `width:u8`, `length:u8`, and `blocked_sides:u8` (a rotated four-bit mask).
-Only footprint-backed Ladder/Stairs/AgilityShortcut/SpiritTree edges use it;
-Door, NPC and teleport admission is unchanged. Zone data includes stable
-kind identities/labels, NPC and hazard rows, curated groups, carves, and
-shaped masks. A shape row stores a zone index u16, north extent u8, and
-row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v15 pack
+v13's approach geometry follows the takeoff tag. Geometry is tag `0` (absent)
+or tag `1` followed by `width:u8`, `length:u8`, and `blocked_sides:u8` (a
+rotated four-bit mask). Only footprint-backed
+Ladder/Stairs/AgilityShortcut/SpiritTree edges use it; an exact takeoff still
+honors that geometry. Legacy edges without takeoff retain prior
+Door/NPC/teleport admission. Zone data includes stable kind identities/labels,
+NPC/hazard rows, curated groups, carves and shaped masks. A shape row stores a
+zone index u16, north extent u8, and row-major u64 cell mask; the shaped NPC's
+`r` byte stores its east extent.
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v16 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
@@ -74,11 +89,11 @@ spatial index. Raw `u32` flags are not on the pack wire. The optional
 separate `274R` sidecar bound to the pack identity.
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
-Ladder; v15 retains this encoding. The remaining kind value keeps its kind.
+Ladder; v16 retains this encoding. The remaining kind value keeps its kind.
 A flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
 `player_delta = to - at`. The flag is invalid on other kinds. Absolute
 landings do not set it.
-`decode` accepts version 15 only — v14 and older are `BadVersion` and must be
+`decode` accepts version 16 only — v15 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
@@ -260,9 +275,10 @@ carries `kind` (Door/Ladder/Stairs/Boat/Teleport/AgilityShortcut/Glider/
 SpiritTree/Npc), `at`/`to`, `loc_id`, the 1-based menu `option`
 (`0` = use first `item_req` on the loc), `ticks`, reusable inventory
 `item_req` gates, per-hop `consumed_req`, script-derived `item_returns`,
-and `worn_req` (**any-of**). A held `item_req` is never budgeted as spent;
-consumed counts budget supply across the full route, and returned items record
-replacement after consumption (including charged-jewellery `next_obj_stage`).
+`worn_req` (**any-of**) and `worn_all_req` (**all-of equipped**). Only items
+currently equipped satisfy `worn_all_req`; carried or banked pieces do not.
+`BankBudget` neither supplies nor equips these strict pieces; the Quester
+loadout handles equipping. A held `item_req` is never budgeted as spent.
 Spell runes and script-deleted fares or passes are consumptive requirements.
 Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
@@ -287,6 +303,26 @@ literal delays are allowed; branches, dialogs, queues, dynamic destinations,
 and additional gameplay side effects are not flattened into ungated edges.
 Existing specialized edges retain their requirements and measured prices.
 New direct climbs price literal script/helper delays plus the interaction.
+
+Named quest/guild door and secret-wall openers are interpreted from their
+RuneScript control flow. The generic engine crossing helpers must match their
+pinned content bodies. Conjunctive worn checks become strict `worn_all_req`
+gates, including exact primary-slot `inv_getobj` checks; carrying the disguise
+does not authorize the crossing. An untransmitted quest varp is admitted only
+with its unique completed-journal proof. Hidden bitfields, intermediate quest
+windows, dialogue/NPC choices and unresolved conditions stay impassable.
+
+Requirement-gated loc ops also derive deterministic force-walk and exact-move
+trajectories, following source proc/label calls, checked arithmetic, placement
+coordinates and scalar loc parameters. Each edge retains the actual menu op,
+loc anchor, exact operable `takeoff`, and the **final** coordinate after all
+sequential movement calls. Script delays and force-walk distance are priced;
+temporary loc replacements never become open-door settle tokens. Generic
+content tool selectors produce separate carried-tool and strictly-worn-tool
+variants with their source skill/use-level gates. The selected tool identity
+remains opaque, so priority-dependent tool choices cannot invent a trajectory.
+Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
+without a real requirement are refused rather than emitted as free shortcuts.
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked
@@ -313,12 +349,12 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v15 pack retains the v12
-zone table described above and carries the resource-accounting vectors
-described above. Generator and producer-source digests invalidate staged
-bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
-navpois bindings. Explicit custom packs baked with the previous generator need
-to be rebaked too.
+it adds no door-specific wire fields. The v16 pack retains the v12 zone table
+described above, carries the resource-accounting vectors described above, and
+appends `worn_all_req` after `worn_req`. Generator and producer-source digests
+invalidate staged bundles and trigger a normal rebake, with refreshed
+pack/reach/canlight/navpois bindings. Explicit custom packs baked with the
+previous generator need to be rebaked too.
 
 ### Quest-stage gates (`nav::quest_gates`)
 
@@ -442,12 +478,17 @@ open or abandoned proof retains the normal forward-search budget. Thus a
 deep-zone goal need not exhaust the safe-reachable world, and exhausting
 the safe budget does not suppress its permitted completion pass.
 
-Refusal diagnosis requires a strict `NoPath` and an all-zone-exempt route
-that still satisfies the same hard gates. It reports active zone-blocked
-transitions on the source-reachable frontier, including separately blocked
-alternatives, rather than naming only a shortest relaxed witness. It does
-not claim a minimal cut; incomplete or budget-limited frontier searches
-return no diagnosis.
+Single-target refusal diagnosis requires a strict `NoPath` and a route that
+still satisfies the same hard gates with zone restrictions lifted. It names
+only the active zones blocking transitions on that best all-zone-exempt route,
+using the original transition rules: one-way escape from active origin zones
+(re-entry is reported) and entry into the selected goal's active zones without
+allowing transit out of them. This reverses NAV-N1's ROUTER-30 decision for
+single-target diagnosis only: a sufficient witness on the best route is more
+useful than listing every blocked alternative. Multi-goal
+`find_first_blocking_zones` retains reachable-frontier attribution per
+goal-zone partition. Neither diagnosis claims a minimal cut; incomplete or
+budget-limited searches return no diagnosis.
 Script bank-fetch refusal hints probe at most eight candidate goals, each
 through the existing bounded router searches, rather than running a separate
 bank/zone diagnosis for every Area tile. This optional hint budget does not

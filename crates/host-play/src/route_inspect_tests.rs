@@ -33,6 +33,8 @@ fn edge(
     consumed_req: Vec<(i32, i32)>,
 ) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind,
         player_delta: None,
         at,
@@ -289,6 +291,7 @@ fn glider_and_boats_use_npc_table() {
     assert_eq!(plank.loc_name, "Gangplank");
     let jewellery = project_hop(
         &TransportEdge {
+            takeoff: None,
             option: 4,
             loc_id: 1712,
             kind: TransportKind::Teleport,
