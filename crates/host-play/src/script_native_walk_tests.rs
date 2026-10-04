@@ -2950,3 +2950,185 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
 }
+
+fn combat_prayer(name: &str) -> (i32, i32) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("R289 prayer facts");
+    let row = data
+        .prayer_by_name(name)
+        .unwrap_or_else(|| panic!("R289 lacks prayer {name}"));
+    (row.varp, row.button_com)
+}
+
+/// Slot-less bot with an attached, ingame scene and prayer widgets: only the
+/// combat-prayer debt arm acts on `step`.
+fn combat_debt_rig() -> Rig {
+    let mut rig = open_rig(false);
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.navs
+        .lock()
+        .unwrap()
+        .insert("alice".to_string(), NavBot::default());
+    rig
+}
+
+fn owe_combat_debt(rig: &Rig, varps: &[i32], tick: u16) {
+    let owned = script::combat::RaisedPrayers::from_test_varps(varps);
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").expect("debt bot");
+    owe_combat_prayers_off(bot, owned, tick);
+}
+
+fn set_combat_varp(snapshot: &mut GameSnapshot, varp: i32, value: i32) {
+    let mut rows = snapshot.varps().to_vec();
+    for row in &mut rows {
+        if row.index == varp {
+            row.value = value;
+        }
+    }
+    snapshot.seed_varps(rows);
+}
+
+#[test]
+fn combat_prayer_off_sends_exactly_one_bounded_retry() {
+    let (varp, component) = combat_prayer("Protect from Missiles");
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, varp, 1);
+    owe_combat_debt(&rig, &[varp], 0);
+    assert!(rig.navs.lock().unwrap()["alice"]
+        .combat_prayer_off
+        .is_some());
+    for tick in 0u32..=12 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        if tick == 0 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component],
+                "Stop debt opens with one off-click"
+            );
+        } else if tick <= 2 {
+            assert_eq!(
+                rig.driver.if_button_components.len(),
+                1,
+                "no re-send while the off receipt is outstanding"
+            );
+        } else if tick == 3 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component, component],
+                "exactly one bounded retry"
+            );
+        }
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![component, component],
+        "a dropped retry must not admit a third off-click"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "the expired retry drops the debt"
+    );
+}
+
+#[test]
+fn combat_prayer_off_refused_retry_spends_the_retry_without_a_loop() {
+    let (varp, component) = combat_prayer("Protect from Missiles");
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, varp, 1);
+    owe_combat_debt(&rig, &[varp], 0);
+    for tick in 0u32..=10 {
+        rig.snapshot.seed_tick(tick);
+        if tick == 1 {
+            // The retry's target vanishes, so the retry is refused at the
+            // send gate after the first off-click was accepted.
+            rig.snapshot.seed_main_modal(5608, Vec::new());
+        }
+        if tick == 4 {
+            // Restore the retry target so an unbounded retry becomes visible.
+            seed_prayer_widgets(&mut rig.snapshot);
+        }
+
+        rig.step();
+        if tick == 0 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component],
+                "the first off-click is accepted"
+            );
+        }
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![component],
+        "a refused retry is never re-sent"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "the refused retry still expires the debt on its deadline"
+    );
+}
+
+#[test]
+fn combat_prayer_off_clears_two_prayers_serially_in_table_order() {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("R289 prayer facts");
+    let missiles = data
+        .prayer_by_name("Protect from Missiles")
+        .expect("R289 missiles");
+    let melee = data
+        .prayer_by_name("Protect from Melee")
+        .expect("R289 melee");
+    let (missiles_varp, missiles_com) = (missiles.varp, missiles.button_com);
+    let (melee_varp, melee_com) = (melee.varp, melee.button_com);
+    let first_varp = data
+        .prayers()
+        .iter()
+        .map(|row| row.varp)
+        .find(|varp| *varp == missiles_varp || *varp == melee_varp)
+        .expect("an owned prayer in table order");
+    let (first_varp, first_com, second_varp, second_com) = if first_varp == missiles_varp {
+        (missiles_varp, missiles_com, melee_varp, melee_com)
+    } else {
+        (melee_varp, melee_com, missiles_varp, missiles_com)
+    };
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, missiles_varp, 1);
+    set_combat_varp(&mut rig.snapshot, melee_varp, 1);
+    owe_combat_debt(&rig, &[missiles_varp, melee_varp], 0);
+    rig.snapshot.seed_tick(0);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com],
+        "one off-click in flight at a time"
+    );
+    set_combat_varp(&mut rig.snapshot, first_varp, 0);
+    rig.snapshot.seed_tick(1);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com, second_com],
+        "the next owned prayer is serviced after the first settles"
+    );
+    set_combat_varp(&mut rig.snapshot, second_varp, 0);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "both owned prayers retired"
+    );
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com, second_com],
+        "settled prayers are never re-clicked"
+    );
+}
