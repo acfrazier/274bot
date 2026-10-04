@@ -745,6 +745,10 @@ impl Sherlock {
                 Fight::ClearPrayers(handle) => actions.cancel(handle),
             }
         }
+        // Death turns prayers off. A later activation belongs to the user,
+        // not to the Combat owner that died.
+        self.hygiene_owned = RaisedPrayers::empty();
+        self.hygiene_pending = false;
         self.combat_id = None;
         self.pending = None;
         self.outcome = None;
