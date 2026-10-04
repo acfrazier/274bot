@@ -631,7 +631,8 @@ Quester and Sherlock retire that obligation when death clears prayers, so a
 later Pause or Resume does not turn off prayers the user activates after respawn.
 Quester recipe substeps retain that obligation when a combat child completes,
 and finish scoped cleanup before settling or starting the next recipe child.
-Operator Stop ends the fight too. Before revoking and dropping the native card,
+Any Stop ends the fight too, whether the operator stops it or a native run
+stops itself on a terminal block. Before revoking and dropping the native card,
 the slot transfers its accepted Combat raises to the host. The ordinary host
 pump pays only those owed off-clicks with WalkGuard's bounded,
 observation-settled retirement rule; a new run waits for that cleanup instead
