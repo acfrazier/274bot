@@ -7,9 +7,9 @@ import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertT
 import { parsePack } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
-import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 const root = path.resolve(import.meta.dirname, '../..');
@@ -301,7 +301,19 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
     const gatherItemNames = new Map<number, string>();
     for (const item of payload.items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
-    assertEqual(JSON.stringify(payload.gather_resources), JSON.stringify(gatherResources(gathering.payload, gatherItemNames)), `${revision} core gather_resources is the family's admitted option slice`);
+    const gatherRows = gatherResources(gathering.payload, gatherItemNames);
+    assertEqual(JSON.stringify(payload.gather_resources), JSON.stringify(gatherRows), `${revision} core gather_resources is the family's admitted option slice`);
+    const fishingOptions = gatherRows.filter((row) => row.skill === 'fishing');
+    const fishingLabels = fishingOptions.map((row) => row.label);
+    if (new Set(fishingLabels).size !== fishingLabels.length) throw new Error(`${revision}: fishing gather labels are not unique`);
+    for (const row of fishingOptions) {
+        if (row.methods.length === 0
+            || JSON.stringify(row.methods) !== JSON.stringify([...row.methods].sort(compareCodepoint))
+            || row.method !== row.methods[0]
+            || JSON.stringify(row.aliases) !== JSON.stringify(row.methods)) {
+            throw new Error(`${revision}: fishing group methods/aliases are not stable: ${JSON.stringify(row)}`);
+        }
+    }
     // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
     const gatherFacts = gathering.payload;
     const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));
@@ -508,7 +520,7 @@ async function verifyRevision(revision: number) {
     for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
         if (trioGiversBlob.includes(banned)) throw new Error(`${revision}: trio_givers published ${banned}`);
     }
-    const rs2b0tRoot = process.env.RS2B0T ?? path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0');
+    const rs2b0tRoot = requireEnvPath('RS2B0T', 'the pinned rs2b0t checkout root');
     assertRs2b0tPinned(rs2b0tRoot);
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(pin.engineRoot, fs.readFileSync(bankSource, 'utf8'));

@@ -428,6 +428,9 @@ mod tests {
         assert_eq!(error.field, "order_override");
         let error = Queue::from_index(&index, settings(&[], &[], &["missing"])).unwrap_err();
         assert_eq!(error.field, "skip");
+        let error = Queue::from_index(&index, settings(&["missing"], &[], &[])).unwrap_err();
+        assert_eq!(error.field, "quests");
+        assert!(error.message.contains("unknown quest id \"missing\""));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::native::WalkEnd;
 use crate::quester::compile::{compile_path, CompileContext, PredicateContext, StepOutcome};
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
@@ -445,7 +446,14 @@ fn combat_test_run(
         last_outcome: None,
         target_gone_restarts: 0,
         walk_outcome_seq_at_begin: 0,
+        raised_prayers: crate::combat::RaisedPrayers::empty(),
     }
+}
+pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    run.begin_combat(cx).unwrap();
+    Box::new(run)
 }
 
 pub(crate) fn no_food_abort_run_for_runner(
@@ -730,6 +738,45 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
     assert_eq!(run.target_gone_restarts, 0);
     assert!(run.action.is_none());
+}
+
+#[test]
+fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey(Arc::from("combat-walk-gate")),
+    )]);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    for abort in [false, true] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            None,
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+            let receipt = WalkReceipt {
+                request_id: 1,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+                blocked: None,
+                detail: None,
+            };
+            if abort {
+                run.on_abort_walk(receipt)
+            } else {
+                run.on_return_walk(receipt, cx)
+            }
+        });
+        let Poll::Ready(Err(error)) = result else {
+            panic!("unproven walk cannot restart combat");
+        };
+        assert_eq!(format!("{error:?}"), format!("NeedsEvidence({gates:?})"));
+        assert_eq!(run.target_gone_restarts, 0);
+        assert!(run.action.is_none());
+    }
 }
 
 #[test]

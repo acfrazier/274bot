@@ -900,7 +900,7 @@ mod tests {
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
         settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Raw trout"));
+        settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
@@ -976,7 +976,7 @@ mod tests {
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
         settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Raw trout"));
+        settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
         let prepared = prepare(settings);
         let bait = prepared.supply.bait.as_ref().unwrap();
@@ -1013,7 +1013,7 @@ mod tests {
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
         settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Raw trout"));
+        settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
@@ -1187,7 +1187,7 @@ mod tests {
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
         settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Raw trout"));
+        settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
         settings.insert("coinTarget".into(), json!(500));
         settings.insert("reserveTeleport".into(), json!(spell.name));

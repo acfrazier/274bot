@@ -1,5 +1,7 @@
 use super::*;
-use crate::native::{ledger, HostEffect, NativeOutput, NativeTick, RetainedMemory, ScriptStatus};
+use crate::native::{
+    ledger, HostEffect, NativeOutput, NativeTick, RetainedMemory, ScriptStatus, WalkEnd,
+};
 use api::obj_names::ItemDefView;
 use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
 use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
@@ -182,12 +184,37 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
             },
             combat_level: 3,
             skill_level: 0,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,
         weight: 0,
     }
 }
+
+pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
+    Box::new(AcquireRun {
+        steps: vec![CompiledAcquireStep {
+            advances: false,
+            skip_if: Arc::new(AnyPlan { items: vec![] }),
+            settle: Arc::new(AllPlan { items: vec![] }),
+            plan: Arc::new(WaitPlan {
+                until: Arc::new(AllPlan { items: vec![] }),
+                max_ticks: 2,
+            }),
+        }],
+        current: Some(child),
+        index: 0,
+        chat_since: 0,
+        settling: false,
+        settle_deadline: Duration::ZERO,
+        waiting_for_read: false,
+        selection_since: None,
+        prayer_cleanup_owned: crate::combat::RaisedPrayers::empty(),
+        clear_prayers: None,
+    })
+}
+
 pub(crate) fn post_user_input_walk_receipt(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
@@ -219,6 +246,64 @@ pub(crate) fn post_user_input_walk_receipt(
 fn assert_manual_movement(result: Poll<Result<StepOutcome, ActionError>>) {
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
 }
+fn mapped_walk_receipt(
+    end: crate::native::WalkEnd,
+    detail: Option<Arc<str>>,
+) -> crate::native::WalkReceipt {
+    crate::native::WalkReceipt {
+        request_id: 7,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            tick: 4,
+            sequence: 5,
+        },
+        end,
+        blocked: None,
+        detail,
+    }
+}
+
+#[test]
+fn quest_walk_step_requires_arrival_and_preserves_refusal_or_user_input() {
+    let route_end = walk_step_evidence(mapped_walk_receipt(
+        crate::native::WalkEnd::RouteEnded,
+        Some(Arc::from("route stopped short")),
+    ));
+    assert!(matches!(
+        route_end,
+        Err(ActionError::Blocked(detail)) if detail.as_ref() == "route stopped short"
+    ));
+    assert_eq!(
+        walk_step_evidence(mapped_walk_receipt(crate::native::WalkEnd::UserInput, None)),
+        Err(ActionError::UserInput)
+    );
+    assert_eq!(
+        walk_step_evidence(mapped_walk_receipt(crate::native::WalkEnd::Cancelled, None)),
+        Err(ActionError::Cancelled)
+    );
+}
+
+#[test]
+fn quest_walk_step_keeps_needs_evidence_typed() {
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("reach-gate"),
+    )]);
+    let error = walk_step_evidence(mapped_walk_receipt(
+        crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+        None,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        format!("{error:?}"),
+        format!("NeedsEvidence({gates:?})"),
+        "quester needs typed gates, not a debug-string Blocked"
+    );
+}
+
 fn wall_door_reach_view() -> api::query::ReachQueryView {
     let mut reachable = vec![0u32];
     reachable[0] = 1 << 4;
@@ -375,6 +460,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             },
             combat_level: 3,
             skill_level: 0,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,
@@ -487,7 +573,7 @@ fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
 }
 
 #[test]
-fn non_straight_wall_door_keeps_the_approach_walk_and_propagates_failure() {
+fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
     let mut s = ready();
     s.seed_local_player(local_player(tile(5, 5)));
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
@@ -549,15 +635,15 @@ fn non_straight_wall_door_keeps_the_approach_walk_and_propagates_failure() {
             tick: 3,
             sequence: 3,
         },
-        end: crate::native::WalkEnd::Failed,
+        end: crate::native::WalkEnd::RouteEnded,
         blocked: None,
-        detail: None,
+        detail: Some(Arc::from("route stopped short")),
     });
     assert!(matches!(
         with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
             .actions
             .poll(&handle, &mut t.cx)),
-        Poll::Ready(Ok(false))
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == "route stopped short"
     ));
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -567,6 +653,86 @@ fn non_straight_wall_door_keeps_the_approach_walk_and_propagates_failure() {
         ))
     );
 }
+
+#[test]
+fn reach_wait_walk_preserves_typed_needs_evidence() {
+    let mut s = ready();
+    s.seed_local_player(local_player(tile(5, 5)));
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(8, 5);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(6, 5);
+    door.distance = 1;
+    door.layer = LocLayer::Wall;
+    door.shape = 9;
+    door.angle = 0;
+    s.seed_locs(vec![wheel.clone(), door]);
+
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let reach = wall_door_reach_view();
+    let handle = with_tick_reach(&s, &reach, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 2, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    let request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("reach-gate"),
+    )]);
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 3,
+            sequence: 3,
+        },
+        end: crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+        blocked: None,
+        detail: None,
+    });
+
+    let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
+        t.actions.poll(&handle, &mut t.cx)
+    });
+    assert_eq!(
+        format!("{result:?}"),
+        format!("Ready(Err(NeedsEvidence({gates:?})))"),
+        "reach must retain typed gates instead of flattening them to Blocked"
+    );
+}
+
 #[test]
 fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
     let mut s = ready();
@@ -1122,6 +1288,89 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
 }
 
 #[test]
+fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
+    struct CompletedChild(RaisedPrayers);
+    impl StepRun for CompletedChild {
+        fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+            Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }))
+        }
+        fn cancel(&mut self, _: &mut NativeActions) {}
+        fn prayer_cleanup(&self) -> RaisedPrayers {
+            self.0
+        }
+    }
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let skin = data.prayer_by_name("Thick Skin").unwrap();
+    let protect = data.prayer_by_name("Protect from Melee").unwrap();
+    let mut owned = RaisedPrayers::empty();
+    owned.accepted(protect.varp, true, 0);
+    let varps = |raised| {
+        data.prayers()
+            .iter()
+            .map(|row| api::snapshot::VarpView {
+                index: row.varp,
+                value: i32::from(row.varp == skin.varp || (raised && row.varp == protect.varp)),
+            })
+            .collect()
+    };
+    let mut snapshot = ready();
+    snapshot.seed_varps(varps(true));
+    let mut ledger = None;
+    let mut run = policy_s2_recipe_run(Box::new(CompletedChild(owned)));
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(run.prayer_cleanup().contains(protect.varp));
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+    assert!(matches!(
+        &action.effect,
+        HostEffect::Interaction(InteractReq::IfButton { component_id })
+            if *component_id == protect.button_com
+    ));
+    let authority = action.authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 3,
+                sequence: 3,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    snapshot.seed_varps(varps(false));
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Ok(_))
+    ));
+    assert!(run.prayer_cleanup().is_empty());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert_eq!(
+        snapshot
+            .varps()
+            .iter()
+            .find(|row| row.index == skin.varp)
+            .unwrap()
+            .value,
+        1
+    );
+}
+
+#[test]
 fn a_disappearing_stack_is_not_success_until_held_count_grows() {
     let mut s = ready();
     s.seed_ground_items(vec![ground()]);
@@ -1231,6 +1480,7 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
                 },
                 combat_level: 3,
                 skill_level: 0,
+                headicons: 0,
                 weapon: None,
             },
             energy: 100,
@@ -3077,6 +3327,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
             },
             combat_level: 3,
             skill_level: 0,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,

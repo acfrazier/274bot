@@ -109,6 +109,7 @@ fn fixture_player(index: usize, combat_level: i32, skill_level: i32) -> PlayerVi
         },
         combat_level,
         skill_level,
+        headicons: 0,
         weapon: None,
     }
 }

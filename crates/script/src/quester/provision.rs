@@ -4,7 +4,7 @@ use super::compile::{CompiledItemKind, CompiledProvisioning, StepContext, StepPl
 use super::families::{self, AcquirePlan};
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkOptions};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
 use api::snapshot::{ItemView, WorldTile};
@@ -990,17 +990,7 @@ impl BankRun {
 }
 
 fn walk_evidence(receipt: crate::native::WalkReceipt) -> Result<(), ActionError> {
-    match receipt.end {
-        WalkEnd::Arrived | WalkEnd::RouteEnded => Ok(()),
-        WalkEnd::UserInput => Err(ActionError::UserInput),
-        WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
-            "walk needs live quest evidence: {gates:?}"
-        )))),
-        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => Err(ActionError::Blocked(
-            receipt.detail.unwrap_or_else(|| Arc::from("walk failed")),
-        )),
-        WalkEnd::Cancelled => Err(ActionError::Cancelled),
-    }
+    receipt.into_arrival().map(|_| ())
 }
 
 fn count_item(inventory: &[ItemView], id: i32) -> i32 {
@@ -1051,6 +1041,65 @@ mod tests {
             actions: Vec::new(),
             component_id: 0,
         }
+    }
+
+    fn walk_receipt(
+        end: crate::native::WalkEnd,
+        detail: Option<Arc<str>>,
+    ) -> crate::native::WalkReceipt {
+        crate::native::WalkReceipt {
+            request_id: 7,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: api::selected::RunKey {
+                    slot: 1,
+                    run: 2,
+                    session: 3,
+                },
+                tick: 4,
+                sequence: 5,
+            },
+            end,
+            blocked: None,
+            detail,
+        }
+    }
+
+    #[test]
+    fn provision_walk_requires_arrival_and_retains_refusal_detail() {
+        let result = walk_evidence(walk_receipt(
+            crate::native::WalkEnd::RouteEnded,
+            Some(Arc::from("route stopped short")),
+        ));
+        assert!(matches!(
+            result,
+            Err(ActionError::Blocked(detail)) if detail.as_ref() == "route stopped short"
+        ));
+    }
+
+    #[test]
+    fn provision_walk_keeps_needs_evidence_typed() {
+        let gates: Arc<[api::selected::QuestGate]> =
+            Arc::from([api::selected::QuestGate::Complete(FactKey::new(
+                "provision-gate",
+            ))]);
+        let error = walk_evidence(walk_receipt(
+            crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+            None,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            format!("{error:?}"),
+            format!("NeedsEvidence({gates:?})"),
+            "quester needs the original typed evidence gates, not a debug-string Blocked"
+        );
+    }
+
+    #[test]
+    fn provision_walk_preserves_manual_cancellation() {
+        assert_eq!(
+            walk_evidence(walk_receipt(crate::native::WalkEnd::UserInput, None)),
+            Err(ActionError::UserInput)
+        );
     }
 
     fn compiled_item(

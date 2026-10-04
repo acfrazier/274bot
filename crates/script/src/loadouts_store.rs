@@ -442,7 +442,7 @@ pub fn resolve_setting_options_with_labels(
             Some("named-banks" | "gatherer-teleports")
         )
     {
-        return ResolvedSettingOptions::from_values(def.options.clone());
+        return inline_setting_options(def);
     }
     if def.options_from.as_deref() == Some("loadouts") {
         return ResolvedSettingOptions::from_values(loadouts.names());
@@ -469,6 +469,9 @@ pub fn resolve_setting_options_with_labels(
         }
         if from == "FOOD_OPTIONS" {
             return resolve_food_options(game_data);
+        }
+        if from == "gatherer-food" {
+            return resolve_gatherer_food_options(game_data);
         }
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
@@ -508,6 +511,17 @@ pub fn resolve_setting_options_with_labels(
     ResolvedSettingOptions::default()
 }
 
+fn inline_setting_options(def: &crate::rs2b0t_registry::SettingDef) -> ResolvedSettingOptions {
+    ResolvedSettingOptions {
+        values: def.options.clone(),
+        labels: if def.option_labels.len() == def.options.len() {
+            def.option_labels.clone()
+        } else {
+            def.options.clone()
+        },
+    }
+}
+
 fn equipment_row_is_selectable(row: &api::game_data::EquipmentNameEntry) -> bool {
     row.disposition == "resolved"
         && row.id.is_some()
@@ -528,6 +542,22 @@ fn resolve_food_options(
             .map(str::to_string)
             .collect(),
     )
+}
+fn resolve_gatherer_food_options(
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions::default();
+    };
+    let mut values = vec![String::new()];
+    let mut labels = vec!["None".to_string()];
+    for name in data.fixed_food_options_best_first() {
+        if !values.iter().any(|value| value.eq_ignore_ascii_case(name)) {
+            values.push(name.to_string());
+            labels.push(name.to_string());
+        }
+    }
+    ResolvedSettingOptions { values, labels }
 }
 
 fn resolve_w1c_equipment_options(
@@ -568,7 +598,7 @@ fn resolve_w1c_equipment_options(
 }
 
 /// Pinned gather options for one skill (`gather:<skill>`): values are the
-/// selectable keys (resource keys for woodcutting/mining, method ids for
+/// selectable keys (resource keys for woodcutting/mining, grouped keys for
 /// fishing) in generator order with parallel display labels. Refused rows stay
 /// visible with their admission gap code; Start refuses them. Empty without
 /// borrowed selected facts.
@@ -941,6 +971,36 @@ mod tests {
             heals.windows(2).all(|pair| pair[0] >= pair[1]),
             "food choices list the best heal first: {heals:?}"
         );
+    }
+
+    #[test]
+    fn gatherer_food_options_start_with_none_and_inline_labels_are_preserved() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let food = equipment_from("gatherer-food");
+        let no_facts = resolve_setting_options_with_labels(&food, &store, None);
+        assert!(
+            no_facts.is_empty(),
+            "dynamic food options need selected facts"
+        );
+        let food_options = resolve_setting_options_with_labels(&food, &store, Some(data.as_ref()));
+        assert_eq!(food_options.values.first().map(String::as_str), Some(""));
+        assert_eq!(
+            food_options.labels.first().map(String::as_str),
+            Some("None")
+        );
+        assert!(food_options.values[1..]
+            .iter()
+            .all(|name| data.fixed_food_heal(name).is_some()));
+
+        let mut inline = equipment_from("not-dynamic");
+        inline.options = vec!["quest_id".into()];
+        inline.option_labels = vec!["Quest display name".into()];
+        inline.options_from = None;
+        let inline_options = resolve_setting_options_with_labels(&inline, &store, None);
+        assert_eq!(inline_options.values, ["quest_id"]);
+        assert_eq!(inline_options.labels, ["Quest display name"]);
     }
     #[test]
     fn w1c_equipment_options_closed_without_game_data() {
@@ -1418,10 +1478,10 @@ mod tests {
             "consumption": [],
             "pickpocket": [],
             "gather_resources": [
-                {"skill": "mining", "method": "mining.copper", "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
-                {"skill": "mining", "method": "mining.iron", "key": "iron", "resources": ["iron"], "label": "Iron ore", "level": 15, "selectable": true, "gap": null},
-                {"skill": "woodcutting", "method": "woodcutting.jungle", "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
-                {"skill": "fishing", "method": "fishing.saltfish.op1", "key": "fishing.saltfish.op1", "resources": ["raw_shrimp", "raw_anchovies"], "label": "Raw shrimps / Raw anchovies", "level": 0, "selectable": true, "gap": null}
+                {"skill": "mining", "method": "mining.copper", "methods": ["mining.copper"], "aliases": [], "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
+                {"skill": "mining", "method": "mining.iron", "methods": ["mining.iron"], "aliases": [], "key": "iron", "resources": ["iron"], "label": "Iron ore", "level": 15, "selectable": true, "gap": null},
+                {"skill": "woodcutting", "method": "woodcutting.jungle", "methods": ["woodcutting.jungle"], "aliases": [], "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
+                {"skill": "fishing", "method": "fishing.saltfish.op1", "methods": ["fishing.saltfish.op1"], "aliases": ["fishing.saltfish.op1"], "key": "fishing.net.tool_303.products_317_321", "resources": ["raw_anchovies", "raw_shrimp"], "label": "Raw shrimps / Raw anchovies — Net (Small fishing net)", "level": 0, "selectable": true, "gap": null}
             ]
         }))
         .expect("gather test facts decode")
@@ -1460,10 +1520,13 @@ mod tests {
             &store,
             Some(&data),
         );
-        assert_eq!(fishing.values, vec!["fishing.saltfish.op1".to_string()]);
+        assert_eq!(
+            fishing.values,
+            vec!["fishing.net.tool_303.products_317_321".to_string()]
+        );
         assert_eq!(
             fishing.labels,
-            vec!["Raw shrimps / Raw anchovies".to_string()]
+            vec!["Raw shrimps / Raw anchovies — Net (Small fishing net)".to_string()]
         );
     }
 

@@ -154,6 +154,7 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapsh
             actor,
             combat_level: 3,
             skill_level: 1,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,

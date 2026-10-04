@@ -1377,7 +1377,7 @@ fn spawn_slot_thread(
                                         }
                                     }
                                 } else {
-                                    true
+                                    false
                                 }
                             } else {
                                 false

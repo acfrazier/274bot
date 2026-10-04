@@ -56,7 +56,8 @@ use std::sync::{Arc, LazyLock};
 
 use crate::clue::{Delegation, Outcome};
 use crate::combat::{
-    begin_clear_prayers, ClearPrayers, Combat, CombatRequest, CombatTables, Hygiene,
+    begin_clear_owned_prayers, ClearPrayers, Combat, CombatRequest, CombatTables, Hygiene,
+    RaisedPrayers,
 };
 use crate::native::{
     ActionError, ActionHandle, CompiledCard, ConfigError, HostFrame, Interrupt, NativeOutput,
@@ -195,7 +196,7 @@ fn create(
         run: Some(run),
         revision: config.revision(),
         dirty: true,
-        hygiene_pending: true,
+        hygiene_pending: false,
         tables,
         ..Default::default()
     }))
@@ -248,6 +249,7 @@ pub struct Sherlock {
     pending: Option<(u32, Arc<CombatRequest>)>,
     outcome: Option<Outcome>,
     hygiene_pending: bool,
+    hygiene_owned: RaisedPrayers,
     tables: Option<Arc<CombatTables>>,
     blocked: Option<ScriptFailure>,
     block_user_input: bool,
@@ -278,12 +280,14 @@ impl Script for Sherlock {
         }
         if self.hygiene_pending {
             let Some(tables) = self.tables.as_ref() else {
-                self.hygiene_pending = false;
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             };
-            match begin_clear_prayers(tables.selected(), tick) {
-                Hygiene::Clean => self.hygiene_pending = false,
+            match begin_clear_owned_prayers(tables.selected(), self.hygiene_owned, tick) {
+                Hygiene::Clean => {
+                    self.hygiene_owned = RaisedPrayers::empty();
+                    self.hygiene_pending = false;
+                }
                 Hygiene::Started(handle) => {
                     self.fight = Some(Fight::ClearPrayers(handle));
                     self.publish(tick.output);
@@ -294,7 +298,6 @@ impl Script for Sherlock {
                     return Ok(ScriptFlow::Continue);
                 }
                 Hygiene::Failed(_) => {
-                    self.hygiene_pending = false;
                     let failure = ScriptFailure {
                         code: Arc::from("combat-failed"),
                         message: Arc::from("prayer hygiene failed"),
@@ -352,26 +355,37 @@ impl Script for Sherlock {
 
     fn interrupt(&mut self, event: Interrupt) {
         if matches!(event, Interrupt::Pause) {
+            if let Some(Fight::Combat(handle)) = self.fight.as_ref() {
+                self.hygiene_owned = handle.prayer_cleanup();
+            }
             if let Some(id) = self.combat_id.take() {
                 self.outcome = Some(Outcome::cancelled(id));
             } else if let Some((id, _)) = self.pending.take() {
                 self.outcome = Some(Outcome::cancelled(id));
             }
             self.fight = None;
-            self.hygiene_pending = true;
+            self.hygiene_pending = !self.hygiene_owned.is_empty();
         }
     }
 }
 
 impl Sherlock {
     fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
+        if let Some(Fight::Combat(handle)) = self.fight.as_ref() {
+            self.hygiene_owned = handle.prayer_cleanup();
+        }
         match self.fight.as_ref() {
             Some(Fight::Combat(handle)) => match tick.actions.poll(handle, &mut tick.cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => {
                     let id = self.combat_id.take().unwrap_or(0);
                     self.fight = None;
-                    self.hygiene_pending |= result.is_err();
+                    if result.is_err() {
+                        self.hygiene_pending = !self.hygiene_owned.is_empty();
+                    } else {
+                        self.hygiene_owned = RaisedPrayers::empty();
+                        self.hygiene_pending = false;
+                    }
                     if matches!(result, Err(ActionError::UserInput)) {
                         self.block_user_input = true;
                     }
@@ -384,10 +398,12 @@ impl Sherlock {
                 Poll::Ready(Ok(report)) => {
                     self.fight = None;
                     if report.timed_out != 0 {
+                        self.hygiene_pending = !self.hygiene_owned.is_empty();
                         self.blocked = Some(hygiene_failure(ActionError::Blocked(Arc::from(
                             "prayer cleanup timed out",
                         ))));
                     } else {
+                        self.hygiene_owned = RaisedPrayers::empty();
                         self.hygiene_pending = false;
                     }
                     Poll::Ready(())

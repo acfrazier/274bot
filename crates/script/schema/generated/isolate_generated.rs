@@ -5358,6 +5358,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_PROJECTILES: ::flatbuffers::VOffsetT = 280;
   pub const VT_CHAT_PAGE_FINGERPRINT: ::flatbuffers::VOffsetT = 282;
   pub const VT_SIDE_MODAL_ID: ::flatbuffers::VOffsetT = 284;
+  pub const VT_LOCAL_PLAYER_MOTION: ::flatbuffers::VOffsetT = 286;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5477,6 +5478,7 @@ impl<'a> Snapshot<'a> {
     builder.add_inv_size(args.inv_size);
     if let Some(x) = args.inv { builder.add_inv(x); }
     if let Some(x) = args.here { builder.add_here(x); }
+    builder.add_local_player_motion(args.local_player_motion);
     builder.add_walk_outcome_cancel_reason(args.walk_outcome_cancel_reason);
     builder.add_walk_outcome_blocked(args.walk_outcome_blocked);
     builder.add_bank_selection_kind(args.bank_selection_kind);
@@ -6502,6 +6504,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(Snapshot::VT_SIDE_MODAL_ID, Some(-1)).unwrap()}
   }
+  #[inline]
+  pub fn local_player_motion(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(Snapshot::VT_LOCAL_PLAYER_MOTION, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6651,6 +6660,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>("projectiles", Self::VT_PROJECTILES, false)?
      .visit_field::<u64>("chat_page_fingerprint", Self::VT_CHAT_PAGE_FINGERPRINT, false)?
      .visit_field::<i32>("side_modal_id", Self::VT_SIDE_MODAL_ID, false)?
+     .visit_field::<u8>("local_player_motion", Self::VT_LOCAL_PLAYER_MOTION, false)?
      .finish();
     Ok(())
   }
@@ -6797,6 +6807,7 @@ pub struct SnapshotArgs<'a> {
     pub projectiles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>>>,
     pub chat_page_fingerprint: u64,
     pub side_modal_id: i32,
+    pub local_player_motion: u8,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6943,6 +6954,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       projectiles: None,
       chat_page_fingerprint: 0,
       side_modal_id: -1,
+      local_player_motion: 0,
     }
   }
 }
@@ -7517,6 +7529,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<i32>(Snapshot::VT_SIDE_MODAL_ID, side_modal_id, -1);
   }
   #[inline]
+  pub fn add_local_player_motion(&mut self, local_player_motion: u8) {
+    self.fbb_.push_slot::<u8>(Snapshot::VT_LOCAL_PLAYER_MOTION, local_player_motion, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7675,6 +7691,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("projectiles", &self.projectiles());
       ds.field("chat_page_fingerprint", &self.chat_page_fingerprint());
       ds.field("side_modal_id", &self.side_modal_id());
+      ds.field("local_player_motion", &self.local_player_motion());
       ds.finish()
   }
 }

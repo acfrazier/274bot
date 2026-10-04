@@ -79069,6 +79069,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.normal",
+      "methods": [
+        "woodcutting.normal"
+      ],
+      "aliases": [],
       "key": "normal",
       "resources": [
         "normal"
@@ -79081,6 +79085,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.jungle",
+      "methods": [
+        "woodcutting.jungle"
+      ],
+      "aliases": [],
       "key": "jungle",
       "resources": [
         "jungle"
@@ -79093,6 +79101,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.burnt",
+      "methods": [
+        "woodcutting.burnt"
+      ],
+      "aliases": [],
       "key": "burnt",
       "resources": [
         "burnt"
@@ -79105,6 +79117,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.achey",
+      "methods": [
+        "woodcutting.achey"
+      ],
+      "aliases": [],
       "key": "achey",
       "resources": [
         "achey"
@@ -79117,6 +79133,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.oak",
+      "methods": [
+        "woodcutting.oak"
+      ],
+      "aliases": [],
       "key": "oak",
       "resources": [
         "oak"
@@ -79129,6 +79149,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.willow",
+      "methods": [
+        "woodcutting.willow"
+      ],
+      "aliases": [],
       "key": "willow",
       "resources": [
         "willow"
@@ -79141,6 +79165,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.maple",
+      "methods": [
+        "woodcutting.maple"
+      ],
+      "aliases": [],
       "key": "maple",
       "resources": [
         "maple"
@@ -79153,6 +79181,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.yew",
+      "methods": [
+        "woodcutting.yew"
+      ],
+      "aliases": [],
       "key": "yew",
       "resources": [
         "yew"
@@ -79165,6 +79197,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.magic",
+      "methods": [
+        "woodcutting.magic"
+      ],
+      "aliases": [],
       "key": "magic",
       "resources": [
         "magic"
@@ -79177,6 +79213,10 @@
     {
       "skill": "woodcutting",
       "method": "woodcutting.hollow",
+      "methods": [
+        "woodcutting.hollow"
+      ],
+      "aliases": [],
       "key": "hollow",
       "resources": [
         "hollow"
@@ -79189,6 +79229,10 @@
     {
       "skill": "mining",
       "method": "mining.rune stones",
+      "methods": [
+        "mining.rune stones"
+      ],
+      "aliases": [],
       "key": "rune stones",
       "resources": [
         "rune stones"
@@ -79201,6 +79245,10 @@
     {
       "skill": "mining",
       "method": "mining.clay",
+      "methods": [
+        "mining.clay"
+      ],
+      "aliases": [],
       "key": "clay",
       "resources": [
         "clay"
@@ -79213,6 +79261,10 @@
     {
       "skill": "mining",
       "method": "mining.copper",
+      "methods": [
+        "mining.copper"
+      ],
+      "aliases": [],
       "key": "copper",
       "resources": [
         "copper"
@@ -79225,6 +79277,10 @@
     {
       "skill": "mining",
       "method": "mining.tin",
+      "methods": [
+        "mining.tin"
+      ],
+      "aliases": [],
       "key": "tin",
       "resources": [
         "tin"
@@ -79237,6 +79293,10 @@
     {
       "skill": "mining",
       "method": "mining.iron",
+      "methods": [
+        "mining.iron"
+      ],
+      "aliases": [],
       "key": "iron",
       "resources": [
         "iron"
@@ -79249,6 +79309,10 @@
     {
       "skill": "mining",
       "method": "mining.coal",
+      "methods": [
+        "mining.coal"
+      ],
+      "aliases": [],
       "key": "coal",
       "resources": [
         "coal"
@@ -79261,6 +79325,10 @@
     {
       "skill": "mining",
       "method": "mining.gold",
+      "methods": [
+        "mining.gold"
+      ],
+      "aliases": [],
       "key": "gold",
       "resources": [
         "gold"
@@ -79273,6 +79341,10 @@
     {
       "skill": "mining",
       "method": "mining.silver",
+      "methods": [
+        "mining.silver"
+      ],
+      "aliases": [],
       "key": "silver",
       "resources": [
         "silver"
@@ -79285,6 +79357,10 @@
     {
       "skill": "mining",
       "method": "mining.mithril",
+      "methods": [
+        "mining.mithril"
+      ],
+      "aliases": [],
       "key": "mithril",
       "resources": [
         "mithril"
@@ -79297,6 +79373,10 @@
     {
       "skill": "mining",
       "method": "mining.adamantite",
+      "methods": [
+        "mining.adamantite"
+      ],
+      "aliases": [],
       "key": "adamantite",
       "resources": [
         "adamantite"
@@ -79309,6 +79389,10 @@
     {
       "skill": "mining",
       "method": "mining.runite",
+      "methods": [
+        "mining.runite"
+      ],
+      "aliases": [],
       "key": "runite",
       "resources": [
         "runite"
@@ -79321,6 +79405,10 @@
     {
       "skill": "mining",
       "method": "mining.blurite",
+      "methods": [
+        "mining.blurite"
+      ],
+      "aliases": [],
       "key": "blurite",
       "resources": [
         "blurite"
@@ -79333,6 +79421,10 @@
     {
       "skill": "mining",
       "method": "mining.gems",
+      "methods": [
+        "mining.gems"
+      ],
+      "aliases": [],
       "key": "gems",
       "resources": [
         "gems"
@@ -79345,6 +79437,10 @@
     {
       "skill": "mining",
       "method": "mining.rock",
+      "methods": [
+        "mining.rock"
+      ],
+      "aliases": [],
       "key": "rock",
       "resources": [
         "rock"
@@ -79357,6 +79453,10 @@
     {
       "skill": "mining",
       "method": "mining.limestone",
+      "methods": [
+        "mining.limestone"
+      ],
+      "aliases": [],
       "key": "limestone",
       "resources": [
         "limestone"
@@ -79368,87 +79468,21 @@
     },
     {
       "skill": "fishing",
-      "method": "fishing.loc_2027.op1",
-      "key": "fishing.loc_2027.op1",
-      "resources": [
-        "raw_trout",
-        "raw_salmon"
-      ],
-      "label": "Raw trout / Raw salmon",
-      "level": 20,
-      "selectable": true,
-      "gap": null
-    },
-    {
-      "skill": "fishing",
-      "method": "fishing.loc_2027.op2",
-      "key": "fishing.loc_2027.op2",
-      "resources": [
-        "raw_pike"
-      ],
-      "label": "Raw pike",
-      "level": 25,
-      "selectable": true,
-      "gap": null
-    },
-    {
-      "skill": "fishing",
-      "method": "fishing.loc_2630.op1",
-      "key": "fishing.loc_2630.op1",
-      "resources": [
-        "raw_lava_eel"
-      ],
-      "label": "Raw lava eel",
-      "level": 53,
-      "selectable": true,
-      "gap": null
-    },
-    {
-      "skill": "fishing",
-      "method": "fishing.0_45_152_lavafish.op1",
-      "key": "fishing.0_45_152_lavafish.op1",
-      "resources": [
-        "raw_lava_eel"
-      ],
-      "label": "Raw lava eel",
-      "level": 53,
-      "selectable": true,
-      "gap": null
-    },
-    {
-      "skill": "fishing",
-      "method": "fishing.category_632.op1",
-      "key": "fishing.category_632.op1",
-      "resources": [
-        "tbwt_raw_karambwanji",
-        "raw_shrimp"
-      ],
-      "label": "Raw karambwanji / Raw shrimps",
-      "level": 5,
-      "selectable": true,
-      "gap": null
-    },
-    {
-      "skill": "fishing",
-      "method": "fishing.category_633.op1",
-      "key": "fishing.category_633.op1",
-      "resources": [
-        "tbwt_raw_karambwan"
-      ],
-      "label": "Raw karambwan",
-      "level": 65,
-      "selectable": false,
-      "gap": "inventory-effect"
-    },
-    {
-      "skill": "fishing",
       "method": "fishing.freshfish.op1",
-      "key": "fishing.freshfish.op1",
-      "resources": [
-        "raw_trout",
-        "raw_salmon"
+      "methods": [
+        "fishing.freshfish.op1",
+        "fishing.loc_2027.op1"
       ],
-      "label": "Raw trout / Raw salmon",
+      "aliases": [
+        "fishing.freshfish.op1",
+        "fishing.loc_2027.op1"
+      ],
+      "key": "fishing.lure.tool_309.products_331_335",
+      "resources": [
+        "raw_salmon",
+        "raw_trout"
+      ],
+      "label": "Raw trout / Raw salmon — Lure (Fly fishing rod + Feather)",
       "level": 20,
       "selectable": true,
       "gap": null
@@ -79456,30 +79490,101 @@
     {
       "skill": "fishing",
       "method": "fishing.freshfish.op3",
-      "key": "fishing.freshfish.op3",
+      "methods": [
+        "fishing.freshfish.op3",
+        "fishing.loc_2027.op2"
+      ],
+      "aliases": [
+        "fishing.freshfish.op3",
+        "fishing.loc_2027.op2"
+      ],
+      "key": "fishing.bait.tool_307.products_349",
       "resources": [
         "raw_pike"
       ],
-      "label": "Raw pike",
+      "label": "Raw pike — Bait (Fishing rod + Fishing bait)",
       "level": 25,
       "selectable": true,
       "gap": null
     },
     {
       "skill": "fishing",
-      "method": "fishing.memberfish.op1",
-      "key": "fishing.memberfish.op1",
-      "resources": [
-        "leather_boots",
-        "seaweed",
-        "leather_gloves",
-        "raw_mackerel",
-        "oystershell",
-        "casket",
-        "raw_cod",
-        "raw_bass"
+      "method": "fishing.0_45_152_lavafish.op1",
+      "methods": [
+        "fishing.0_45_152_lavafish.op1",
+        "fishing.loc_2630.op1"
       ],
-      "label": "Leather boots / Seaweed / Leather gloves / Raw mackerel / Oyster / Casket / Raw cod / Raw bass",
+      "aliases": [
+        "fishing.0_45_152_lavafish.op1",
+        "fishing.loc_2630.op1"
+      ],
+      "key": "fishing.bait.tool_1585.products_2148",
+      "resources": [
+        "raw_lava_eel"
+      ],
+      "label": "Raw lava eel — Bait (Oily fishing rod + Fishing bait)",
+      "level": 53,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.category_632.op1",
+      "methods": [
+        "fishing.category_632.op1"
+      ],
+      "aliases": [
+        "fishing.category_632.op1"
+      ],
+      "key": "fishing.net.tool_303.products_317_3150",
+      "resources": [
+        "raw_shrimp",
+        "tbwt_raw_karambwanji"
+      ],
+      "label": "Raw karambwanji / Raw shrimps — Net (Small fishing net)",
+      "level": 5,
+      "selectable": true,
+      "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.category_633.op1",
+      "methods": [
+        "fishing.category_633.op1"
+      ],
+      "aliases": [
+        "fishing.category_633.op1"
+      ],
+      "key": "fishing.fish.tool_3159.products_3142",
+      "resources": [
+        "tbwt_raw_karambwan"
+      ],
+      "label": "Raw karambwan — Fish (Karambwan vessel)",
+      "level": 65,
+      "selectable": false,
+      "gap": "inventory-effect"
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.memberfish.op1",
+      "methods": [
+        "fishing.memberfish.op1"
+      ],
+      "aliases": [
+        "fishing.memberfish.op1"
+      ],
+      "key": "fishing.net.tool_305.products_341_353_363_401_405_407_1059_1061",
+      "resources": [
+        "casket",
+        "leather_boots",
+        "leather_gloves",
+        "oystershell",
+        "raw_bass",
+        "raw_cod",
+        "raw_mackerel",
+        "seaweed"
+      ],
+      "label": "Leather boots / Seaweed / Leather gloves +5 more — Net (Big fishing net)",
       "level": 16,
       "selectable": true,
       "gap": null
@@ -79487,11 +79592,17 @@
     {
       "skill": "fishing",
       "method": "fishing.memberfish.op3",
-      "key": "fishing.memberfish.op3",
+      "methods": [
+        "fishing.memberfish.op3"
+      ],
+      "aliases": [
+        "fishing.memberfish.op3"
+      ],
+      "key": "fishing.harpoon.tool_311.products_383",
       "resources": [
         "raw_shark"
       ],
-      "label": "Raw shark",
+      "label": "Raw shark — Harpoon (Harpoon)",
       "level": 76,
       "selectable": true,
       "gap": null
@@ -79499,11 +79610,17 @@
     {
       "skill": "fishing",
       "method": "fishing.rarefish.op1",
-      "key": "fishing.rarefish.op1",
+      "methods": [
+        "fishing.rarefish.op1"
+      ],
+      "aliases": [
+        "fishing.rarefish.op1"
+      ],
+      "key": "fishing.cage.tool_301.products_377",
       "resources": [
         "raw_lobster"
       ],
-      "label": "Raw lobster",
+      "label": "Raw lobster — Cage (Lobster pot)",
       "level": 40,
       "selectable": true,
       "gap": null
@@ -79511,12 +79628,18 @@
     {
       "skill": "fishing",
       "method": "fishing.rarefish.op3",
-      "key": "fishing.rarefish.op3",
-      "resources": [
-        "raw_tuna",
-        "raw_swordfish"
+      "methods": [
+        "fishing.rarefish.op3"
       ],
-      "label": "Raw tuna / Raw swordfish",
+      "aliases": [
+        "fishing.rarefish.op3"
+      ],
+      "key": "fishing.harpoon.tool_311.products_359_371",
+      "resources": [
+        "raw_swordfish",
+        "raw_tuna"
+      ],
+      "label": "Raw tuna / Raw swordfish — Harpoon (Harpoon)",
       "level": 35,
       "selectable": true,
       "gap": null
@@ -79524,12 +79647,18 @@
     {
       "skill": "fishing",
       "method": "fishing.saltfish.op1",
-      "key": "fishing.saltfish.op1",
-      "resources": [
-        "raw_shrimp",
-        "raw_anchovies"
+      "methods": [
+        "fishing.saltfish.op1"
       ],
-      "label": "Raw shrimps / Raw anchovies",
+      "aliases": [
+        "fishing.saltfish.op1"
+      ],
+      "key": "fishing.net.tool_303.products_317_321",
+      "resources": [
+        "raw_anchovies",
+        "raw_shrimp"
+      ],
+      "label": "Raw shrimps / Raw anchovies — Net (Small fishing net)",
       "level": 0,
       "selectable": true,
       "gap": null
@@ -79537,12 +79666,18 @@
     {
       "skill": "fishing",
       "method": "fishing.saltfish.op3",
-      "key": "fishing.saltfish.op3",
-      "resources": [
-        "raw_sardine",
-        "raw_herring"
+      "methods": [
+        "fishing.saltfish.op3"
       ],
-      "label": "Raw sardine / Raw herring",
+      "aliases": [
+        "fishing.saltfish.op3"
+      ],
+      "key": "fishing.bait.tool_307.products_327_345",
+      "resources": [
+        "raw_herring",
+        "raw_sardine"
+      ],
+      "label": "Raw sardine / Raw herring — Bait (Fishing rod + Fishing bait)",
       "level": 5,
       "selectable": true,
       "gap": null
@@ -79550,11 +79685,17 @@
     {
       "skill": "fishing",
       "method": "fishing.slimeyfish.op1",
-      "key": "fishing.slimeyfish.op1",
+      "methods": [
+        "fishing.slimeyfish.op1"
+      ],
+      "aliases": [
+        "fishing.slimeyfish.op1"
+      ],
+      "key": "fishing.bait.tool_307.products_3379",
       "resources": [
         "mort_slimey_eel"
       ],
-      "label": "Slimey eel",
+      "label": "Slimey eel — Bait (Fishing rod + Fishing bait)",
       "level": 28,
       "selectable": true,
       "gap": null
@@ -116877,6 +117018,7 @@
         "attackrange": 15,
         "huntrange": 15,
         "vislevel": 333,
+        "headicon": 8,
         "hitpoints": 255,
         "damagetype": null,
         "strength": 300,
@@ -116931,6 +117073,7 @@
         "attackrange": 10,
         "huntrange": 10,
         "vislevel": 333,
+        "headicon": 3,
         "hitpoints": 255,
         "damagetype": null,
         "strength": 300,

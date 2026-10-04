@@ -65,30 +65,19 @@ fn settings_schema() -> &'static [SettingDef] {
         max_deaths.step = Some("1".into());
 
         vec![
-            setting(
+            path_setting(
                 "quests",
-                "string[]",
                 "[]",
                 "Quests",
                 "Empty selects all released quests.",
-                &[],
             ),
-            setting(
+            path_setting(
                 "order_override",
-                "string[]",
                 "[]",
                 "Order override",
                 "Prioritize these selected quest ids; remaining quests retain release order.",
-                &[],
             ),
-            setting(
-                "skip",
-                "string[]",
-                "[]",
-                "Skip",
-                "Do not run these released quest ids.",
-                &[],
-            ),
+            path_setting("skip", "[]", "Skip", "Do not run these released quest ids."),
             setting(
                 "partner_account",
                 "string",
@@ -126,6 +115,37 @@ fn settings_schema() -> &'static [SettingDef] {
     &SETTINGS
 }
 
+fn released_setting_paths() -> &'static [(String, String)] {
+    static PATHS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
+        RELEASE_INDEX
+            .paths
+            .iter()
+            .filter_map(|entry| {
+                let bytes = released_path(&entry.id)?;
+                let document: super::path::PathDocument =
+                    serde_json::from_slice(bytes).expect("released Path document");
+                Some((entry.id.clone(), document.display_name))
+            })
+            .collect()
+    });
+    PATHS.as_slice()
+}
+
+fn path_setting(id: &str, default: &str, label: &str, help: &str) -> SettingDef {
+    let mut def = setting(id, "string[]", default, label, help, &[]);
+    let paths = released_setting_paths();
+    def.options = paths.iter().map(|(id, _)| id.clone()).collect();
+    def.option_labels = paths.iter().map(|(_, display)| display.clone()).collect();
+    def.options_from = Some(
+        if id == "order_override" {
+            "released-path-order"
+        } else {
+            "released-paths"
+        }
+        .into(),
+    );
+    def
+}
 fn setting(
     id: &str,
     ty: &str,
@@ -402,6 +422,57 @@ mod tests {
             ]
         );
         assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
+        let paths = released_setting_paths();
+        assert!(!paths.is_empty());
+        let quests = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "quests")
+            .unwrap();
+        let expected_ids = paths.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>();
+        let expected_labels = paths
+            .iter()
+            .map(|(_, display)| display.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(quests.ty, "string[]");
+        assert_eq!(
+            quests
+                .options
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected_ids
+        );
+        assert_eq!(
+            quests
+                .option_labels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected_labels
+        );
+        assert_eq!(quests.options_from.as_deref(), Some("released-paths"));
+        let skip = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "skip")
+            .unwrap();
+        assert_eq!(skip.ty, "string[]");
+        assert_eq!(
+            skip.options.iter().map(String::as_str).collect::<Vec<_>>(),
+            expected_ids
+        );
+        assert_eq!(
+            skip.option_labels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected_labels
+        );
+        assert_eq!(skip.options_from.as_deref(), Some("released-paths"));
+        let order = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "order_override")
+            .unwrap();
+        assert_eq!(order.options_from.as_deref(), Some("released-path-order"));
 
         let mut bag = SettingsBag::new();
         bag.insert("quest".into(), serde_json::Value::String("cook".into()));
