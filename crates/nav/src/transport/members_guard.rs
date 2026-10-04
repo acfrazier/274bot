@@ -402,7 +402,7 @@ fn handler_blocks(text: &str) -> Vec<(String, String, String)> {
         let line = raw.trim();
         let Some(header) = super::script_text::parse_script_header(
             line,
-            super::script_text::ScriptHeaderStyle::Trimmed,
+            super::script_text::ScriptHeaderStyle::Exact,
         ) else {
             return super::script_text::ScriptBlockLine::Body(line);
         };
@@ -559,4 +559,23 @@ fn strip_strings(text: &str) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handler_blocks;
+
+    #[test]
+    fn handler_blocks_require_exact_header_parts() {
+        let blocks = handler_blocks(
+            "[oploc1,_first]\nfirst;\n[ oploc1 ,_spaced_kind]\nkept as body;\n[oploc1, _spaced_name]\nkept too;\n[oploc1,_next]\nnext;",
+        );
+
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].0, "oploc1");
+        assert_eq!(blocks[0].1, "_first");
+        assert!(blocks[0].2.contains("[ oploc1 ,_spaced_kind]"));
+        assert!(blocks[0].2.contains("[oploc1, _spaced_name]"));
+        assert_eq!(blocks[1].1, "_next");
+    }
 }

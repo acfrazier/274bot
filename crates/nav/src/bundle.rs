@@ -109,17 +109,28 @@ pub fn source_digest_from_fingerprints(
     use sha2::{Digest, Sha256};
     let mut digest = Sha256::new();
     digest.update(b"274NAVSOURCE01");
+    let mut source_inputs = Vec::new();
     for input in inputs {
         let path = Path::new(&input.path);
         let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
-        // `/`-joined on every platform: a Windows label must not differ.
-        let label = relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+        // Sorting the `/`-joined labels avoids native-separator ordering.
+        let mut label = String::new();
+        for component in relative.components() {
+            if !label.is_empty() {
+                label.push('/');
+            }
+            label.push_str(&component.as_os_str().to_string_lossy());
+        }
+        source_inputs.push((label, input));
+    }
+    source_inputs.sort_unstable_by(|(left_label, left), (right_label, right)| {
+        left_label
+            .cmp(right_label)
+            .then_with(|| left.sha256.cmp(&right.sha256))
+    });
+    for (label, input) in source_inputs {
         digest.update((label.len() as u64).to_be_bytes());
         digest.update(label.as_bytes());
         digest.update(input.sha256.as_bytes());

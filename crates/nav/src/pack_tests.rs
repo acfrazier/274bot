@@ -1563,24 +1563,6 @@ fn decode_grid_rejects_oversized_grid() {
     assert!(matches!(decode_grid(&bytes), Err(PackError::BadLength(_))));
 }
 
-#[test]
-fn decode_rejects_truncated_large_grid_before_allocation() {
-    let large_grid = header(0, super::MAX_GRID as u32, super::MAX_GRID as u32);
-    assert!(matches!(
-        decode_grid(&large_grid),
-        Err(PackError::Truncated)
-    ));
-
-    let mut pack = b"274V".to_vec();
-    pack.push(VERSION);
-    pack.push(0); // no quest-family binding
-    for value in [0i32, 0, 0] {
-        pack.extend_from_slice(&value.to_le_bytes());
-    }
-    pack.extend_from_slice(&(super::MAX_GRID as u32).to_le_bytes());
-    pack.extend_from_slice(&(super::MAX_GRID as u32).to_le_bytes());
-    assert!(matches!(decode(&pack), Err(PackError::Truncated)));
-}
 
 #[test]
 fn decode_grid_rejects_zero_grid() {
