@@ -35,9 +35,10 @@ missing or contradictory hints fail rather than becoming stage zero.
 `FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
 operator's starting gear. Gear never raises the profile to make it wearable:
 an item refusal fails the fixture and is a real qualification limit.
-Kit items accept selected config aliases or case-insensitive display names,
-matching product lookup. The builder emits only resolved config aliases in
-`give` commands and merges carried kit/extras by item ID.
+Product Path loadout headers require selected config aliases. Fixture lookup
+also accepts case-insensitive display names; this does not relax product header
+validation. The builder emits only resolved config aliases in `give` commands
+and merges carried kit/extras by item ID.
 
 The returned `QuesterFixture` has independently owned `scenario`,
 `start_settings`, `seed_commands` and a cloneable `seed`. Move `scenario`
