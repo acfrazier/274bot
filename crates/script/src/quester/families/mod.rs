@@ -2000,7 +2000,12 @@ impl StepRun for UseOnRun {
                 };
                 let request = InteractReq::UseOn {
                     name: self.item.to_string(),
-                    kind: self.kind.to_string(),
+                    // Compiled Path targets call inventory rows `item`; InteractReq uses `inv`.
+                    kind: match self.kind.as_ref() {
+                        "item" => "inv",
+                        kind => kind,
+                    }
+                    .to_string(),
                     target_name: self.target_name.as_ref().map(|n| n.to_string()),
                     x: tile.x,
                     z: tile.z,
