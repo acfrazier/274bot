@@ -293,27 +293,25 @@ fn load_pack_path_round_trips_a_world() {
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge {
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: tile(1, 0, 0),
-        to: tile(3, 0, 0),
-        loc_id: 1530,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    });
+    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: tile(1, 0, 0),
+    to: tile(3, 0, 0),
+    loc_id: 1530,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, });
     graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
     let dir = std::env::temp_dir().join(format!(
@@ -362,27 +360,25 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge {
-        kind: TransportKind::Teleport,
-        player_delta: None,
-        at: tile(0, 0, 0),
-        to: tile(4, 4, 0),
-        loc_id: 0,
-        option: 0,
-        ticks: 3,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 25)],
-        item_req: vec![],
-        consumed_req: vec![(554, 1), (556, 3), (563, 1)],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    });
+    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    player_delta: None,
+    at: tile(0, 0, 0),
+    to: tile(4, 4, 0),
+    loc_id: 0,
+    option: 0,
+    ticks: 3,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(6, 25)],
+    item_req: vec![],
+    consumed_req: vec![(554, 1), (556, 3), (563, 1)],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, });
 
     let dir = std::env::temp_dir().join(format!(
         "274bot-navworld-teles-{}-{}",
@@ -417,7 +413,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
 
 #[test]
 fn load_pack_round_trips_bank_stands() {
-    // The v15 pack stores the bank stand table; NavWorld::banks exposes
+    // The v16 pack stores the bank stand table; NavWorld::banks exposes
     // it to the Banking session.
     let mut plane = vec![0u32; 4];
     plane[0] = BLOCKED;

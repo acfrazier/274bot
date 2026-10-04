@@ -112,27 +112,25 @@ pub(super) const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 /// `varp_req` gate could never pass live.
 pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
     for w in ESSENCE_WIZARDS {
-        graph.edges.push(TransportEdge {
-            kind: TransportKind::Npc,
-            player_delta: None,
-            at: w.at,
-            to: ESSENCE_MINE_PAD,
-            loc_id: w.npc,
-            option: w.option,
-            ticks: ESSENCE_MINE_TICKS,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            consumed_req: vec![],
-            item_returns: vec![],
-            quest_req: vec!["Rune Mysteries Quest".to_string()],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None,
-        });
+        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+        player_delta: None,
+        at: w.at,
+        to: ESSENCE_MINE_PAD,
+        loc_id: w.npc,
+        option: w.option,
+        ticks: ESSENCE_MINE_TICKS,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec!["Rune Mysteries Quest".to_string()],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None, });
     }
 }
 
@@ -207,26 +205,24 @@ pub(super) const ELKOY_ESCORTS: &[ElkoyEscort] = &[
 /// per escort, keyed from the Elkoy NPC's tile.
 pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
     for e in ELKOY_ESCORTS {
-        graph.edges.push(TransportEdge {
-            kind: TransportKind::Npc,
-            player_delta: None,
-            at: e.at,
-            to: e.to,
-            loc_id: e.npc,
-            option: 1,
-            ticks: 1,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            consumed_req: vec![],
-            item_returns: vec![],
-            quest_req: vec!["Tree Gnome Village".to_string()],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None,
-        });
+        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+        player_delta: None,
+        at: e.at,
+        to: e.to,
+        loc_id: e.npc,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec!["Tree Gnome Village".to_string()],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None, });
     }
 }

@@ -50,11 +50,13 @@ it was baked with. Rebake it after content changes or a format upgrade.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **15**. Each
-edge's reusable `item_req` remains a held-item gate; v15 adds count-prefixed
-`(id, count)` `consumed_req` and `item_returns` vectors after it. Resource
+the derived `TransportGraph`. Magic `b"274V"`, version byte **16**. Each
+edge's reusable `item_req` remains a held-item gate; v15 added count-prefixed
+`(id, count)` `consumed_req` and `item_returns` vectors after it. Version 16
+adds a count-prefixed `worn_all_req` ID vector after the existing any-of
+`worn_req`; every listed item must be equipped at traversal time. Resource
 counts must be positive, and a returned item requires consumed resources.
-Version 15 retains v11's selected quest-family binding — its
+Version 16 retains v11's selected quest-family binding — its
 `quest_facts_sha256` and `quest_extractor_schema` — and typed per-edge
 quest-stage gates; it keeps the content-derived bank-stand table after the
 edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
@@ -66,7 +68,7 @@ Door, NPC and teleport admission is unchanged. Zone data includes stable
 kind identities/labels, NPC and hazard rows, curated groups, carves, and
 shaped masks. A shape row stores a zone index u16, north extent u8, and
 row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v15 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v16 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
@@ -74,11 +76,11 @@ spatial index. Raw `u32` flags are not on the pack wire. The optional
 separate `274R` sidecar bound to the pack identity.
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
-Ladder; v15 retains this encoding. The remaining kind value keeps its kind.
+Ladder; v16 retains this encoding. The remaining kind value keeps its kind.
 A flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
 `player_delta = to - at`. The flag is invalid on other kinds. Absolute
 landings do not set it.
-`decode` accepts version 15 only — v14 and older are `BadVersion` and must be
+`decode` accepts version 16 only — v15 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
@@ -260,9 +262,10 @@ carries `kind` (Door/Ladder/Stairs/Boat/Teleport/AgilityShortcut/Glider/
 SpiritTree/Npc), `at`/`to`, `loc_id`, the 1-based menu `option`
 (`0` = use first `item_req` on the loc), `ticks`, reusable inventory
 `item_req` gates, per-hop `consumed_req`, script-derived `item_returns`,
-and `worn_req` (**any-of**). A held `item_req` is never budgeted as spent;
-consumed counts budget supply across the full route, and returned items record
-replacement after consumption (including charged-jewellery `next_obj_stage`).
+`worn_req` (**any-of**) and `worn_all_req` (**all-of equipped**). Only items
+currently equipped satisfy `worn_all_req`; carried or banked pieces do not.
+`BankBudget` neither supplies nor equips these strict pieces; the Quester
+loadout handles equipping. A held `item_req` is never budgeted as spent.
 Spell runes and script-deleted fares or passes are consumptive requirements.
 Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
@@ -313,12 +316,12 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v15 pack retains the v12
-zone table described above and carries the resource-accounting vectors
-described above. Generator and producer-source digests invalidate staged
-bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
-navpois bindings. Explicit custom packs baked with the previous generator need
-to be rebaked too.
+it adds no door-specific wire fields. The v16 pack retains the v12 zone table
+described above, carries the resource-accounting vectors described above, and
+appends `worn_all_req` after `worn_req`. Generator and producer-source digests
+invalidate staged bundles and trigger a normal rebake, with refreshed
+pack/reach/canlight/navpois bindings. Explicit custom packs baked with the
+previous generator need to be rebaked too.
 
 ### Quest-stage gates (`nav::quest_gates`)
 

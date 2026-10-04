@@ -1,5 +1,5 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
-//! transport graph, the bank stand table, the v15 pack bytes, the raw flags
+//! transport graph, the bank stand table, the v16 pack bytes, the raw flags
 //! sidecar, the paint-reach sidecar, the static canlight sidecar and the bound
 //! manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
@@ -969,7 +969,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let canlight_bits =
         canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
 
-    // The raw baked flags ride in the sidecar; the v15 pack carries only
+    // The raw baked flags ride in the sidecar; the v16 pack carries only
     // the packed walk surface (the router's resident form).
     let flags = collision
         .flags

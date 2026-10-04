@@ -1,7 +1,7 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
 //! and the content-derived bank stand table ([`crate::pack::BankStand`]).
-//! The v15 pack file stores the compact packed walk surface and the
+//! The v16 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
@@ -226,35 +226,33 @@ impl NavWorld {
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
             let i = graph.edges.len();
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Door,
-                player_delta: None,
-                at: WorldTile {
-                    x: d.from.x,
-                    z: d.from.z,
-                    level: d.from.level,
-                },
-                to: WorldTile {
-                    x: d.to.x,
-                    z: d.to.z,
-                    level: d.to.level,
-                },
-                loc_id: d.loc_id,
-                option: 1,
-                ticks: 1,
-                dir: None,
-                open_loc_id: None,
-                skill_req: vec![],
-                item_req: vec![],
-                consumed_req: vec![],
-                item_returns: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-                quest_gates: None,
-            });
+            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+            player_delta: None,
+            at: WorldTile {
+                x: d.from.x,
+                z: d.from.z,
+                level: d.from.level,
+            },
+            to: WorldTile {
+                x: d.to.x,
+                z: d.to.z,
+                level: d.to.level,
+            },
+            loc_id: d.loc_id,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None, });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
         NavWorld {

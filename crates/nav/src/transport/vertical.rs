@@ -472,27 +472,25 @@ fn resolve_ladder_stair_rules(
                         bump(skipped, SKIP_DEST_OUTSIDE, 1);
                         continue;
                     }
-                    graph.edges.push(TransportEdge {
-                        kind: *kind,
-                        player_delta: landing.player_delta(),
-                        at,
-                        to,
-                        loc_id: id,
-                        option,
-                        ticks,
-                        dir: None,
-                        open_loc_id: None,
-                        skill_req: vec![],
-                        item_req: vec![],
-                        consumed_req: vec![],
-                        item_returns: vec![],
-                        quest_req: vec![],
-                        varp_req: vec![],
-                        worn_req: vec![],
-                        members_req: false,
-                        wildy_cap: None,
-                        quest_gates: None,
-                    });
+                    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: *kind,
+                    player_delta: landing.player_delta(),
+                    at,
+                    to,
+                    loc_id: id,
+                    option,
+                    ticks,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                    wildy_cap: None,
+                    quest_gates: None, });
                 }
             }
         }
@@ -610,27 +608,25 @@ pub(super) fn trapdoor_edges(
                     continue;
                 }
                 seen.insert(at);
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::Ladder,
-                    player_delta: landing.player_delta(),
-                    at,
-                    to,
-                    loc_id: closed_id,
-                    option: 1,
-                    ticks,
-                    dir: None,
-                    open_loc_id: open_id,
-                    skill_req: vec![],
-                    item_req: vec![],
-                    consumed_req: vec![],
-                    item_returns: vec![],
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: vec![],
-                    members_req: false,
-                    wildy_cap: None,
-                    quest_gates: None,
-                });
+                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Ladder,
+                player_delta: landing.player_delta(),
+                at,
+                to,
+                loc_id: closed_id,
+                option: 1,
+                ticks,
+                dir: None,
+                open_loc_id: open_id,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None, });
             }
         }
         let Some(open_id) = open_id else {
@@ -653,27 +649,25 @@ pub(super) fn trapdoor_edges(
                 bump(skipped, SKIP_DEST_OUTSIDE, 1);
                 continue;
             }
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Ladder,
-                player_delta: landing.player_delta(),
-                at,
-                to,
-                loc_id: open_id,
-                option: 1,
-                ticks,
-                dir: None,
-                open_loc_id: None,
-                skill_req: vec![],
-                item_req: vec![],
-                consumed_req: vec![],
-                item_returns: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-                quest_gates: None,
-            });
+            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Ladder,
+            player_delta: landing.player_delta(),
+            at,
+            to,
+            loc_id: open_id,
+            option: 1,
+            ticks,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None, });
         }
     }
 }

@@ -31,27 +31,25 @@ fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollisi
 }
 
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> TransportEdge {
-    TransportEdge {
-        kind,
-        player_delta: None,
-        at,
-        to,
-        loc_id,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { worn_all_req: Vec::new(), kind,
+    player_delta: None,
+    at,
+    to,
+    loc_id,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 fn route(legs: Vec<Leg>) -> Route {

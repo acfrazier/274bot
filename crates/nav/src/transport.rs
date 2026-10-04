@@ -162,8 +162,10 @@ pub enum DoorDir {
 /// spend, derived only when the source proves an inventory transformation.
 /// `worn_req` is the obj ids of which **any one** must be equipped (a Dramen
 /// staff is a one-id list; slashable webs list every blade whose
-/// `slashattack_anim` is not unarmed). `option` 0 on a loc hop means use the
-/// first `item_req` obj on the loc (`oplocu`); option 1 is `oploc1`.
+/// `slashattack_anim` is not unarmed). `worn_all_req` is a conjunctive
+/// equipment gate: every listed obj id must currently be equipped. `option` 0
+/// on a loc hop means use the first `item_req` obj on the loc (`oplocu`);
+/// option 1 is `oploc1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
@@ -188,6 +190,10 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
+    /// Conjunctive equipment prerequisites: every obj id must be equipped.
+    /// Unlike `worn_req`, this cannot be satisfied by an alternative, a
+    /// carried item, or a banked item.
+    pub worn_all_req: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
     /// handler (see `members_guard`): an F2P refusal on its leading path
     /// gates every edge through it; gliders, Zanaris, spirit trees, stage
@@ -616,7 +622,7 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
                 &e.item_returns,
                 &e.quest_req,
             ),
-            (&e.varp_req, &e.worn_req, e.members_req, e.wildy_cap),
+            (&e.varp_req, &e.worn_req, &e.worn_all_req, e.members_req, e.wildy_cap),
             &e.quest_gates,
         )
     }

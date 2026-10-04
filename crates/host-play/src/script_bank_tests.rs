@@ -1626,27 +1626,25 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
     use nav::transport::{TransportEdge, TransportKind};
     let banks = vec![bank("local", 12, 4), bank("Falador teleport bank", 40, 40)];
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge {
-        kind: TransportKind::Teleport,
-        player_delta: None,
-        at: tile(0, 0),
-        to: tile(39, 39),
-        loc_id: 0,
-        option: 0,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 37)],
-        item_req: vec![(555, 1), (556, 3), (563, 1)],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    });
+    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    player_delta: None,
+    at: tile(0, 0),
+    to: tile(39, 39),
+    loc_id: 0,
+    option: 0,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(6, 37)],
+    item_req: vec![(555, 1), (556, 3), (563, 1)],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, });
     let world = native_world(false, &banks, graph);
     let mut state = WorldState::empty().with_map_members(true);
     state.stats.insert(6, 60);

@@ -5,27 +5,25 @@ fn tile(x: i32, z: i32) -> WorldTile {
 }
 
 fn edge(kind: TransportKind) -> TransportEdge {
-    TransportEdge {
-        kind,
-        player_delta: None,
-        at: tile(10, 10),
-        to: tile(20, 20),
-        loc_id: 1,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: Vec::new(),
-        item_req: Vec::new(),
-        consumed_req: Vec::new(),
-        item_returns: Vec::new(),
-        quest_req: Vec::new(),
-        varp_req: Vec::new(),
-        worn_req: Vec::new(),
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { worn_all_req: Vec::new(), kind,
+    player_delta: None,
+    at: tile(10, 10),
+    to: tile(20, 20),
+    loc_id: 1,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: Vec::new(),
+    item_req: Vec::new(),
+    consumed_req: Vec::new(),
+    item_returns: Vec::new(),
+    quest_req: Vec::new(),
+    varp_req: Vec::new(),
+    worn_req: Vec::new(),
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 fn options(texts: &[&str]) -> Vec<api::snapshot::ChatOptionView> {

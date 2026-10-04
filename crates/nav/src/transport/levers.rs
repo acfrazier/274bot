@@ -86,27 +86,25 @@ pub(super) fn lever_edges(
                 level: loc.level,
             };
             for to in &tos {
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::Door,
-                    player_delta: None,
-                    at,
-                    to: *to,
-                    loc_id,
-                    option: 1, // Pull (oploc1)
-                    ticks: LEVER_TICKS,
-                    dir: None,
-                    open_loc_id: None,
-                    skill_req: vec![],
-                    item_req: vec![],
-                    consumed_req: vec![],
-                    item_returns: vec![],
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: vec![],
-                    members_req: false,
-                    wildy_cap: None,
-                    quest_gates: None,
-                });
+                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                player_delta: None,
+                at,
+                to: *to,
+                loc_id,
+                option: 1, // Pull (oploc1)
+                ticks: LEVER_TICKS,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None, });
             }
         }
         if graph.edges.len() == edge_start {
