@@ -123,6 +123,17 @@ pub fn is_death_line(text: &str) -> bool {
         .any(|part| part.eq_ignore_ascii_case(DEATH_NEEDLE_B.as_bytes()))
 }
 
+/// Whether the live player has posted zero effective hitpoints. This is only
+/// an action-safety gate: the chat latch remains the authority for a death.
+/// A missing stat page or missing stat is not a zero.
+pub(crate) fn hitpoints_zero(stats: Option<&[api::snapshot::StatView]>) -> bool {
+    stats.is_some_and(|stats| {
+        stats
+            .iter()
+            .any(|stat| stat.name == "hitpoints" && stat.effective <= 0)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
