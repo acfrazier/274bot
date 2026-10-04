@@ -1728,6 +1728,8 @@ mod bank_fetch_fixtures {
             flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
         }
         let edge = TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
             at: WorldTile {
@@ -2372,6 +2374,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         level: at.level,
     };
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Boat,
         player_delta: None,
         at,

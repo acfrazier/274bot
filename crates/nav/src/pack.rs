@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 15, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 16, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -23,19 +23,16 @@
 //! same indexing — then the transport edge count u32le and per edge
 //! `(kind u8, at x/z/level, to x/z/level, loc_id, option, ticks, dir u8,
 //! open_loc_id)` i32le plus requirement vectors, membership and wilderness
-//! caps, and quest-stage gates. Version 15 appends count-prefixed
-//! `(id, count)` `consumed_req` and `item_returns` vectors after reusable
-//! `item_req`; resource counts must be positive and returns require consumption.
-//! Version 13 appends one approach-geometry tag per edge after its quest gates
-//! (`0` absent, `1` + footprint width, length, and blocked-side mask). Version
-//! 14 reserves bit 7 of the existing kind byte for a player-relative
+//! caps, quest-stage gates, the conjunctive `worn_all_req` list, and a
+//! per-edge takeoff tag (`0` absent, `1` + exact `(x, z, level)` i32le).
+//! The takeoff is stored after quest gates and before approach geometry.
+//! Version 14 reserves bit 7 of the existing kind byte for a player-relative
 //! ladder/stairs landing. The low seven bits retain the kind; flagged `to - at`
 //! encodes the content displacement, resolved against each actual takeoff
 //! stand. Absolute edge records are unchanged and the flag adds no wire bytes.
-//! (`TransportGraph::teleports`) round-trips inside the same edge array as
-//! kind-4 edges; [`decode`] splits them back out and never indexes them into
-//! `at`. After the edges come the content-derived bank stand table, then the
-//! packed Wilderness rules. The v12 zone section follows Wilderness:
+//! Teleport edges round-trip inside the same array as kind-4 edges; [`decode`]
+//! splits them out and never indexes them into `at`. After edges come bank
+//! stands, Wilderness rules, and the v12 zone section:
 //! a kind table (npc id i32, vislevel u16, AP/visibility flags u8, then id
 //! and label as length-prefixed UTF-8), zone rows (tag 0 for NPC spawn/radius
 //! and tag 1 for a hazard rectangle), curated groups (identity, label, rect,
@@ -43,14 +40,13 @@
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v15 stream has `Some(ZoneTable)`, even when every row count
+//! Every decoded v16 stream has `Some(ZoneTable)`, even when every row count
 //! is zero; legacy grids and synthetic in-memory graphs use `zones: None`.
 //! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v14 or older whole-world stream is
-//! [`PackError::BadVersion`], never compat-loaded. The raw flags, paint-reach
-//! bitset, and canlight bitset remain sidecars: flags use magic `b"274F"`,
-//! reach `b"274R"`, and canlight `b"274L"`. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v15.
+//! return [`PackError::BadLength`]. A v15 or older whole-world stream is
+//! [`PackError::BadVersion`], never compat-loaded. Takeoff levels must match
+//! the loc anchor's valid game plane, and exact tiles must be standable in
+//! the decoded collision.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -106,17 +102,15 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// words into the `u8` face byte plus packed `SQ_BLOCKED` bit-plane. v8
 /// appends the bank stand table; v9 adds `members_req`; v10 adds wilderness
 /// teleport caps and the Wilderness-level formula. v11 binds the selected
-/// quest family and appends typed quest-stage gates. v12 appends the
-/// content-derived zone table after Wilderness. v13 appends per-edge
-/// approach geometry after quest gates. v14 flags player-relative landings in
-/// the kind byte. v15 appends per-edge consumed-resource and replacement-item
-/// vectors after held `item_req`. [`decode`] accepts version 15 only.
-pub const VERSION: u8 = 15;
+/// quest family and appends typed quest-stage gates. v12 appends the zone
+/// table, v13 approach geometry, v14 player-relative landings, v15 consumed
+/// resources and returns, and v16 `worn_all_req` plus optional exact takeoff.
+pub const VERSION: u8 = 16;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V15";
+pub const FORMAT_ID: &str = "274V16";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// High bit of a ladder/stairs kind byte: `to - at` is a player displacement.
@@ -425,7 +419,7 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v15 pack byte format. The graph's `at` index is not
+/// zone tables to the v16 pack byte format. The graph's `at` index is not
 /// stored; [`decode`] rebuilds it from the edges and collision. Teleports
 /// (kind-4 edges) are written after ordinary edges and always carry absent
 /// approach geometry. The raw flags are not on the wire (see the flags
@@ -490,10 +484,11 @@ pub fn encode(
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
-        out.push(if e.members_req { 1 } else { 0 });
-        let cap = e.wildy_cap.unwrap_or(-1);
-        out.extend_from_slice(&cap.to_le_bytes());
+        write_req_ids(&mut out, &e.worn_all_req);
+        out.push(u8::from(e.members_req));
+        out.extend_from_slice(&e.wildy_cap.unwrap_or(-1).to_le_bytes());
         write_quest_gates(&mut out, e.quest_gates.as_ref());
+        write_takeoff(&mut out, e.takeoff);
         write_approach(
             &mut out,
             if edge_index < graph.edges.len() {
@@ -614,7 +609,16 @@ fn encoded_size(
         }
         size_strings(&mut edge_size, &edge.quest_req, "quest requirements")?;
         size_ids(&mut edge_size, edge.worn_req.len(), "worn requirements")?;
+        size_ids(
+            &mut edge_size,
+            edge.worn_all_req.len(),
+            "conjunctive worn requirements",
+        )?;
+        edge_size = add_encoded_size(edge_size, 13, "transport takeoff")?;
         size_quest_gates(&mut edge_size, edge.quest_gates.as_ref())?;
+        if let Some(takeoff) = edge.takeoff {
+            validate_takeoff_admission(collision, edge, takeoff, approach)?;
+        }
         if approach.is_some() {
             edge_size = add_encoded_size(edge_size, 3, "approach geometry")?;
         }
@@ -800,7 +804,7 @@ fn kind_to_u8(k: TransportKind) -> Result<u8, PackError> {
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
-/// Version 15 is the only accepted wire; older streams are rejected rather
+/// Version 16 is the only accepted wire; older streams are rejected rather
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
 /// malformed resource requirements, gates, or approach geometry are rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
@@ -854,9 +858,9 @@ fn decode_pack_body<R: PackRead>(
     // themselves still fail with Truncated past the real end.
     let remaining = r.remaining();
     let mut graph = TransportGraph {
-        // A v15 edge is at least 80 bytes, including its empty vectors and trailer.
-        edges: Vec::with_capacity(n_edges.min(remaining / 80)),
-        approaches: Vec::with_capacity(n_edges.min(remaining / 80)),
+        // A v16 edge is at least 97 bytes, including its takeoff field and trailer.
+        edges: Vec::with_capacity(n_edges.min(remaining / 97)),
+        approaches: Vec::with_capacity(n_edges.min(remaining / 97)),
         quest_family,
         ..Default::default()
     };
@@ -901,6 +905,7 @@ fn decode_pack_body<R: PackRead>(
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
             worn_req: read_req_ids(&mut r)?,
+            worn_all_req: read_req_ids(&mut r)?,
             members_req: match read_u8(&mut r)? {
                 0 => false,
                 1 => true,
@@ -924,7 +929,9 @@ fn decode_pack_body<R: PackRead>(
                 }
             },
             quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
+            takeoff: None,
         };
+        edge.takeoff = read_takeoff(&mut r, edge.at)?;
         validate_resource_requirements(&edge)?;
         if player_relative {
             let delta = |to: i32, at: i32| {
@@ -967,6 +974,21 @@ fn decode_pack_body<R: PackRead>(
         blocked,
         flags: None,
     };
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if let Some(takeoff) = edge.takeoff {
+            validate_takeoff_admission(
+                &collision,
+                edge,
+                takeoff,
+                graph.approaches.get(index).copied().flatten(),
+            )?;
+        }
+    }
+    for edge in &graph.teleports {
+        if let Some(takeoff) = edge.takeoff {
+            validate_takeoff_admission(&collision, edge, takeoff, None)?;
+        }
+    }
     graph.rebuild_index(&collision);
     Ok((collision, graph, banks))
 }
@@ -1058,7 +1080,7 @@ fn read_req_strings<R: PackRead>(r: &mut R) -> Result<Vec<String>, PackError> {
     Ok(out)
 }
 
-/// A worn-item requirement vector as i32le ids, count-prefixed.
+/// A worn-item requirement vector as count-prefixed i32le ids.
 fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
     out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
     for id in reqs {
@@ -1066,7 +1088,7 @@ fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
     }
 }
 
-/// Read a count-prefixed i32le id vector (the `worn_req` list).
+/// Read a count-prefixed i32le id vector.
 fn read_req_ids<R: PackRead>(r: &mut R) -> Result<Vec<i32>, PackError> {
     let n = read_u32(r)? as usize;
     let remaining = r.remaining();
@@ -1192,6 +1214,92 @@ fn read_quest_gates<R: PackRead>(
     QuestGates::new(*family, gates)
         .map(Some)
         .map_err(|error| PackError::BadLength(error.to_string()))
+}
+
+/// Write a fixed-size v16 exact-takeoff field.
+fn write_takeoff(out: &mut Vec<u8>, takeoff: Option<WorldTile>) {
+    match takeoff {
+        None => {
+            out.push(0);
+            out.extend_from_slice(&[0; 12]);
+        }
+        Some(tile) => {
+            out.push(1);
+            for value in [tile.x, tile.z, tile.level] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+}
+
+fn validate_takeoff(at: WorldTile, takeoff: WorldTile) -> Result<(), PackError> {
+    if !(0..4).contains(&takeoff.level) || takeoff.level != at.level {
+        return Err(PackError::BadLength(format!(
+            "transport takeoff plane {} does not match valid anchor plane {}",
+            takeoff.level, at.level
+        )));
+    }
+    Ok(())
+}
+fn validate_takeoff_admission(
+    collision: &WorldCollision,
+    edge: &TransportEdge,
+    takeoff: WorldTile,
+    approach: Option<LocApproach>,
+) -> Result<(), PackError> {
+    validate_takeoff(edge.at, takeoff)?;
+    if !collision.standable(takeoff) {
+        return Err(PackError::BadLength(format!(
+            "transport takeoff {takeoff:?} is not standable"
+        )));
+    }
+    if edge.kind == TransportKind::Teleport {
+        return Ok(());
+    }
+    let admissible = approach.map_or_else(
+        || {
+            (takeoff.x - edge.at.x)
+                .abs()
+                .max((takeoff.z - edge.at.z).abs())
+                <= 1
+        },
+        |shape| {
+            shape.can_operate(
+                edge.at,
+                takeoff,
+                collision.walkable_word(takeoff.x, takeoff.z, takeoff.level) as i32,
+            )
+        },
+    );
+    if !admissible {
+        return Err(PackError::BadLength(format!(
+            "transport takeoff {takeoff:?} is not an admissible stand for {:?} at {:?}",
+            edge.kind, edge.at
+        )));
+    }
+    Ok(())
+}
+
+fn read_takeoff<R: PackRead>(r: &mut R, at: WorldTile) -> Result<Option<WorldTile>, PackError> {
+    let tag = read_u8(r)?;
+    let tile = WorldTile {
+        x: read_i32(r)?,
+        z: read_i32(r)?,
+        level: read_i32(r)?,
+    };
+    match tag {
+        0 if tile.x == 0 && tile.z == 0 && tile.level == 0 => Ok(None),
+        0 => Err(PackError::BadLength(
+            "absent transport takeoff has nonzero payload".into(),
+        )),
+        1 => {
+            validate_takeoff(at, tile)?;
+            Ok(Some(tile))
+        }
+        other => Err(PackError::BadLength(format!(
+            "transport takeoff tag {other} is not 0 or 1"
+        ))),
+    }
 }
 
 /// Write the v13 per-edge footprint-approach geometry.

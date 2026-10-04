@@ -110,6 +110,8 @@ pub(super) const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 pub(super) fn essence_mine_edges(graph: &mut TransportGraph, quest_name: &str) {
     for w in ESSENCE_WIZARDS {
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Npc,
             player_delta: None,
             at: w.at,
@@ -205,6 +207,8 @@ pub(super) const ELKOY_ESCORTS: &[ElkoyEscort] = &[
 pub(super) fn elkoy_edges(graph: &mut TransportGraph, quest_name: &str) {
     for e in ELKOY_ESCORTS {
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Npc,
             player_delta: None,
             at: e.at,

@@ -1,7 +1,7 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
 //! and the content-derived bank stand table ([`crate::pack::BankStand`]).
-//! The v15 pack file stores the compact packed walk surface and the
+//! The v16 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
@@ -227,6 +227,8 @@ impl NavWorld {
         for d in &grid.doors {
             let i = graph.edges.len();
             graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
                 kind: TransportKind::Door,
                 player_delta: None,
                 at: WorldTile {

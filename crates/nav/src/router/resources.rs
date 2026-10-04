@@ -225,7 +225,8 @@ impl ResourceBudget {
 
 pub(super) fn fixed_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool {
     state.fixed_reqs_allow(edge)
-        && (edge.worn_req.is_empty() || edge.worn_req.iter().any(|id| state.worn.contains(id)))
+        && state.worn_req_allows(edge)
+        && state.worn_all_req_allows(edge)
         && match relax {
             Relax::Strict => state.quest_gates(edge) == Truth::True,
             Relax::UnknownQuest => state.quest_gates(edge) != Truth::False,

@@ -1,7 +1,7 @@
 //! Live proof that knife-on-web and worn slash-weapon web crossings follow
 //! the pinned R289 content on a fresh, tutorial-unlocked account.
 //!
-//! The Mage Arena segment is planned with a local R289 v15 pack and ends just
+//! The Mage Arena segment is planned with a local R289 v16 pack and ends just
 //! beyond the second web at 3093/3957.
 //! Run with `LIVE=1`, `BOT_CPU=1`, `BOT_NAV_BUILD=skip`,
 //! `BOT_LIVE_NAME_PREFIX` (1-4 chars), `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`,
@@ -51,7 +51,7 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         http_port: Some(2080),
         nav_pack: Some(PathBuf::from(
             std::env::var("WORLD_NAV_PACK")
-                .expect("WORLD_NAV_PACK must name the worktree v15 pack"),
+                .expect("WORLD_NAV_PACK must name the worktree v16 pack"),
         )),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(PathBuf::from(
@@ -70,10 +70,10 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
     assert_eq!(profile.client().game_port(), 45594);
     assert_eq!(profile.client().asset_port(), 2080);
     let template = SharedClientTemplate::load(Arc::clone(&profile))
-        .expect("load selected R289 profile and v15 pack");
+        .expect("load selected R289 profile and v16 pack");
     assert!(
         template.world().is_some(),
-        "the selected v15 pack must load"
+        "the selected v16 pack must load"
     );
     (profile, template)
 }

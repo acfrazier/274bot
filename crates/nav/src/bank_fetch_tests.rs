@@ -56,6 +56,8 @@ fn walled_5x5() -> WorldCollision {
 /// One door crossing the wall, gated on a worn knife.
 fn knife_graph() -> TransportGraph {
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: tile(1, 2, 0),
@@ -581,6 +583,7 @@ fn bank_trip_keeps_worn_and_skill_facts() {
 fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
     let door = |item_req: Vec<(i32, i32)>, consumed_req: Vec<(i32, i32)>, worn_req: Vec<i32>| {
         TransportEdge {
+            takeoff: None,
             item_req,
             consumed_req,
             item_returns: vec![],
@@ -696,6 +699,39 @@ fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn worn_all_req_is_not_fetchable_from_inventory_or_bank() {
+    let wc = walled_5x5();
+    let mut graph = knife_graph();
+    graph.edges[0].worn_req.clear();
+    graph.edges[0].worn_all_req = vec![KNIFE];
+    let edge = graph.edges[0].clone();
+    let from = tile(0, 0, 0);
+    let to = tile(4, 4, 0);
+    let stands = [stand(4, 0)];
+    let inventory = WorldState {
+        inv: HashMap::from([(KNIFE, 1)]),
+        ..WorldState::empty()
+    };
+    let banked = WorldState::empty();
+    let bank = [(KNIFE, 1)];
+
+    for (state, bank_items) in [(&inventory, &[][..]), (&banked, &bank[..])] {
+        assert!(matches!(
+            find_with(&wc, &graph, from, to, FindOptions::default(), state),
+            Err(RouteError::NoPath)
+        ));
+        assert!(
+            find_missing_item_reqs(&wc, &graph, from, to, FindOptions::default(), state).is_none(),
+            "the carry/wear diagnosis cannot cross worn_all_req"
+        );
+        assert!(
+            !fetchable_state(state, bank_items, &stands).allows(&edge),
+            "a carried or banked candidate never becomes observed equipment"
+        );
     }
 }
 

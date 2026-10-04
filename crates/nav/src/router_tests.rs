@@ -343,6 +343,8 @@ fn blocked_door_fixture() -> WorldCollision {
 /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at,
@@ -380,6 +382,25 @@ fn find_skips_relative_transport_when_takeoff_landing_overflows() {
         find(&collision, &graph, tile(1, 2, 0), tile(4, 2, 0)).err(),
         Some(RouteError::NoPath)
     );
+}
+
+#[test]
+fn exact_takeoff_is_the_only_indexed_transport_stand() {
+    let collision = bake(10, 10, &[]);
+    let required = tile(4, 3, 0);
+    let mut graph = door(tile(4, 4, 0), tile(9, 9, 0), 1);
+    graph.edges[0].kind = TransportKind::AgilityShortcut;
+    graph.edges[0].takeoff = Some(required);
+    graph.rebuild_index(&collision);
+
+    assert_eq!(graph.at.get(&required).map(Vec::as_slice), Some(&[0][..]));
+    assert!(!graph.at.contains_key(&tile(4, 4, 0)));
+    let route = find(&collision, &graph, tile(4, 2, 0), tile(9, 9, 0)).unwrap();
+    let (Leg::Walk { tiles }, Leg::Transport { edge }) = (&route.legs[0], &route.legs[1]) else {
+        panic!("expected walk to exact takeoff followed by the transport");
+    };
+    assert_eq!(tiles.last(), Some(&required));
+    assert_eq!(edge.takeoff, Some(required));
 }
 
 #[test]
@@ -446,6 +467,8 @@ fn teleport(
 ) -> TransportGraph {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: tile(0, 0, 0),
@@ -546,6 +569,8 @@ fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available(
     let at = tile(1, 2, 0);
     let to = tile(2, 2, 0);
     let edge = |option, item_req, worn_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         at,
         to,
@@ -755,6 +780,8 @@ fn wall_tile_blocks_through_wall_steps_and_the_router_avoids_it() {
 fn find_transport_changes_level_and_walks_upstairs() {
     let wc = bake(4, 4, &[]);
     let ladder = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: None,
         at: tile(0, 0, 0),
@@ -1266,6 +1293,8 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
         let at = tile(199, 201, 0);
         graph.at.entry(at).or_default().push(0);
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
             at,
@@ -1726,6 +1755,8 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
         seed % bound
     };
     let edge = |kind, at, to, ticks, item_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind,
         player_delta: None,
         at,
@@ -2779,6 +2810,35 @@ fn find_missing_item_reqs_treats_worn_req_as_any_of() {
         }]),
         "no worn alternative: the session may fetch either blade"
     );
+}
+
+#[test]
+fn worn_all_req_requires_every_equipped_piece_on_a_route() {
+    let wc = walled_5x5();
+    let mut graph = toll_graph();
+    graph.edges[0].consumed_req.clear();
+    graph.edges[0].worn_all_req = vec![1277, 1321];
+    let from = tile(0, 0, 0);
+    let to = tile(4, 4, 0);
+    let one_worn = WorldState {
+        inv: HashMap::from([(1277, 1), (1321, 1)]),
+        worn: HashSet::from([1277]),
+        ..WorldState::empty()
+    };
+    assert!(matches!(
+        find_with(&wc, &graph, from, to, FindOptions::default(), &one_worn),
+        Err(RouteError::NoPath)
+    ));
+    assert!(
+        find_missing_item_reqs(&wc, &graph, from, to, FindOptions::default(), &one_worn).is_none(),
+        "worn_all_req is not relaxed into a BankBudget shopping list"
+    );
+
+    let all_worn = WorldState {
+        worn: HashSet::from([1277, 1321]),
+        ..WorldState::empty()
+    };
+    assert!(find_with(&wc, &graph, from, to, FindOptions::default(), &all_worn).is_ok());
 }
 
 /// A route blocked by a skill gate is not a banking problem: the
@@ -4557,7 +4617,35 @@ fn diagnosis_names_only_zones_active_under_the_original_predicate() {
 }
 
 #[test]
-fn refusal_attribution_reports_all_reachable_zone_frontiers_not_shortest_witness() {
+fn single_target_witness_observes_origin_escape_and_goal_entry() {
+    let collision = bake(9, 1, &[]);
+    let from = tile(1, 0, 0);
+    let to = tile(7, 0, 0);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![
+            rect_zone(1, 2, 0, 0),
+            rect_zone(6, 7, 0, 0),
+            rect_zone(4, 4, 0, 0),
+        ],
+    );
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+    assert!(matches!(
+        find_with(&collision, &graph, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    ));
+    assert_eq!(
+        crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
+        Some(vec![ZoneKey::Zone(2)]),
+        "origin escape and goal entry are permitted; only the intervening zone blocks"
+    );
+}
+
+#[test]
+fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
     let blocked: Vec<_> = (0..3)
         .flat_map(|z| {
             (0..7).filter_map(move |x| {
@@ -4608,10 +4696,11 @@ fn refusal_attribution_reports_all_reachable_zone_frontiers_not_shortest_witness
         1,
         "one shortest witness traverses only one of the two blocked corridors"
     );
+    let witness_zone = *witness_zones.iter().next().unwrap();
     assert_eq!(
         crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
-        Some(vec![ZoneKey::Zone(0), ZoneKey::Zone(1)]),
-        "both source-reachable corridor frontiers block a feasible route"
+        Some(vec![ZoneKey::Zone(witness_zone)]),
+        "single-target attribution follows the selected relaxed route"
     );
 
     let goals = [tile(6, 0, 0), tile(6, 2, 0), tile(3, 1, 0)];
@@ -4752,7 +4841,7 @@ fn transport_and_any_tile_teleport_landings_are_checked_independently() {
         assert_eq!(
             crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[],),
             Some(vec![ZoneKey::Zone(0)]),
-            "a blocked transport/teleport landing is part of the route frontier"
+            "a blocked transport/teleport landing is on the selected relaxed route"
         );
         let route = find_with(
             &collision,
@@ -4803,7 +4892,7 @@ fn essence_return_landing_is_checked_before_the_following_walk() {
     assert_eq!(
         crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[]),
         Some(vec![ZoneKey::Zone(0)]),
-        "a blocked essence return landing is part of the route frontier"
+        "a blocked essence return landing is on the selected relaxed route"
     );
     let route = find_with(
         &collision,
@@ -5217,7 +5306,7 @@ fn real_289_first_refusal_witness_exempts_its_chosen_goal_zone() {
 }
 
 #[test]
-fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
+fn real_289_refusals_report_best_relaxed_route_zone_witness() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -5242,8 +5331,7 @@ fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
     .unwrap();
     let mountain = table.resolve("white-wolf-mountain").unwrap();
     let wolf = table.resolve("wolf@2647,3584,0").unwrap();
-    assert!(keys.contains(&mountain), "{keys:?}");
-    assert!(keys.contains(&wolf), "{keys:?}");
+    assert_eq!(keys, vec![wolf, mountain]);
     let crossing = FindOptions {
         zones: ZoneExempt::named(&[mountain, wolf]).unwrap(),
         ..opts
@@ -5307,8 +5395,7 @@ fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
         .unwrap();
         let bear = table.resolve("brownbear@3176,3223,0").unwrap();
         let rat = table.resolve("giantrat1@3211,3195,0").unwrap();
-        assert!(keys.contains(&bear), "{keys:?}");
-        assert!(keys.contains(&rat), "{keys:?}");
+        assert_eq!(keys, vec![rat, bear], "{keys:?}");
         let route = find_with(
             &world.collision,
             &world.graph,
@@ -5566,21 +5653,7 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
         &[],
     )
     .expect("active zone witness");
-    // Attribution names the source-reachable frontier, which can precede
-    // the mage deeper inside overlapping zones on this raw-plane crossing.
-    assert!(
-        crossing.legs.iter().any(|leg| match leg {
-            Leg::Walk { tiles } => tiles.iter().any(|&cell| {
-                table
-                    .at(cell)
-                    .any(|index| blocked.contains(&table.key(index)))
-            }),
-            Leg::Transport { edge } => table
-                .at(edge.to)
-                .any(|index| blocked.contains(&table.key(index))),
-        }),
-        "{blocked:?}"
-    );
+    assert!(blocked.contains(&mage), "{blocked:?}");
 }
 
 #[path = "router/consumption_tests.rs"]

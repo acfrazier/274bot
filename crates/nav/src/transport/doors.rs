@@ -176,6 +176,8 @@ pub(super) fn door_edges(
                 observable.admit_edge(
                     graph,
                     TransportEdge {
+                        takeoff: None,
+                        worn_all_req: Vec::new(),
                         kind: TransportKind::Door,
                         player_delta: None,
                         at,

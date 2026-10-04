@@ -1627,6 +1627,8 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
     let banks = vec![bank("local", 12, 4), bank("Falador teleport bank", 40, 40)];
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: tile(0, 0),
