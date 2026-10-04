@@ -2161,14 +2161,24 @@ impl SlotScript {
         self.state
     }
 
-    /// The random-event knock: ask the running compiled script whether it
-    /// handles the detected event. Rising edge only (the guardian owns the
-    /// per-event signature); JS isolates always answer `Host` — no isolate
-    /// hook this tag. Idle / Paused / not-want-run slots answer `Host`
-    /// without touching the script.
+    /// The random-event knock. A running Load isolate's cached
+    /// `ignoredRandoms()` names return `Handle` when case-insensitively
+    /// listed; this suppresses guardian action/hold without hiding the
+    /// detected event. Unlisted Load events return `Host`; compiled scripts
+    /// use their `on_random` hook. Rising edge only (the guardian owns the
+    /// per-event signature). Idle / Paused / not-want-run slots answer
+    /// `Host` without touching the script.
     pub fn on_random(&mut self, ev: &DetectedRandom) -> RandomClaim {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
+        }
+        #[cfg(feature = "load")]
+        if self
+            .load
+            .as_ref()
+            .is_some_and(|isolate| isolate.ignores_random(&ev.name))
+        {
+            return RandomClaim::Handle;
         }
         let Some(run) = &mut self.compiled else {
             return RandomClaim::Host;
