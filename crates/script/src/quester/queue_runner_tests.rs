@@ -135,11 +135,9 @@ fn individually_missing_quest_row_stays_fail_closed() {
 
 #[test]
 fn excluding_the_entire_default_queue_is_an_actionable_block() {
+    let index: ReleaseIndex = serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
     let (mut queued, snapshot) = fixture(QueueSettings {
-        skip: ["cook", "sheep", "runemysteries", "romeojuliet", "imp"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+        skip: index.paths.into_iter().map(|entry| entry.id).collect(),
         ..QueueSettings::default()
     });
     let mut ledger = None;
