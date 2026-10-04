@@ -818,6 +818,32 @@ arguments and awaits one completion.
   `takeAnchor()` returns the anchor the stalled run latched; an unused hint
   clears once the new `onStart` succeeds.
 
+## Bank item ops (compat v1)
+
+`Bank` transfers are Rust families on the shared transfer kernel
+(`crates/script/src/bank/ops.rs`); the shim passes the caller's arguments and
+awaits the frozen return. One transfer runs at a time: a second start while
+`withdraw*`, `withdrawLoad`, `close`, a deposit loop or `withdrawTo` is in
+flight settles false (a deposit loop does nothing).
+
+- **`Bank.deposit(name, op = 'Deposit-1')`** presses that label on the first
+  bank-side row with the name, by id, slot and component, and answers whether
+  it pressed. A row without the label presses nothing; it is never an All.
+- **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
+  each matching row's All op by id and wait up to 4 s for that id to leave
+  the pack. `depositAllExcept(names)` keeps every id whose display name is
+  kept, noted or not. A nameless row is still an item the matcher decides.
+  A posted empty side ends the loop at once; a side root still down is
+  waited on for 1.2 s.
+- **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
+  true once more pack slots are used, the pack is full or that row emptied,
+  within 4 s; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
+- **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
+  Close is true only when the bank is shut, its old side root is released
+  and the bank session generation moved on, within `timeoutMs` (4 s when
+  omitted). A reopened or logged-out session is false.
+
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in
