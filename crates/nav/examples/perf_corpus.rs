@@ -382,7 +382,15 @@ fn main() -> Result<(), String> {
             .expect("zone refusal witness");
             let table = world.graph.zones.as_ref().expect("v12 zones");
             let names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
-            assert_eq!(names, ["white-wolf-mountain", "wolf@2647,3584,0"]);
+            // NAV-N1 attributes the full frontier, not just a shortest exempt witness.
+            assert!(
+                names.iter().any(|name| name == "white-wolf-mountain"),
+                "{names:?}"
+            );
+            assert!(
+                names.iter().any(|name| name == "wolf@2647,3584,0"),
+                "{names:?}"
+            );
             Observation {
                 outcome: format!("NoPath blocked:{names:?}"),
                 settled: search.settled(),
