@@ -58,6 +58,7 @@ impl Skill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Location {
     Start,
+    Site,
     Custom,
     Auto,
 }
@@ -83,6 +84,8 @@ pub struct GathererSettings {
     pub target_preference: String,
     #[serde(default = "default_location")]
     pub location: String,
+    #[serde(default)]
+    pub site: String,
     #[serde(default)]
     pub custom_tile: Option<WorldTile>,
     #[serde(default = "default_radius")]
@@ -168,6 +171,7 @@ impl Default for GathererSettings {
             fishing_method: default_fishing_method(),
             target_preference: default_target_preference(),
             location: default_location(),
+            site: String::new(),
             custom_tile: None,
             radius: default_radius(),
             disposition: default_disposition(),
@@ -191,14 +195,27 @@ impl Default for GathererSettings {
 
 impl GathererSettings {
     pub fn from_bag(bag: &SettingsBag) -> Result<Self, ConfigError> {
+        Self::decode_bag(bag)?.validate()
+    }
+
+    pub(super) fn from_bag_for_prepare(bag: &SettingsBag) -> Result<Self, ConfigError> {
+        // A field-local location edit must save before the newly visible Site
+        // picker can supply its value. Prepared.site_error remains the Start gate.
+        Self::decode_bag(bag)?.validate_fields(true)
+    }
+
+    fn decode_bag(bag: &SettingsBag) -> Result<Self, ConfigError> {
         Self::deserialize(serde::de::value::MapDeserializer::new(
             bag.iter().map(|(key, value)| (key.as_str(), value)),
         ))
         .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
-        .and_then(|settings| settings.validate())
     }
 
-    pub fn validate(mut self) -> Result<Self, ConfigError> {
+    pub fn validate(self) -> Result<Self, ConfigError> {
+        self.validate_fields(false)
+    }
+
+    fn validate_fields(mut self, allow_empty_site: bool) -> Result<Self, ConfigError> {
         let skill = Skill::parse(&self.skill).ok_or_else(|| {
             ConfigError::new(
                 "skill",
@@ -224,7 +241,17 @@ impl GathererSettings {
             return Err(ConfigError::new(
                 "location",
                 "invalid-option",
-                "offers Start, Custom and Auto locations",
+                "offers Start, Site, Auto and Custom locations",
+            ));
+        }
+        if !allow_empty_site
+            && self.location.eq_ignore_ascii_case("site")
+            && self.site.trim().is_empty()
+        {
+            return Err(ConfigError::new(
+                "site",
+                "required",
+                "Site location needs a named site",
             ));
         }
         if self.location.eq_ignore_ascii_case("custom") && self.custom_tile.is_none() {
@@ -370,6 +397,7 @@ impl GathererSettings {
             || self.mining_resources != other.mining_resources
             || self.fishing_method != other.fishing_method
             || self.location != other.location
+            || self.site != other.site
             || self.custom_tile != other.custom_tile
     }
 
@@ -414,6 +442,8 @@ impl Location {
             Some(Self::Custom)
         } else if value.eq_ignore_ascii_case("auto") {
             Some(Self::Auto)
+        } else if value.eq_ignore_ascii_case("site") {
+            Some(Self::Site)
         } else {
             None
         }
@@ -666,9 +696,17 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "location",
             "string",
             Some("Start"),
-            &["Start", "Custom", "Auto"],
+            &["Start", "Site", "Auto", "Custom"],
             None,
             None,
+        ),
+        setting(
+            "site",
+            "string",
+            Some(""),
+            &[],
+            Some("{ key: 'location', anyOf: ['Site'] }"),
+            Some("gather:sites"),
         ),
         setting(
             "customTile",
@@ -827,6 +865,50 @@ fn boolean_setting_show_if(id: &str, default: bool, show_if: &str) -> SettingDef
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn site_is_additive_required_only_when_active_and_restart_required() {
+        assert_eq!(super::super::card::CARD.schema_version, 4);
+        let old = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert_eq!(old.location, "Start");
+        assert!(old.site.is_empty());
+        let location = schema().iter().find(|def| def.id == "location").unwrap();
+        assert_eq!(location.options, ["Start", "Site", "Auto", "Custom"]);
+        let site = schema().iter().find(|def| def.id == "site").unwrap();
+        assert_eq!(site.ty, "string");
+        assert_eq!(site.options_from.as_deref(), Some("gather:sites"));
+        assert_eq!(
+            site.show_if.as_deref(),
+            Some("{ key: 'location', anyOf: ['Site'] }")
+        );
+        let mut bag = SettingsBag::new();
+        bag.insert("location".into(), json!("Site"));
+        let error = GathererSettings::from_bag(&bag).unwrap_err();
+        assert_eq!(
+            (error.field.as_ref(), error.code.as_ref()),
+            ("site", "required")
+        );
+        bag.insert("site".into(), json!("woodcutting.draynor"));
+        let named = GathererSettings::from_bag(&bag).unwrap();
+        assert_eq!(named.location_mode().unwrap(), Location::Site);
+        let changed = GathererSettings {
+            site: "woodcutting.market".into(),
+            ..named.clone()
+        };
+        assert!(named.restart_required_changed(&changed));
+        for mode in ["Start", "Auto", "Custom"] {
+            bag.insert("location".into(), json!(mode));
+            bag.insert("site".into(), json!("removed-site"));
+            bag.insert(
+                "customTile".into(),
+                json!({"x": 3000, "z": 3000, "level": 0}),
+            );
+            assert_eq!(
+                GathererSettings::from_bag(&bag).unwrap().site,
+                "removed-site"
+            );
+        }
+    }
 
     fn selected_catalog(
         revision: api::selected::ClientRevision,

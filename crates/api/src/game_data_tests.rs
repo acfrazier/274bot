@@ -150,6 +150,121 @@ fn minimal_json(tail: &str) -> String {
 }
 
 #[test]
+fn named_sites_are_selected_core_rows_with_skill_key_closure() {
+    for (revision, counts) in [
+        (ClientRevision::R274, [243, 33, 31]),
+        (ClientRevision::R289, [246, 33, 31]),
+    ] {
+        let data = for_revision(revision).unwrap();
+        let mut ids = std::collections::HashSet::new();
+        let mut labels = std::collections::HashSet::new();
+        for (skill, expected) in ["woodcutting", "mining", "fishing"].into_iter().zip(counts) {
+            assert_eq!(data.gather_sites_for(skill).count(), expected);
+            for row in data.gather_sites_for(skill) {
+                assert!(ids.insert(row.id.as_str()));
+                assert!(labels.insert((row.skill.as_str(), row.label.as_str())));
+                assert!(row.region.min_z < 6400);
+                assert!(!row
+                    .label
+                    .as_bytes()
+                    .windows(4)
+                    .any(|window| window.iter().all(u8::is_ascii_digit)));
+                assert!(!row.keys.is_empty());
+                for key in &row.keys {
+                    assert!(key.count > 0);
+                    let option = data.gather_option(skill, &key.key).unwrap();
+                    assert_eq!(option.key, key.key);
+                }
+            }
+        }
+        for (skill, id, label) in [
+            (
+                "fishing",
+                "fishing.catherby",
+                "Catherby · Harpoon, Net, Bait, Cage",
+            ),
+            (
+                "fishing",
+                "fishing.musa_point",
+                "Musa Point · Bait, Cage, Harpoon, Net",
+            ),
+            (
+                "fishing",
+                "fishing.barbarian_village",
+                "Barbarian Village · Bait, Lure",
+            ),
+            (
+                "fishing",
+                "fishing.agility_training_area.sw",
+                "Agility Training Area SW19 · Bait, Lure",
+            ),
+            (
+                "mining",
+                "mining.varrock_east.se",
+                "Varrock East SE50 · Copper ore 9, Tin ore 6, Iron ore 4",
+            ),
+            (
+                "woodcutting",
+                "woodcutting.draynor",
+                "Draynor · Logs 25, Willow logs 5, Oak logs 4",
+            ),
+        ] {
+            assert_eq!(data.gather_site(skill, id).unwrap().label, label);
+        }
+        let baxtorian = data
+            .gather_site(" Fishing ", " FISHING.BAXTORIAN_FALLS ")
+            .unwrap();
+        assert_eq!(
+            (baxtorian.region.min_x, baxtorian.region.min_z),
+            (2527, 3403)
+        );
+        assert_eq!(
+            (baxtorian.region.max_x, baxtorian.region.max_z),
+            (2537, 3412)
+        );
+        assert!(data.gather_site("mining", "fishing.catherby").is_none());
+        assert!(data
+            .gather_site("fishing", "fishing.rimmington.sw")
+            .is_none());
+        assert!(data
+            .gather_site("fishing", "fishing.cooks_guild.w")
+            .is_none());
+    }
+}
+
+#[test]
+fn named_site_wire_rejects_unknown_fields_and_legacy_core_defaults_empty() {
+    let row = serde_json::json!({
+        "id": "mining.fixture", "skill": "mining", "label": "Fixture · Copper ore 1",
+        "region": {"min_x": 1, "min_z": 2, "max_x": 1, "max_z": 2, "level": 0},
+        "keys": [{"key": "copper", "count": 1}]
+    });
+    assert!(serde_json::from_value::<GatherSiteOption>(row.clone()).is_ok());
+    for changed in [
+        {
+            let mut changed = row.clone();
+            changed["anchor"] = serde_json::json!({"x": 1, "z": 2, "level": 0});
+            changed
+        },
+        {
+            let mut changed = row.clone();
+            changed["region"]["plane"] = serde_json::json!(0);
+            changed
+        },
+        {
+            let mut changed = row;
+            changed["keys"][0]["resource"] = serde_json::json!("copper");
+            changed
+        },
+    ] {
+        assert!(serde_json::from_value::<GatherSiteOption>(changed).is_err());
+    }
+    let legacy =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(legacy.gather_sites().is_empty());
+}
+
+#[test]
 fn selected_prayer_layout_rejects_noncontiguous_or_oversized_rows() {
     let mut gap: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
     gap.prayers[0].varp += 1;

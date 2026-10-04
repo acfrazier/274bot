@@ -3155,6 +3155,40 @@ fn persist_profile_setting(
     }
 }
 
+fn filtered_parameter_indices<'a>(
+    options: &'a frontend_core::scripts::ParameterOptions,
+    query: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
+    options
+        .selectable()
+        .iter()
+        .enumerate()
+        .filter_map(move |(index, _)| options.matches_query(index, query).then_some(index))
+}
+
+fn unavailable_parameter_text(
+    label: &str,
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, serde_json::Value>,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> String {
+    if def.options_from.as_deref() == Some("loadouts") {
+        return format!("{label} (no loadouts available)");
+    }
+    if def.ty == "string" && options.preserved > 0 {
+        let current = bag
+            .get(&def.id)
+            .and_then(serde_json::Value::as_str)
+            .or(def.default.as_deref())
+            .unwrap_or("");
+        return format!(
+            "{label} (options unavailable · {})",
+            options.label_for(current)
+        );
+    }
+    format!("{label} (options unavailable)")
+}
+
 fn script_parameter_text_input(
     ui: &Ui,
     session: &mut Session,
@@ -3276,6 +3310,19 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             (std::borrow::Cow::Borrowed(fields), bag)
         }
     };
+    let filter_field_visible = session
+        .script_parameter_filter_id
+        .as_ref()
+        .is_some_and(|id| {
+            schema.iter().any(|def| {
+                def.id.as_str() == id.as_str()
+                    && script::setting_visible(def.show_if.as_deref(), &bag)
+            })
+        });
+    if !filter_field_visible {
+        session.script_parameter_filter.clear();
+        session.script_parameter_filter_id = None;
+    }
     if schema.is_empty() {
         ui.text_disabled("(no parameters)");
         return;
@@ -3302,10 +3349,10 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             game_data_ref,
         );
         if def.options_from.is_some() && resolved.is_empty() {
-            if def.options_from.as_deref() == Some("loadouts") {
-                ui.text_disabled(format!("{label} (no loadouts available)"));
-            } else {
-                ui.text_disabled(format!("{label} (options unavailable)"));
+            ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
+            if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+                session.script_parameter_filter.clear();
+                session.script_parameter_filter_id = None;
             }
             continue;
         }
@@ -3327,13 +3374,13 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     &selection,
                     profile.as_deref(),
                     def,
-                    &resolved.values,
+                    resolved.selectable(),
                     bag.get(&def.id).cloned(),
                 );
             }
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
-                let opts = &resolved.values;
+                let opts = resolved.selectable();
                 let stored = bag
                     .get(&def.id)
                     .and_then(|v| v.as_str())
@@ -3348,7 +3395,30 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     preview,
                     combo_opts,
                 ) {
-                    for opt in opts {
+                    let first_open =
+                        session.script_parameter_filter_id.as_deref() != Some(def.id.as_str());
+                    if first_open {
+                        session.script_parameter_filter_id = Some(def.id.clone());
+                        session.script_parameter_filter.clear();
+                        ui.set_keyboard_focus_here();
+                    }
+                    let mut filter = std::mem::take(&mut session.script_parameter_filter);
+                    let searchable = opts.len() > 16;
+                    if searchable {
+                        ui.set_next_item_width(-1.0);
+                        ui.input_text(format!("##param-filter-{id}", id = def.id), &mut filter)
+                            .hint("Filter options")
+                            .build();
+                        ui.separator();
+                    } else {
+                        filter.clear();
+                    }
+                    let mut matches = 0;
+                    for index in filtered_parameter_indices(&resolved, &filter) {
+                        let Some(opt) = opts.get(index) else {
+                            continue;
+                        };
+                        matches += 1;
                         let selected = opt == &current;
                         let shown = format!("{}##{opt}", resolved.label_for(opt));
                         if ui.selectable_config(&shown).selected(selected).build() {
@@ -3362,6 +3432,13 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                             bag.insert(def.id.clone(), serde_json::json!(value));
                         }
                     }
+                    if searchable && matches == 0 {
+                        ui.text_disabled("no matching options");
+                    }
+                    session.script_parameter_filter = filter;
+                } else if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+                    session.script_parameter_filter.clear();
+                    session.script_parameter_filter_id = None;
                 }
             }
             "string[]" if !resolved.is_empty() => {
@@ -3411,7 +3488,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     &selection,
                     profile.as_deref(),
                     def,
-                    &resolved.values,
+                    resolved.selectable(),
                     bag.get(&def.id).cloned(),
                 );
             }
@@ -5700,6 +5777,79 @@ fn ui_frame(
     background_ack_window(ui, &mut state.session);
     discard_unconsumed_native_capture();
     false
+}
+
+#[cfg(test)]
+mod parameter_options_tests {
+    use super::*;
+
+    #[test]
+    fn panel_site_filter_uses_selectable_shared_search_results() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let loadouts = script::LoadoutsStore::at(
+            std::env::temp_dir().join(format!("panel-site-filter-{}.json", std::process::id())),
+        );
+        let schema = script::gatherer::settings::schema();
+        let site = schema
+            .iter()
+            .find(|field| field.id == "site")
+            .expect("Gatherer schema includes the Site setting");
+        let mut bag = serde_json::Map::new();
+        bag.insert("skill".into(), serde_json::json!("Woodcutting"));
+        bag.insert("woodcuttingResources".into(), serde_json::json!(["normal"]));
+        bag.insert("site".into(), serde_json::json!("woodcutting.draynor"));
+        let options = frontend_core::scripts::resolve_parameter_options(
+            site,
+            &bag,
+            &loadouts,
+            Some(data.as_ref()),
+        );
+
+        let matches = filtered_parameter_indices(&options, "varrock").collect::<Vec<_>>();
+        assert_eq!(options.selectable().len(), 223);
+        assert_eq!(matches.len(), 11);
+        assert!(matches
+            .iter()
+            .all(|index| options.matches_query(*index, "varrock")));
+        assert_eq!(
+            bag.get("site"),
+            Some(&serde_json::json!("woodcutting.draynor")),
+            "resolving and filtering do not alter the saved site"
+        );
+    }
+
+    #[test]
+    fn disabled_panel_site_keeps_the_saved_reason_read_only() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let loadouts = script::LoadoutsStore::at(
+            std::env::temp_dir().join(format!("panel-site-disabled-{}.json", std::process::id())),
+        );
+        let schema = script::gatherer::settings::schema();
+        let site = schema
+            .iter()
+            .find(|field| field.id == "site")
+            .expect("Gatherer schema includes the Site setting");
+        let mut bag = serde_json::Map::new();
+        bag.insert("skill".into(), serde_json::json!("Mining"));
+        bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
+        bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
+        let options = frontend_core::scripts::resolve_parameter_options(
+            site,
+            &bag,
+            &loadouts,
+            Some(data.as_ref()),
+        );
+
+        assert!(options.is_empty());
+        let disabled = unavailable_parameter_text("Site", site, &bag, &options);
+        assert!(disabled.contains("options unavailable"));
+        assert!(disabled.contains("not for the selected resources"));
+        assert_eq!(
+            bag.get("site"),
+            Some(&serde_json::json!("mining.varrock_east.se")),
+            "disabled rendering does not rewrite the saved site"
+        );
+    }
 }
 
 #[cfg(test)]
