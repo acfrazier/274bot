@@ -12,6 +12,12 @@ fn capture(value: &Value) -> CombatCapture {
     capture.start_baseline =
         (!value["start_baseline"].is_null()).then(|| value["start_baseline"].clone());
     capture.started = value["started"] == json!(true);
+    capture.magic_setup =
+        (!value["magic_setup"].is_null()).then(|| value["magic_setup"].clone());
+    capture.magic_npc_events = value["magic"]["raw_npc_mask_and_landing_events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     capture.maze_injected = capture
         .random_events
         .iter()
@@ -36,7 +42,8 @@ fn replay_all_retained_combat_receipts() {
                     path.file_name()
                         .and_then(|name| name.to_str())
                         .is_some_and(|name| {
-                            name.starts_with('M') && name.ends_with("-receipt.json")
+                            (name.starts_with('M') || name.starts_with("cm-"))
+                                && name.ends_with("-receipt.json")
                         })
                 }),
         );
@@ -54,6 +61,9 @@ fn replay_all_retained_combat_receipts() {
             "M4" => Case::M4,
             "M5" => Case::M5,
             "M6" => Case::M6,
+            "cm-G1" => Case::MageAuto,
+            "cm-G2-fallback" => Case::MageManualFallback,
+            "cm-G2-no-fallback" => Case::MageManualNoFallback,
             other => panic!("unknown case {other}"),
         };
         let ready = case_ready(case, &c);
@@ -315,6 +325,51 @@ fn replay_all_retained_combat_receipts() {
                         path.display()
                     );
                     leaves["duplicate_attack_mutant_rejected"] = json!(true);
+                }
+            }
+            Case::MageAuto | Case::MageManualFallback | Case::MageManualNoFallback => {
+                let evidence = magic_rune_evidence(&c);
+                leaves["runes_coherent"] = json!(evidence.coherent);
+                leaves["cast_cadence"] = json!(rune_cast_cadence_ok(&evidence.casts));
+                leaves["fire_bolts"] = json!(rune_cast_count(&evidence.casts, MageSpell::FireBolt));
+                leaves["fire_strikes"] = json!(rune_cast_count(&evidence.casts, MageSpell::FireStrike));
+                leaves["protect_timing"] = json!(protection_timing_ok(&c));
+                leaves["protect_restoring_terminal"] = json!(protect_plan_ends_with_terminal(&c));
+                leaves["manual_cast_contract"] =
+                    json!(case == Case::MageAuto || manual_magic_cast_contract(&c, &evidence.casts));
+                if case == Case::MageAuto {
+                    leaves["queue_contract"] = json!(magic_queue_contract(&c, &evidence.casts));
+                    leaves["splash_count"] = json!(magic_splashes(&c, &evidence.casts).len());
+                }
+                if ready {
+                    let mut never_on = value.clone();
+                    for frame in never_on["frames"].as_array_mut().unwrap() {
+                        for row in frame["prayer_varps"].as_array_mut().unwrap() {
+                            if row["index"] == json!(97) {
+                                row["value"] = json!(0);
+                            }
+                        }
+                    }
+                    assert!(!protection_timing_ok(&capture(&never_on)), "never-on mutant accepted");
+                    leaves["never_on_mutant_rejected"] = json!(true);
+
+                    let onset = first_warlord_attack_onset(&c).unwrap();
+                    let component = prayer_component(&c, "Protect from Melee").unwrap();
+                    let mut late = value.clone();
+                    let action = late["actions"].as_array_mut().unwrap().iter_mut()
+                        .find(|row| prayer_action(row, component)).unwrap();
+                    action["tick"] = json!(onset + 3);
+                    for frame in late["frames"].as_array_mut().unwrap() {
+                        if frame["tick"].as_i64().is_some_and(|tick| tick <= onset + 2) {
+                            for row in frame["prayer_varps"].as_array_mut().unwrap() {
+                                if row["index"] == json!(97) {
+                                    row["value"] = json!(0);
+                                }
+                            }
+                        }
+                    }
+                    assert!(!protection_timing_ok(&capture(&late)), "late-on mutant accepted");
+                    leaves["late_on_mutant_rejected"] = json!(true);
                 }
             }
             _ => {}

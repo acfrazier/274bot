@@ -3489,13 +3489,20 @@ fn protect_plan_ends_with_terminal(capture: &CombatCapture) -> bool {
         .filter(|action| prayer_action(action, component))
         .all(|action| match prayer_varp(&action["snapshot"], varp) {
             Some(1) => true, // WindDown deactivation owes no restoring attack.
-            Some(0) => plan_rows(capture, action)
-                .last()
-                .is_some_and(|last| is_npc_attack(last) || is_drink(last)),
+            // S3 §5.1 G1 P4 restores after protect; G2 forbids Attack and
+            // requires the §3.3(d) targeted Cast terminal instead.
+            Some(0) => plan_rows(capture, action).last().is_some_and(|last| {
+                is_npc_attack(last)
+                    || is_drink(last)
+                    || (last["request"]["op"] == "use-widget-on"
+                        && last["request"]["kind"] == "npc")
+            }),
             _ => false,
         })
 }
 
+// S3 §5.1 G1 P4: Protect from Melee is on by the first onset + 2.
+// Earlier activation is valid, but a request without its observed echo is not.
 fn protection_timing_ok(capture: &CombatCapture) -> bool {
     let Some(onset_tick) = first_warlord_attack_onset(capture) else {
         return false;
@@ -4742,6 +4749,42 @@ fn corpse_identity_and_terminal_prayer_off_are_checked_in_their_own_shapes() {
     assert!(protect_plan_ends_with_terminal(&capture));
     capture.actions[0]["snapshot"]["prayer_varps"][0]["value"] = Value::Null;
     assert!(!protect_plan_ends_with_terminal(&capture));
+}
+
+#[test]
+fn preemptive_manual_protect_rejects_never_on_and_after_hit_activation() {
+    let mut capture = CombatCapture::default();
+    capture.prayer_facts.push(json!({
+        "name": "Protect from Melee", "button_com": 5623, "varp": 97
+    }));
+    capture.actions = vec![
+        json!({
+            "kind": "interaction", "tick": 8, "batch": 1, "accepted": true,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+        }),
+        json!({
+            "kind": "interaction", "tick": 8, "batch": 1, "accepted": true,
+            "request": {"op": "use-widget-on", "kind": "npc", "index": 7}
+        })
+    ];
+    let frame = |tick, on, hp| json!({
+        "tick": tick, "self_slot": 1,
+        "stats": [{"name": "hitpoints", "base": 40, "effective": hp}],
+        "prayer_varps": [{"index": 97, "value": on}],
+        "nearby_npcs": [{
+            "name": "Khazard warlord", "index": 7, "animation": 401,
+            "in_combat": true, "target": {"kind": "Player", "index": 1}
+        }]
+    });
+    capture.frames = vec![frame(10, 1, 40), frame(12, 1, 40)];
+    assert!(protection_timing_ok(&capture), "preemptive manual Cast is valid");
+    capture.frames = vec![frame(10, 0, 40), frame(12, 0, 31)];
+    assert!(!protection_timing_ok(&capture), "protect never turned on");
+    capture.actions[0]["tick"] = json!(13);
+    capture.actions[1]["tick"] = json!(13);
+    capture.frames.push(frame(13, 1, 31));
+    assert!(!protection_timing_ok(&capture), "activation after the hit at12 is late");
 }
 
 #[test]
