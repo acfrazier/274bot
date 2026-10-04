@@ -20,7 +20,7 @@ use crate::CompiledId;
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
-use api::selected::{FactKey, Knowledge, QuestGate, RunKey, Truth};
+use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use api::{DetectedRandom, RandomClaim};
 use std::num::NonZeroU32;
@@ -87,7 +87,6 @@ pub struct Quester {
     park_reason: &'static str,
     last_error: Option<Arc<str>>,
     last_error_kind: QuesterFailureKind,
-    pending_walk_gates: Option<Arc<[QuestGate]>>,
     waiting: Option<(&'static str, Arc<str>)>,
     deaths: u16,
     prior_deaths: u16,
@@ -392,7 +391,6 @@ impl Quester {
             park_reason: "no progress",
             last_error: None,
             last_error_kind: QuesterFailureKind::Other,
-            pending_walk_gates: None,
             waiting: None,
             deaths: 0,
             max_deaths: default_max_deaths(),
@@ -512,12 +510,6 @@ impl Quester {
         self.last_read.as_deref()
     }
 
-    /// Authoritative gates required by the last blocked walk. The caller
-    /// can acquire evidence without parsing a display diagnostic.
-    pub fn unresolved_walk_gates(&self) -> &[QuestGate] {
-        self.pending_walk_gates.as_deref().unwrap_or(&[])
-    }
-
     fn progress_slice(&self) -> &[QuestProgress] {
         self.progress
             .as_deref()
@@ -543,24 +535,21 @@ impl Quester {
     fn clear_last_error(&mut self) {
         self.last_error = None;
         self.last_error_kind = QuesterFailureKind::Other;
-        self.pending_walk_gates = None;
     }
 
     fn set_last_error(&mut self, kind: QuesterFailureKind, message: Arc<str>) {
         self.last_error = Some(message);
         self.last_error_kind = kind;
-        self.pending_walk_gates = None;
         self.dirty = true;
     }
 
     fn record_failure(&mut self, error: ActionError) {
         let (kind, message) = match error {
-            ActionError::NeedsEvidence(gates) => {
+            ActionError::NeedsEvidence(_) => {
                 self.set_last_error(
                     QuesterFailureKind::NeedsEvidence,
                     Arc::from("walk needs authoritative quest-gate evidence"),
                 );
-                self.pending_walk_gates = Some(gates);
                 return;
             }
             ActionError::UserInput => (
@@ -2813,14 +2802,16 @@ mod tests {
     }
 
     #[test]
-    fn quester_preserves_walk_evidence_for_the_caller_and_reports_a_block() {
+    fn quester_reports_walk_evidence_as_a_terminal_block() {
         let (mut script, _) = fixture();
-        let gates: Arc<[QuestGate]> = Arc::from([QuestGate::Complete(FactKey::new("test-quest"))]);
-        script.record_failure(ActionError::NeedsEvidence(Arc::clone(&gates)));
-        assert!(std::ptr::eq(script.unresolved_walk_gates(), gates.as_ref()));
+        let gates: Arc<[api::selected::QuestGate]> =
+            Arc::from([api::selected::QuestGate::Complete(FactKey::new(
+                "test-quest",
+            ))]);
+        script.record_failure(ActionError::NeedsEvidence(gates));
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
         script.clear_last_error();
-        assert!(script.unresolved_walk_gates().is_empty());
+        assert!(script.last_error.is_none());
     }
 
     #[test]

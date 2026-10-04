@@ -4561,8 +4561,14 @@ fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
         &[tile(0, 0, 0), tile(8, 0, 0)],
         &ZoneExempt::NONE,
     );
-    assert!(filter.blocks(&graph.wilderness, tile(5, 0, 0)));
-    assert!(!filter.blocks(&graph.wilderness, tile(6, 0, 0)));
+    assert!(filter
+        .blocking_at(&graph.wilderness, tile(5, 0, 0))
+        .next()
+        .is_some());
+    assert!(filter
+        .blocking_at(&graph.wilderness, tile(6, 0, 0))
+        .next()
+        .is_none());
     assert!(matches!(
         find_with(
             &collision,
