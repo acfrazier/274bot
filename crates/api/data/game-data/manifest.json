@@ -9,7 +9,7 @@
       "consumption": 262,
       "pickpocket": 12,
       "drop_tables": 5,
-      "spells": 16,
+      "spells": 21,
       "staves": 14,
       "herbs": 19,
       "prayers": 15,
@@ -193,8 +193,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 4934845,
-      "sha256": "fedfcf3cd0d5f7a17eefad2dca3d98d34e5799f394947ab3f3a7ce64d077177d",
+      "bytes": 4941206,
+      "sha256": "6421cbcfceb1ecc7ad216095ad6c227f682b15b3617911eb7bc3043b226fba98",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -7821,6 +7821,11 @@
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
         },
         {
+          "path": "scripts/skill_magic/interfaces/magic.if",
+          "bytes": 119831,
+          "sha256": "9331d8b3bb1b062b1ed5446934d8338dc5f59906f5053e3fbcded06a22b75d92"
+        },
+        {
           "path": "scripts/skill_magic/scripts/magic.rs2",
           "bytes": 5171,
           "sha256": "90cadc39eeb448d1810fb8741f1a7da7df5ce7224019588355b09761d258ce90"
@@ -8380,7 +8385,7 @@
       "consumption": 262,
       "pickpocket": 12,
       "drop_tables": 5,
-      "spells": 16,
+      "spells": 21,
       "staves": 14,
       "herbs": 19,
       "prayers": 15,
@@ -8564,8 +8569,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5366464,
-      "sha256": "d97304ab7e209e5a6c679fe2d7c173f06d7845c8ffcb9184108c22fdb9245dbe",
+      "bytes": 5372826,
+      "sha256": "94da41f56a1135caf99d0815c61d247f88c5cba798ca3726c0a6f7baefb68170",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -16775,6 +16780,11 @@
           "path": "scripts/skill_magic/configs/magic_staff.dbrow",
           "bytes": 698,
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
+        },
+        {
+          "path": "scripts/skill_magic/interfaces/magic.if",
+          "bytes": 119831,
+          "sha256": "9331d8b3bb1b062b1ed5446934d8338dc5f59906f5053e3fbcded06a22b75d92"
         },
         {
           "path": "scripts/skill_magic/scripts/magic.rs2",
