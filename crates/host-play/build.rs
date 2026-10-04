@@ -37,7 +37,8 @@ use std::path::{Path, PathBuf};
 
 use nav::bake::{
     config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
-    pois_generator_identity, BakeRequest, GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
+    pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
+    GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
 use nav::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
@@ -357,6 +358,21 @@ fn main() {
     if input_fingerprints != final_inputs || manifest != final_manifest {
         fail("cache/content inputs changed during navigation preparation");
     }
+    let final_content_id = decoded_identity_from_snapshot(
+        revision,
+        &cache_dir,
+        &snapshot_root,
+        &final_inputs,
+        &final_manifest,
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "decoded navigation cache changed during navigation preparation: {e}"
+        ))
+    });
+    if content_id != final_content_id {
+        fail("decoded navigation content changed during navigation preparation");
+    }
     let rows = publish(&out_dir, checked_in, vec![row]);
     println!("cargo:rustc-env=BOT_NAV_BUNDLED={revision}");
     println!(
@@ -589,43 +605,6 @@ fn file_len(path: &Path) -> Option<u64> {
         .ok()
         .filter(|metadata| metadata.is_file())
         .map(|metadata| metadata.len())
-}
-fn verify_cache_manifest_from_fingerprints(
-    revision: u16,
-    cache_dir: &Path,
-    manifest_path: &Path,
-    config_jag: &Path,
-    inputs: &[nav::bundle::InputFingerprint],
-) -> Result<CacheManifest, String> {
-    let bytes = std::fs::read(manifest_path)
-        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-    let manifest: CacheManifest = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-    if manifest.revision != revision {
-        return Err(format!(
-            "cache manifest revision {} does not match selected revision {revision}",
-            manifest.revision
-        ));
-    }
-    let captured = nav::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
-    if manifest != captured {
-        return Err(format!(
-            "cache manifest does not match cache bytes at {}",
-            cache_dir.display()
-        ));
-    }
-    let expected_config = manifest
-        .archives
-        .get("config")
-        .ok_or_else(|| "cache manifest has no config archive".to_string())?;
-    let actual_config = &nav::bundle::fingerprint_for_path(inputs, config_jag)?.sha256;
-    if actual_config != expected_config {
-        return Err(format!(
-            "selected config {} does not belong to the verified revision {revision} cache",
-            config_jag.display()
-        ));
-    }
-    Ok(manifest)
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {

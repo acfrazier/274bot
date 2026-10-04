@@ -179,10 +179,10 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
 }
 
 #[test]
-fn old_stamps_without_pois_parse_and_are_stale() {
+fn legacy_v8_stamp_without_manifest_or_input_hashes_is_stale() {
     let json = r#"{
         "generator":"gen-1",
-        "format":"274V15",
+        "format":"274V8",
         "revision":289,
         "cache_id":"cache-1",
         "cache_manifest":null,
@@ -195,22 +195,24 @@ fn old_stamps_without_pois_parse_and_are_stale() {
         "flags_bytes":7,
         "reach_bytes":9,
         "canlight_bytes":5,
-        "manifest_sha256":"6767676767676767676767676767676767676767676767676767676767676767",
-        "manifest_bytes":13,
         "relative_pack":"nav/289/274bot.navpack",
         "relative_flags":"nav/289/274bot.navflags",
         "relative_reach":"nav/289/274bot.navreach",
         "relative_canlight":"nav/289/274bot.navcanlight",
-        "relative_manifest":"nav/289/274bot.navpack.json",
         "inputs":[{"path":"/content/maps/m1.jm2","bytes":10,"modified_nanos":5}]
     }"#;
     let stamp: BakeStamp = serde_json::from_str(json).expect("legacy stamp still parses");
+    assert_eq!(stamp.format, "274V8");
     assert!(stamp.pois_sha256.is_none());
-    let inputs = stamp.inputs.clone();
+    assert!(stamp.manifest_sha256.is_none());
+    assert!(stamp.manifest_bytes.is_none());
+    assert!(stamp.relative_manifest.is_none());
+    assert_eq!(stamp.inputs[0].sha256, "");
+
     let err = stamp
-        .covers(&expectation(&inputs))
-        .expect_err("missing navpois is stale");
-    assert!(err.contains("navpois"), "{err}");
+        .covers(&expectation(&stamp.inputs))
+        .expect_err("pre-N4 stamp is stale");
+    assert!(err.contains("format"), "{err}");
 }
 
 #[test]
@@ -248,19 +250,21 @@ fn content_digest_reuses_the_captured_fingerprint_hashes() {
     std::fs::remove_file(explicit).unwrap();
 }
 
-/// Provenance is machine-independent: nested inputs digest to the same
-/// value on every platform (Windows once hashed `maps\m.jm2` labels).
+/// Provenance is machine-independent: normalized `/` labels determine order,
+/// even when the native separator sorts differently.
 #[test]
 fn content_digest_is_the_same_on_every_platform() {
     let root = std::env::temp_dir().join(format!("nav-source-labels-{}", std::process::id()));
-    std::fs::create_dir_all(root.join("maps")).unwrap();
-    std::fs::write(root.join("maps").join("m50_50.jm2"), b"map").unwrap();
-    std::fs::write(root.join("gates.loc"), b"gate").unwrap();
-    let digest = super::source_digest(&root, &[]).unwrap();
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::write(root.join("a").join("file"), b"nested").unwrap();
+    std::fs::write(root.join("a;"), b"punctuation").unwrap();
+    let inputs = fingerprints(&root, &[]).unwrap();
+    let reversed: Vec<_> = inputs.into_iter().rev().collect();
+    let digest = source_digest_from_fingerprints(&root, &[], &reversed).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     assert_eq!(
         digest,
-        "d05cb65b16c8c8cd706f9205447c6a876ee91b9e82dd0d3132c398a4e0095fce"
+        "06cafeace22eee3935571a9d98be5242cbbfd1d3fe57148e69d79f121549ceeb"
     );
 }
 

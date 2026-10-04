@@ -236,9 +236,9 @@ pub fn decoded_identity(
     }
     Ok(result)
 }
-/// Compute decoded identity inside a caller's input-fingerprint boundary.
-/// The caller must compare the same complete snapshot again before publishing
-/// an artifact that uses this identity.
+/// Compute a decoded identity after verifying the cache against a captured
+/// input-fingerprint set. The decoded snapshot is not in that set, so callers
+/// must recompute and compare this identity before publishing.
 pub fn decoded_identity_from_snapshot(
     revision: u16,
     cache_dir: &Path,
