@@ -32,7 +32,10 @@ impl RaisedPrayers {
         self.0 |= other.0;
     }
 
-    pub(crate) fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
+    /// Mark an accepted raise as owned. Public so retirement layers (and
+    /// their direct tests) can construct owned masks; ownership rules live
+    /// in the callers.
+    pub fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
         let Some(bit) = Self::bit(varp) else {
             return;
         };
