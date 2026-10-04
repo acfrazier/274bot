@@ -278,44 +278,6 @@ pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[Z
     )
 }
 
-const WHITE_WOLF_MOUNTAIN_AVOID: AvoidRect = AvoidRect {
-    min_x: 2828,
-    max_x: 2878,
-    min_z: 3468,
-    max_z: 3538,
-    level: None,
-};
-const DRAYNOR_JAIL_GUARD_AVOIDS: [AvoidRect; 4] = [
-    AvoidRect {
-        min_x: 3096,
-        max_x: 3122,
-        min_z: 3224,
-        max_z: 3250,
-        level: Some(0),
-    },
-    AvoidRect {
-        min_x: 3107,
-        max_x: 3133,
-        min_z: 3225,
-        max_z: 3251,
-        level: Some(0),
-    },
-    AvoidRect {
-        min_x: 3108,
-        max_x: 3134,
-        min_z: 3236,
-        max_z: 3262,
-        level: Some(0),
-    },
-    AvoidRect {
-        min_x: 3114,
-        max_x: 3140,
-        min_z: 3235,
-        max_z: 3261,
-        level: Some(0),
-    },
-];
-
 pub(crate) fn resolve_route_exclusions(
     mut opts: FindOptions,
     world: &NavWorld,
@@ -349,20 +311,39 @@ pub(crate) fn resolve_route_exclusions(
                         "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
                     ));
                 };
-                if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str())
-                    || table.resolve(id).is_none()
-                {
+                if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
                     return Err(format!("avoidZones: unknown zone {id:?}"));
                 }
+                let Some(group) = table.resolve(id).and_then(|key| match key {
+                    ZoneKey::Group(index) => table.groups().get(usize::from(index)),
+                    ZoneKey::Zone(_) => None,
+                }) else {
+                    return Err(format!(
+                        "avoidZones: catalog zone {id:?} has no baked group geometry"
+                    ));
+                };
                 match id.as_str() {
-                    "white-wolf-mountain" => exclusions.avoid.push(WHITE_WOLF_MOUNTAIN_AVOID),
+                    "white-wolf-mountain" => exclusions.avoid.push(group.rect),
                     "draynor-jail-guards" => {
-                        let endpoint_inside = DRAYNOR_JAIL_GUARD_AVOIDS
-                            .iter()
-                            .any(|rect| rect.contains(from) || rect.contains(to));
+                        let member_rect = |member: &u16| {
+                            let zone = &table.zones()[usize::from(*member)];
+                            AvoidRect {
+                                min_x: zone.min_x,
+                                max_x: zone.max_x,
+                                min_z: zone.min_z,
+                                max_z: zone.max_z,
+                                level: Some(i32::from(zone.level)),
+                            }
+                        };
+                        let endpoint_inside = group.members.iter().any(|member| {
+                            let rect = member_rect(member);
+                            rect.contains(from) || rect.contains(to)
+                        });
                         let combat_high = state.combat_level.is_some_and(|level| level > 50);
                         if !endpoint_inside && !combat_high {
-                            exclusions.avoid.extend(DRAYNOR_JAIL_GUARD_AVOIDS);
+                            exclusions
+                                .avoid
+                                .extend(group.members.iter().map(member_rect));
                         }
                     }
                     _ => unreachable!(),
