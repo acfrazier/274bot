@@ -1501,12 +1501,11 @@ impl TuiSession {
             z: h.z,
             level: h.level,
         });
-        let command = match app.map_model.confirm(
-            ActionKind::Teleport,
-            &context,
-            from,
-            app.map_find_options(),
-        ) {
+        let options = app.map_find_options();
+        let command = match app
+            .map_model
+            .confirm(ActionKind::Teleport, &context, from, options)
+        {
             Ok(command) => command,
             Err(error) => {
                 app.clear_consumed_map_selection();

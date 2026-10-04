@@ -68,7 +68,6 @@ pub struct ParamsPane<'a> {
     pub state: &'a mut ParamsState,
 }
 
-
 impl<'a> ParamsPane<'a> {
     pub fn visible_rows(&self) -> Vec<&'a SettingDef> {
         self.schema
@@ -285,12 +284,7 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         if def.ty == "boolean" {
-            if self
-                .state
-                .walk_permissions
-                .permission_enabled(&def.id)
-                == Some(true)
-            {
+            if self.state.walk_permissions.permission_enabled(&def.id) == Some(true) {
                 return ParamsKey::None;
             }
             let cur = self
@@ -593,10 +587,7 @@ impl Widget for ParamsPane<'_> {
                 let mark = if i == self.state.cursor { "> " } else { "  " };
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
-                } else if let Some(global) = self
-                    .state
-                    .walk_permissions
-                    .permission_enabled(&def.id)
+                } else if let Some(global) = self.state.walk_permissions.permission_enabled(&def.id)
                 {
                     if global {
                         "On (inherited globally; script cannot veto)".into()

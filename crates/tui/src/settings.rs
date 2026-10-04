@@ -370,7 +370,6 @@ impl Widget for SettingsPane<'_> {
     }
 }
 
-
 /// The width in columns of one character, as [`Span`] measures it.
 fn char_width(text: &str, at: usize, ch: char) -> usize {
     Span::raw(&text[at..at + ch.len_utf8()]).width()

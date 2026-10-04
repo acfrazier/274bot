@@ -113,8 +113,7 @@
           "args": {
             "tile": [3166, 3306, 2],
             "source": "A defs/cooksassistant.ts:17",
-            "radius": 2,
-            "allow_teleports": false
+            "radius": 2
           },
           "skip_if": {
             "Any": [
@@ -197,8 +196,7 @@
           "args": {
             "tile": [3166, 3306, 0],
             "source": "A defs/cooksassistant.ts:18",
-            "radius": 2,
-            "allow_teleports": false
+            "radius": 2
           },
           "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 6 } } },
           "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 2 } } }

@@ -1695,7 +1695,8 @@ impl TuiApp {
         let [map_area, button_area, info_area] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(inner.height.min(1)),
-            Constraint::Length(inner.height.saturating_sub(2).min(5)),
+            // Shared permission copy wraps; keep the legend and observations visible.
+            Constraint::Length(inner.height.saturating_sub(2).min(9)),
         ])
         .areas(inner);
         self.regions.map = map_area;

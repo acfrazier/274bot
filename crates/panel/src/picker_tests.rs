@@ -468,10 +468,16 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
         [[0.0, 0.0], [0.0, 0.0]],
         "the latest durable global replaces the one-shot checkbox"
     );
-    assert!(!session.route_through_zones, "global-on consumes the one-shot");
+    assert!(
+        !session.route_through_zones,
+        "global-on consumes the one-shot"
+    );
     picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
     picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
-    assert!(!session.route_through_zones, "the hidden checkbox cannot grant danger");
+    assert!(
+        !session.route_through_zones,
+        "the hidden checkbox cannot grant danger"
+    );
 
     frontend_core::nav_preference_at(
         &path,

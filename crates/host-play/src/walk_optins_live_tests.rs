@@ -23,19 +23,24 @@ const CONTROL_LIMIT: Duration = Duration::from_secs(30);
 enum Cell {
     Teleport,
     Danger,
+    DangerNoSafe,
 }
 impl Cell {
     fn from_env() -> Self {
         match std::env::var("WALK_OPTINS_SCENARIO").as_deref() {
             Ok("teleport") => Self::Teleport,
             Ok("danger") => Self::Danger,
-            other => panic!("WALK_OPTINS_SCENARIO must be teleport or danger: {other:?}"),
+            Ok("danger-no-safe") => Self::DangerNoSafe,
+            other => {
+                panic!("WALK_OPTINS_SCENARIO must be teleport, danger or danger-no-safe: {other:?}")
+            }
         }
     }
     fn name(self) -> &'static str {
         match self {
             Self::Teleport => "teleport",
             Self::Danger => "danger",
+            Self::DangerNoSafe => "danger-no-safe",
         }
     }
 }
@@ -109,7 +114,7 @@ impl LiveState {
                     "seed only the owned account: {command}"
                 );
             }
-            if cell == Cell::Danger {
+            if cell != Cell::Teleport {
                 // This cell proves permitted arrival, not low-level survival.
                 // Normal defensive stats leave the real always-on WWM zone
                 // active and do not grant protection or change world RNG.
@@ -121,13 +126,16 @@ impl LiveState {
                 }
             }
             let supply = match cell {
-                Cell::Teleport => "give amulet_of_glory_4 1",
-                Cell::Danger => "give coins 60",
+                Cell::Teleport => Some("give amulet_of_glory_4 1"),
+                Cell::Danger => Some("give coins 60"),
+                Cell::DangerNoSafe => None,
             };
-            assert_eq!(
-                api::interact::cheat(client, supply),
-                client::CheatSend::Sent
-            );
+            if let Some(supply) = supply {
+                assert_eq!(
+                    api::interact::cheat(client, supply),
+                    client::CheatSend::Sent
+                );
+            }
             self.primed = Some(Instant::now());
             return;
         }
@@ -149,8 +157,9 @@ impl LiveState {
             let supply_ready = match cell {
                 Cell::Teleport => self.count("Amulet of glory(4)") == 1,
                 Cell::Danger => self.count("Coins") == 60,
+                Cell::DangerNoSafe => self.count("Coins") == 0,
             };
-            let stats_ready = cell != Cell::Danger
+            let stats_ready = cell == Cell::Teleport
                 || [1, 3].iter().all(|index| {
                     self.snapshot
                         .stats()
@@ -175,10 +184,30 @@ impl LiveState {
     }
 }
 
-fn nav_sample(play: &Play, account: &str) -> Option<(u64, Value)> {
+fn nav_sample(play: &Play, account: &str, combat: Option<i32>) -> Option<(u64, Value)> {
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account)?;
     let (target, radius, teles, wild, fetch, zones) = bot.requested_route?;
+    let active_zone_tiles = bot.route.as_ref().and_then(|route| {
+        let world = play.world.as_ref()?;
+        let table = world.graph.zones.as_ref()?;
+        let filter = nav::zones::ZoneFilter::new(table, combat, &[], &nav::zones::ZoneExempt::NONE);
+        Some(
+            route
+                .legs
+                .iter()
+                .map(|leg| match leg {
+                    nav::router::Leg::Walk { tiles } => tiles
+                        .iter()
+                        .filter(|&&tile| filter.blocks(&world.graph.wilderness, tile))
+                        .count(),
+                    nav::router::Leg::Transport { edge } => {
+                        usize::from(filter.blocks(&world.graph.wilderness, edge.to))
+                    }
+                })
+                .sum::<usize>(),
+        )
+    });
     let legs = bot.route.as_ref().map(|route| route.legs.iter().map(|leg| match leg {
         nav::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
         nav::router::Leg::Transport { edge } => json!({"kind": format!("{:?}", edge.kind), "at": edge.at, "to": edge.to, "option": edge.option, "ticks": edge.ticks}),
@@ -191,6 +220,7 @@ fn nav_sample(play: &Play, account: &str) -> Option<(u64, Value)> {
             "allow_teleports": teles, "allow_wilderness": wild, "allow_bank_fetch": fetch,
             "all_danger_zones": zones.is_all(), "bank_budget_active": bot.bank_fetch.is_some(),
             "guard_active": bot.walk_guard.is_some(), "route": legs,
+            "combat_level": combat, "active_zone_tiles": active_zone_tiles,
         }),
     ))
 }
@@ -332,7 +362,7 @@ fn live_quester_walk_optins() {
         assert!(ready, "owned account must reach live ingame scene 2, exact supply and not-started journal before native Start");
         let settings = serde_json::from_value(json!({
             "quests": ["imp"], "allow_teleports": granted && cell == Cell::Teleport,
-            "allow_danger_zones": granted && cell == Cell::Danger,
+            "allow_danger_zones": granted && cell != Cell::Teleport,
         }))
         .unwrap();
         states[account].lock().started = true;
@@ -347,7 +377,12 @@ fn live_quester_walk_optins() {
     let mut control_captured = false;
     loop {
         for (i, account) in names.iter().enumerate() {
-            if let Some((request, sample)) = nav_sample(&play, account) {
+            let combat = states[account]
+                .lock()
+                .snapshot
+                .local_player()
+                .map(|lp| lp.player.combat_level);
+            if let Some((request, sample)) = nav_sample(&play, account, combat) {
                 if previous_request[i] != Some(request) {
                     previous_request[i] = Some(request);
                     admissions[i].push(sample);
@@ -407,8 +442,30 @@ fn live_quester_walk_optins() {
         tile.level == 2 && tile.x.abs_diff(3103).max(tile.z.abs_diff(3163)) <= 6
     });
     let scene_ready = state.ingame && state.scene_state == 2;
+    let route_policy = match cell {
+        Cell::Teleport => true,
+        Cell::Danger => {
+            admissions.iter().all(|rows| {
+                rows.iter()
+                    .any(|sample| !sample["route"].is_null() && sample["active_zone_tiles"] == 0)
+            }) && admissions[0].iter().all(|sample| {
+                sample["active_zone_tiles"].is_null() || sample["active_zone_tiles"] == 0
+            })
+        }
+        Cell::DangerNoSafe => {
+            admissions[0].iter().any(|sample| {
+                sample["active_zone_tiles"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0)
+            }) && admissions[1].iter().all(|sample| sample["route"].is_null())
+        }
+    };
     drop(state);
-    let success = complete && endpoint && scene_ready && (cell != Cell::Teleport || teleported);
+    let success = complete
+        && endpoint
+        && scene_ready
+        && route_policy
+        && (cell != Cell::Teleport || teleported);
     let report = document(
         &play,
         account,
@@ -428,7 +485,7 @@ fn live_quester_walk_optins() {
     assert!(success, "grant must reach the permitted endpoint and cause real native quest completion by {PROGRESS_LIMIT:?}; teleport requires real charge consumption and displacement");
     assert!(admissions[0].iter().any(|sample| match cell {
         Cell::Teleport => sample["allow_teleports"] == true,
-        Cell::Danger => sample["all_danger_zones"] == true,
+        Cell::Danger | Cell::DangerNoSafe => sample["all_danger_zones"] == true,
     }));
     assert!(
         admissions
