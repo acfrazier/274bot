@@ -398,8 +398,8 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
         if (wornrequired !== undefined) namedItem(itemIds, wornrequired, `${parsed.name} required weapon`);
         const wornRaw = parsed.values.worn_reqmessage?.[0]?.[0];
         if (wornrequired !== undefined && wornRaw === undefined) throw new Error(`${parsed.name}: wornrequired without worn_reqmessage`);
-        // Expected target gfx for the S7 launch probe. The shared miss splash stays
-        // in the style facts, so failedspell_impact and unresolvable aliases are -1.
+        // Successful target gfx only. The shared miss splash is published separately
+        // as failed_spell_impact; it and unresolvable aliases remain -1 per spell.
         const targetRaw = parsed.values.spotanim_target?.[0]?.[0];
         const targetAlias = targetRaw === undefined ? null : (targetRaw.startsWith('^') ? targetRaw.slice(1) : targetRaw);
         const impactSpotanim = targetAlias === null || targetAlias === 'failedspell_impact' ? -1 : (spotanims.get(targetAlias) ?? -1);
