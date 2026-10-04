@@ -2911,6 +2911,10 @@ impl GatherSlot {
         if !self.bank_conservation_active() {
             return Ok(());
         }
+        // Wait for the inventory component's posted capacity before reading a tool ID.
+        if self.snapshot.inventory_size() <= 0 {
+            return Ok(());
+        }
         let bank = text_field(status, "bank");
         let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
         let event = text_field(status, "last_event");
