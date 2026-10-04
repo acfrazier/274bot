@@ -266,10 +266,11 @@ an open modal without a loaded item table is not a successful native open.
 A bank without packed stand or declared NPC access fails closed with its name.
 Native counted withdrawals use the same session-fenced host amount-dialog
 continuation as compatibility scripts; dispatch alone never confirms a transfer.
-Named bank deposits use one content `Deposit All` operation for all held copies
-of that item, rather than sending an operation for each occupied slot. Other
-item types and configured keep items are untouched; observed inventory changes,
-not accepted dispatch alone, still settle the transfer.
+Named bank deposits press one content `Deposit All` operation on that exact
+bank-side row (id, slot and component), never a same-named noted or unnoted
+copy, rather than sending an operation for each occupied slot. Other item ids
+and configured keep items are untouched; observed inventory changes, not
+accepted dispatch alone, still settle the transfer.
 
 Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
@@ -509,6 +510,10 @@ Inventory, bank and quest observations carry readiness and an `EvidenceStamp`;
 unavailable is not an observed empty list. A closed main modal is an observed
 root of `-1` only on an ingame frame. Snapshot views do not clone the world or
 grant a send-side driver.
+A bank-side backpack is posted only while the bank's side modal root is up
+(`modals().side`, sent to compatibility scripts as `side_modal_id`): an open
+main bank whose side root is still down has no side observation, even with an
+empty list, while a raised root with no rows is a posted empty pack.
 
 ## Nav vs scripts
 

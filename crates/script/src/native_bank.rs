@@ -2,21 +2,24 @@
 //!
 //! Selection owns immutable [`NamedBankFacts`] explicitly. Operations never
 //! trust dispatch receipts as transfers: every withdraw/deposit settles from a
-//! newer inventory or bank-side observation in the same bank session.
+//! newer inventory observation in the same bank session. Click choice,
+//! completion and deposit settlement are the shared [`crate::bank::ops`]
+//! kernel.
 use crate::bank::npc;
+use crate::bank::ops::{
+    self, DepositKind, DepositScan, DepositSpec, NoteIntent, Progress, WithdrawGoal,
+    DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO, TRANSFER_BOUND,
+};
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
-use api::snapshot::{ItemView, QuestListStatus, QuestStatusView, StatView, WorldTile};
+use api::snapshot::{QuestListStatus, QuestStatusView, StatView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
 const OPEN_BOUND: Duration = Duration::from_secs(12);
-const TRANSFER_BOUND: Duration = Duration::from_secs(4);
-const MAX_MEMO: usize = 64;
-const MAX_DEPOSITS: u8 = 32;
 
 #[derive(Clone)]
 pub struct BankSelector {
@@ -260,7 +263,7 @@ enum Phase {
     Act,
     AwaitTransfer {
         before: i32,
-        item_id: Option<i32>,
+        item_id: i32,
         evidence: EvidenceStamp,
     },
     AwaitClose,
@@ -277,6 +280,8 @@ pub struct BankMachine {
     deposited: u32,
     item_mode_ensured: bool,
     open_stage: u8,
+    /// The until-empty side-view bound is armed in `deadline`.
+    view_armed: bool,
 }
 
 impl NativeMachine for BankMachine {
@@ -311,7 +316,7 @@ impl NativeMachine for BankMachine {
                     }
                     protected_before.push(BankCount {
                         id,
-                        count: count(inventory.value, id),
+                        count: ops::count_id(inventory.value, id),
                     });
                 }
             }
@@ -335,6 +340,11 @@ impl NativeMachine for BankMachine {
                     )));
                 }
             }
+            BankAction::DepositAll { keep } if keep.len() > MAX_MEMO => {
+                return Err(ActionError::Unavailable(Arc::from(
+                    "bank keep set exceeds 64 items",
+                )));
+            }
             _ => {}
         }
         Ok(Self {
@@ -348,6 +358,7 @@ impl NativeMachine for BankMachine {
             deposited: 0,
             item_mode_ensured: false,
             open_stage: 0,
+            view_armed: false,
         })
     }
 
@@ -654,64 +665,61 @@ impl NativeMachine for BankMachine {
                         return Poll::Ready(Ok(self.receipt(cx, true)));
                     }
                     BankAction::Withdraw { item, qty } => {
-                        let snapshot = cx.snapshot();
-                        let Some(inv) = snapshot.inventory() else {
+                        let Some(view) = HeldView::read(cx, item.id) else {
                             return Poll::Pending;
                         };
-                        let held = count(inv.value, item.id);
-                        if held >= *qty {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        let goal = WithdrawGoal::exact_at_least(
+                            item.id,
+                            Arc::clone(&item.name),
+                            item.id,
+                            *qty,
+                            view.available,
+                            view.held,
+                            self.session,
+                        );
+                        match ops::withdraw_progress(
+                            &goal,
+                            view.held,
+                            view.full,
+                            self.same_session(cx),
+                        ) {
+                            Progress::Complete => {
+                                return Poll::Ready(Ok(self.receipt(cx, true)));
+                            }
+                            Progress::SessionGone => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during withdraw",
+                                ))));
+                            }
+                            Progress::Incomplete | Progress::PackFull | Progress::OverTarget => {}
                         }
-                        let Some(bank) = snapshot.bank() else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank closed during withdraw",
-                            ))));
+                        let reason = match self.click_withdraw(cx, &goal, view.held)? {
+                            Clicked::Sent => return Poll::Pending,
+                            Clicked::Closed => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during withdraw",
+                                ))));
+                            }
+                            Clicked::NoStock => "bank lacks requested item",
+                            Clicked::NoOp => "bank item has no compatible withdraw action",
                         };
-                        let Some(row) = bank.value.iter().find(|row| row.def.id == item.id) else {
-                            let receipt = self.receipt(cx, false);
-                            return if self.request.partial_ok {
-                                Poll::Ready(Ok(receipt))
-                            } else {
-                                Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank lacks requested item",
-                                ))))
-                            };
+                        // `partial_ok` takes the incomplete receipt; an unmet
+                        // exact target is never reported complete.
+                        return if self.request.partial_ok {
+                            Poll::Ready(Ok(self.receipt(cx, false)))
+                        } else {
+                            Poll::Ready(Err(ActionError::Failed(Arc::from(reason))))
                         };
-                        let need = (*qty - held).min(row.count).max(0);
-                        if need == 0 {
-                            return Poll::Ready(Ok(self.receipt(cx, self.request.partial_ok)));
-                        }
-                        let Some(request) =
-                            withdraw_request(row, &item.name, item.id, need, self.session)
-                        else {
-                            let receipt = self.receipt(cx, false);
-                            return if self.request.partial_ok {
-                                Poll::Ready(Ok(receipt))
-                            } else {
-                                Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank item has no compatible withdraw action",
-                                ))))
-                            };
-                        };
-                        if !self.item_mode_ensured {
-                            queue_unnoted_mode(&mut self.phase, &mut self.deadline, cx)?;
-                            return Poll::Pending;
-                        }
-                        cx.emit(request)?;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before: held,
-                            item_id: Some(item.id),
-                            evidence: cx.evidence(),
-                        };
-                        return Poll::Pending;
                     }
                     BankAction::WithdrawAny { items, qty } => {
                         let snapshot = cx.snapshot();
                         let Some(inv) = snapshot.inventory() else {
                             return Poll::Pending;
                         };
-                        if items.iter().any(|item| count(inv.value, item.id) >= *qty) {
+                        if items
+                            .iter()
+                            .any(|item| ops::count_id(inv.value, item.id) >= *qty)
+                        {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         }
                         let Some(bank) = snapshot.bank() else {
@@ -719,200 +727,161 @@ impl NativeMachine for BankMachine {
                                 "bank closed during tier withdraw",
                             ))));
                         };
-                        let Some((item, row)) = items.iter().find_map(|item| {
+                        let Some(item) = items.iter().find(|item| {
                             bank.value
                                 .iter()
-                                .find(|row| row.def.id == item.id && row.count > 0)
-                                .map(|row| (item, row))
+                                .any(|row| row.def.id == item.id && row.count > 0)
                         }) else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "bank lacks every permitted loadout tier",
                             ))));
                         };
-                        let before = count(inv.value, item.id);
-                        let need = (*qty - before).min(row.count).max(0);
-                        let Some(request) =
-                            withdraw_request(row, &item.name, item.id, need, self.session)
-                        else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank item has no compatible withdraw action",
-                            ))));
-                        };
-                        if !self.item_mode_ensured {
-                            queue_unnoted_mode(&mut self.phase, &mut self.deadline, cx)?;
+                        let Some(view) = HeldView::read(cx, item.id) else {
                             return Poll::Pending;
-                        }
-                        cx.emit(request)?;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before,
-                            item_id: Some(item.id),
-                            evidence: cx.evidence(),
                         };
-                        return Poll::Pending;
+                        let goal = WithdrawGoal::exact_at_least(
+                            item.id,
+                            Arc::clone(&item.name),
+                            item.id,
+                            *qty,
+                            view.available,
+                            view.held,
+                            self.session,
+                        );
+                        if ops::withdraw_progress(
+                            &goal,
+                            view.held,
+                            view.full,
+                            self.same_session(cx),
+                        ) == Progress::SessionGone
+                        {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank closed during tier withdraw",
+                            ))));
+                        }
+                        match self.click_withdraw(cx, &goal, view.held)? {
+                            Clicked::Sent => return Poll::Pending,
+                            Clicked::Closed => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during tier withdraw",
+                                ))));
+                            }
+                            Clicked::NoStock | Clicked::NoOp => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank item has no compatible withdraw action",
+                                ))));
+                            }
+                        }
                     }
                     BankAction::WithdrawTo { withdrawals } => {
-                        let snapshot = cx.snapshot();
-                        let Some(inv) = snapshot.inventory() else {
-                            return Poll::Pending;
-                        };
                         let Some(withdrawal) = withdrawals.get(self.withdraw_index) else {
                             return Poll::Ready(Ok(self.receipt(cx, true)));
                         };
-                        let held = count(inv.value, withdrawal.id);
-                        if held > withdrawal.target {
-                            return Poll::Ready(Ok(self.receipt(cx, false)));
-                        }
-                        if held == withdrawal.target {
-                            self.withdraw_index += 1;
-                            continue;
-                        }
-                        let Some(bank) = snapshot.bank() else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank closed during exact withdraw",
-                            ))));
+                        let Some(view) = HeldView::read(cx, withdrawal.id) else {
+                            return Poll::Pending;
                         };
-                        let Some(row) = bank
-                            .value
-                            .iter()
-                            .find(|row| row.def.id == withdrawal.id && row.count > 0)
-                        else {
-                            return Poll::Ready(Ok(self.receipt(cx, false)));
-                        };
-                        let need = (withdrawal.target - held).min(row.count).max(0);
-                        if need == 0 {
-                            return Poll::Ready(Ok(self.receipt(cx, false)));
-                        }
-                        let Some(request) = withdraw_request(
-                            row,
-                            &withdrawal.name,
+                        let goal = WithdrawGoal::exact_equal(
                             withdrawal.id,
-                            need,
+                            Arc::clone(&withdrawal.name),
+                            withdrawal.id,
+                            withdrawal.target,
+                            view.available,
+                            view.held,
                             self.session,
-                        ) else {
-                            return Poll::Ready(Ok(self.receipt(cx, false)));
-                        };
-                        if !self.item_mode_ensured {
-                            queue_unnoted_mode(&mut self.phase, &mut self.deadline, cx)?;
-                            return Poll::Pending;
-                        }
-                        cx.emit(request)?;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before: held,
-                            item_id: Some(withdrawal.id),
-                            evidence: cx.evidence(),
-                        };
-                        return Poll::Pending;
-                    }
-                    BankAction::Deposit { item } => {
-                        let snapshot = cx.snapshot();
-                        let Some(side) = snapshot.bank_side() else {
-                            return Poll::Pending;
-                        };
-                        let held = count(side.value, item.id);
-                        if held == 0 {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
-                        }
-                        cx.emit(InteractReq::Deposit {
-                            name: item.name.to_string(),
-                        })?;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before: held,
-                            item_id: Some(item.id),
-                            evidence: cx.evidence(),
-                        };
-                        return Poll::Pending;
-                    }
-                    BankAction::DepositAll { keep } => {
-                        if self.deposits >= MAX_DEPOSITS {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "deposit-all exceeded 32 item rows",
-                            ))));
-                        }
-                        let snapshot = cx.snapshot();
-                        let Some(side) = snapshot.bank_side() else {
-                            return Poll::Pending;
-                        };
-                        let row = side
-                            .value
-                            .iter()
-                            .find(|row| row.count > 0 && !keep.contains(&row.def.id));
-                        let Some(row) = row else {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
-                        };
-                        let Some(name) = row.def.name.clone() else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "deposit row has no resolved name",
-                            ))));
-                        };
-                        let before = side
-                            .value
-                            .iter()
-                            .filter(|row| !keep.contains(&row.def.id))
-                            .map(|row| row.count)
-                            .sum();
-                        cx.emit(InteractReq::Deposit { name })?;
-                        self.deposits += 1;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before,
-                            item_id: None,
-                            evidence: cx.evidence(),
-                        };
-                        return Poll::Pending;
-                    }
-                    BankAction::DepositProducts { products, keep } => {
-                        match self.protected_unchanged(cx) {
-                            Some(true) => {}
-                            Some(false) => {
-                                return Poll::Ready(Err(ActionError::Blocked(Arc::from(
-                                    "protected inventory changed during bank deposit",
+                        );
+                        match ops::withdraw_progress(
+                            &goal,
+                            view.held,
+                            view.full,
+                            self.same_session(cx),
+                        ) {
+                            Progress::Complete => {
+                                self.withdraw_index += 1;
+                                continue;
+                            }
+                            Progress::OverTarget => {
+                                return Poll::Ready(Ok(self.receipt(cx, false)));
+                            }
+                            Progress::SessionGone => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during exact withdraw",
                                 ))));
                             }
-                            None => return Poll::Pending,
+                            Progress::Incomplete | Progress::PackFull => {}
                         }
+                        match self.click_withdraw(cx, &goal, view.held)? {
+                            Clicked::Sent => return Poll::Pending,
+                            Clicked::Closed => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during exact withdraw",
+                                ))));
+                            }
+                            Clicked::NoStock | Clicked::NoOp => {
+                                return Poll::Ready(Ok(self.receipt(cx, false)));
+                            }
+                        }
+                    }
+                    BankAction::Deposit { .. }
+                    | BankAction::DepositAll { .. }
+                    | BankAction::DepositProducts { .. } => {
+                        if matches!(self.request.action, BankAction::DepositProducts { .. }) {
+                            match self.protected_unchanged(cx) {
+                                Some(true) => {}
+                                Some(false) => {
+                                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                                        "protected inventory changed during bank deposit",
+                                    ))));
+                                }
+                                None => return Poll::Pending,
+                            }
+                        }
+                        let now = cx.active_now();
                         let snapshot = cx.snapshot();
-                        let Some(inventory) = snapshot.inventory() else {
-                            return Poll::Pending;
-                        };
-                        let before = product_count(inventory.value, products, keep);
-                        if before <= 0 {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        let pack = snapshot.inventory().map(|rows| rows.value);
+                        let side = snapshot.bank_side().map(|rows| rows.value);
+                        let spec = deposit_spec(&self.request.action)
+                            .expect("deposit actions have a deposit spec");
+                        let wait_done = self.view_armed && now >= self.deadline;
+                        match ops::deposit_next(&spec, side, pack, wait_done) {
+                            DepositScan::WaitView => {
+                                if pack.is_some() && spec.kind == DepositKind::UntilEmpty {
+                                    if !self.view_armed {
+                                        self.view_armed = true;
+                                        self.deadline = now
+                                            .saturating_add(Duration::from_millis(DEPOSIT_VIEW_MS));
+                                    }
+                                } else if now >= self.deadline {
+                                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                        "bank deposit view did not post",
+                                    ))));
+                                }
+                                return Poll::Pending;
+                            }
+                            DepositScan::Done => return Poll::Ready(Ok(self.receipt(cx, true))),
+                            DepositScan::MissingRequired => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "inventory products remain but matching bank side row is missing",
+                                ))));
+                            }
+                            DepositScan::Click(click) => {
+                                if self.deposits >= MAX_DEPOSITS {
+                                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                        "bank deposit exceeded 32 item rows",
+                                    ))));
+                                }
+                                let before = pack.map_or(0, |rows| ops::count_id(rows, click.id));
+                                cx.emit(ops::deposit_req(click, self.session))?;
+                                self.deposits += 1;
+                                self.view_armed = false;
+                                self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
+                                self.phase = Phase::AwaitTransfer {
+                                    before,
+                                    item_id: click.id,
+                                    evidence: cx.evidence(),
+                                };
+                                return Poll::Pending;
+                            }
                         }
-                        if self.deposits >= MAX_DEPOSITS {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "product deposit exceeded 32 item rows",
-                            ))));
-                        }
-                        let Some(side) = snapshot.bank_side() else {
-                            return Poll::Pending;
-                        };
-                        let row = side.value.iter().find(|row| {
-                            row.count > 0
-                                && products.contains(&row.def.id)
-                                && !keep.contains(&row.def.id)
-                        });
-                        let Some(row) = row else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "inventory products remain but matching bank side row is missing",
-                            ))));
-                        };
-                        let Some(name) = row.def.name.clone() else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "product row has no resolved name",
-                            ))));
-                        };
-                        cx.emit(InteractReq::Deposit { name })?;
-                        self.deposits += 1;
-                        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-                        self.phase = Phase::AwaitTransfer {
-                            before,
-                            item_id: None,
-                            evidence: cx.evidence(),
-                        };
-                        return Poll::Pending;
                     }
                     BankAction::Close => unreachable!("close is handled before opening"),
                 },
@@ -937,42 +906,12 @@ impl NativeMachine for BankMachine {
                             None => return Poll::Pending,
                         }
                     }
-                    let current = match &self.request.action {
-                        BankAction::Withdraw { item, .. } => cx
-                            .snapshot()
-                            .inventory()
-                            .map(|rows| count(rows.value, item.id)),
-                        BankAction::WithdrawAny { items, .. } => {
-                            cx.snapshot().inventory().map(|rows| {
-                                items
-                                    .iter()
-                                    .map(|item| count(rows.value, item.id))
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                        }
-                        BankAction::WithdrawTo { .. } => item_id.and_then(|id| {
-                            cx.snapshot().inventory().map(|rows| count(rows.value, id))
-                        }),
-                        BankAction::Deposit { item } => cx
-                            .snapshot()
-                            .bank_side()
-                            .map(|rows| count(rows.value, item.id)),
-                        BankAction::DepositAll { keep } => cx.snapshot().bank_side().map(|rows| {
-                            rows.value
-                                .iter()
-                                .filter(|row| !keep.contains(&row.def.id))
-                                .map(|row| row.count)
-                                .sum()
-                        }),
-                        BankAction::DepositProducts { products, keep, .. } => cx
-                            .snapshot()
-                            .inventory()
-                            .map(|rows| product_count(rows.value, products, keep)),
-                        BankAction::Scan | BankAction::OpenStand { .. } | BankAction::Close => {
-                            Some(before)
-                        }
-                    };
+                    // The clicked id's held count: a withdraw raises it, a
+                    // deposit lowers it.
+                    let current = cx
+                        .snapshot()
+                        .inventory()
+                        .map(|rows| ops::count_id(rows.value, item_id));
                     let withdrawing = matches!(
                         self.request.action,
                         BankAction::Withdraw { .. }
@@ -994,9 +933,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
-                    let same_session = cx.snapshot().bank_session().is_some_and(|session| {
-                        session.value.open && session.value.generation == self.session
-                    });
+                    let same_session = self.same_session(cx);
                     if !same_session || cx.active_now() >= self.deadline {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank transfer did not settle",
@@ -1154,14 +1091,127 @@ fn npc_intent(access: &BankStandAccess) -> Result<npc::Intent<'_>, ActionError> 
     Ok(npc::Intent { name, op, choose })
 }
 
+/// The kernel deposit spec of a deposit action, borrowed from its request:
+/// a one-row deposit must move that id, deposit-all sweeps everything not
+/// kept, and products must leave the pack.
+fn deposit_spec(action: &BankAction) -> Option<DepositSpec<'_>> {
+    match action {
+        BankAction::Deposit { item } => Some(DepositSpec {
+            kind: DepositKind::Required,
+            keep: &[],
+            only: Some(std::slice::from_ref(&item.id)),
+        }),
+        BankAction::DepositAll { keep } => Some(DepositSpec {
+            kind: DepositKind::UntilEmpty,
+            keep,
+            only: None,
+        }),
+        BankAction::DepositProducts { products, keep } => Some(DepositSpec {
+            kind: DepositKind::Required,
+            keep,
+            only: Some(products),
+        }),
+        _ => None,
+    }
+}
+
+/// The held count, pack fullness and bank stock of one id this frame.
+struct HeldView {
+    held: i32,
+    full: bool,
+    available: i32,
+}
+
+impl HeldView {
+    /// `None` until the inventory has posted.
+    fn read(cx: &ActionContext<'_>, id: i32) -> Option<Self> {
+        let snapshot = cx.snapshot();
+        let inventory = snapshot.inventory()?.value;
+        let size = snapshot
+            .inventory_capacity()
+            .map_or(0, |capacity| i32::from(capacity.value));
+        Some(Self {
+            held: ops::count_id(inventory, id),
+            full: ops::pack_full(inventory, size),
+            available: snapshot
+                .bank()
+                .map_or(0, |bank| ops::count_id(bank.value, id)),
+        })
+    }
+}
+
+/// What one withdraw click attempt did.
+enum Clicked {
+    /// The click (or the Item-mode step before it) was sent.
+    Sent,
+    /// The bank item table is gone.
+    Closed,
+    /// No bank row of the item has stock.
+    NoStock,
+    /// The row has no compatible withdraw op.
+    NoOp,
+}
+
 impl BankMachine {
+    fn same_session(&self, cx: &ActionContext<'_>) -> bool {
+        cx.snapshot()
+            .bank_session()
+            .is_some_and(|session| session.value.open && session.value.generation == self.session)
+    }
+
+    /// Send the kernel's next click toward `goal`, after selecting Item mode
+    /// once per open session.
+    fn click_withdraw(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        goal: &WithdrawGoal,
+        held: i32,
+    ) -> Result<Clicked, ActionError> {
+        let request = {
+            let snapshot = cx.snapshot();
+            let Some(bank) = snapshot.bank() else {
+                return Ok(Clicked::Closed);
+            };
+            let Some(row) = bank
+                .value
+                .iter()
+                .find(|row| row.def.id == goal.bank_item_id && row.count > 0)
+            else {
+                return Ok(Clicked::NoStock);
+            };
+            let Some(request) = ops::withdraw_click(row, ops::withdraw_remaining(goal, held), goal)
+            else {
+                return Ok(Clicked::NoOp);
+            };
+            request
+        };
+        if !self.item_mode_ensured {
+            let evidence = cx.evidence();
+            let request_id = cx.emit(ops::note_req(NoteIntent::Item))?;
+            self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
+            self.phase = Phase::AwaitNoteMode {
+                request_id,
+                evidence,
+            };
+            return Ok(Clicked::Sent);
+        }
+        cx.emit(request)?;
+        self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
+        self.phase = Phase::AwaitTransfer {
+            before: held,
+            item_id: goal.lands_as_id,
+            evidence: cx.evidence(),
+        };
+        Ok(Clicked::Sent)
+    }
+
     fn protected_unchanged(&self, cx: &ActionContext<'_>) -> Option<bool> {
         let snapshot = cx.snapshot();
         let inventory = snapshot.inventory()?;
         Some(
             self.protected_before
                 .iter()
-                .all(|before| count(inventory.value, before.id) == before.count),
+                .all(|before| ops::count_id(inventory.value, before.id) == before.count),
         )
     }
 
@@ -1174,91 +1224,11 @@ impl BankMachine {
             .iter()
             .map(|id| BankCount {
                 id: *id,
-                count: bank.map_or(0, |rows| count(rows.value, *id)),
+                count: bank.map_or(0, |rows| ops::count_id(rows.value, *id)),
             })
             .collect();
         BankReceipt { counts, complete }
     }
-}
-fn queue_unnoted_mode(
-    phase: &mut Phase,
-    deadline: &mut Duration,
-    cx: &mut ActionContext<'_>,
-) -> Result<(), ActionError> {
-    let evidence = cx.evidence();
-    let request_id = cx.emit(InteractReq::SetNoteMode { on: false })?;
-    *deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
-    *phase = Phase::AwaitNoteMode {
-        request_id,
-        evidence,
-    };
-    Ok(())
-}
-
-fn normalized_action_bytes(value: &str) -> impl Iterator<Item = u8> + '_ {
-    value
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b'-' | b'_'))
-        .map(|byte| byte.to_ascii_lowercase())
-}
-
-fn normalized_action_eq(actual: &str, expected: &str) -> bool {
-    normalized_action_bytes(actual).eq(normalized_action_bytes(expected))
-}
-
-fn withdraw_action_index(item: &ItemView, expected: &str) -> Option<usize> {
-    item.actions.iter().position(|action| {
-        action
-            .as_deref()
-            .is_some_and(|action| normalized_action_eq(action, expected))
-    })
-}
-
-fn withdraw_request(
-    row: &ItemView,
-    name: &str,
-    lands_as_id: i32,
-    requested: i32,
-    bank_generation: u64,
-) -> Option<InteractReq> {
-    let requested = requested.min(row.count.max(0));
-    if requested <= 0 {
-        return None;
-    }
-    let fixed = match requested {
-        1 => Some("Withdraw-1"),
-        5 => Some("Withdraw-5"),
-        10 => Some("Withdraw-10"),
-        _ => None,
-    };
-    let selected = fixed
-        .and_then(|action| withdraw_action_index(row, action).map(|index| (requested, index)))
-        .or_else(|| withdraw_action_index(row, "Withdraw-X").map(|index| (requested, index)))
-        .or_else(|| {
-            [(10, "Withdraw-10"), (5, "Withdraw-5"), (1, "Withdraw-1")]
-                .into_iter()
-                .filter(|(count, _)| *count <= requested)
-                .find_map(|(count, action)| {
-                    withdraw_action_index(row, action).map(|index| (count, index))
-                })
-        })?;
-    let (count, index) = selected;
-    let action = row.actions.get(index)?.as_ref()?.clone();
-    Some(InteractReq::WithdrawX {
-        name: name.to_owned(),
-        count,
-        bank_item_id: row.def.id,
-        lands_as_id,
-        action,
-        bank_generation,
-    })
-}
-
-fn product_count(rows: &[ItemView], products: &[i32], keep: &[i32]) -> i32 {
-    rows.iter()
-        .filter(|row| products.contains(&row.def.id) && !keep.contains(&row.def.id))
-        .map(|row| row.count)
-        .sum()
 }
 
 pub struct Select {
@@ -1473,18 +1443,12 @@ impl NativeMachine for Close {
     }
 }
 
-fn count(rows: &[ItemView], id: i32) -> i32 {
-    rows.iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count)
-        .sum()
-}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::native::{HostEffect, InteractionReceipt};
     use crate::quester::families::tests::with_tick;
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
 
     fn catalog_bank(name: &str) -> NamedBank {
         let definition = api::named_banks::BANK_CATALOG
@@ -1970,6 +1934,264 @@ mod tests {
                 count: 3,
             }]
         );
+    }
+
+    fn row_with(item: ItemView, actions: &[&str], slot: i32) -> ItemView {
+        ItemView {
+            actions: actions.iter().map(|a| Some((*a).to_owned())).collect(),
+            slot,
+            ..item
+        }
+    }
+
+    fn bank_request(action: BankAction, partial_ok: bool) -> BankRequest {
+        BankRequest {
+            bank: None,
+            action,
+            memo_ids: Arc::from([]),
+            partial_ok,
+        }
+    }
+
+    fn begin_bank(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        request: BankRequest,
+    ) -> (
+        crate::native::ActionHandle<BankMachine>,
+        Poll<Result<BankReceipt, ActionError>>,
+    ) {
+        with_tick(snapshot, ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(request, &mut tick.cx)
+                .unwrap();
+            let poll = tick.actions.poll(&handle, &mut tick.cx);
+            (handle, poll)
+        })
+    }
+
+    /// P-ladder (native): a fixed-only row serves an exact 7 as 5 + 1 + 1;
+    /// one landed click is never the request.
+    #[test]
+    fn exact_withdraw_clicks_the_fixed_ladder_until_the_final_count() {
+        let id = 995;
+        let bank = |count| {
+            Some(vec![row_with(
+                item(id, "Coins", count, ItemContainer::Bank),
+                &["Withdraw-1", "Withdraw-5", "Withdraw-10"],
+                0,
+            )])
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, bank(50), Vec::new());
+        let mut ledger = None;
+        let request = bank_request(
+            BankAction::WithdrawTo {
+                withdrawals: Arc::from([Withdrawal {
+                    id,
+                    name: Arc::from("Coins"),
+                    target: 7,
+                }]),
+            },
+            false,
+        );
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request);
+        assert!(poll.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+        let mut clicks = Vec::new();
+        let mut held = 0;
+        for tick_number in 2..=4 {
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            match acknowledge(&mut ledger, tick_number) {
+                HostEffect::Interaction(InteractReq::WithdrawX {
+                    action,
+                    count,
+                    bank_item_id,
+                    lands_as_id,
+                    ..
+                }) => {
+                    assert_eq!((bank_item_id, lands_as_id), (id, id));
+                    clicks.push(action);
+                    held += count;
+                }
+                _ => panic!("expected a withdraw click"),
+            }
+            snapshot.seed_inventory(vec![item(id, "Coins", held, ItemContainer::Inventory)], 28);
+            snapshot.seed_bank_observation(10, 1, bank(50 - held), Vec::new());
+        }
+        assert_eq!(clicks, ["Withdraw-5", "Withdraw-1", "Withdraw-1"]);
+        let receipt = with_tick(&snapshot, &mut ledger, 5, |tick| {
+            match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Ready(Ok(receipt)) => receipt,
+                other => panic!("held 7 completes the request: {other:?}"),
+            }
+        });
+        assert!(receipt.complete);
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// `partial_ok` returns the incomplete receipt; an unmet exact target is
+    /// never reported complete.
+    #[test]
+    fn partial_withdraw_of_missing_stock_is_incomplete() {
+        let id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(id, "Bait", 0, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let request = bank_request(
+            BankAction::Withdraw {
+                item: BankItem {
+                    id,
+                    name: Arc::from("Bait"),
+                },
+                qty: 5,
+            },
+            true,
+        );
+        let (_, poll) = begin_bank(&snapshot, &mut ledger, request);
+        assert!(matches!(
+            poll,
+            Poll::Ready(Ok(BankReceipt {
+                complete: false,
+                ..
+            }))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// A one-row deposit presses that exact side row by id/slot/component;
+    /// a same-named noted row is never re-found by name.
+    #[test]
+    fn deposit_presses_the_exact_side_row() {
+        let (trout, noted) = (333, 334);
+        let deposit_ops = ["Deposit-1", "Deposit-5", "Deposit-All"];
+        let side = vec![
+            row_with(
+                item(trout, "Trout", 2, ItemContainer::BankSide),
+                &deposit_ops,
+                0,
+            ),
+            row_with(
+                item(noted, "Trout", 9, ItemContainer::BankSide),
+                &deposit_ops,
+                1,
+            ),
+        ];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![
+                item(trout, "Trout", 2, ItemContainer::Inventory),
+                item(noted, "Trout", 9, ItemContainer::Inventory),
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side.clone());
+        let mut ledger = None;
+        let request = bank_request(
+            BankAction::Deposit {
+                item: BankItem {
+                    id: noted,
+                    name: Arc::from("Trout"),
+                },
+            },
+            false,
+        );
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, request);
+        assert!(poll.is_pending());
+        let generation = snapshot.bank_session_generation();
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton {
+                id,
+                slot: 1,
+                component: 7,
+                operation: 3,
+                bank_generation,
+            }) if id == noted && bank_generation == generation
+        ));
+        snapshot.seed_inventory(vec![item(trout, "Trout", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side[..1].to_vec());
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            poll,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+    }
+
+    /// Until-empty deposit: a posted empty side settles at once; a side
+    /// root still down is not an empty side and waits the 1.2 s view bound.
+    #[test]
+    fn deposit_all_reads_the_side_root_not_the_list_length() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(526, "Bones", 1, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let all = || {
+            bank_request(
+                BankAction::DepositAll {
+                    keep: Arc::from([]),
+                },
+                false,
+            )
+        };
+        let mut ledger = None;
+        let (_, poll) = begin_bank(&snapshot, &mut ledger, all());
+        assert!(matches!(
+            poll,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+
+        snapshot.seed_side_modal(-1);
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, all());
+        assert!(poll.is_pending(), "a side root still down is not posted");
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(poll, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
+            "the until-empty view bound settles: {poll:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        // Required never settles on that bound.
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::DepositProducts {
+                    products: Arc::from([526]),
+                    keep: Arc::from([]),
+                },
+                false,
+            ),
+        );
+        assert!(poll.is_pending());
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
     }
 
     #[test]
