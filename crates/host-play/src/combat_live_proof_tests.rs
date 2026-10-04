@@ -1257,7 +1257,7 @@ fn start_preflight_at(
             || !tile_is(&setup["spawn_tile"], spawn)
             || !tile_is(&setup["tele_tile"], tele)
             || setup["chebyshev_distance"] != json!(5)
-            || !tile_is(&baseline["tile"], tele)
+            || baseline["tile"] != json!([tele.x, tele.z, tele.level])
         {
             return Some("magic proof did not observe npcadd at the stand then a five-tile east teleport before Start".to_owned());
         }
@@ -5413,6 +5413,50 @@ fn every_magic_spawn_follows_the_settled_stand_and_precedes_start() {
             .unwrap();
         assert!(stand < spawn && spawn < start);
     }
+}
+
+#[test]
+fn magic_preflight_compares_array_baseline_with_object_setup_tiles() {
+    let tele = WorldTile {
+        x: IMP_START.x + 5,
+        ..IMP_START
+    };
+    let mut baseline = json!({
+        "ingame": true, "scene_state": 2,
+        "tile": [tele.x, tele.z, tele.level],
+        "stats": [
+            {"name": "magic", "base": 35, "effective": 35},
+            {"name": "defence", "base": 40, "effective": 40},
+            {"name": "hitpoints", "base": 40, "effective": 40},
+            {"name": "prayer", "base": 43, "effective": 43}
+        ],
+        "prayer_varps": [{"index": 97, "value": 0}],
+        "inventory": [
+            {"id": CHAOS_RUNE_ID, "count": MAGIC_CHAOS_RUNES},
+            {"id": AIR_RUNE_ID, "count": MAGIC_AIR_RUNES},
+            {"id": MIND_RUNE_ID, "count": MAGIC_MIND_RUNES}
+        ],
+        "equipment": [{"id": STAFF_OF_FIRE_ID, "count": 1}],
+        "nearby_npcs": [{"name": "Khazard warlord", "distance": 5}]
+    });
+    let setup = json!({
+        "npcadd": "khazard_warlord",
+        "spawn_tile": IMP_START,
+        "tele_tile": tele,
+        "chebyshev_distance": 5
+    });
+    for case in [
+        Case::MageAuto,
+        Case::MageManualFallback,
+        Case::MageManualNoFallback,
+    ] {
+        assert_eq!(
+            start_preflight_at(case, &baseline, Some(tele), Some(&setup)),
+            None
+        );
+    }
+    baseline["tile"] = json!([tele.x + 1, tele.z, tele.level]);
+    assert!(start_preflight_at(Case::MageAuto, &baseline, Some(tele), Some(&setup)).is_some());
 }
 
 #[test]
