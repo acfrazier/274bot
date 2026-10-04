@@ -970,7 +970,7 @@ pub(crate) fn shop_buyout_open_npc_bank(
                         return true;
                     }
                     let mut ix = Interactions::new(snapshot, c);
-                    return match ix.continue_dialog() {
+                    return match ix.continue_dialog(None) {
                         SendResult::Sent { .. } => {
                             state.continued = Some(identity);
                             true

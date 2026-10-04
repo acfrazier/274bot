@@ -2135,7 +2135,10 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
         })
         .is_pending());
         assert!(
-            matches!(emitted(&ledger), InteractReq::ContinueDialog),
+            matches!(
+                emitted(&ledger),
+                InteractReq::ContinueDialog { component_id: None }
+            ),
             "objbox from a successful shear must be continued before the next UseOn"
         );
     });
@@ -3227,7 +3230,10 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
     for tick in 24..29 {
@@ -3478,7 +3484,10 @@ fn assert_reused_dialogue_page_is_acknowledged(
     with_tick(&snapshot, &mut ledger, 2, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
     ledger.as_mut().unwrap().outbox.clear();
     // A fresh snapshot of the old page is not an acknowledgement.
     with_tick(&snapshot, &mut ledger, 3, |t| {
@@ -3494,7 +3503,10 @@ fn assert_reused_dialogue_page_is_acknowledged(
     with_tick(&snapshot, &mut ledger, 5, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
 }
 
 #[test]
@@ -3565,7 +3577,10 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
     with_tick(&snapshot, &mut ledger, 37, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
 }
 
 #[test]

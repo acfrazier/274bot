@@ -2102,7 +2102,7 @@ mod tests {
                     component: 6600,
                     generation: 7,
                 },
-                InteractReq::ContinueDialog,
+                InteractReq::ContinueDialog { component_id: None },
                 InteractReq::Answer { option: 2 },
                 InteractReq::AnswerCount { value: 6859 },
                 InteractReq::ShopButton {
@@ -2237,7 +2237,7 @@ mod tests {
         let sink = tick(&mut chatting, &mut script, Some(&data));
         assert_eq!(
             sink,
-            vec![InteractReq::ContinueDialog],
+            vec![InteractReq::ContinueDialog { component_id: None }],
             "a posted continue is not a Talk-to and not a wait"
         );
         assert!(script.token.is_some(), "continue keeps the session");
@@ -2258,7 +2258,7 @@ mod tests {
         .is_none());
         assert!(matches!(
             crate::clue::verb_req(&serde_json::json!({ "kind": "continue" })),
-            Some(InteractReq::ContinueDialog)
+            Some(InteractReq::ContinueDialog { component_id: None })
         ));
         assert!(matches!(
             crate::clue::verb_req(

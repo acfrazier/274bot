@@ -192,7 +192,7 @@ fn is_search(id: i32) -> impl Fn(&InteractReq) -> bool {
 }
 
 fn is_continue(op: &InteractReq) -> bool {
-    matches!(op, InteractReq::ContinueDialog)
+    matches!(op, InteractReq::ContinueDialog { component_id: None })
 }
 
 /// A failed walk whose navigator named `(id, count)` as the one short.

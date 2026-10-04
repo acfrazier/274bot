@@ -633,15 +633,50 @@ impl<'a> Interactions<'a> {
         )
     }
 
-    pub fn continue_dialog<'t>(&mut self) -> SendResult<'t> {
+    /// Resume the chat continuation, or a currently visible pause component.
+    pub fn continue_dialog<'t>(&mut self, component_id: Option<i32>) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
         }
-        let component_id = snapshot.chat_continue_component_id();
-        if component_id == -1 {
-            return refuse(snapshot, SendReason::NoContinue);
-        }
+        let component_id = if let Some(component_id) = component_id {
+            let ctx = ReadContext::new(snapshot);
+            let Some(live) = ctx.component(component_id) else {
+                return refuse(snapshot, SendReason::StaleTarget);
+            };
+            if live.button_type != 6 {
+                return refuse(snapshot, SendReason::InvalidAction);
+            }
+            if live.client_code > 0 {
+                return refuse(snapshot, SendReason::ClientSideOnly);
+            }
+            if !component_visible(live, snapshot) {
+                return refuse(snapshot, SendReason::ComponentNotVisible);
+            }
+            let mut ancestor = live;
+            for _ in 0..snapshot.widgets().len() {
+                if ancestor.hidden {
+                    return refuse(snapshot, SendReason::ComponentNotVisible);
+                }
+                if ancestor.parent_id == -1 {
+                    break;
+                }
+                let Some(parent) = ctx.component(ancestor.parent_id) else {
+                    return refuse(snapshot, SendReason::ComponentNotVisible);
+                };
+                ancestor = parent;
+            }
+            if ancestor.parent_id != -1 {
+                return refuse(snapshot, SendReason::ComponentNotVisible);
+            }
+            live.component_id
+        } else {
+            let component_id = snapshot.chat_continue_component_id();
+            if component_id == -1 {
+                return refuse(snapshot, SendReason::NoContinue);
+            }
+            component_id
+        };
         self.dispatch(
             WireCommand::Continue { component_id },
             snapshot.tick() as u64,

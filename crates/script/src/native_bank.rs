@@ -1664,7 +1664,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 2),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(2, vec!["Second page".into()]);
@@ -1677,7 +1677,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 4),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(3, vec!["Final page".into()]);

@@ -479,7 +479,7 @@ pub(crate) fn answer_quest_journal_dialogs(
     if snapshot.chat_continue_component_id() != -1 {
         let mut ix = Interactions::new(snapshot, client);
         return matches!(
-            ix.continue_dialog(),
+            ix.continue_dialog(None),
             SendResult::Sent { .. } | SendResult::Refused { .. }
         );
     }

@@ -180,7 +180,9 @@ impl NpcAccess {
                         .flatten();
                     let (request, choice) = match option {
                         Some(option) => (InteractReq::Answer { option }, true),
-                        None if chat.can_continue => (InteractReq::ContinueDialog, false),
+                        None if chat.can_continue => {
+                            (InteractReq::ContinueDialog { component_id: None }, false)
+                        }
                         None => {
                             cx.arm(NPC_OPEN_MS);
                             self.phase = Phase::Settle;

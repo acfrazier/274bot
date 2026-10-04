@@ -1345,7 +1345,9 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog)
+            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+                component_id: None
+            })
         ));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);

@@ -1021,8 +1021,8 @@ where
                     }
                 }
             }
-            InteractReq::ContinueDialog => {
-                wrote |= matches!(ix.continue_dialog(), SendResult::Sent { .. });
+            InteractReq::ContinueDialog { component_id } => {
+                wrote |= matches!(ix.continue_dialog(component_id), SendResult::Sent { .. });
             }
             InteractReq::Answer { option } => {
                 wrote |= matches!(ix.answer_choice(option), SendResult::Sent { .. });

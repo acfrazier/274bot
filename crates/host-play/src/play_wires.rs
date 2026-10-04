@@ -38,7 +38,7 @@ pub(super) fn dispatch_wires(
     for cmd in cmds {
         match cmd {
             WireCmd::Continue => {
-                ix.continue_dialog();
+                ix.continue_dialog(None);
             }
             WireCmd::Answer(option) => {
                 ix.answer_choice(option);

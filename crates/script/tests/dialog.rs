@@ -307,7 +307,7 @@ fn talk_through_opens_continues_prefers_then_completes_on_partial_bank() {
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
+        vec![InteractReq::ContinueDialog { component_id: None }],
         "the first continue page must use the existing continue verb"
     );
 
@@ -575,7 +575,10 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     snap.chat_text = Some("An unrelated game message");
     post_page(&iso, &snap, &first_page);
     tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
 
     for n in 3..=6u64 {
         snap.tick = n;
@@ -600,7 +603,10 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     snap.tick = 8;
     post(&iso, &snap);
     tick(&iso, 8);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
     iso.join();
 }
 
@@ -618,7 +624,10 @@ fn continue_ack_ignores_ring_lines_on_an_unchanged_page() {
     snap.chat_text = Some("First ring line");
     post_page(&iso, &snap, &page);
     tick(&iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
 
     for n in 2..=5u64 {
         snap.tick = n;
@@ -780,7 +789,10 @@ fn continue_ack_timeout_fails_without_repressing() {
     snap.chat_text = Some("Initial unrelated ring line");
     post_page(&iso, &snap, &page);
     tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
 
     snap.tick = 3;
     // Same root, page, and visible Continue leave the native ack pending.
@@ -848,7 +860,10 @@ fn pause_and_reset_during_continue_ack_drop_stale_actions() {
     snap.chat_continue = true;
     post(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog { component_id: None }]
+    );
 
     iso.pause();
     snap.tick = 3;
