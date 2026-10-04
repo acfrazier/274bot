@@ -1337,6 +1337,12 @@ impl SlotScript {
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartLoadError> {
         let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        if let Some(bag) = bag {
+            let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
+            crate::loadouts_store::resolve_script_loadout_setting(loadouts.loadouts(), wanted)
+                .map(|_| ())
+                .map_err(|error| StartLoadError::Refused(error.to_string()))?;
+        }
         self.start_load_with_loadouts_and_game_data_typed(
             source,
             shape,
