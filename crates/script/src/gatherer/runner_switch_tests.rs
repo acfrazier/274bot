@@ -142,6 +142,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                             _ => None,
                         },
                         radius: 1,
+                        arrival: nav::arrival::ArrivalKind::Reach,
                         options: FindOptions {
                             allow_teleports: false,
                             allow_wilderness: false,

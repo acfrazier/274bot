@@ -84609,7 +84609,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 11,
@@ -84666,7 +84666,7 @@
         "dragonfire": null,
         "attackrate": 5,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 13,
@@ -84694,7 +84694,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 14,
@@ -84722,7 +84722,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 15,
@@ -84808,7 +84808,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 18,
@@ -85097,7 +85097,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 28,
@@ -85733,7 +85733,7 @@
         "dragonfire": "other",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 51,
@@ -85817,7 +85817,7 @@
         "dragonfire": "chromatic",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 54,
@@ -85845,7 +85845,7 @@
         "dragonfire": "chromatic",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 55,
@@ -85873,7 +85873,7 @@
         "dragonfire": "chromatic",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 56,
@@ -85953,7 +85953,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 59,
@@ -86179,7 +86179,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 67,
@@ -86209,7 +86209,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 68,
@@ -86239,7 +86239,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 69,
@@ -86965,7 +86965,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 95,
@@ -89016,7 +89016,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 169,
@@ -89046,7 +89046,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 170,
@@ -89131,7 +89131,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 173,
@@ -89159,7 +89159,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 174,
@@ -89187,7 +89187,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 175,
@@ -89243,7 +89243,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 177,
@@ -89271,7 +89271,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 178,
@@ -89383,7 +89383,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 182,
@@ -89583,7 +89583,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 189,
@@ -89611,7 +89611,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 190,
@@ -89639,7 +89639,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 191,
@@ -89751,7 +89751,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 195,
@@ -90545,7 +90545,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 223,
@@ -92093,7 +92093,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 278,
@@ -95998,7 +95998,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 414,
@@ -96026,7 +96026,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 415,
@@ -96054,7 +96054,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 416,
@@ -96082,7 +96082,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 417,
@@ -96110,7 +96110,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 418,
@@ -96138,7 +96138,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 419,
@@ -97857,7 +97857,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 480,
@@ -97886,7 +97886,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 481,
@@ -103510,7 +103510,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 679,
@@ -103792,7 +103792,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 689,
@@ -103820,7 +103820,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 690,
@@ -103848,7 +103848,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 691,
@@ -103876,7 +103876,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 692,
@@ -104323,7 +104323,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 708,
@@ -105303,7 +105303,7 @@
         "dragonfire": "elvarg",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 743,
@@ -105613,7 +105613,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 754,
@@ -105725,7 +105725,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 758,
@@ -107072,7 +107072,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 804,
@@ -110009,7 +110009,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 908,
@@ -110037,7 +110037,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 909,
@@ -110065,7 +110065,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 910,
@@ -110093,7 +110093,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 911,
@@ -110121,7 +110121,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": false,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 912,
@@ -110149,7 +110149,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 913,
@@ -110177,7 +110177,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 914,
@@ -110205,7 +110205,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 915,
@@ -110772,7 +110772,7 @@
         "dragonfire": null,
         "attackrate": 5,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 935,
@@ -110830,7 +110830,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 937,
@@ -110859,7 +110859,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 938,
@@ -110888,7 +110888,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 939,
@@ -110972,7 +110972,7 @@
         "dragonfire": "chromatic",
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 942,
@@ -111988,7 +111988,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 978,
@@ -112824,7 +112824,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1008,
@@ -113867,7 +113867,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1045,
@@ -113895,7 +113895,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1046,
@@ -113923,7 +113923,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1047,
@@ -114117,7 +114117,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1054,
@@ -114673,7 +114673,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1074,
@@ -114702,7 +114702,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1075,
@@ -114731,7 +114731,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1076,
@@ -115462,7 +115462,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1102,
@@ -115490,7 +115490,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1103,
@@ -115518,7 +115518,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1104,
@@ -115546,7 +115546,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1105,
@@ -115574,7 +115574,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1106,
@@ -116135,7 +116135,7 @@
         "dragonfire": null,
         "attackrate": 8,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1126,
@@ -116277,7 +116277,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1131,
@@ -116305,7 +116305,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1132,
@@ -116333,7 +116333,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1133,
@@ -116361,7 +116361,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1134,
@@ -116389,7 +116389,7 @@
         "dragonfire": null,
         "attackrate": 7,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1135,
@@ -116891,7 +116891,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1154,
@@ -116919,7 +116919,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1155,
@@ -116947,7 +116947,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1156,
@@ -116975,7 +116975,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1157,
@@ -117003,7 +117003,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1158,
@@ -117031,7 +117031,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1159,
@@ -117085,7 +117085,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1161,
@@ -117719,7 +117719,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1184,
@@ -117747,7 +117747,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1185,
@@ -118289,7 +118289,7 @@
         "dragonfire": null,
         "attackrate": 5,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1204,
@@ -118318,7 +118318,7 @@
         "dragonfire": null,
         "attackrate": 5,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1205,
@@ -118732,7 +118732,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1220,
@@ -118760,7 +118760,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1221,
@@ -118840,7 +118840,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1224,
@@ -118948,7 +118948,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1228,
@@ -118976,7 +118976,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1229,
@@ -119004,7 +119004,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1230,
@@ -119032,7 +119032,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1231,
@@ -119060,7 +119060,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1232,
@@ -119088,7 +119088,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1233,
@@ -119116,7 +119116,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1234,
@@ -119144,7 +119144,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1235,
@@ -119172,7 +119172,7 @@
         "dragonfire": null,
         "attackrate": 6,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1236,
@@ -119319,7 +119319,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1241,
@@ -119347,7 +119347,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1242,
@@ -119401,7 +119401,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1244,
@@ -119429,7 +119429,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1245,
@@ -119457,7 +119457,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1246,
@@ -119485,7 +119485,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1247,
@@ -119513,7 +119513,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1248,
@@ -119541,7 +119541,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1249,
@@ -119569,7 +119569,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1250,
@@ -119597,7 +119597,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1251,
@@ -120800,7 +120800,7 @@
         "dragonfire": null,
         "attackrate": 1,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1294,
@@ -122073,7 +122073,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1339,
@@ -122101,7 +122101,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1340,
@@ -122129,7 +122129,7 @@
         "dragonfire": null,
         "attackrate": 4,
         "bespoke": true,
-        "counter_protect": true
+        "counter_protect": false
       },
       {
         "id": 1341,

@@ -300,8 +300,9 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
     if (hasDragonBreath || mixedSection || sectionKinds.size > 1) attackKind = 'mixed';
     else if (sectionKinds.has('ranged')) attackKind = 'ranged';
     else if (sectionKinds.has('magic')) attackKind = 'magic';
-    const counterProtect = [...apTriggers, ...opTriggers].some(({ script, section }) =>
-        expandSections(section.body, script, scripts).some(({ body }) => /~check_protect_prayer\s*(?:\(|;)/.test(body)));
+    // Protect-counter behavior is NPC-specific; shared or expanded helpers do not count.
+    const counterProtect = [...apTriggers, ...opTriggers].some(({ section }) =>
+        /~check_protect_prayer\s*(?:\(|;)/.test(section.body));
     const forced = attacks.flatMap((attack) => attack.forcedMaxHit === null ? [] : [attack.forcedMaxHit]);
     return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, counter_protect: counterProtect };
 }

@@ -5,9 +5,11 @@ import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack } from './extractors/common.ts';
+import { parseCombatScripts } from './extractors/combat.ts';
+import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 const root = path.resolve(import.meta.dirname, '../..');
@@ -15,11 +17,6 @@ const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
     engineRoot: spec.engine, contentRoot: spec.content, cache: spec.cacheIdentity,
 }]));
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'scripts/skill_prayer/configs/prayers.dbrow', 'scripts/skill_prayer/configs/prayers.constant', 'scripts/skill_prayer/interfaces/prayer.if', 'scripts/areas/area_falador/configs/dwarven_mine.inv', 'scripts/areas/area_falador/configs/dwarven_mine.npc', 'scripts/skill_runecraft/configs/runecraft.constant', 'maps/m45_75.jm2', 'pack/npc.pack', 'scripts/quests/quest_murder/configs/quest_murder.loc', 'scripts/general/configs/quest.enum', 'maps/m42_55.jm2', 'pack/loc.pack', 'pack/obj.pack', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', 'scripts/_unpack/225/all.npc', 'scripts/drop tables/scripts/giant.rs2', 'scripts/drop tables/scripts/moss_giant.rs2', 'scripts/drop tables/scripts/fire_giant.rs2', 'scripts/drop tables/scripts/green_dragon.rs2', 'scripts/drop tables/scripts/shared_droptables.rs2', ...questIdentityContentFiles, ...trailContentFiles];
-const unpackNpcIndex = contentFiles.indexOf('scripts/_unpack/225/all.npc');
-contentFiles.splice(unpackNpcIndex + 1, 0, 'scripts/areas/area_kalphite/configs/kalphite.npc');
-const sharedDropsIndex = contentFiles.indexOf('scripts/drop tables/scripts/shared_droptables.rs2');
-contentFiles.splice(sharedDropsIndex, 0, 'scripts/drop tables/scripts/kalphite_queen.rs2');
 const kqDropNames = ['Adamant spear', 'Amulet of power', 'Blood rune', 'Chaos talisman', 'Death rune', 'Dragon chainbody', 'Dragon spear', 'Fire rune', 'Half of a key', 'Iron arrow', 'Lava battlestaff', 'Law rune', 'Lobster', 'Mithril arrow', 'Nature rune', 'Nature talisman', 'Oyster pearls', 'Rune arrow', 'Rune axe', 'Rune chainbody', 'Rune javelin', 'Rune spear', 'Rune warhammer', 'Shield left half', 'Uncut diamond', 'Uncut emerald', 'Uncut ruby', 'Uncut sapphire', 'Wine of zamorak'];
 const expectedDropNames: Record<number, Record<string, string[]>> = {
     274: {
@@ -119,10 +116,16 @@ async function verifyRevision(revision: number) {
     const spec = revisions.find((each) => each.revision === revision)!;
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
-    const expectedContentFiles = payload.quest_starts === undefined
-        ? contentFiles
-        : [...new Set([...contentFiles, ...questStartContentFiles(pin.contentRoot)])];
-    assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
+    const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
+    const npcNames = extractNpcNamesFacts(pin.contentRoot);
+    const combatScripts = parseCombatScripts(pin.contentRoot);
+    const expectedContentFiles = [...new Set([
+        ...baseContentFiles,
+        ...(payload.quest_starts === undefined ? [] : questStartContentFiles(pin.contentRoot)),
+        ...npcNames.files,
+        ...combatScripts.files.map((script) => script.relative),
+    ])].sort();
+    assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
     assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }

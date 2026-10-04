@@ -27,9 +27,7 @@
 //! Knobs (see docs/api/nav.md):
 //! - `BOT_NAV_BUILD=require|skip` (default `require`)
 //! - `BOT_NAV_REVISION=289|274` (default `289`)
-//! - `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR`, else the revision's canonical
-//!   local engine (`$HOME/experiments/lostcity-289/engine` /
-//!   `$HOME/experiments/Server/engine`)
+//! - `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR` (required when nav bundling is enabled)
 //! - `BOT_NAV_CONTENT_DIR` (default the engine's sibling `content/`)
 //! - `BOT_CACHE_MANIFEST` (verified cache manifest; otherwise the captured
 //!   cache identity must be one of the checked-in known cache identities)
@@ -116,7 +114,7 @@ fn main() {
     }
 
     let revision = selected_revision();
-    let engine_dir = engine_dir(revision);
+    let engine_dir = engine_dir();
     let content_dir = std::env::var_os("BOT_NAV_CONTENT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -502,22 +500,14 @@ fn selected_revision() -> u16 {
     }
 }
 
-fn engine_dir(revision: u16) -> PathBuf {
+fn engine_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("BOT_NAV_ENGINE_DIR").map(PathBuf::from) {
         return dir;
     }
     if let Some(dir) = std::env::var_os("ENGINE_DIR").map(PathBuf::from) {
         return dir;
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(if revision == 289 {
-        "experiments/lostcity-289/engine"
-    } else {
-        "experiments/Server/engine"
-    })
+    fail("set BOT_NAV_ENGINE_DIR or ENGINE_DIR to the local engine root, or BOT_NAV_BUILD=skip to build without bundled navigation")
 }
 
 fn read_rows(path: &Path) -> Vec<NavIdentityRow> {

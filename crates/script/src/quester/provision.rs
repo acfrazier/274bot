@@ -976,11 +976,6 @@ fn walk_evidence(receipt: crate::native::WalkReceipt) -> Result<(), ActionError>
         WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => Err(ActionError::Blocked(
             receipt.detail.unwrap_or_else(|| Arc::from("walk failed")),
         )),
-        WalkEnd::Unprotectable => Err(ActionError::Blocked(
-            receipt
-                .detail
-                .unwrap_or_else(|| Arc::from("walk unprotectable")),
-        )),
         WalkEnd::Cancelled => Err(ActionError::Cancelled),
     }
 }

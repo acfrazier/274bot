@@ -26,10 +26,11 @@ cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
 # or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR …
 ```
 
-Legacy positional defaults are `$HOME/experiments/Server/content/maps` and
-siblings. Pass the three paths if yours lives elsewhere. Output goes to
-`$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is derived from the
-maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
+When `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` is set, legacy positional mode
+defaults to `<engine>/../content/maps`, matching doors configs, and
+`<engine>/data/pack/config`. Pass all three paths when using another tree.
+Output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is
+derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -84,7 +85,7 @@ files.
 | --- | --- | --- |
 | `BOT_NAV_BUILD` | `require` | `skip`: no artifact baked/staged, checked-in identities only |
 | `BOT_NAV_REVISION` | `289` | selected release revision (`274` supported) |
-| `BOT_NAV_ENGINE_DIR`, `ENGINE_DIR` | revision's canonical engine | bake input root |
+| `BOT_NAV_ENGINE_DIR`, `ENGINE_DIR` | none; required for bundled navigation | bake input root |
 | `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree |
 | `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
 | `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
