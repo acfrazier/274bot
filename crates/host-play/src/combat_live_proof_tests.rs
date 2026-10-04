@@ -133,6 +133,7 @@ enum Case {
     M3,
     M4,
     M5,
+    M5Stop,
     M6,
 }
 
@@ -145,6 +146,7 @@ impl Case {
             Self::M3 => "M3",
             Self::M4 => "M4",
             Self::M5 => "M5",
+            Self::M5Stop => "M5-Stop",
             Self::M6 => "M6",
         }
     }
@@ -157,13 +159,14 @@ impl Case {
             Self::M3 => "combat_m3_melee_food_only",
             Self::M4 => "combat_m4_unattackable_tree",
             Self::M5 => "combat_m5_raised_prayer_interrupt_hygiene",
+            Self::M5Stop => "combat_stop_owned_prayer_cleanup",
             Self::M6 => "combat_m6_melee_combo_eat",
         }
     }
 
     fn path_relative(self) -> &'static str {
         match self {
-            Self::M1 | Self::M1HandIn | Self::M5 => "imp.json",
+            Self::M1 | Self::M1HandIn | Self::M5 | Self::M5Stop => "imp.json",
             Self::M2 => "fixtures/combat_melee_upkeep.json",
             Self::M3 | Self::M6 => "fixtures/combat_melee_food_only.json",
             Self::M4 => "fixtures/combat_unattackable.json",
@@ -183,7 +186,7 @@ impl Case {
             Self::M2 => M2_ITEMS,
             Self::M3 => M3_ITEMS,
             Self::M4 => M4_ITEMS,
-            Self::M5 => M5_ITEMS,
+            Self::M5 | Self::M5Stop => M5_ITEMS,
             Self::M6 if std::env::var_os("BOT_COMBAT_M6_ORIGINAL_FOOD").is_some() => M6_ITEMS,
             Self::M6 => M6_RESERVE_ITEMS,
         }
@@ -193,7 +196,7 @@ impl Case {
         match self {
             Self::M1 => Duration::from_secs(m1_coverage_budget().2),
             Self::M1HandIn => Duration::from_secs(1_200),
-            Self::M5 => Duration::from_secs(1_200),
+            Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 => Duration::from_secs(900),
             Self::M4 => Duration::from_secs(300),
         }
@@ -201,7 +204,7 @@ impl Case {
 
     fn stand(self, world: &nav::world::NavWorld) -> Result<WorldTile, String> {
         match self {
-            Self::M1 | Self::M5 => Ok(IMP_START),
+            Self::M1 | Self::M5 | Self::M5Stop => Ok(IMP_START),
             // COMBAT-S3A-2 operator-authorized hand-in-only staging: the
             // CB46 seed cannot cross the default danger zones from Ardougne.
             // Start on the Wizard Tower ground floor, not at the farm.
@@ -351,6 +354,52 @@ impl LiveState {
                 }
             }
         }
+        if self.case == Case::M5Stop && self.started {
+            let trigger = {
+                let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
+                !capture
+                    .random_events
+                    .iter()
+                    .any(|event| event["kind"] == "OperatorStop")
+                    && stop_fight_raise(&capture).is_some()
+                    && self.snapshot.ingame()
+                    && self.snapshot.scene_state() == 2
+                    && self
+                        .snapshot
+                        .varps()
+                        .iter()
+                        .any(|row| row.index == 83 && row.value == 1)
+                    && self
+                        .snapshot
+                        .varps()
+                        .iter()
+                        .any(|row| row.index == 97 && row.value == 1)
+            };
+            if trigger {
+                let facts = combat_proof::snapshot_facts(&self.snapshot, None);
+                let result = self
+                    .start_context
+                    .as_ref()
+                    .expect("started context")
+                    .0
+                    .stop(&self.account);
+                self.capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .random_events
+                    .push(json!({
+                        "kind": "OperatorStop",
+                        "snapshot": facts,
+                        "accepted": result.is_ok(),
+                    }));
+                if let Err(error) = result {
+                    combat_proof::mark_invalid(
+                        &self.account,
+                        format!("operator Stop failed: {error}"),
+                    );
+                }
+            }
+        }
 
         if matches!(
             self.runner.status(),
@@ -426,7 +475,7 @@ impl EvidenceWriter {
             Value::Null
         };
         let mut receipt = json!({
-            "proof": "COMBAT-S3A-3",
+            "proof": if self.case == Case::M5Stop { "LIFECYCLE-FOLLOWUPS-1" } else { "COMBAT-S3A-3" },
             "case": self.case.key(),
             "scenario": self.case.label(),
             "outcome": self.outcome,
@@ -457,6 +506,7 @@ impl EvidenceWriter {
             }),
             "m4_conditional_eat": m4_eat,
             "m5_raised_protect_cleared_before_next_operation": m5_clear,
+            "stop_cleared_only_combat_prayers": self.case == Case::M5Stop && stop_ready(&capture),
             "m1_content_deadline": m1_deadline,
             "combat_outcomes": combat_outcomes(&capture),
             "imp_corpse_classification": imp_corpse_classification(&capture),
@@ -647,7 +697,7 @@ fn preparation_steps(case: Case) -> Vec<Step> {
             ("prayer", 5, 1),
         ],
         Case::M4 => &[("hitpoints", 3, 30), ("prayer", 5, 1)],
-        Case::M5 => &[
+        Case::M5 | Case::M5Stop => &[
             ("attack", 0, 40),
             ("strength", 2, 40),
             ("defence", 1, 40),
@@ -683,7 +733,7 @@ fn preparation_steps(case: Case) -> Vec<Step> {
             "~stat_drain hitpoints 22 0".to_owned(),
             Proof::Stat { id: 3, min: 8 },
         )),
-        Case::M5 => {
+        Case::M5 | Case::M5Stop => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
                 "seed user Thick Skin before Start",
@@ -876,7 +926,7 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 );
             }
         }
-        Case::M5 => {
+        Case::M5 | Case::M5Stop => {
             if stat_base(baseline, "prayer") != Some(43)
                 || prayer_varp(baseline, 83) != Some(1)
                 || prayer_varp(baseline, 97) != Some(0)
@@ -905,8 +955,58 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
         Case::M3 => m3_ready(capture),
         Case::M4 => m4_ready(capture),
         Case::M5 => m5_ready(capture),
+        Case::M5Stop => stop_ready(capture),
         Case::M6 => m6_ready(capture),
     }
+}
+
+fn stop_fight_raise(capture: &CombatCapture) -> Option<&Value> {
+    capture.actions.iter().find(|raise| {
+        raise["request"]["op"] == "if-button"
+            && raise["request"]["component_id"] == 5623
+            && action_wire_valid(raise)
+            && prayer_varp(&raise["snapshot"], 97) == Some(0)
+            && capture.actions.iter().any(|attack| {
+                is_npc_attack(attack)
+                    && attack["request"]["name"] == "Imp"
+                    && action_wire_valid(attack)
+                    && attack["run"] == raise["run"]
+                    && attack["action_id"] == raise["action_id"]
+                    && attack["sequence"].as_u64() < raise["sequence"].as_u64()
+            })
+    })
+}
+
+fn stop_ready(capture: &CombatCapture) -> bool {
+    let Some(stop) = capture
+        .random_events
+        .iter()
+        .find(|event| event["kind"] == "OperatorStop")
+    else {
+        return false;
+    };
+    let Some(baseline) = capture.start_baseline.as_ref() else {
+        return false;
+    };
+    stop["accepted"] == true
+        && start_preflight(Case::M5Stop, baseline).is_none()
+        && stop_fight_raise(capture).is_some()
+        && prayer_varp(&stop["snapshot"], 83) == Some(1)
+        && prayer_varp(&stop["snapshot"], 97) == Some(1)
+        && capture.actions.iter().any(|action| {
+            action["kind"] == "guard"
+                && action["op"] == "if-button"
+                && action["component_id"] == 5623
+                && prayer_varp(&action["snapshot"], 83) == Some(1)
+                && prayer_varp(&action["snapshot"], 97) == Some(1)
+        })
+        && capture.frames.last().is_some_and(|frame| {
+            frame["ingame"] == true
+                && frame["scene_state"] == 2
+                && prayer_varp(frame, 83) == Some(1)
+                && prayer_varp(frame, 97) == Some(0)
+        })
+        && !capture_has_death(capture)
 }
 
 // This proves only the production hand-in, never natural bead acquisition.
@@ -3209,6 +3309,13 @@ fn run_case(case: Case) {
         );
     }
 
+    if case == Case::M5Stop {
+        assert_eq!(
+            writer.outcome, "PASS",
+            "Stop live proof: {:?}",
+            writer.error
+        );
+    }
     match writer.outcome.as_str() {
         "PASS" | "INVALID" | "NOT_STAGED" => {}
         other => panic!("{} live proof {other}: {:?}", case.key(), writer.error),
@@ -3249,6 +3356,12 @@ fn live_combat_m4_static_nasty_tree_unattackable() {
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_combat_m5_random_interrupt_clears_only_combat_raised_protect() {
     run_case(Case::M5);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_lifecycle_followups_stop_clears_only_combat_raised_protect() {
+    run_case(Case::M5Stop);
 }
 
 #[test]

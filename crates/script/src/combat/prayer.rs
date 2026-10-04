@@ -43,8 +43,14 @@ impl RaisedPrayers {
         }
     }
 
-    pub(crate) fn contains(self, varp: i32) -> bool {
+    pub fn contains(self, varp: i32) -> bool {
         Self::bit(varp).is_some_and(|bit| self.0 & bit != 0)
+    }
+
+    pub fn remove(&mut self, varp: i32) {
+        if let Some(bit) = Self::bit(varp) {
+            self.0 &= !bit;
+        }
     }
 
     pub(crate) const fn mask(self) -> u16 {

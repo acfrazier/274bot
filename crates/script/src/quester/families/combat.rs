@@ -840,6 +840,23 @@ impl CombatRun {
         Ok(LootStart::Complete)
     }
 
+    fn next_loot_or_reengage(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        match self.begin_loot(cx) {
+            Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
+            Ok(LootStart::Complete) => {
+                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                    self.finish(cx)
+                } else {
+                    self.rebegin_combat(cx, false)
+                }
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
     fn evaluate_predicate(
         &self,
         predicate: &Arc<dyn PredicatePlan>,
@@ -933,6 +950,12 @@ impl StepRun for CombatRun {
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
                 }
             }
+            ActionPoll::Failed(ActionError::Blocked(_)) if matches!(&self.phase, Phase::Loot) => {
+                // Loot is optional: an unreachable ground item does not end
+                // the combat step. Other errors remain visible to the caller.
+                self.action = None;
+                self.next_loot_or_reengage(cx)
+            }
             ActionPoll::Failed(error) => {
                 self.action = None;
                 Poll::Ready(Err(error))
@@ -948,17 +971,7 @@ impl StepRun for CombatRun {
                     // A stale or absent drop is not evidence for another click.
                     // The next combat run can produce a fresh ground row.
                 }
-                match self.begin_loot(cx) {
-                    Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
-                    Ok(LootStart::Complete) => {
-                        if self.until.is_none() && self.win.is_none() || self.should_stop(cx) {
-                            self.finish(cx)
-                        } else {
-                            self.rebegin_combat(cx, false)
-                        }
-                    }
-                    Err(error) => Poll::Ready(Err(error)),
-                }
+                self.next_loot_or_reengage(cx)
             }
         }
     }

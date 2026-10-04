@@ -1284,6 +1284,8 @@ impl Script for Quester {
             );
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.prayer_cleanup_owned = RaisedPrayers::empty();
+            self.prayer_cleanup_pending = false;
             self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
             tick.cx.retained().quester().deaths = self.prior_deaths.saturating_add(self.deaths);
@@ -1769,6 +1771,13 @@ impl Script for Quester {
         self.dirty = true;
         Ok(())
     }
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        let mut owned = self.prayer_cleanup_owned;
+        if let Some(step) = self.step.as_ref() {
+            owned.merge(step.prayer_cleanup());
+        }
+        owned
+    }
 }
 
 /// Queue ownership stays outside the active executor: only one Path is compiled
@@ -2251,6 +2260,11 @@ impl Script for QueuedQuester {
             .as_ref()
             .and_then(|active| active.recovery_anchor())
             .or(self.anchor)
+    }
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        self.active
+            .as_ref()
+            .map_or_else(RaisedPrayers::empty, |active| active.prayer_cleanup())
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
