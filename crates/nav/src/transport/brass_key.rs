@@ -204,37 +204,34 @@ pub(super) fn selected_script_bodies(
     selected_op: &str,
     selected_name: &str,
 ) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut selected = false;
-    let mut body = String::new();
-    for raw in text.lines() {
+    super::script_text::collect_script_blocks(text, |raw| {
         let header_line = raw
             .split_once("//")
             .map_or(raw, |(before, _)| before)
             .trim();
-        if let Some(rest) = header_line.strip_prefix('[') {
-            if let Some((header, inline)) = rest.split_once(']') {
-                if selected {
-                    out.push(std::mem::take(&mut body));
-                }
-                let mut parts = header.split(',').map(str::trim);
-                selected = parts.next() == Some(selected_op)
-                    && parts.next() == Some(selected_name)
-                    && parts.next().is_none();
-                if selected && !inline.trim().is_empty() {
-                    body.push_str(inline.trim());
-                    body.push('\n');
-                }
-                continue;
-            }
+        if let Some(after_open) = header_line.strip_prefix('[') {
+            let Some(header) = super::script_text::parse_script_header(
+                header_line,
+                super::script_text::ScriptHeaderStyle::Trimmed,
+            ) else {
+                return if after_open.contains(']') {
+                    super::script_text::ScriptBlockLine::Boundary
+                } else {
+                    super::script_text::ScriptBlockLine::Body(raw)
+                };
+            };
+            let inline = header.tail.trim();
+            return super::script_text::ScriptBlockLine::Header {
+                value: (header.kind.to_string(), header.name.to_string()),
+                inline_body: (!inline.is_empty()).then_some(inline),
+                inline_body_newline: true,
+                keep: header.kind == selected_op && header.name == selected_name,
+            };
         }
-        if selected {
-            body.push_str(raw);
-            body.push('\n');
-        }
-    }
-    if selected {
-        out.push(body);
-    }
-    out
+        super::script_text::ScriptBlockLine::Body(raw)
+    })
+    .into_iter()
+    .filter(|((op, name), _)| op == selected_op && name == selected_name)
+    .map(|(_, body)| body)
+    .collect()
 }

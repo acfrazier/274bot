@@ -197,6 +197,36 @@ fn done_page(token: u64) -> ProgressPage {
 
 #[test]
 fn quest_paths_is_synchronous_and_lists_every_released_path() {
+    let index: script::quester::queue::ReleaseIndex =
+        serde_json::from_str(script::quester::compile::INDEX_JSON).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289");
+    let expected_rows: Vec<_> = index
+        .paths
+        .into_iter()
+        .map(|entry| {
+            let document: script::quester::path::PathDocument =
+                serde_json::from_slice(&std::fs::read(root.join(&entry.file)).unwrap()).unwrap();
+            assert_eq!(document.id.0.as_ref(), entry.id);
+            let role = &document.roles[0];
+            let mut stages: Vec<_> = role
+                .sequences
+                .iter()
+                .map(|sequence| sequence.stage.0.as_ref())
+                .collect();
+            stages.sort_unstable_by_key(|stage| {
+                stage
+                    .rsplit_once(':')
+                    .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+                    .unwrap_or(u32::MAX)
+            });
+            serde_json::json!({
+                "id": entry.id,
+                "display": document.display_name,
+                "journal": !role.progress.as_ref().unwrap().rules.is_empty(),
+                "stages": stages,
+            })
+        })
+        .collect();
     let iso = isolate();
     assert_eq!(
         iso.probe("__api.questPaths() instanceof Promise").unwrap(),
@@ -207,34 +237,7 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
         serde_json::json!({
             "ok": true,
             "value": {
-                "rows": [{
-                    "id": "cook",
-                    "display": "Cook's Assistant",
-                    "journal": false,
-                    "stages": ["cook:0", "cook:1", "cook:2"]
-                }, {
-                    "id": "sheep",
-                    "display": "Sheep Shearer",
-                    "journal": true,
-                    "stages": ["sheep:0", "sheep:1", "sheep:2"]
-                }, {
-                    "id": "runemysteries",
-                    "display": "Rune Mysteries",
-                    "journal": true,
-                    "stages": ["runemysteries:0", "runemysteries:1", "runemysteries:2"]
-                }, {
-                    "id": "romeojuliet",
-                    "display": "Romeo & Juliet",
-                    "journal": true,
-                    "stages": ["romeojuliet:0", "romeojuliet:10", "romeojuliet:20",
-                               "romeojuliet:30", "romeojuliet:40", "romeojuliet:50",
-                               "romeojuliet:60", "romeojuliet:100"]
-                }, {
-                    "id": "imp",
-                    "display": "Imp Catcher",
-                    "journal": false,
-                    "stages": ["imp:0", "imp:1", "imp:2"]
-                }]
+                "rows": expected_rows
             }
         })
     );

@@ -822,6 +822,7 @@ fn with_step_banks<R>(
         required_after,
         bank: &bank,
         banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 
@@ -2430,6 +2431,7 @@ fn with_sheep_step<R>(
         required_after: evidence,
         bank: &bank,
         banks: &banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 
@@ -3899,6 +3901,7 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
         leash: 1,
         prefer: Arc::from([]),
         choose: None,
+        expect_combat: None,
         walk: None,
         dialogue: None,
         started: false,
@@ -3940,6 +3943,7 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
             leash: 6,
             prefer: Arc::from([]),
             choose: None,
+            expect_combat: None,
             walk: None,
             dialogue: None,
             started: false,
@@ -4068,5 +4072,135 @@ fn path_walk_crossing_and_protection_are_independent() {
                 assert_eq!(&*request.cross[0], "death-plateau-throwers");
             }
         }
+    });
+}
+
+#[test]
+fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
+    compile_context_test(|compile| {
+        let expected = compile
+            .selected
+            .npc_by_config("desertminingcaptain")
+            .unwrap();
+        for (target_kind, target_index, opponent_type, attacking_local, succeeds) in [
+            (
+                api::snapshot::ActorKind::Npc,
+                42,
+                Some(expected.id as usize),
+                true,
+                true,
+            ),
+            (
+                api::snapshot::ActorKind::Npc,
+                43,
+                Some(expected.id as usize),
+                true,
+                false,
+            ),
+            (
+                api::snapshot::ActorKind::Player,
+                42,
+                Some(expected.id as usize),
+                true,
+                false,
+            ),
+            (api::snapshot::ActorKind::Npc, 42, Some(0), true, false),
+            (api::snapshot::ActorKind::Npc, 42, None, true, false),
+            (
+                api::snapshot::ActorKind::Npc,
+                42,
+                Some(expected.id as usize),
+                false,
+                false,
+            ),
+        ] {
+            let plan = compile_talk(
+                &serde_json::json!({
+                    "npc":"desertminingcaptain",
+                    "expect_combat":{"npc":"desertminingcaptain"}
+                }),
+                compile,
+            )
+            .unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_chat_modal(4882, vec!["It's a funny captain...".into()]);
+            let mut player = local_player(tile(3270, 3029));
+            snapshot.seed_local_player(player.clone());
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            snapshot.seed_chat_modal(-1, vec![]);
+            player.player.actor.in_combat = true;
+            player.player.actor.target = Some(api::snapshot::ActorTargetView {
+                kind: target_kind,
+                index: target_index,
+            });
+            snapshot.seed_local_player(player);
+            snapshot.seed_npcs(vec![api::snapshot::NpcView {
+                index: 42,
+                r#type: opponent_type,
+                name: expected.display.clone(),
+                actions: vec![],
+                tile: tile(3271, 3029),
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 40,
+                total_health: 40,
+                face_entity: -1,
+                target: attacking_local.then_some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: 0,
+                }),
+                moving: false,
+                running: false,
+                in_combat: false,
+                level: 40,
+                size: 1,
+                network: tile(3271, 3029),
+                x: 0,
+                z: 0,
+                yaw: 0,
+            }]);
+            let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if succeeds {
+                let Poll::Ready(Ok(outcome)) = result else {
+                    panic!("expected authored captain combat handoff");
+                };
+                assert!(matches!(
+                    outcome.receipt.as_ref().unwrap().as_any().downcast_ref::<TalkReceipt>(),
+                    Some(TalkReceipt::HandedToCombat { npc_type, npc_index: 42 })
+                        if *npc_type == expected.id
+                ));
+            } else {
+                assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+            }
+        }
+    });
+}
+
+#[test]
+fn talk_expected_combat_rejects_unknown_npc_config() {
+    compile_context_test(|cx| {
+        let result = compile_talk(
+            &serde_json::json!({"npc":"desertminingcaptain","expect_combat":{"npc":"missing"}}),
+            cx,
+        );
+        assert!(
+            matches!(result, Err(CompileError { code, .. }) if code.as_ref() == "unresolved-npc")
+        );
     });
 }

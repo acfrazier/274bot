@@ -22,8 +22,8 @@ use super::*;
 /// ([`quest_door_free_arms`]) keeps that crossing with empty requirements.
 /// The gated reverse is omitted unless [`completed_quest_reverse`] proves a
 /// conservative completed-quest requirement for that loc (Death Plateau hut
-/// doors only); a missing or incomplete quest fact still fails closed. The
-/// v8 pack carries no masked bitfield, so raw varp 315 is never the gate.
+/// doors only); a missing or incomplete quest fact still fails closed.
+/// The packed format carries no masked bitfield, so raw varp 315 is never the gate.
 /// Closed fence-gate members declared outside `gates.loc` (the quest/area
 /// configs) join the door set only through [`inherited_closed_gates`] —
 /// the closed gate categories whose effective handler is the verified
@@ -41,9 +41,11 @@ pub(super) fn door_edges(
     collision: &WorldCollision,
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
+    preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
 ) {
     let configs = content_root.join("scripts").join("doors").join("configs");
-    let mut door_ids = HashSet::new();
+    let preloaded_paths = preloaded_doors.map_or(&[][..], |(_, paths)| paths);
+    let mut extra_door_ids = HashSet::new();
     let mut open_ids: HashMap<i32, i32> = HashMap::new();
     if let Ok(entries) = fs::read_dir(&configs) {
         for ent in entries.flatten() {
@@ -52,7 +54,9 @@ pub(super) fn door_edges(
                 continue;
             }
             if let Ok(text) = fs::read_to_string(&path) {
-                door_ids.extend(parse_door_config(&text));
+                if !preloaded_paths.contains(&path) {
+                    extra_door_ids.extend(parse_door_config(&text));
+                }
                 open_ids.extend(parse_door_open_ids(&text, ids));
             }
         }
@@ -66,7 +70,9 @@ pub(super) fn door_edges(
         .join("configs")
         .join("gates.loc");
     if let Ok(text) = fs::read_to_string(&gates) {
-        door_ids.extend(parse_door_config(&text));
+        if !preloaded_paths.contains(&gates) {
+            extra_door_ids.extend(parse_door_config(&text));
+        }
         open_ids.extend(parse_door_open_ids(&text, ids));
     }
     // Closed gate members declared outside `gates.loc` (the quest/area
@@ -82,17 +88,17 @@ pub(super) fn door_edges(
         &members_gates,
         skipped,
     );
-    door_ids.extend(inherited.keys().copied());
+    extra_door_ids.extend(inherited.keys().copied());
     open_ids.extend(inherited.iter().map(|(&id, &open)| (id, open)));
     // Closed doors anywhere in the content whose effective handler is a
     // verified generic door category (West Ardougne's `loc_2997`, the
     // Rellekka/Troll Stronghold/games room members): the same crossing.
     let overridden = oploc1_overrides(content_root);
     let generic = generic_closed_doors(content_root, ids, &overridden, skipped);
-    door_ids.extend(generic.keys().copied());
+    extra_door_ids.extend(generic.keys().copied());
     open_ids.extend(generic.iter().map(|(&id, door)| (id, door.open)));
     let swaps = swap_doors(content_root, ids, loc_defs, skipped);
-    door_ids.extend(swaps.keys().copied());
+    extra_door_ids.extend(swaps.keys().copied());
     open_ids.extend(swaps.iter().map(|(&id, &open)| (id, open)));
     let constants = script_constants(content_root);
     let varps = varp_ids_by_name(content_root);
@@ -107,14 +113,19 @@ pub(super) fn door_edges(
             bump(skipped, SKIP_FREE_ARM_GATE_CONFLICT, 1);
         }
     }
-    door_ids.extend(door_reqs.keys().copied());
-    door_ids.extend(free_arms.keys().copied());
+    extra_door_ids.extend(door_reqs.keys().copied());
+    extra_door_ids.extend(free_arms.keys().copied());
 
-    if door_ids.is_empty() {
+    let configured_door_ids = preloaded_doors.map_or(&extra_door_ids, |(ids, _)| ids);
+    if configured_door_ids.is_empty() && extra_door_ids.is_empty() {
         bump(skipped, SKIP_NO_DOOR_CONFIGS, 1);
         return;
     }
-    for id in &door_ids {
+    for id in configured_door_ids.iter().chain(
+        extra_door_ids
+            .iter()
+            .filter(|id| !configured_door_ids.contains(id)),
+    ) {
         let Some(placements) = positions.get(id) else {
             continue;
         };

@@ -12,9 +12,9 @@ WalkTo is **host nav** (panel picker / TUI map), not a script card.
 While the host guardian holds a trapped random (Maze, Mime, Strange box) the
 native run is frozen. The guardian gives one Maze visit 1,000 game ticks (twice
 the content's 500-tick reward clock); after that, and for the Maze or Mime
-square with random events off, the square is inert and an unheld native run
-standing on it fails with `random-trapped` and takes the terminal Blocked Stop
-described below instead of staying `Working` there.
+square with random events off, the square is inert and any unheld running
+script (native or Load) standing on it fails with `random-trapped` and takes
+the terminal Blocked Stop described below instead of continuing there.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -137,6 +137,11 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 and `gang` are per-account settings, not bulk-copy settings; partner quest
 execution remains separate from this release slice.
 
+`crest_gauntlets` is also per-account: `chaos` (the default), `cooking`, or
+`goldsmith`. Runtime account choices are available to quest handlers when a step
+begins, without specializing the shared compiled Path. Omitted saved values use
+`chaos`, and unknown or random values are refused.
+
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
 For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
 The other released IDs are `sheep`, `runemysteries`, `romeojuliet`, and `imp`.
@@ -146,6 +151,41 @@ two deaths can recover, and the third stops Quester as blocked with a
 maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
+
+Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
+recreation and reconnect preserve its death count, consumed chat watermark,
+last quest stand, completion count and bank-retreat receipts. An old death
+message does not count again; a new one received during recreation still does.
+The shared slot watchdog walks a displaced Quester back to that stand without
+recreating its instance. If it must recreate the card, Quester rereads server
+quest evidence instead of treating its discarded local step cursor as progress.
+Operator Stop releases retained run memory; Stop/Start begins a fresh budget.
+
+The Quester's no-progress window counts unchanged step boundaries (warn at
+three, block at eight), not time spent paused or held. Pause/Resume, guardian
+holds, reconnect and death reset that window, including ineligible frames
+without an explicit hold callback. This remains distinct from the shared slot's
+wall-clock wedge clock and Gatherer's eligible-gameplay-tick idle bound.
+
+Rust-native cards and the compatibility clue machine observe death through the
+same death-chat latch. Quester, Sherlock and compatibility clues temporarily
+suppress work at zero HP while the content's delayed death message or restored
+HP is awaited. HP alone neither spends a death allowance nor terminates a clue;
+lethal damage must not turn an active Quester dialogue into a living-player
+combat interruption. A new death message cancels the current clue without
+counting it as solved, even while held or after HP has already been restored.
+Posted compatibility arguments cannot manufacture a death observation.
+Sherlock retains its consumed death-chat watermark across watchdog recreation,
+so a death received in that gap suppresses new clue work once rather than
+being discarded as the recreated card's initial chat baseline. Operator
+Stop/Start discards that retained watermark and begins a fresh baseline.
+
+Running Load cards can exempt explicitly named random events through their
+cached `ignoredRandoms()` list. The event is still published, but the guardian
+does not act or hold for that event. Unlisted events and inactive cards retain
+host guardian handling; this is not a general-purpose decline hook. Ignoring
+Maze or Mime declines the guardian's solve/hold, not the slot's terminal
+`random-trapped` protection if the script is left unheld on the trap square.
 
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
@@ -208,6 +248,10 @@ on change; unchanged polls do not allocate or republish it. These intermediate
 status fields do not complete the step or replace the final outcome used by
 Path predicates.
 
+Loot is optional: an unreachable drop is skipped and the combat step continues.
+Manual movement, cancellation and missing-evidence outcomes still end the
+operation. Non-loot Reach door-recovery failures still park Quester.
+
 ### Dialogue page acknowledgements
 
 Native and compatibility dialogue acknowledge Continue and answers only when
@@ -217,6 +261,22 @@ chat-history ring line is not page progress. The host computes the shared native
 fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
+
+### Quester expected combat handoff
+
+A `talk` step may declare `expect_combat: {"npc": "desertminingcaptain"}` when
+the conversation deliberately starts a fight. The config name resolves to an
+exact NPC type. A combat interruption succeeds only when the local player's
+observed NPC target has that type and targets the local player in return.
+The NPC's own damage timer need not be set before the player retaliates.
+The step returns a `HandedToCombat` receipt; wrong, missing, player or unrelated
+targets remain **Blocked**.
+
+Author the handoff with `"advances": false` and an `in_combat` settle, followed
+by a `combat` step on the declared opponent. This avoids opening a progress
+journal during the fight. The combat step may declare `"advances": true` once
+the fight and its reward have settled. An ordinary dialogue completion retains
+the normal talk outcome; `expect_combat` does not fabricate a fight.
 
 ### Quester journal reads
 
@@ -231,8 +291,9 @@ fail-closed and requires an explicit operator Start. Poison hits count too:
 poison closes interfaces before applying its damage hitsplat, which sets the
 same flag. A closed chat while the flag is set produces an explicit
 combat-interruption outcome, including during dialogue opening or page
-acknowledgement. Quester does not count that interruption as successful work,
-settle the step, or request an advancement journal read. It does not fight or
+acknowledgement. Without an explicit expected-combat handoff, Quester does not
+count that interruption as successful work, settle the step, or request an
+advancement journal read. It does not fight or
 automatically retry the conversation. A journal transaction
 that loses ownership or becomes transiently busy is retried only after both
 main and chat modals have been observed closed for three game ticks. Unknown
@@ -251,7 +312,7 @@ and Stop/Pause revocation still govern all captures and closes.
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
-equipped tool, at the Start area, a Custom location or an Auto-selected area.
+equipped tool, at the Start area, a named Site, a Custom location or an Auto-selected area.
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
@@ -291,6 +352,32 @@ anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
 `resource-unavailable`. These terminal search failures stop the run;
 an explicit Start begins a fresh search at the current position.
+
+`location` defaults to `Start`, unchanged for existing schema-4 settings.
+Choose `Site` to pick a content-derived named camp for the selected resources
+or fishing method. The site list follows the active selection; an old or
+incompatible saved site stays visible with its reason but cannot be picked
+and refuses Start. Entering Site mode saves before a place is picked; an empty
+site refuses Start until a named place is selected. In the TUI, Space cycles
+eligible choices and Enter opens
+a choice list; lists with more than 16 choices support search. The panel
+combo has the same eligibility and search threshold. Search matches site
+names and ids; Esc cancels without changing the selection.
+
+Site chooses an accessible placement of a selected resource nearest the
+camp's resource centroid. That retained anchor survives Pause/Resume; changing
+the site requires a fresh Start. The work area remains `anchor ± radius`,
+not the camp's entire box. Site does not widen on exhaustion. `Custom` keeps
+free tile and radius entry, including underground locations that have no named
+surface site. Banking with `Nearest` picks the nearest routable eligible bank;
+Return uses a resource/observation-stand Area arrival at radius 1, even when
+the bank is inside the configured gathering radius.
+Unloaded loc resources retain loc-aware Reach arrival and their `loc_id`,
+including the refresh to the live loc's operable stands when it loads. Only
+unloaded fishing NPC observation stands use Area arrival; live NPC operations
+own their own approach. Large fishing movement envelopes remain eligible for
+Return and observation beyond the first eight cells. The eight-approach
+budget still bounds unsuccessful surveys; exhausting it is not absence proof.
 Gas, ents and whirlpools are identified by generated IDs and trigger reselection
 or a walk away, not another gathering click on the hazard. Pause/Resume preserves
 an unfinished escape walk. A temporary hold defers actions and resumes on release
@@ -594,11 +681,20 @@ cancelled fight or Pause and clear only those prayers before continuing.
 Scoped cleanup waits for missing owned prayer rows rather than treating them
 as off. Accepted dispatches are included even when cancellation occurs before
 Combat's next poll.
+Quester and Sherlock retire that obligation when death clears prayers, so a
+later Pause or Resume does not turn off prayers the user activates after respawn.
 Quester recipe substeps retain that obligation when a combat child completes,
 and finish scoped cleanup before settling or starting the next recipe child.
-Cancellation revokes the fight's action authority and emits no compensating
-click. A completed fight does not trigger another clear merely because user
-prayers remain on. Explicit `Prayer.clear` retains its broad all-prayers meaning.
+Any Stop ends the fight too, whether the operator stops it or a native run
+stops itself on a terminal block. Before revoking and dropping the native card,
+the slot transfers its accepted Combat raises to the host. The ordinary host
+pump pays only those owed off-clicks with WalkGuard's bounded,
+observation-settled retirement rule; a new run waits for that cleanup instead
+of adopting the raised prayers as its baseline. User prayers remain untouched.
+Cancellation still revokes the fight's action authority; the retirement
+off-clicks belong to the host, not that revoked owner. A completed fight does
+not trigger another clear merely because user prayers remain on. Explicit
+`Prayer.clear` retains its broad all-prayers meaning.
 
 ## Nav vs scripts
 
@@ -658,10 +754,16 @@ as guard-owned, even while the walk is still active.
 Arrival, Stop, Pause, cancellation, owner revocation and manual takeover retire
 the guard but preserve its conditional off-click on the host. An in-flight
 enable or switch has three ticks from successful send admission to be observed
-on; otherwise the host logs and drops the debt without a click. An observed-on
-owned protect receives an off-click, and the debt remains until that protect is
-observed off. If it stays on, the host retries once after three ticks and drops
-the debt after three more ticks if the retry has not been observed off.
+on. If a switch expires while the previous guard-owned style is still observed
+on, cleanup retires that old style instead; a user-owned style is never a
+fallback, and an observed real switch is never reversed. Otherwise the host
+logs and drops the unobserved-enable debt without a click.
+For an already-observed owned protect, the bounded cleanup attempt window
+starts at the first cleanup pump, not the guard's last evaluation before a
+hold. It receives an off-click, and the debt remains until observed off. If
+it stays on, the host retries once after three ticks and drops the debt after
+three more ticks if the retry has not been observed off. Timed drops are
+logged, including unavailable varps and refused off-clicks.
 An already-off protect receives no toggle. Later walks and bank work resume
 after at most the first three-tick window, even while cleanup is watched; a
 new guard cannot raise protection until that old cleanup ends.
@@ -782,6 +884,32 @@ arguments and awaits one completion.
 - **`RecoveryHints`** outlive a watchdog restart: the restarted script's
   `takeAnchor()` returns the anchor the stalled run latched; an unused hint
   clears once the new `onStart` succeeds.
+
+## Bank item ops (compat v1)
+
+`Bank` transfers are Rust families on the shared transfer kernel
+(`crates/script/src/bank/ops.rs`); the shim passes the caller's arguments and
+awaits the frozen return. One transfer runs at a time: a second start while
+`withdraw*`, `withdrawLoad`, `close`, a deposit loop or `withdrawTo` is in
+flight settles false (a deposit loop does nothing).
+
+- **`Bank.deposit(name, op = 'Deposit-1')`** presses that label on the first
+  bank-side row with the name, by id, slot and component, and answers whether
+  it pressed. A row without the label presses nothing; it is never an All.
+- **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
+  each matching row's All op by id and wait up to 4 s for that id to leave
+  the pack. `depositAllExcept(names)` keeps every id whose display name is
+  kept, noted or not. A nameless row is still an item the matcher decides.
+  A posted empty side ends the loop at once; a side root still down is
+  waited on for 1.2 s.
+- **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
+  true once more pack slots are used, the pack is full or that row emptied,
+  within 4 s; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
+- **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
+  Close is true only when the bank is shut, its old side root is released
+  and the bank session generation moved on, within `timeoutMs` (4 s when
+  omitted). A reopened or logged-out session is false.
 
 ## Hard no
 

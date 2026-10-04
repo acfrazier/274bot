@@ -476,6 +476,10 @@ pub fn resolve_setting_options_with_labels(
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
         }
+        if from == "gather:sites" {
+            // Site eligibility depends on the settings bag, owned by frontend-core.
+            return ResolvedSettingOptions::default();
+        }
         if let Some(skill) = from.strip_prefix("gather:") {
             return resolve_gather_options(skill, game_data);
         }

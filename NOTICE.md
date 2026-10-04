@@ -18,6 +18,7 @@ Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,
 
 - **API shape:** snapshot → query → interact → settle is a **borrowed idea** from m8aq-style bot APIs. This is not a file port of m8aq (or any other bot framework).
 - **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless 274 clients, login queue, live harnesses), not a port of its TypeScript implementation. Script-API declarations in `crates/script/compat-js/index.d.ts` are generated from rs2b0t `00d39a17e0`, Copyright 2026 N64Jive (MIT), with host-specific type overlays; the emitted file retains the MIT notice. Listed TS for the 0.1.5 shim is loaded from an operator `$RS2B0T` checkout (`src/bot/scripts`), not vendored here.
+- **Quester Paths:** the quest Path documents under `crates/script/paths/` (and the Quester's queue order, safespot tiles and quest-specific numbers in them) are derived in part from rs2b0t's AIOQuester (`src/bot/api/ai/quests/` at `00d39a17e0`), Copyright 2026 N64Jive, used under the MIT license, and re-checked against the revision-289 game content. The Quester runtime itself is a Rust rewrite modelled on FFXIV Questionable's per-quest document approach, not a port of either.
 
 ## Vendored rendering backend
 

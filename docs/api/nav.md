@@ -178,17 +178,20 @@ otherwise the captured identity must be one of the checked-in
 `crates/host-play/src/known-cache-identities.json` rows.
 
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
-records the cache identity, the pack/flags/reach/canlight/navpois digests, the
-generator identity (the manual id plus the bytes of `bake.rs`/`collision.rs`/
-`pack.rs`/`paint.rs`/`quest_gates.rs`/`router.rs`/`transport.rs` and the
-transport producers), the navpois generator
-identity (`map/services.rs`/`map/poi.rs`) and a fingerprint (size + mtime) of every canonical input
-(content tree, config jag, cache archives). Any change to those inputs, to the
-pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, a missing navpois sidecar, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
-Build preparation additionally computes source and decoded digests to detect
-same-size replacement; runtime computes decoded identity once per prepared
-profile, not per bot. The bundled pack fast path keeps its cheap
+records the cache identity, SHA-256 digests of all staged navigation artifacts
+(pack, flags, reach, canlight, navpois and manifest), generator identities
+(manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/`paint.rs`/
+`quest_gates.rs`/`router.rs`/`transport.rs` and transport producers), the
+navpois generator identity (`map/services.rs`/`map/poi.rs`), and an input
+fingerprint (size, mtime and SHA-256) of every canonical input (content tree,
+config jag, cache archives). Source and captured cache digests use one input-
+fingerprint snapshot. The decoded identity is computed from that verified
+cache snapshot and recomputed after baking before publishing. Any change to
+those inputs, to the pack format identity (`nav::pack::FORMAT_ID`), to the
+generator, to the cache identity, a missing navpois sidecar, or a missing/
+replaced staged artifact (including the reach sidecar) rebakes. Runtime
+computes decoded identity once per prepared profile, not per bot. The bundled
+pack fast path keeps its cheap
 revision/cache-identity check and reads + decodes the staged pack once
 (`NavLoadCounters`). Both bundled and external packs expose the same verified
 auxiliary sidecars when their identities are present in the selected manifest.
@@ -442,6 +445,11 @@ transitions on the source-reachable frontier, including separately blocked
 alternatives, rather than naming only a shortest relaxed witness. It does
 not claim a minimal cut; incomplete or budget-limited frontier searches
 return no diagnosis.
+Script bank-fetch refusal hints probe at most eight candidate goals, each
+through the existing bounded router searches, rather than running a separate
+bank/zone diagnosis for every Area tile. This optional hint budget does not
+truncate the route's goals or authorize a route; targets beyond it may have
+no bank-fetch zone attribution.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
@@ -523,8 +531,8 @@ cancelled receipts surface promptly. Motion is carried explicitly through
 the isolate snapshot; old snapshots report it unavailable, not stationary.
 The existing active walk deadline bounds the wait, without relaxing reach.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
-Quester Stops with a `needs-evidence` failure and retains those gates for its
-caller through `unresolved_walk_gates()`.
+Quester Stops with a `needs-evidence` failure; it does not retain an unused
+copy of the gates after reporting that terminal block.
 
 Manual movement takes ownership before frontend or script follow. A matching
 native walk completes once with the normal `WalkEnd::UserInput` receipt

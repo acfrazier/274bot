@@ -156,6 +156,8 @@ pub struct SlotScript {
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
+    /// Host-side Stop cleanup outlives the revoked native action owner.
+    stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
     control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
@@ -278,6 +280,7 @@ impl SlotScript {
             api: None,
             retained: None,
             native_runtime: Default::default(),
+            stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
             control_generation: 0,
             #[cfg(feature = "load")]
@@ -877,7 +880,23 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
+        if let Some(run) = self.compiled.as_ref() {
+            match catch_unwind(AssertUnwindSafe(|| run.script.prayer_cleanup())) {
+                Ok(owned) => self.stop_prayer_cleanup.merge(owned),
+                Err(payload) => {
+                    self.pending_logs.push(format!(
+                        "prayer cleanup snapshot panic: {}",
+                        panic_message(&payload)
+                    ));
+                }
+            }
+        }
         self.stop_with_reason(StopReason::Operator, "operator stop");
+    }
+
+    /// Transfer only accepted Combat raises to the ordinary host off-click pump.
+    pub fn take_stop_prayer_cleanup(&mut self) -> crate::combat::RaisedPrayers {
+        std::mem::take(&mut self.stop_prayer_cleanup)
     }
 
     /// Retire a removed slot, distinct from the operator's Stop command.
@@ -2039,6 +2058,13 @@ impl SlotScript {
             return;
         }
         #[cfg(feature = "load")]
+        if self.load.is_some() {
+            if let Some(failure) = trapped_failure(ctx) {
+                self.stop_blocked(failure, ctx.tick);
+                return;
+            }
+        }
+        #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             self.tick_api(ctx);
@@ -2123,6 +2149,22 @@ impl SlotScript {
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
     fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
+        #[cfg(feature = "load")]
+        if self.compiled.is_none() {
+            let generation = self.runtime_generation;
+            let reason = format!("{}: {}", failure.code, failure.message);
+            self.stop_with_reason(StopReason::Error, "blocked");
+            self.pending_logs.push(reason.clone());
+            self.last_error = Some(reason.clone());
+            self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                runtime_generation: generation,
+                state: ScriptTerminalState::Failed,
+                tick,
+                reason,
+            });
+            return;
+        }
+
         use crate::native::NativeOutput;
         let run = self.compiled.as_mut().expect("blocked compiled run");
         let status = crate::native::ScriptStatus {
@@ -2161,14 +2203,24 @@ impl SlotScript {
         self.state
     }
 
-    /// The random-event knock: ask the running compiled script whether it
-    /// handles the detected event. Rising edge only (the guardian owns the
-    /// per-event signature); JS isolates always answer `Host` — no isolate
-    /// hook this tag. Idle / Paused / not-want-run slots answer `Host`
-    /// without touching the script.
+    /// The random-event knock. A running Load isolate's cached
+    /// `ignoredRandoms()` names return `Handle` when case-insensitively
+    /// listed; this suppresses guardian action/hold without hiding the
+    /// detected event. Unlisted Load events return `Host`; compiled scripts
+    /// use their `on_random` hook. Rising edge only (the guardian owns the
+    /// per-event signature). Idle / Paused / not-want-run slots answer
+    /// `Host` without touching the script.
     pub fn on_random(&mut self, ev: &DetectedRandom) -> RandomClaim {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
+        }
+        #[cfg(feature = "load")]
+        if self
+            .load
+            .as_ref()
+            .is_some_and(|isolate| isolate.ignores_random(&ev.name))
+        {
+            return RandomClaim::Handle;
         }
         let Some(run) = &mut self.compiled else {
             return RandomClaim::Host;
@@ -2338,12 +2390,12 @@ impl Drop for SlotScript {
     }
 }
 
-/// An unheld native run standing on a random event's trap square (the Maze
+/// An unheld running script standing on a random event's trap square (the Maze
 /// or the Mime stage). Only that event's own solution leads off the square,
 /// and an unheld frame means the host guardian is not running one (it gave
-/// up, or random events are off), so the card cannot make progress there:
-/// Blocked with the reason instead of ticking it against a world it was
-/// never placed in.
+/// up, was explicitly ignored, or random events are off). Native and Load
+/// scripts take the same terminal Blocked Stop rather than running against
+/// a world they cannot leave through ordinary work.
 fn trapped_failure(ctx: &ScriptCtx<'_>) -> Option<ScriptFailure> {
     if ctx.compiled.hold {
         return None;

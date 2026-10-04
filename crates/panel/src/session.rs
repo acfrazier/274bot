@@ -1074,6 +1074,10 @@ pub struct Session {
     /// Parameters editor modal open.
     /// Modal typed editors moved to Script prefs window (0.1.6).
     pub script_prefs_open: bool,
+    /// Search input for a searchable script-parameter combo while it is open.
+    pub script_parameter_filter: String,
+    /// Setting id that owns `script_parameter_filter` while its combo is open.
+    pub script_parameter_filter_id: Option<String>,
     /// Loadouts CRUD window (non-modal).
     pub loadouts_open: bool,
     /// Selected row in the loadouts list.
@@ -1426,6 +1430,8 @@ impl Session {
             rs2b0t_catalog_dir: crate::script_picker::default_load_browse_dir(None),
             browse_category_filter: None,
             script_prefs_open: false,
+            script_parameter_filter: String::new(),
+            script_parameter_filter_id: None,
             loadouts_open: false,
             loadouts_sel: 0,
             loadouts_draft: None,

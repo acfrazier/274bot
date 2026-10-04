@@ -3063,3 +3063,247 @@ fn refused_death_return_stops_and_cannot_be_recreated() {
     tick(&mut slot, &death, now + 2);
     assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
 }
+
+fn site_willow_bag(site: &str) -> SettingsBag {
+    let mut bag = SettingsBag::new();
+    bag.insert("woodcuttingResources".into(), serde_json::json!(["willow"]));
+    bag.insert("location".into(), serde_json::json!("Site"));
+    bag.insert("site".into(), serde_json::json!(site));
+    bag
+}
+
+fn site_willow_frame() -> GameSnapshot {
+    let mut frame = snapshot(&[]);
+    frame.seed_stats(vec![StatView {
+        index: 8,
+        name: "woodcutting".into(),
+        effective: 30,
+        base: 30,
+        xp: 0,
+        used: true,
+    }]);
+    frame
+}
+
+fn site_work_anchor(slot: &SlotScript) -> WorldTile {
+    let area = lifecycle_status_text(slot, "area");
+    let coordinates = area
+        .strip_prefix("site (")
+        .unwrap()
+        .split_once(')')
+        .unwrap()
+        .0;
+    let parts: Vec<i32> = coordinates.split(',').map(|v| v.parse().unwrap()).collect();
+    WorldTile {
+        x: parts[0],
+        z: parts[1],
+        level: parts[2],
+    }
+}
+
+#[test]
+fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_anchor() {
+    let selected = selected();
+    let mut slot = started_with(4420, &selected, site_willow_bag("woodcutting.draynor"));
+    let mut frame = site_willow_frame();
+    let mut now = 0;
+    let (_, _, first) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(
+        matches!(first, HostEffect::Walk(_)),
+        "Site starts outside the work area"
+    );
+    let anchor = site_work_anchor(&slot);
+    let catalog = fixture_catalog(&selected);
+    let region = api::gather_methods::SceneRegionInput {
+        min_x: anchor.x,
+        max_x: anchor.x,
+        min_z: anchor.z,
+        max_z: anchor.z,
+        level: anchor.level,
+    };
+    assert!(catalog.methods_for_resource("willow").any(|method| catalog
+        .spots(method, &region)
+        .unwrap()
+        .any(|spot| spot.origin == anchor)));
+    slot.pause();
+    trip_position(
+        &mut frame,
+        WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 1,
+        },
+    );
+    slot.resume();
+    now += 1;
+    tick(&mut slot, &frame, now);
+    assert_eq!(
+        site_work_anchor(&slot),
+        anchor,
+        "Resume cannot relocate a Site"
+    );
+
+    let run = slot.native_run().unwrap();
+    let worker_selected = selected.clone();
+    let changed = site_willow_bag("woodcutting.market");
+    let config = api::selected::FamilyPreparation::run(move |families| {
+        script::slot::prepare_config(
+            families,
+            script::CompiledId("Gatherer"),
+            2,
+            Arc::new(changed),
+            worker_selected,
+            Arc::default(),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    slot.configure_compiled(config, run);
+    now += 1;
+    tick(&mut slot, &frame, now);
+    assert_eq!(slot.native_status().unwrap().active_settings, 1);
+    assert_eq!(slot.native_status().unwrap().pending_settings, Some(2));
+    assert_eq!(site_work_anchor(&slot), anchor);
+    slot.stop();
+
+    // A fresh Start on the SAME slot must clear the previous Site anchor
+    // through the production Stop path (`RetainedMemory` is dropped on
+    // Stop), not merely by constructing a new slot.
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Gatherer"),
+        Arc::new(site_willow_bag("woodcutting.market")),
+        Arc::clone(&selected),
+        Arc::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match slot.poll_start() {
+            StartPoll::Settled(outcome) => {
+                assert_eq!(outcome, StartOutcome::Ready);
+                break;
+            }
+            StartPoll::Pending => {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            StartPoll::NotOwed => panic!("no start owed"),
+        }
+    }
+    let mut now = 0;
+    next_trip_effect(&mut slot, &site_willow_frame(), &mut now);
+    assert_ne!(
+        site_work_anchor(&slot),
+        anchor,
+        "fresh Start clears the previous Site anchor"
+    );
+    slot.stop();
+}
+
+#[test]
+fn site_refused_initial_walk_stops_with_nav_detail() {
+    let selected = selected();
+    let mut slot = started_with(4422, &selected, site_willow_bag("woodcutting.draynor"));
+    let frame = site_willow_frame();
+    let mut now = 0;
+    let (authority, request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    slot.complete_native_walk(
+        &authority,
+        script::native::WalkReceipt {
+            request_id: request,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            end: script::native::WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::from("no route to the selected site")),
+        },
+    );
+    now += 1;
+    tick(&mut slot, &frame, now);
+    assert_eq!(slot.state(), script::RunState::Idle);
+    assert!(!slot.want_run);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert!(status
+        .failure
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("no route to the selected site"));
+    assert!(!slot.has_native_actions());
+}
+
+#[test]
+fn exhausted_site_stops_instead_of_widening() {
+    use api::gather_methods::{known_rows, TargetClass};
+    use api::selected::EntityId;
+    let selected = selected();
+    let mut slot = started_with(4423, &selected, site_willow_bag("woodcutting.draynor"));
+    let mut frame = site_willow_frame();
+    let mut now = 0;
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("initial Site approach")
+    };
+    let anchor = site_work_anchor(&slot);
+    trip_position(&mut frame, request.target);
+    let region = api::gather_methods::SceneRegionInput {
+        min_x: anchor.x - 12,
+        max_x: anchor.x + 12,
+        min_z: anchor.z - 12,
+        max_z: anchor.z + 12,
+        level: anchor.level,
+    };
+    let catalog = fixture_catalog(&selected);
+    let mut locs = Vec::new();
+    let template = depleted_snapshot(&selected).locs()[0].clone();
+    for method in catalog.methods_for_resource("willow") {
+        let EntityId::Loc(id) = known_rows(&method.targets)
+            .iter()
+            .find(|target| target.class == TargetClass::Depleted)
+            .unwrap()
+            .entity
+        else {
+            panic!("willow stump")
+        };
+        for spot in catalog.spots(method, &region).unwrap() {
+            let mut loc = template.clone();
+            loc.id = id;
+            loc.tile = spot.origin;
+            locs.push(loc);
+        }
+    }
+    assert!(!locs.is_empty());
+    frame.seed_locs(locs);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    for tick_now in now + 1..now + 900 {
+        tick(&mut slot, &frame, tick_now);
+        assert!(
+            !slot.has_native_actions(),
+            "Site cannot search or walk to another camp"
+        );
+        if slot.state() == script::RunState::Idle {
+            break;
+        }
+    }
+    assert_eq!(slot.state(), script::RunState::Idle);
+    let status = slot.native_status().unwrap();
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "resource-unavailable"
+    );
+    assert_eq!(site_work_anchor(&slot), anchor);
+}

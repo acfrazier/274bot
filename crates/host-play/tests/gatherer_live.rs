@@ -76,6 +76,7 @@ const FEATHERS_ID: i32 = 314;
 const CASKET_ID: i32 = 405;
 const OAK_ID: i32 = 1281;
 const MAPLE_LOG_ID: i32 = 1517;
+const WILLOW_LOG_ID: i32 = 1519;
 const OAK_STUMP_ID: i32 = 1355;
 const OAK_RESPAWN_MAX_TICKS: u32 = 30;
 const AUTO_TREE_IDS: &[i32] = &[1276, 1278];
@@ -232,6 +233,9 @@ impl Cell {
     const fn name_for_case(self, case: LiveCase) -> &'static str {
         match (self, case) {
             (Self::Woodcutting, LiveCase::Power) => "gatherer_wc_power",
+            (Self::Fishing, LiveCase::Site) => "gatherer_fish_harpoon_bank_site",
+            (Self::Woodcutting, LiveCase::Site) => "gatherer_wc_willow_site",
+            (Self::Mining, LiveCase::Site) => "gatherer_mine_copper_tin_site",
             (Self::Mining, LiveCase::Power) => "gatherer_mine_tier_power",
             (Self::Woodcutting, LiveCase::CancelBeforeDrain) => "gatherer_cancel_before_drain_live",
             (Self::Woodcutting, LiveCase::DeathDuringDrop) => "gatherer_death_during_drop_live",
@@ -336,7 +340,8 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => "harpoon",
-            (Self::Mining, LiveCase::BankCost) => "bronze_pickaxe",
+            (Self::Fishing, LiveCase::Site) => "harpoon",
+            (Self::Mining, LiveCase::BankCost | LiveCase::Site) => "bronze_pickaxe",
             (Self::Mining, _) => "steel_pickaxe",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => "rune_axe",
             _ => "bronze_axe",
@@ -348,7 +353,8 @@ impl Cell {
             (Self::Fishing, LiveCase::FishNet) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => 311,
-            (Self::Mining, LiveCase::BankCost) => 1265,
+            (Self::Fishing, LiveCase::Site) => 311,
+            (Self::Mining, LiveCase::BankCost | LiveCase::Site) => 1265,
             (Self::Mining, _) => 1269,
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => 1359,
             _ => 1351,
@@ -357,6 +363,9 @@ impl Cell {
 
     const fn default_level(self, case: LiveCase) -> i32 {
         match (self, case) {
+            (Self::Woodcutting, LiveCase::Site) => 30,
+            (Self::Mining, LiveCase::Site) => 1,
+            (Self::Fishing, LiveCase::Site) => 76,
             (
                 Self::Woodcutting,
                 LiveCase::DeathReturn
@@ -390,6 +399,9 @@ impl Cell {
 
     const fn products(self, case: LiveCase) -> &'static [i32] {
         match (self, case) {
+            (Self::Woodcutting, LiveCase::Site) => &[WILLOW_LOG_ID],
+            (Self::Mining, LiveCase::Site) => &[COPPER_ID, TIN_ID],
+            (Self::Fishing, LiveCase::Site) => &[TUNA_ID, SWORDFISH_ID],
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => &[MAPLE_LOG_ID],
             (
                 Self::Woodcutting,
@@ -431,6 +443,8 @@ impl Cell {
 
     fn resources(self, case: LiveCase) -> Vec<String> {
         match self {
+            Self::Woodcutting if case == LiveCase::Site => vec!["willow".into()],
+            Self::Mining if case == LiveCase::Site => vec!["copper".into(), "tin".into()],
             Self::Woodcutting if case == LiveCase::BankCostSeersMaple => vec!["maple".into()],
             Self::Woodcutting => vec![if matches!(
                 case,
@@ -472,6 +486,7 @@ impl Cell {
 
     fn level(self, case: LiveCase) -> i32 {
         let env = match (self, case) {
+            (_, LiveCase::Site) => None,
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => None,
             (Self::Woodcutting, LiveCase::OakRespawn | LiveCase::OakNearEdge) => {
                 Some("GATHERER_OAK_LEVEL")
@@ -614,6 +629,7 @@ impl Cell {
                     LiveCase::FishBaitGate | LiveCase::FishBait => "fishing.freshfish.op1",
                     LiveCase::FishHarpoonBank => "fishing.rarefish.op3",
                     LiveCase::FishHarpoonBankAuto => "fishing.rarefish.op3",
+                    LiveCase::Site => "fishing.harpoon.tool_311.products_359_371",
                     _ => "fishing.saltfish.op1",
                 }),
             );
@@ -731,7 +747,29 @@ impl Cell {
             );
             bag.insert("reserveCasts".into(), json!(10));
         }
+        if case == LiveCase::Site {
+            bag.insert("location".into(), json!("Site"));
+            bag.insert("site".into(), json!(self.site_id()));
+            bag.insert("disposition".into(), json!("Bank"));
+            bag.insert("bank".into(), json!("Nearest"));
+        }
         bag
+    }
+
+    const fn site_id(self) -> &'static str {
+        match self {
+            Self::Woodcutting => "woodcutting.draynor",
+            Self::Mining => "mining.varrock_east.se",
+            Self::Fishing => "fishing.catherby",
+        }
+    }
+
+    const fn site_bank(self) -> &'static str {
+        match self {
+            Self::Woodcutting => "Draynor",
+            Self::Mining => "Varrock East",
+            Self::Fishing => "Catherby",
+        }
     }
 }
 
@@ -760,6 +798,7 @@ impl BankCostFixtureIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LiveCase {
     Power,
+    Site,
     CancelBeforeDrain,
     DeathDuringDrop,
     RunKeyChangeDuringDrop,
@@ -801,6 +840,7 @@ impl LiveCase {
     const fn name(self) -> &'static str {
         match self {
             Self::Power => "power",
+            Self::Site => "named-site-bank-return",
             Self::CancelBeforeDrain => "cancel-before-drain",
             Self::DeathDuringDrop => "death-during-drop",
             Self::RunKeyChangeDuringDrop => "run-key-change-during-drop",
@@ -844,6 +884,7 @@ impl LiveCase {
         matches!(
             self,
             Self::WoodcuttingBank
+                | Self::Site
                 | Self::WoodcuttingBankUnwieldable
                 | Self::BankCost
                 | Self::BankCostFirstGoal
@@ -1524,6 +1565,10 @@ struct Witness {
     bank_loaded_observed: bool,
     bank_closed_observed: bool,
     bank_return_step_seen: bool,
+    site_anchor_selected: bool,
+    site_initial_walk: bool,
+    site_return_area_r1: bool,
+    site_walks: Vec<Value>,
     bank_return_after_pause: bool,
     bank_return_after_reconnect: bool,
     other_plane_observed: bool,
@@ -4351,6 +4396,20 @@ impl GatherSlot {
                 }
                 Ok(())
             }
+            LiveCase::Site => {
+                if !site_bank_complete(self.cell, &self.witness, &self.plan, self.baseline_xp())
+                    || !self.complete_bank_selection()
+                    || self
+                        .latest
+                        .as_ref()
+                        .is_none_or(|latest| latest.product_count == 0)
+                    || (self.cell == Cell::Fishing
+                        && (!self.item_in_inventory() || self.item_equipped()))
+                {
+                    return Err(format!("{} did not prove a selected resource anchor, initial approach, nearest bank conservation, Area r1 Return and fresh yield: {:?}", self.name(), self.witness));
+                }
+                Ok(())
+            }
             LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto => {
                 let seeded_casket_required = self.case.requires_seeded_casket();
                 if !self.complete_bank_selection()
@@ -4918,6 +4977,11 @@ fn fixture_plan(
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
+        LiveCase::Site => match cell {
+            Cell::Fishing => world_tile(2809, 3441),
+            Cell::Woodcutting => world_tile(3120, 3267),
+            Cell::Mining => world_tile(3253, 3420),
+        },
         LiveCase::BankCost => world_tile(3016, 9840),
         LiveCase::BankCostFirstGoal => DRAYNOR_OAK_BANK_START,
         LiveCase::BankCostSeersMaple => SEERS_MAPLE_BANK_START,
@@ -4955,7 +5019,7 @@ fn fixture_plan(
     };
     if matches!(
         case,
-        LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple
+        LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple | LiveCase::Site
     ) && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
     {
         return Err(
@@ -5028,6 +5092,12 @@ fn selected_profile(
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
+    }
+    if case == LiveCase::Site && !cfg!(feature = "live-probe") {
+        return Err(
+            "Site live cells require host-play/live-probe for read-only Area-arrival evidence"
+                .into(),
+        );
     }
     if (case == LiveCase::RandomEvent || case.is_death_recovery())
         && std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("g4a")
@@ -5864,6 +5934,49 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             if let Err(error) = slot.apply_status(&status) {
                 slot.error = Some(error);
             }
+            #[cfg(feature = "live-probe")]
+            if case == LiveCase::Site {
+                let probe = play.manual_click_live_probe(&account);
+                let nav = &probe["nav"];
+                let returning =
+                    text_field(&status, "bank").is_some_and(|bank| bank.ends_with("; Return"));
+                let anchor = text_field(&status, "area").and_then(parse_work_anchor);
+                if nav["armed"] == true {
+                    slot.witness.site_initial_walk |= !returning
+                        && slot.witness.status_trips == 0
+                        && slot.witness.last_status_yielded == 0
+                        && text_field(&status, "phase") == Some("walking")
+                        && text_field(&status, "target").is_some_and(|target| target != "—")
+                        && anchor.is_some_and(|tile| site_nav_targets_area(nav, tile));
+                    if returning
+                        && anchor.is_some_and(|tile| {
+                            site_return_nav_matches(
+                                nav,
+                                tile,
+                                text_field(&status, "target").unwrap_or_default(),
+                            )
+                        })
+                    {
+                        slot.witness.site_return_area_r1 = true;
+                    }
+                    if slot
+                        .witness
+                        .site_walks
+                        .last()
+                        .is_none_or(|prior| prior["nav"]["request_id"] != nav["request_id"])
+                    {
+                        slot.witness.site_walks.push(json!({"returning": returning, "nav": nav, "target": text_field(&status, "target")}));
+                    }
+                }
+                if !slot.witness.site_anchor_selected {
+                    if let Some(area) = anchor {
+                        slot.witness.site_anchor_selected =
+                            slot.bank_config.as_ref().is_some_and(|config| {
+                                script::gatherer::test_site_anchor_selected(config, area)
+                            });
+                    }
+                }
+            }
             if case == LiveCase::DeathReturnRefused && slot.witness.death_return_refused {
                 slot.witness.death_return_stopped |= play.script_state(&account)
                     == script::RunState::Idle
@@ -6039,6 +6152,14 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.bank_closed_observed
             }
             LiveCase::BankCost => witness.bank_loaded_observed,
+            LiveCase::Site => {
+                site_bank_complete(cell, &witness, &plan, baseline_xp)
+                    && bank_selection_complete
+                    && latest
+                        .as_ref()
+                        .is_some_and(|latest| latest.product_count > 0 && latest.xp > baseline_xp)
+                    && (cell != Cell::Fishing || (harpoon_in_inventory && !harpoon_equipped))
+            }
             LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple => {
                 real_content_bank_lifecycle_complete(case, &witness, &plan, target, baseline_xp)
             }
@@ -6382,6 +6503,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "post_bank_yields": witness.post_bank_yields,
             "yielded": witness.last_status_yielded,
             "xp": witness.last_xp,
+        });
+    }
+    if case == LiveCase::Site {
+        receipt["named_site"] = json!({
+            "id": cell.site_id(),
+            "expected_bank": cell.site_bank(),
+            "selected_resource_anchor": witness.site_anchor_selected,
+            "initial_site_walk": witness.site_initial_walk,
+            "return_area_r1": witness.site_return_area_r1,
+            "walks": witness.site_walks,
+            "area": witness.last_area,
+            "scene_seeds": fixture_plan.seed_locs.len(),
         });
     }
     receipt.as_object_mut().expect("receipt object").append(
@@ -6773,6 +6906,24 @@ fn gatherer_fish_harpoon_bank() {
 #[ignore = "requires LIVE=1 and local 289 engine"]
 fn gatherer_fish_harpoon_bank_auto() {
     run_cell(Cell::Fishing, LiveCase::FishHarpoonBankAuto).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, live-probe and local 289 engine"]
+fn gatherer_fish_harpoon_bank_site() {
+    run_cell(Cell::Fishing, LiveCase::Site).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, live-probe and local 289 engine"]
+fn gatherer_wc_willow_site() {
+    run_cell(Cell::Woodcutting, LiveCase::Site).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, live-probe and local 289 engine"]
+fn gatherer_mine_copper_tin_site() {
+    run_cell(Cell::Mining, LiveCase::Site).unwrap();
 }
 
 #[test]
@@ -7296,6 +7447,66 @@ fn real_content_bank_lifecycle_complete(
         && witness.last_xp > baseline_xp
 }
 
+fn parse_work_anchor(area: &str) -> Option<WorldTile> {
+    let coords = area.strip_prefix("site (")?.split_once(')')?.0;
+    parse_tile("site area", coords).ok()
+}
+
+fn site_nav_destination(nav: &Value) -> Option<WorldTile> {
+    let [x, z, level] = nav["requested_destination"].as_array()?.as_slice() else {
+        return None;
+    };
+    Some(WorldTile {
+        x: i32::try_from(x.as_i64()?).ok()?,
+        z: i32::try_from(z.as_i64()?).ok()?,
+        level: i32::try_from(level.as_i64()?).ok()?,
+    })
+}
+
+fn site_nav_targets_area(nav: &Value, anchor: WorldTile) -> bool {
+    site_nav_destination(nav).is_some_and(|goal| {
+        goal.level == anchor.level && goal.x.abs_diff(anchor.x).max(goal.z.abs_diff(anchor.z)) <= 12
+    })
+}
+
+fn site_return_nav_matches(nav: &Value, anchor: WorldTile, target: &str) -> bool {
+    let Some(stand) = target
+        .split_once("; observation stand:")
+        .and_then(|(_, coords)| parse_tile("Site Return stand", coords).ok())
+    else {
+        return false;
+    };
+    nav["armed"] == true
+        && nav["requested"] == true
+        && nav["request_id"].as_u64().is_some_and(|id| id > 0)
+        && nav["arrival"] == "Area"
+        && nav["requested_radius"] == 1
+        && site_nav_destination(nav) == Some(stand)
+        && site_nav_targets_area(nav, anchor)
+}
+
+fn site_bank_complete(cell: Cell, witness: &Witness, plan: &FixturePlan, baseline_xp: i32) -> bool {
+    witness.site_anchor_selected
+        && witness.site_initial_walk
+        && witness.site_return_area_r1
+        && witness.bank_return_step_seen
+        && witness.bank_arrivals >= 1
+        && witness.bank_trips.iter().any(BankTripReceipt::complete)
+        && witness.bank_nonzero_roundtrips >= 1
+        && witness.post_bank_yields >= 1
+        && witness.last_xp > baseline_xp
+        && cell
+            .products(LiveCase::Site)
+            .iter()
+            .any(|id| witness.products_seen.contains(id))
+        && witness
+            .last_status_bank
+            .as_deref()
+            .is_some_and(|bank| bank.starts_with(cell.site_bank()) && bank.contains("; Reachable;"))
+        && plan.seed_locs.is_empty()
+        && plan.oak_tiles.is_empty()
+}
+
 fn power_complete(cell: Cell, witness: &Witness) -> bool {
     witness.cycles >= REQUIRED_CYCLES
         && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
@@ -7521,5 +7732,179 @@ mod fish_harpoon_auto_fixture_tests {
         };
         assert!(witness.fish_bank_complete(false));
         assert!(!witness.fish_bank_complete(true));
+    }
+}
+
+#[cfg(test)]
+mod named_site_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn site_fixtures_use_named_real_content_without_coordinate_settings() {
+        for cell in [Cell::Fishing, Cell::Woodcutting, Cell::Mining] {
+            let settings = cell.settings(LiveCase::Site);
+            assert_eq!(settings.get("location"), Some(&json!("Site")));
+            assert_eq!(settings.get("site"), Some(&json!(cell.site_id())));
+            assert_eq!(settings.get("radius"), Some(&json!(12)));
+            assert_eq!(settings.get("disposition"), Some(&json!("Bank")));
+            assert_eq!(settings.get("bank"), Some(&json!("Nearest")));
+            for coordinate in ["x", "z", "level"] {
+                assert!(!settings.contains_key(coordinate));
+            }
+            let (start, plan, task) = fixture_plan(cell, LiveCase::Site).unwrap();
+            assert_eq!(
+                start,
+                match cell {
+                    Cell::Fishing => world_tile(2809, 3441),
+                    Cell::Woodcutting => world_tile(3120, 3267),
+                    Cell::Mining => world_tile(3253, 3420),
+                }
+            );
+            assert!(plan.seed_locs.is_empty());
+            assert!(plan.oak_tiles.is_empty());
+            assert!(plan.inventory_seed.is_empty());
+            assert!(plan.bank_seed.is_empty());
+            assert!(plan.auto_felled.is_empty());
+            assert!(plan.auto_next.is_empty());
+            assert!(plan.inject_after_progress.is_none());
+            assert!(task.is_none());
+        }
+    }
+
+    #[test]
+    fn site_completion_requires_real_anchor_walk_area_return_and_fresh_yield() {
+        for cell in [Cell::Fishing, Cell::Woodcutting, Cell::Mining] {
+            let product = cell.products(LiveCase::Site)[0];
+            let mut trip = BankTripReceipt::new(
+                1,
+                BTreeMap::from([(cell.default_tool_id(LiveCase::Site), 1), (product, 2)]),
+                &[product],
+                BTreeMap::new(),
+                0,
+                &[product],
+                0,
+            );
+            trip.deposit_verified = true;
+            trip.positive_return = true;
+            trip.returned = true;
+            trip.post_bank_yield = true;
+            let mut witness = Witness {
+                site_anchor_selected: true,
+                site_initial_walk: true,
+                site_return_area_r1: true,
+                bank_return_step_seen: true,
+                bank_arrivals: 1,
+                bank_trips: vec![trip],
+                bank_nonzero_roundtrips: 1,
+                post_bank_yields: 1,
+                last_xp: 1,
+                products_seen: BTreeSet::from([product]),
+                last_status_bank: Some(format!("{}; Reachable; Return", cell.site_bank())),
+                ..Witness::default()
+            };
+            let mut plan = FixturePlan::default();
+            assert!(site_bank_complete(cell, &witness, &plan, 0));
+            witness.site_anchor_selected = false;
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.site_anchor_selected = true;
+            witness.site_initial_walk = false;
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.site_initial_walk = true;
+            witness.site_return_area_r1 = false;
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.site_return_area_r1 = true;
+            witness.post_bank_yields = 0;
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.post_bank_yields = 1;
+            witness.bank_trips[0].deposit_verified = false;
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.bank_trips[0].deposit_verified = true;
+            witness.last_status_bank = Some("Different bank; Reachable; Return".into());
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+            witness.last_status_bank = Some(format!("{}; Reachable; Return", cell.site_bank()));
+            plan.oak_tiles.push(world_tile(1, 1));
+            assert!(!site_bank_complete(cell, &witness, &plan, 0));
+        }
+    }
+
+    #[test]
+    fn site_work_anchor_parser_only_accepts_resolved_site_areas() {
+        assert_eq!(
+            parse_work_anchor("site (3083,3237,0) r12"),
+            Some(world_tile(3083, 3237))
+        );
+        assert_eq!(parse_work_anchor("site unresolved"), None);
+        assert_eq!(parse_work_anchor("auto (3083,3237,0) r12"), None);
+        assert_eq!(parse_work_anchor("site (bad,3237,0) r12"), None);
+    }
+
+    #[test]
+    fn site_walk_goal_is_inside_the_selected_work_area_not_necessarily_its_anchor() {
+        let anchor = world_tile(3083, 3237);
+        let mut nav = json!({"requested_destination": [3084, 3237, 0]});
+        assert!(site_nav_targets_area(&nav, anchor));
+        for goal in [
+            json!([3096, 3237, 0]),
+            json!([3084, 3237, 1]),
+            json!([3084, 3237]),
+            json!([3084.5, 3237, 0]),
+        ] {
+            nav["requested_destination"] = goal;
+            assert!(!site_nav_targets_area(&nav, anchor));
+        }
+    }
+
+    #[test]
+    fn return_proof_binds_current_area_request_to_its_resource_observation_stand() {
+        let anchor = world_tile(3083, 3237);
+        let target = "willowtree; observation stand:3084,3237,0";
+        let mut nav = json!({
+            "armed": true,
+            "requested": true,
+            "request_id": 1,
+            "arrival": "Area",
+            "requested_radius": 1,
+            "requested_destination": [3084, 3237, 0],
+            "outcome_radius": 1,
+        });
+        assert!(site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(&nav, anchor, "willowtree"));
+        assert!(!site_return_nav_matches(
+            &nav,
+            anchor,
+            "willowtree; observation stand:3084,3237,1"
+        ));
+        assert!(!site_return_nav_matches(
+            &json!({
+                "armed": true,
+                "requested": true,
+                "request_id": 1,
+                "arrival": "Area",
+                "requested_radius": 1,
+                "requested_destination": [3096, 3237, 0],
+            }),
+            anchor,
+            "willowtree; observation stand:3096,3237,0"
+        ));
+        nav["requested_destination"] = json!([anchor.x, anchor.z, anchor.level]);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["requested_destination"] = json!([3084, 3237, 0]);
+        nav["requested_radius"] = json!(12);
+        assert!(
+            !site_return_nav_matches(&nav, anchor, target),
+            "a stale r1 outcome is not a current Return"
+        );
+        nav["requested_radius"] = json!(1);
+        nav["arrival"] = json!("Reach");
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["arrival"] = json!("Area");
+        nav["requested"] = json!(false);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["requested"] = json!(true);
+        nav["request_id"] = json!(0);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["request_id"] = json!(1);
+        nav["armed"] = json!(false);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
     }
 }

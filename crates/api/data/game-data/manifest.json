@@ -97,6 +97,26 @@
           "unknown": 6
         }
       },
+      "gather_sites": {
+        "woodcutting": {
+          "sites": 243,
+          "direct": 0,
+          "dropped": 2287,
+          "outside_box": 0
+        },
+        "mining": {
+          "sites": 33,
+          "direct": 0,
+          "dropped": 9,
+          "outside_box": 0
+        },
+        "fishing": {
+          "sites": 31,
+          "direct": 20,
+          "dropped": 7,
+          "outside_box": 0
+        }
+      },
       "equipment_names": {
         "bows": 12,
         "crossbows": 10,
@@ -173,8 +193,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 4799790,
-      "sha256": "c4f6d6210611477bbea08e9a50e1667ea27a4fd2d18209796831a6326b2164b3",
+      "bytes": 4934845,
+      "sha256": "fedfcf3cd0d5f7a17eefad2dca3d98d34e5799f394947ab3f3a7ce64d077177d",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -195,6 +215,11 @@
         }
       ],
       "content_inputs": [
+        {
+          "path": "maps/labels.txt",
+          "bytes": 3581,
+          "sha256": "2e449c784d0520cc0defbbe3cff3d8ff8fa3f919fed28c6e2f0fccca339cb52b"
+        },
         {
           "path": "maps/m42_55.jm2",
           "bytes": 114393,
@@ -8443,6 +8468,26 @@
           "unknown": 6
         }
       },
+      "gather_sites": {
+        "woodcutting": {
+          "sites": 246,
+          "direct": 0,
+          "dropped": 2537,
+          "outside_box": 0
+        },
+        "mining": {
+          "sites": 33,
+          "direct": 0,
+          "dropped": 16,
+          "outside_box": 0
+        },
+        "fishing": {
+          "sites": 31,
+          "direct": 20,
+          "dropped": 9,
+          "outside_box": 0
+        }
+      },
       "equipment_names": {
         "bows": 12,
         "crossbows": 10,
@@ -8519,8 +8564,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5230327,
-      "sha256": "0c45abd9b53813d5270eb053b235db09da602ebcdc7fdf56886cb1ea20ed1c15",
+      "bytes": 5366464,
+      "sha256": "d97304ab7e209e5a6c679fe2d7c173f06d7845c8ffcb9184108c22fdb9245dbe",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -8541,6 +8586,11 @@
         }
       ],
       "content_inputs": [
+        {
+          "path": "maps/labels.txt",
+          "bytes": 3581,
+          "sha256": "2e449c784d0520cc0defbbe3cff3d8ff8fa3f919fed28c6e2f0fccca339cb52b"
+        },
         {
           "path": "maps/m42_55.jm2",
           "bytes": 114035,
