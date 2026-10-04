@@ -16,6 +16,8 @@ pub(crate) enum RowKind {
     Style,
     Retaliate,
     Attack,
+    Cast,
+    Arm,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PlanRow {
@@ -28,14 +30,17 @@ impl PlanRow {
         Self { kind, id, aux }
     }
     pub fn cost(self) -> u8 {
-        if self.kind == RowKind::Attack {
+        if self.kind == RowKind::Arm && self.aux & 0x80 != 0 {
+            return 0;
+        }
+        if matches!(self.kind, RowKind::Attack | RowKind::Cast) {
             2
         } else {
             1
         }
     }
     pub fn terminal(self, tables: &CombatTables) -> bool {
-        self.kind == RowKind::Attack
+        matches!(self.kind, RowKind::Attack | RowKind::Cast | RowKind::Arm)
             || self.kind == RowKind::Drink
             || (self.kind == RowKind::Eat
                 && tables

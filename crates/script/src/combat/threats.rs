@@ -992,6 +992,21 @@ impl ThreatSet {
         if style == StyleObs::Unknown {
             return;
         }
+        // An old spell's landing belongs to its retained queue, not to the
+        // newest facing actor or the newest attack's style chronology.
+        match self.due_source(tick) {
+            DueAttribution::Unique(actor) => {
+                if let Some(index) = self.ensure_actor(actor, frame, tables, tick) {
+                    Self::record_impact(&mut self.rows[index], tick);
+                }
+                return;
+            }
+            DueAttribution::Ambiguous => {
+                self.mark_unknown(tick);
+                return;
+            }
+            DueAttribution::None => {}
+        }
         let Some(actor) = sole_facing(frame) else {
             self.mark_unknown(tick);
             return;

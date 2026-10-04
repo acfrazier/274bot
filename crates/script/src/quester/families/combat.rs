@@ -218,6 +218,7 @@ pub(super) fn compile(
         melee_mode: args.melee_mode,
         kit,
         spells: None,
+        fallback_spells: false,
         stand,
         search_bounds,
         engage_radius: args.tactic.engage_radius,

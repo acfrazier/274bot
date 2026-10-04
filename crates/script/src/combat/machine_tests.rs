@@ -609,11 +609,10 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 #[test]
 fn fail_closed_later_slices_have_no_host_work() {
     let scene = Scene::new("imp");
-    for change in [0, 1, 2, 3] {
+    for change in [0, 2, 3] {
         let mut request = scene.request();
         match change {
             0 => request.style = Style::Ranged,
-            1 => request.style = Style::Mage,
             2 => request.prayer_mode = PrayerMode::Flick,
             _ => {
                 request.target = Target::Player {
@@ -702,7 +701,7 @@ fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
     scene.refresh();
     assert!(matches!(harness.poll(&scene.snapshot, 2), Poll::Pending));
     assert_ne!(harness.machine.end, Some(CombatEnd::Killed));
-    assert_eq!(harness.machine.engaged_type, other);
+    assert_eq!(harness.machine.engaged_type(), other);
     harness.take();
     scene.npcs[0].r#type = Some(scene.data.npc_by_config("nasty_tree").unwrap().id as usize);
     scene.refresh();
@@ -3441,3 +3440,6 @@ fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() 
         vec![protect.button_com]
     );
 }
+
+#[path = "magic_machine_tests.rs"]
+mod magic_tests;
