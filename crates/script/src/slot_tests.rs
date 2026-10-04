@@ -1353,6 +1353,58 @@ fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
     );
 }
 
+/// MAZE-RANDOM-1: a native run teleported onto the Maze square stayed
+/// `Working` there. Held, the guardian owns the square and the card keeps
+/// its frame; unheld (the guardian gave the Maze up, or random events are
+/// off), the run blocks with the reason and the card is not ticked.
+#[cfg(feature = "load")]
+#[test]
+fn an_unheld_native_run_on_a_random_trap_square_blocks() {
+    let maze = (2891, 4555, 0);
+    let mut slot = SlotScript::new();
+    slot.start_test_script(Box::new(Walker), None).unwrap();
+    let mut d = NullDriver::default();
+
+    let mut held = compiled_ctx(&mut d, None);
+    held.here = Some(maze);
+    held.compiled.hold = true;
+    slot.on_game_tick(&mut held);
+    assert_eq!(slot.drain_interacts(), vec![walker_walk()]);
+    assert_ne!(
+        slot.native_status().map(|status| status.phase),
+        Some(crate::native::NativePhase::Blocked),
+        "a held frame leaves the Maze to the guardian"
+    );
+
+    let mut unheld = compiled_ctx(&mut d, None);
+    unheld.here = Some(maze);
+    slot.on_game_tick(&mut unheld);
+    assert!(
+        slot.drain_interacts().is_empty(),
+        "the card is not ticked inside the Maze"
+    );
+    let status = slot.native_status().expect("blocked status");
+    assert_eq!(status.phase, crate::native::NativePhase::Blocked);
+    let failure = status.failure.as_ref().expect("blocked failure");
+    assert_eq!(&*failure.code, "random-trapped");
+    assert!(
+        failure.message.contains("Maze") && failure.message.contains("(2891, 4555, 0)"),
+        "{}",
+        failure.message
+    );
+
+    // The Mime stage is the other trap square.
+    let mut slot = SlotScript::new();
+    slot.start_test_script(Box::new(Walker), None).unwrap();
+    let mut mime = compiled_ctx(&mut d, None);
+    mime.here = Some((31 * 64 + 10, 74 * 64 + 10, 0));
+    slot.on_game_tick(&mut mime);
+    let status = slot.native_status().expect("blocked status");
+    assert!(status.failure.as_ref().is_some_and(
+        |failure| &*failure.code == "random-trapped" && failure.message.contains("Mime")
+    ));
+}
+
 #[cfg(feature = "load")]
 #[test]
 fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
