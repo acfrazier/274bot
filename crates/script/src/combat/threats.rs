@@ -875,10 +875,11 @@ impl ThreatSet {
             .iter()
             .filter(|projectile| projectile.target == Some(me))
         {
-            if !cycle_recent(frame.loop_cycle, projectile.t1) {
+            // t1 is the future visual-flight start, not packet publication.
+            // All main families start 32..=51 client cycles after emission.
+            if !cycle_recent(frame.loop_cycle, projectile.t1.saturating_sub(32)) {
                 continue;
             }
-            let launch_tick = cycle_to_tick(tick, frame.loop_cycle, projectile.t1);
             let duplicate_launch = frame
                 .projectiles
                 .iter()
@@ -920,6 +921,12 @@ impl ThreatSet {
                 continue;
             };
             let family = projectile_family(actor, style, frame, tables);
+            let launch_cycle = projectile_launch_cycle(projectile, family)
+                .unwrap_or_else(|| projectile.t1.saturating_sub(51).max(0));
+            if !cycle_recent(frame.loop_cycle, launch_cycle) {
+                continue;
+            }
+            let launch_tick = cycle_to_tick(tick, frame.loop_cycle, launch_cycle);
             let due = projectile_due_tick(projectile, family, tick, frame.loop_cycle);
             if family == ProjectileFamily::Unknown || due.is_none() {
                 self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
@@ -927,23 +934,23 @@ impl ThreatSet {
             let mut ambiguous_range = None;
             {
                 let row = &mut self.rows[index];
-                let new_launch = cycle_newer(projectile.t1, row.last_cycle)
+                let new_launch = cycle_newer(launch_cycle, row.last_cycle)
                     || (style != StyleObs::Unknown
-                        && projectile.t1 == row.last_cycle
+                        && launch_cycle == row.last_cycle
                         && tick_age(launch_tick, row.last_seen) <= 2
                         && row.priority() < PRIORITY_PROJECTILE);
                 if !new_launch {
                     continue;
                 }
                 if style == StyleObs::Unknown {
-                    Self::record_unknown_onset(row, launch_tick, projectile.t1);
+                    Self::record_unknown_onset(row, launch_tick, launch_cycle);
                 } else {
                     Self::record_event(
                         row,
                         style,
                         PRIORITY_PROJECTILE,
                         launch_tick,
-                        projectile.t1,
+                        launch_cycle,
                         Some(launch_tick),
                     );
                 }
@@ -1385,6 +1392,23 @@ fn projectile_family(
     }
 }
 
+/// Recover emission chronology from the family-specific visual start delay.
+fn projectile_launch_cycle(projectile: &ProjectileView, family: ProjectileFamily) -> Option<i32> {
+    projectile
+        .t1
+        .checked_sub(projectile_launch_delay(family)?)
+        .filter(|cycle| *cycle >= 0)
+}
+
+fn projectile_launch_delay(family: ProjectileFamily) -> Option<i32> {
+    match family {
+        ProjectileFamily::NpcRanged | ProjectileFamily::PlayerThrown => Some(32),
+        ProjectileFamily::PlayerRanged => Some(41),
+        ProjectileFamily::NpcSpell | ProjectileFamily::PlayerSpell => Some(51),
+        ProjectileFamily::Unknown => None,
+    }
+}
+
 /// Reconstruct the hit-queue tick independently of projectile visual flight.
 fn projectile_due_tick(
     projectile: &ProjectileView,
@@ -1396,17 +1420,12 @@ fn projectile_due_tick(
     if flight < 0 {
         return None;
     }
-    let delay = match family {
-        ProjectileFamily::NpcRanged | ProjectileFamily::PlayerThrown => {
-            32i32.saturating_add(flight)
-        }
-        ProjectileFamily::PlayerRanged => 41i32.saturating_add(flight),
-        ProjectileFamily::NpcSpell | ProjectileFamily::PlayerSpell => 51i32.saturating_add(flight),
-        ProjectileFamily::Unknown => return None,
-    };
+    let launch_delay = projectile_launch_delay(family)?;
+    let launch_cycle = projectile_launch_cycle(projectile, family)?;
+    let delay = launch_delay.saturating_add(flight);
     let spell_offset = i32::from(family == ProjectileFamily::PlayerSpell);
     let due_after_launch = u16::try_from(delay.div_euclid(30).saturating_add(spell_offset)).ok()?;
-    Some(cycle_to_tick(tick, loop_cycle, projectile.t1).wrapping_add(due_after_launch))
+    Some(cycle_to_tick(tick, loop_cycle, launch_cycle).wrapping_add(due_after_launch))
 }
 
 /// The narrowest launch-relative queue window available when family is unknown.
@@ -1419,16 +1438,26 @@ fn projectile_due_window(
     if !(0..=i32::from(THREAT_TTL) * 30).contains(&flight) {
         return None;
     }
-    let earliest = u16::try_from(32i32.saturating_add(flight).div_euclid(30)).ok()?;
-    let latest = u16::try_from(
-        51i32
-            .saturating_add(flight)
-            .div_euclid(30)
-            .saturating_add(1),
-    )
-    .ok()?;
-    let launch = cycle_to_tick(tick, loop_cycle, projectile.t1);
-    Some((launch.wrapping_add(earliest), launch.wrapping_add(latest)))
+    let mut earliest = None;
+    let mut latest = None;
+    for family in [
+        ProjectileFamily::NpcRanged,
+        ProjectileFamily::PlayerRanged,
+        ProjectileFamily::NpcSpell,
+        ProjectileFamily::PlayerSpell,
+    ] {
+        let Some(due) = projectile_due_tick(projectile, family, tick, loop_cycle) else {
+            continue;
+        };
+        let offset = due.wrapping_sub(tick) as i16;
+        if earliest.is_none_or(|first: u16| offset < first.wrapping_sub(tick) as i16) {
+            earliest = Some(due);
+        }
+        if latest.is_none_or(|last: u16| offset > last.wrapping_sub(tick) as i16) {
+            latest = Some(due);
+        }
+    }
+    Some((earliest?, latest?))
 }
 
 fn cycle_recent(now: i32, then: i32) -> bool {
@@ -1671,24 +1700,34 @@ mod tests {
 
     #[test]
     fn projectile_family_windows_cover_exact_cycle_boundaries() {
-        let shot = projectile(1_000, 1_029);
-        assert_eq!(
-            projectile_due_tick(&shot, ProjectileFamily::NpcRanged, 50, 1_000),
-            Some(52)
-        );
-        assert_eq!(
-            projectile_due_tick(&shot, ProjectileFamily::PlayerRanged, 50, 1_000),
-            Some(52)
-        );
-        assert_eq!(
-            projectile_due_tick(&shot, ProjectileFamily::NpcSpell, 50, 1_000),
-            Some(52)
-        );
-        assert_eq!(
-            projectile_due_tick(&shot, ProjectileFamily::PlayerSpell, 50, 1_000),
-            Some(53)
-        );
+        for (family, visual_delay, spell_offset) in [
+            (ProjectileFamily::NpcRanged, 32, 0),
+            (ProjectileFamily::PlayerThrown, 32, 0),
+            (ProjectileFamily::PlayerRanged, 41, 0),
+            (ProjectileFamily::NpcSpell, 51, 0),
+            (ProjectileFamily::PlayerSpell, 51, 1),
+        ] {
+            let shot = projectile(1_000 + visual_delay, 1_029 + visual_delay);
+            assert_eq!(projectile_launch_cycle(&shot, family), Some(1_000));
+            assert_eq!(
+                projectile_due_tick(&shot, family, 50, 1_000),
+                Some(52 + spell_offset),
+                "{family:?} publication precedes visual flight"
+            );
+            assert_eq!(
+                projectile_due_tick(&shot, family, 52, 1_060),
+                Some(52 + spell_offset),
+                "{family:?} late observation keeps the original queue"
+            );
+        }
+        let shot = projectile(1_051, 1_080);
         assert_eq!(projectile_due_window(&shot, 50, 1_000), Some((52, 53)));
+        assert_eq!(projectile_due_window(&shot, 51, 1_030), Some((52, 53)));
+        assert_eq!(projectile_due_window(&shot, 52, 1_060), Some((52, 53)));
+        assert_eq!(
+            projectile_due_window(&shot, u16::MAX - 1, 1_000),
+            Some((0, 1))
+        );
 
         let malformed = projectile(1_000, 999);
         assert_eq!(
