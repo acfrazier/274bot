@@ -216,10 +216,13 @@ binds dependencies first and compiles each recipe once, independent of its
 declaration order. A chain can contain at most 32 recipes. A cycle returns
 `recipe-cycle` with the cycle's recipe names. A missing dependency remains
 `unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
-Completed bank scans inside nested acquisition recipes update the runner's
-bank knowledge before the parent recipe evaluates its next child or settlement
-predicate. An observed empty bank is known zero stock; missing bank evidence
-remains unknown.
+Completed bank scans inside nested acquisition recipes update the existing bank
+knowledge once, before the parent recipe evaluates its next child or settlement
+predicate. This applies to authored acquisition steps and loadout provisioning.
+Recipe settlement receives its completed child's outcome, including outcome facts.
+An observed empty bank is known zero stock; missing bank evidence remains unknown.
+Finishing a provisioning recipe still invalidates the memo because the recipe
+may have changed inventory; cancel or Stop discards its pending child evidence.
 
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
