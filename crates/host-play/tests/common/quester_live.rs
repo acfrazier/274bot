@@ -870,9 +870,8 @@ pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
             spec.quest, identity.display, spec.display
         ));
     }
-    let name: &'static str = Box::leak(format!("quester_{}", spec.quest).into_boxed_str());
     let fixture = scenario::quester::quester_stage(scenario::quester::QuesterStage {
-        name,
+        name: spec.quest,
         quest_display: spec.display,
         path: &path,
         identity,
