@@ -135,18 +135,11 @@ impl NativeMachine for Reach {
                     }
                     return Poll::Ready(Ok(false));
                 }
-                if let Some((id, tile)) = self.clicked_loc {
-                    let Some(locs) = cx.snapshot().locs() else {
-                        return Poll::Pending;
-                    };
-                    if !locs
-                        .value
-                        .iter()
-                        .any(|loc| loc.id == id && loc.tile == tile)
-                    {
-                        return Poll::Ready(Ok(cx
-                            .interaction_receipt(self.request_id)
-                            .is_some_and(|receipt| receipt.accepted)));
+                if !matches!(self.args.kind, ReachKind::Ground { .. }) {
+                    match cx.interaction_receipt(self.request_id) {
+                        Some(receipt) if receipt.accepted => {}
+                        Some(_) => return Poll::Ready(Ok(false)),
+                        None => return Poll::Pending,
                     }
                 }
                 if let ReachKind::Ground { id, .. } = self.args.kind {

@@ -1935,7 +1935,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -2229,7 +2229,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         }
       },
       "required": [
