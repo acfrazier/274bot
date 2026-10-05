@@ -8,13 +8,15 @@ use super::queue::{ReleaseIndex, ReleasePath};
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::selected::ClientRevision;
-use std::collections::{BTreeMap, HashMap};
-use std::io::Read;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const MAX_PATH_BYTES: u64 = 1024 * 1024;
 const MAX_ROWS: usize = 256;
+const MAX_DIAGNOSTIC_LINES: usize = 32;
+const MAX_LISTED_DIAGNOSTICS: usize = MAX_DIAGNOSTIC_LINES - 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FolderSource {
@@ -23,6 +25,7 @@ pub struct FolderSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
 pub enum PathSource {
     Bundled,
     Folder,
@@ -64,6 +67,35 @@ impl std::fmt::Display for PathDiagnostic {
                 .as_deref()
                 .unwrap_or("Path validation failed")
         )
+    }
+}
+
+#[derive(Default)]
+struct Diagnostics {
+    lines: Vec<PathDiagnostic>,
+    total: usize,
+    omitted: usize,
+}
+
+impl Diagnostics {
+    fn push(&mut self, diagnostic: impl FnOnce() -> PathDiagnostic) {
+        self.total += 1;
+        if self.lines.len() < MAX_LISTED_DIAGNOSTICS {
+            self.lines.push(diagnostic());
+        } else {
+            self.omitted += 1;
+        }
+    }
+
+    fn finish(mut self, folder: &Path) -> (Vec<PathDiagnostic>, usize) {
+        if self.omitted > 0 {
+            self.lines.push(diagnostic(
+                folder,
+                "more-diagnostics",
+                format!("{} more validation diagnostics omitted", self.omitted),
+            ));
+        }
+        (self.lines, self.total)
     }
 }
 
@@ -265,14 +297,8 @@ impl PathRegistry {
     }
     pub fn path_source(&self, id: &str) -> PathSource {
         match self {
-            Self::Folder(folder) if folder.documents.contains_key(id) => {
-                if BUNDLED_INDEX.paths.iter().any(|row| row.id == id) {
-                    PathSource::Folder
-                } else {
-                    PathSource::Draft
-                }
-            }
-            _ => PathSource::Bundled,
+            Self::Bundled => PathSource::Bundled,
+            Self::Folder(folder) => classify_source(id, &folder.index, &folder.documents),
         }
     }
     pub fn bytes(&self, id: &str) -> Option<PathBytes> {
@@ -343,19 +369,19 @@ impl PathRegistry {
             return Err(CompileError::code("unsupported-revision")
                 .with_detail("Folder Paths support revision 289 only"));
         }
-        let mut diagnostics = Vec::new();
+        let mut diagnostics = Diagnostics::default();
         let mut candidates = BTreeMap::new();
+        let mut omitted_candidates = 0;
+        let mut omitted_indexed = HashSet::new();
         match std::fs::read_dir(&source.folder) {
             Ok(entries) => {
                 for entry in entries {
                     let entry = match entry {
                         Ok(entry) => entry,
                         Err(error) => {
-                            diagnostics.push(diagnostic(
-                                &source.folder,
-                                "read-folder",
-                                error.to_string(),
-                            ));
+                            diagnostics.push(|| {
+                                diagnostic(&source.folder, "read-folder", error.to_string())
+                            });
                             continue;
                         }
                     };
@@ -365,36 +391,44 @@ impl PathRegistry {
                     {
                         continue;
                     }
-                    let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                        diagnostics.push(diagnostic(
-                            &path,
-                            "invalid-filename",
-                            "Path filename must be UTF-8",
-                        ));
+                    let Some(id) = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::to_owned)
+                    else {
+                        diagnostics.push(|| {
+                            diagnostic(&path, "invalid-filename", "Path filename must be UTF-8")
+                        });
                         continue;
                     };
-                    if !valid_id(id) {
-                        diagnostics.push(diagnostic(
-                            &path,
-                            "invalid-filename",
-                            "Use a quest id containing letters, digits, '-' or '_'",
-                        ));
+                    if !valid_id(&id) {
+                        diagnostics.push(|| {
+                            diagnostic(
+                                &path,
+                                "invalid-filename",
+                                "Use a quest id containing letters, digits, '-' or '_'",
+                            )
+                        });
                         continue;
                     }
-                    if candidates.len() >= MAX_ROWS {
-                        diagnostics.push(diagnostic(
-                            &path,
-                            "too-many-paths",
-                            "Folder contains more than 256 Path files",
-                        ));
-                        continue;
-                    }
-                    candidates.insert(id.to_owned(), path);
+                    insert_candidate(&mut candidates, &id, path, &mut omitted_candidates);
                 }
             }
             Err(error) => {
-                diagnostics.push(diagnostic(&source.folder, "read-folder", error.to_string()))
+                diagnostics.push(|| diagnostic(&source.folder, "read-folder", error.to_string()));
             }
+        }
+        if omitted_candidates > 0 {
+            diagnostics.push(|| {
+                diagnostic(
+                    &source.folder,
+                    "too-many-paths",
+                    format!(
+                        "{} more filename-sorted Path files omitted after the 256-file cap",
+                        omitted_candidates
+                    ),
+                )
+            });
         }
         let folder_index = read_index(&source.folder.join("index.json"), &mut diagnostics);
         let mut ordered = Vec::new();
@@ -406,18 +440,25 @@ impl PathRegistry {
                         .as_deref()
                         .is_some_and(|file| file != format!("{}.json", row.id))
                 {
-                    diagnostics.push(diagnostic(
-                        &source.folder.join("index.json"),
-                        "invalid-index-row",
-                        format!("{} must use <id>.json in this folder", row.id),
-                    ));
+                    diagnostics.push(|| {
+                        diagnostic(
+                            &source.folder.join("index.json"),
+                            "invalid-index-row",
+                            format!("{} must use <id>.json in this folder", row.id),
+                        )
+                    });
                     continue;
                 }
                 ordered.push(row.id.clone());
                 if let Some(file) = &row.file {
-                    candidates
-                        .entry(row.id.clone())
-                        .or_insert_with(|| source.folder.join(file));
+                    let path = source.folder.join(file);
+                    if !candidates.contains_key(&row.id) {
+                        if omitted_candidates > 0 && path.is_file() {
+                            omitted_indexed.insert(row.id.clone());
+                        } else {
+                            candidates.insert(row.id.clone(), path);
+                        }
+                    }
                 }
             }
         }
@@ -431,16 +472,36 @@ impl PathRegistry {
         for id in ordered {
             let bundled = index.paths.iter().position(|row| row.id == id);
             if bundled.is_none() && index.paths.len() >= MAX_ROWS {
-                diagnostics.push(diagnostic(
-                    &source.folder.join(format!("{id}.json")),
-                    "too-many-paths",
-                    "Combined registry contains more than 256 rows",
-                ));
+                diagnostics.push(|| {
+                    diagnostic(
+                        &source.folder.join(format!("{id}.json")),
+                        "too-many-paths",
+                        "Combined registry contains more than 256 rows",
+                    )
+                });
                 continue;
             }
             let authored = folder_index
                 .as_ref()
                 .and_then(|index| index.paths.iter().find(|row| row.id == id));
+            let mut draft = ReleasePath {
+                id: id.clone(),
+                file: Some(format!("{id}.json")),
+                name: None,
+                unavailable: None,
+            };
+            if omitted_indexed.contains(&id) {
+                if bundled.is_none() {
+                    draft.name = Some(
+                        authored
+                            .and_then(|row| row.name.clone())
+                            .unwrap_or_else(|| id.clone()),
+                    );
+                    draft.unavailable = Some("Omitted by the 256-file filename-sorted cap".into());
+                    index.paths.push(draft);
+                }
+                continue;
+            }
             if let Some(row) =
                 authored.filter(|row| row.file.is_none() && !candidates.contains_key(&id))
             {
@@ -454,12 +515,6 @@ impl PathRegistry {
                 .cloned()
                 .unwrap_or_else(|| source.folder.join(format!("{id}.json")));
             let result = read_document(&path, &id, selected, quests);
-            let mut draft = ReleasePath {
-                id: id.clone(),
-                file: Some(format!("{id}.json")),
-                name: None,
-                unavailable: None,
-            };
             match result {
                 Ok(document) => {
                     if let Some(reason) = authored.and_then(|row| row.unavailable.as_ref()) {
@@ -478,13 +533,14 @@ impl PathRegistry {
                         );
                         draft.unavailable = Some(issue.to_string());
                     }
-                    diagnostics.push(issue);
+                    diagnostics.push(move || issue);
                 }
             }
             if bundled.is_none() {
                 index.paths.push(draft);
             }
         }
+        let (diagnostics, diagnostic_count) = diagnostics.finish(&source.folder);
         let mut rows = bundled_rows().to_vec();
         for entry in &index.paths {
             let display = documents
@@ -492,14 +548,7 @@ impl PathRegistry {
                 .map(|document| document.display.as_str())
                 .or(entry.name.as_deref())
                 .unwrap_or(&entry.id);
-            let source =
-                if bundled_in(&BUNDLED_INDEX, &entry.id) && documents.contains_key(&entry.id) {
-                    PathSource::Folder
-                } else if !BUNDLED_INDEX.paths.iter().any(|row| row.id == entry.id) {
-                    PathSource::Draft
-                } else {
-                    PathSource::Bundled
-                };
+            let source = classify_source(&entry.id, &index, &documents);
             if source == PathSource::Bundled && entry.unavailable.is_none() {
                 continue;
             }
@@ -527,7 +576,7 @@ impl PathRegistry {
             "Reload Paths: {} folder documents, {} registry rows, {} validation errors ({})",
             documents.len(),
             index.paths.len(),
-            diagnostics.len(),
+            diagnostic_count,
             source.folder.display()
         );
         for issue in &diagnostics {
@@ -541,6 +590,24 @@ impl PathRegistry {
             diagnostics,
             report: Some(report.into()),
         })))
+    }
+}
+
+fn classify_source(
+    id: &str,
+    index: &ReleaseIndex,
+    documents: &HashMap<String, FolderDocument>,
+) -> PathSource {
+    if BUNDLED_INDEX.paths.iter().any(|row| row.id == id) {
+        if documents.contains_key(id) {
+            PathSource::Folder
+        } else {
+            PathSource::Bundled
+        }
+    } else if index.paths.iter().any(|row| row.id == id) {
+        PathSource::Draft
+    } else {
+        PathSource::Bundled
     }
 }
 
@@ -560,14 +627,62 @@ fn valid_id(id: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
+fn insert_candidate(
+    candidates: &mut BTreeMap<String, PathBuf>,
+    id: &str,
+    path: PathBuf,
+    omitted: &mut usize,
+) {
+    if candidates.contains_key(id) {
+        return;
+    }
+    if candidates.len() < MAX_ROWS {
+        candidates.insert(id.to_owned(), path);
+        return;
+    }
+
+    *omitted += 1;
+    if candidates
+        .last_key_value()
+        .is_some_and(|(last_id, _)| id < last_id.as_str())
+    {
+        let last_id = candidates
+            .last_key_value()
+            .expect("the full candidate set has a last filename")
+            .0
+            .clone();
+        candidates.remove(&last_id);
+        candidates.insert(id.to_owned(), path);
+    }
+}
 fn diagnostic(path: &Path, code: &'static str, detail: impl Into<Arc<str>>) -> PathDiagnostic {
     PathDiagnostic {
         file: path.to_owned(),
         error: CompileError::code(code).with_detail(detail),
     }
 }
+fn open_nonblocking(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
+}
+
 fn read_bounded(path: &Path) -> Result<Vec<u8>, CompileError> {
-    let metadata = std::fs::metadata(path)
+    read_bounded_with_open(path, open_nonblocking)
+}
+fn read_bounded_with_open(
+    path: &Path,
+    open_file: impl FnOnce(&Path) -> io::Result<std::fs::File>,
+) -> Result<Vec<u8>, CompileError> {
+    let file = open_file(path)
+        .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
+    let metadata = file
+        .metadata()
         .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
     if !metadata.is_file() {
         return Err(CompileError::code("not-a-file").with_detail("Path must be a regular file"));
@@ -575,8 +690,6 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, CompileError> {
     if metadata.len() > MAX_PATH_BYTES {
         return Err(CompileError::code("file-too-large").with_detail("Path file exceeds 1 MiB"));
     }
-    let file = std::fs::File::open(path)
-        .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_PATH_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -586,7 +699,7 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, CompileError> {
     }
     Ok(bytes)
 }
-fn read_index(path: &Path, diagnostics: &mut Vec<PathDiagnostic>) -> Option<ReleaseIndex> {
+fn read_index(path: &Path, diagnostics: &mut Diagnostics) -> Option<ReleaseIndex> {
     if !path.exists() {
         return None;
     }
@@ -600,7 +713,7 @@ fn read_index(path: &Path, diagnostics: &mut Vec<PathDiagnostic>) -> Option<Rele
     match result {
         Ok(index) => Some(index),
         Err(error) => {
-            diagnostics.push(PathDiagnostic {
+            diagnostics.push(move || PathDiagnostic {
                 file: path.to_owned(),
                 error,
             });
@@ -810,6 +923,7 @@ mod tests {
         with_data(|selected, quests| {
             let folder = Folder::new();
             folder.cook("draft-a", "A");
+            folder.cook("cook", "folder override");
             folder.cook("draft-z", "Z");
             std::fs::write(folder.0.join("index.json"),
                 r#"{"schema":1,"paths":[{"id":"draft-z","file":"draft-z.json"},{"id":"draft-a","file":"draft-a.json"},{"id":"hauntedmine","name":"Haunted Mine","unavailable":"no content"}]}"#
@@ -825,6 +939,10 @@ mod tests {
                 &PathRegistry::Bundled.ids()
             );
             assert!(registry.diagnostics().is_empty());
+            for id in ["cook", "draft-a", "draft-z", "hauntedmine"] {
+                let row = registry.rows().iter().find(|row| row.id == id).unwrap();
+                assert_eq!(row.source, registry.path_source(id));
+            }
             assert!(registry.bytes("hauntedmine").is_none());
         });
     }
@@ -843,10 +961,145 @@ mod tests {
             for (id, code) in [("broken", "invalid-json"), ("huge", "file-too-large")] {
                 let row = registry.rows().iter().find(|row| row.id == id).unwrap();
                 assert_eq!(row.source, PathSource::Draft);
+                assert_eq!(registry.path_source(id), row.source);
                 assert!(row.unavailable.as_deref().unwrap().contains(code));
                 assert!(registry.bytes(id).is_none());
             }
             assert!(registry.compile("valid", &selected, &quests).is_ok());
         });
+    }
+
+    #[test]
+    fn candidates_are_sorted_before_the_256_file_cap() {
+        let mut candidates = BTreeMap::new();
+        let mut omitted = 0;
+        for number in (0..MAX_ROWS + 4).rev() {
+            let id = format!("draft-{number:03}");
+            insert_candidate(
+                &mut candidates,
+                &id,
+                PathBuf::from(format!("{id}.json")),
+                &mut omitted,
+            );
+        }
+
+        assert_eq!(omitted, 4);
+        for (number, (id, _)) in candidates.iter().enumerate() {
+            assert_eq!(id, &format!("draft-{number:03}"));
+        }
+    }
+
+    #[test]
+    fn folder_diagnostics_are_capped_with_an_omission_summary() {
+        with_data(|selected, quests| {
+            let folder = Folder::new();
+            for number in 0..300 {
+                std::fs::write(
+                    folder.0.join(format!("draft-{number:03}.json")),
+                    b"not JSON",
+                )
+                .unwrap();
+            }
+
+            let registry = PathRegistry::load(&folder.source(true), &selected, &quests).unwrap();
+            let report = registry.report().unwrap();
+            assert_eq!(registry.diagnostics().len(), MAX_DIAGNOSTIC_LINES);
+            assert!(
+                registry
+                    .diagnostics()
+                    .last()
+                    .unwrap()
+                    .to_string()
+                    .contains(" more "),
+                "the final emitted diagnostic is the omission summary"
+            );
+            assert!(report.contains(" more "), "{report}");
+            let queue = super::super::queue::Queue::from_registry(
+                registry,
+                super::super::queue::QueueSettings::default(),
+            )
+            .unwrap();
+            assert!(
+                queue.path_report().unwrap().contains(" more "),
+                "the status field's report keeps the omission summary"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_rechecks_metadata_after_a_swapped_fifo_is_opened() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let folder = Folder::new();
+        let path = folder.0.join("swapped.json");
+        std::fs::write(&path, b"[]").unwrap();
+
+        let result = read_bounded_with_open(&path, |path| {
+            std::fs::remove_file(path)?;
+            let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+            // SAFETY: `c_path` is a valid, NUL-terminated pathname.
+            if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            open_nonblocking(path)
+        });
+
+        let error = result.expect_err("the opened FIFO must be rejected");
+        assert_eq!(error.code.as_ref(), "not-a-file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_opens_fifo_without_blocking() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let folder = Folder::new();
+        let path = folder.0.join("fifo.json");
+        let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c_path` is a valid, NUL-terminated pathname.
+        if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+            panic!("could not create FIFO: {}", std::io::Error::last_os_error());
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            let _ = sender.send(read_bounded(&worker_path));
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(result) => {
+                worker.join().unwrap();
+                assert_eq!(
+                    result
+                        .expect_err("the opened FIFO must be rejected")
+                        .code
+                        .as_ref(),
+                    "not-a-file"
+                );
+            }
+            Err(_) => {
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).custom_flags(libc::O_NONBLOCK);
+                let _writer = options
+                    .open(&path)
+                    .expect("release a regression that blocks while opening the FIFO");
+                let result = receiver
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("the blocked FIFO opener did not resume");
+                assert_eq!(
+                    result
+                        .expect_err("the opened FIFO must be rejected")
+                        .code
+                        .as_ref(),
+                    "not-a-file"
+                );
+                worker.join().unwrap();
+                panic!("reading the FIFO blocked; the Path loader must open with O_NONBLOCK");
+            }
+        }
     }
 }

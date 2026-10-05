@@ -2651,6 +2651,75 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 }
 
 #[test]
+fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
+    let iso = IsolatedEnv::enter("panel-quester-paths-startup");
+    let folder = iso.dir.join("paths");
+    std::fs::create_dir_all(&folder).unwrap();
+    for (id, name) in [("cook", "Folder Cook"), ("fresh-draft", "Fresh Draft")] {
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../script/paths/289/cook.json"
+        )))
+        .unwrap();
+        document["id"] = id.into();
+        document["display_name"] = name.into();
+        std::fs::write(
+            folder.join(format!("{id}.json")),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+    }
+    let prefs = crate::ui_state::path();
+    std::fs::create_dir_all(prefs.parent().unwrap()).unwrap();
+    std::fs::write(
+        &prefs,
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": true,
+                "folder": folder.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    assert!(session.quester_paths.settings().enabled);
+    let selected = api::selected::FamilyPreparation::run(|_| {
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected 289 game data")
+    })
+    .expect("spawn selected data worker")
+    .join()
+    .expect("selected data worker");
+
+    session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+    assert!(
+        session.quester_paths.is_running(),
+        "saved folder starts a reload without a user action"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.quester_paths.is_running() {
+        assert!(
+            Instant::now() < deadline,
+            "startup Path reload did not finish"
+        );
+        session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+        thread::yield_now();
+    }
+
+    let report = session
+        .quester_paths
+        .notice_text()
+        .expect("startup validation report");
+    assert!(
+        !report.is_empty(),
+        "startup reload reports its result without a user action"
+    );
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[test]
 fn walk_permissions_projection_reads_only_after_peer_write() {
     let dir = TestDir::new("walk-permissions-peer-refresh");
     let path = dir.join("panel-ui.json");

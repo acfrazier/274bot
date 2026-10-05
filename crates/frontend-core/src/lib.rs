@@ -56,7 +56,9 @@ pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
-pub use quester_paths::{QuesterPathsView, ReloadPaths, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
+pub use quester_paths::{
+    QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL,
+};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{

@@ -28,7 +28,7 @@ impl Default for QuesterPathsView {
 
 impl QuesterPathsView {
     /// Read the host-wide settings object without touching any Path files.
-    pub fn read_at(prefs_path: &Path) -> Self {
+    fn read_at(prefs_path: &Path) -> Self {
         let Some(value) = host_play::panel_ui_value_at(prefs_path, "quester_paths") else {
             return Self::default();
         };
@@ -49,7 +49,7 @@ impl QuesterPathsView {
     }
 
     /// Write only fields changed by this editor through the shared panel-ui transaction.
-    pub fn persist_changed_at(prefs_path: &Path, before: &Self, after: &Self) -> io::Result<()> {
+    fn persist_changed_at(prefs_path: &Path, before: &Self, after: &Self) -> io::Result<()> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
@@ -83,7 +83,7 @@ impl QuesterPathsView {
     }
 
     /// Apply the durable source to the process-wide registry configuration.
-    pub fn apply(&self) {
+    fn apply(&self) {
         script::quester::registry::set_source(script::quester::registry::FolderSource {
             enabled: self.enabled,
             folder: self.folder.clone(),
@@ -91,16 +91,16 @@ impl QuesterPathsView {
     }
 }
 
-/// Non-blocking owner for one explicit Path-registry reload.
+/// Non-blocking owner for one Path-registry reload.
 #[derive(Default)]
-pub struct ReloadPaths {
+struct ReloadPaths {
     receiver: Option<Receiver<Result<Arc<str>, String>>>,
 }
 
 impl ReloadPaths {
-    /// Re-read the configured source and publish the resulting shared snapshot
-    /// on a FamilyPreparation worker. No file compilation runs on the caller.
-    pub fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
+    /// Re-read the configured source and publish its snapshot on a
+    /// FamilyPreparation worker, never on the caller.
+    fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
         self.start_with(move || {
             let registry = script::quester::registry::reload(&selected)
                 .map_err(|error| compile_error_message(&error))?;
@@ -131,7 +131,7 @@ impl ReloadPaths {
     }
 
     /// Take a completed summary or error without blocking the UI/pump.
-    pub fn poll(&mut self) -> Option<Result<Arc<str>, String>> {
+    fn poll(&mut self) -> Option<Result<Arc<str>, String>> {
         let receiver = self.receiver.as_ref()?;
         match receiver.try_recv() {
             Ok(result) => {
@@ -146,8 +146,143 @@ impl ReloadPaths {
         }
     }
 
-    pub fn is_running(&self) -> bool {
+    fn is_running(&self) -> bool {
         self.receiver.is_some()
+    }
+}
+
+/// Owns the shared settings, reload lifecycle, notice state and user-facing
+/// messages for both front ends.
+#[derive(Default)]
+pub struct QuesterPathsController {
+    settings: QuesterPathsView,
+    reload: ReloadPaths,
+    notice: Option<Result<Arc<str>, Arc<str>>>,
+    reload_when_ready: bool,
+}
+
+impl QuesterPathsController {
+    /// Restore and apply saved settings. An enabled source is reloaded the
+    /// first time selected game data is supplied to [`Self::advance`].
+    pub fn restore_at(&mut self, prefs_path: &Path) {
+        self.settings = QuesterPathsView::read_at(prefs_path);
+        self.settings.apply();
+        self.reload_when_ready = self.settings.enabled;
+        self.notice = None;
+    }
+
+    pub fn settings(&self) -> &QuesterPathsView {
+        &self.settings
+    }
+
+    /// Persist (when requested), apply and reload a changed source.
+    pub fn apply_changed_at(
+        &mut self,
+        prefs_path: &Path,
+        after: QuesterPathsView,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+        persist: bool,
+    ) -> Result<(), String> {
+        if after == self.settings {
+            return Ok(());
+        }
+        if persist {
+            if let Err(error) =
+                QuesterPathsView::persist_changed_at(prefs_path, &self.settings, &after)
+            {
+                let message = format!("Quest Paths settings were not saved: {error}");
+                self.set_notice(Err(Arc::from(message.clone())));
+                return Err(message);
+            }
+        }
+
+        self.settings = after;
+        self.settings.apply();
+        self.reload_when_ready = true;
+        if selected.is_none() {
+            self.set_notice(Err(Arc::from(
+                "Load a profile before reloading quest Paths.",
+            )));
+        }
+        self.advance(selected);
+        Ok(())
+    }
+
+    /// Handle an explicit Reload Paths action.
+    pub fn request_reload(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
+        if self.reload.is_running() {
+            self.set_notice(Ok(Arc::from("A Path reload is already running.")));
+        } else if let Some(selected) = selected {
+            self.reload_when_ready = false;
+            self.start_reload(selected);
+        } else {
+            self.set_notice(Err(Arc::from(
+                "Load a profile before reloading quest Paths.",
+            )));
+        }
+    }
+
+    /// Start a saved-setting reload as soon as game data is ready and poll
+    /// the worker without blocking the caller.
+    pub fn advance(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
+        if let Some(result) = self.reload.poll() {
+            match result {
+                Ok(message) => self.set_notice(Ok(message)),
+                Err(error) => self.set_notice(Err(reload_error(error))),
+            }
+        }
+        if self.reload_when_ready && !self.reload.is_running() {
+            if let Some(selected) = selected {
+                self.reload_when_ready = false;
+                self.start_reload(selected);
+            }
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.reload.is_running()
+    }
+
+    pub fn notice(&self) -> Option<&Result<Arc<str>, Arc<str>>> {
+        self.notice.as_ref()
+    }
+
+    pub fn notice_text(&self) -> Option<&str> {
+        self.notice.as_ref().map(|notice| match notice {
+            Ok(message) | Err(message) => message.as_ref(),
+        })
+    }
+
+    pub fn notice_is_error(&self) -> bool {
+        matches!(self.notice, Some(Err(_)))
+    }
+
+    pub fn clear_notice(&mut self) {
+        self.notice = None;
+    }
+
+    fn start_reload(&mut self, selected: Arc<api::game_data::SelectedGameData>) {
+        match self.reload.start(selected) {
+            Ok(()) => self.set_notice(Ok(Arc::from("Reloading quest Paths…"))),
+            Err(error) => self.set_notice(Err(reload_error(error))),
+        }
+    }
+
+    fn set_notice(&mut self, notice: Result<Arc<str>, Arc<str>>) {
+        let (level, message) = match &notice {
+            Ok(message) => (crate::log::Level::Info, message.as_ref()),
+            Err(message) => (crate::log::Level::Error, message.as_ref()),
+        };
+        crate::log::global().process_line(crate::log::Source::Host, level, message);
+        self.notice = Some(notice);
+    }
+}
+
+fn reload_error(error: String) -> Arc<str> {
+    if error.starts_with("Path reload failed:") {
+        error.into()
+    } else {
+        format!("Path reload failed: {error}").into()
     }
 }
 
