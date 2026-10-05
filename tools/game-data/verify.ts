@@ -163,6 +163,15 @@ async function verifyRevision(revision: number) {
         && typeof value.id === 'number'
         && 'name' in value
         && typeof value.name === 'string';
+    type PickpocketCheckRow = {
+        npcs: { alias: string; id: number; name: string }[];
+        kind?: unknown; level?: unknown; source_file?: unknown;
+        target_row?: unknown; source_row?: unknown; loot?: unknown;
+    };
+    const hasPickpocketNpcs = (value: unknown): value is PickpocketCheckRow =>
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+        && 'npcs' in value && Array.isArray(value.npcs)
+        && value.npcs.length > 0 && value.npcs.every(isNpc);
     const consumption: unknown[] = Array.isArray(payload.consumption) ? payload.consumption : [];
     const fixed = new Map<string, number>();
     for (const value of consumption) {
@@ -195,34 +204,12 @@ async function verifyRevision(revision: number) {
         if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`);
     }
     const pickpocket: unknown[] = Array.isArray(payload.pickpocket) ? payload.pickpocket : [];
-    const guard = pickpocket.find((value: unknown) => {
-        if (
-            typeof value !== 'object'
-            || value === null
-            || Array.isArray(value)
-            || !('npcs' in value)
-            || !Array.isArray(value.npcs)
-        ) return false;
-        const npcs: unknown[] = value.npcs;
-        return npcs.some((npc) => isNpc(npc) && npc.alias === 'guard1');
-    });
-    if (
-        typeof guard !== 'object'
-        || guard === null
-        || Array.isArray(guard)
-        || !('level' in guard)
-        || guard.level !== 40
-    ) throw new Error(`${revision}: Guard thieving level mismatch`);
-    const invalidPickpocket = pickpocket.some((value: unknown) => {
-        if (
-            typeof value !== 'object'
-            || value === null
-            || Array.isArray(value)
-            || !('npcs' in value)
-            || !Array.isArray(value.npcs)
-        ) return true;
-        const npcs: unknown[] = value.npcs;
-        if (npcs.length === 0 || !npcs.every(isNpc)) return true;
+    const guard = pickpocket.find((value) =>
+        hasPickpocketNpcs(value) && value.npcs.some((npc) => npc.alias === 'guard1'));
+    if (!hasPickpocketNpcs(guard) || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`);
+    const invalidPickpocket = pickpocket.some((value) => {
+        if (!hasPickpocketNpcs(value)) return true;
+        const npcs = value.npcs;
         if ('kind' in value && value.kind === 'level_only') {
             return npcs.length !== 1
                 || !('level' in value)
@@ -261,28 +248,11 @@ async function verifyRevision(revision: number) {
             ['troll_prison_guard2', 30, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', '[opnpc3,troll_prison_guard2]', 'if (stat(thieving) < 30) {'],
         ] as const;
         for (const [alias, level, sourceFile, targetRow, sourceRow] of expected) {
-            const fact = pickpocket.find((value: unknown) => {
-                if (
-                    typeof value !== 'object'
-                    || value === null
-                    || Array.isArray(value)
-                    || !('kind' in value)
-                    || value.kind !== 'level_only'
-                    || !('level' in value)
-                    || value.level !== level
-                    || !('source_file' in value)
-                    || value.source_file !== sourceFile
-                    || !('target_row' in value)
-                    || value.target_row !== targetRow
-                    || !('source_row' in value)
-                    || value.source_row !== sourceRow
-                    || !('npcs' in value)
-                    || !Array.isArray(value.npcs)
-                ) return false;
-                const npcs: unknown[] = value.npcs;
-                const [npc] = npcs;
-                return npcs.length === 1 && isNpc(npc) && npc.alias === alias;
-            });
+            const fact = pickpocket.find((value) =>
+                hasPickpocketNpcs(value) && value.kind === 'level_only' && value.level === level
+                && value.source_file === sourceFile && value.target_row === targetRow
+                && value.source_row === sourceRow && value.npcs.length === 1
+                && value.npcs[0].alias === alias);
             if (!fact) throw new Error(`${revision}: missing selected Thieving level row for ${alias}`);
         }
     }

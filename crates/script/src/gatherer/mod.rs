@@ -9,12 +9,12 @@ mod area;
 mod card;
 mod drop;
 pub(crate) mod gather;
-mod oneop;
+pub(crate) mod oneop;
 mod runner;
 pub(crate) mod select;
 pub mod settings;
 pub mod status;
-mod supply;
+pub(crate) mod supply;
 mod widen;
 
 pub use area::{AreaMode, WorkArea};

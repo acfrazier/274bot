@@ -19,18 +19,6 @@ pub struct ExactItemArg {
     pub id: i32,
 }
 
-impl From<String> for ItemArg {
-    fn from(alias: String) -> Self {
-        Self::Alias(alias)
-    }
-}
-
-impl From<&str> for ItemArg {
-    fn from(alias: &str) -> Self {
-        Self::Alias(alias.to_owned())
-    }
-}
-
 impl ItemArg {
     pub fn resolve<'a>(
         &self,

@@ -12,13 +12,12 @@ use super::super::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
 use super::item_arg::ItemArg;
-use crate::gatherer::gather::{
-    method_ready, GatherEnd, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS,
-};
+use crate::gatherer::gather::{GatherEnd, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS};
 use crate::gatherer::select::{
     select_for_quest, FishingSurvey, PlacementClass, SelectionObservation,
 };
 use crate::gatherer::settings::{admit_quest_method, GathererSettings};
+use crate::gatherer::supply::method_ready;
 use crate::gatherer::{AreaMode, WorkArea};
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions};
@@ -99,12 +98,10 @@ pub(super) fn compile(
     {
         return Err(CompileError::code("invalid-args"));
     }
-    let catalog = api::gather_methods::cached(cx.selected)
-        .filter(|catalog| {
-            cx.gathering
-                .is_some_and(|prepared| std::ptr::eq(prepared, catalog.as_ref()))
-        })
-        .ok_or_else(|| CompileError::code("gathering-unavailable"))?;
+    let catalog = Arc::clone(
+        cx.gathering
+            .ok_or_else(|| CompileError::code("gathering-unavailable"))?,
+    );
     let item_id = args.until.obj.id(cx.selected)?;
     let methods: Vec<_> = catalog
         .methods()
@@ -262,11 +259,9 @@ impl StepRun for Run {
                                 "gather inventory full before goal".into(),
                             )))
                         }
-                        GatherEnd::Refused => {
-                            return Poll::Ready(Err(ActionError::Failed(
-                                "gather action refused".into(),
-                            )))
-                        }
+                        // The shared run tends stray modals. Both callers then
+                        // revalidate and select again after a server refusal.
+                        GatherEnd::Refused => {}
                         GatherEnd::Hazard => {
                             return Poll::Ready(Err(ActionError::Failed(
                                 "gather resource became hazardous".into(),
@@ -308,10 +303,31 @@ impl StepRun for Run {
             anchor: here.value,
             radius: self.radius,
         });
+        let mut ready = false;
+        let mut unobserved = false;
+        let mut refusal = None;
         for &index in self.methods.iter() {
-            if !method_ready(snapshot, &self.catalog.methods()[index], true)? {
-                return Poll::Pending;
+            match method_ready(snapshot, &self.catalog.methods()[index], true) {
+                Ok(true) => {
+                    ready = true;
+                    break;
+                }
+                Ok(false) => unobserved = true,
+                Err(error) => {
+                    refusal.get_or_insert(error);
+                }
             }
+        }
+        if !ready {
+            return if unobserved {
+                Poll::Pending
+            } else {
+                Poll::Ready(Err(ActionError::Unavailable(
+                    refusal
+                        .expect("compiled gather methods are nonempty")
+                        .into(),
+                )))
+            };
         }
         let selected = select_for_quest(
             &self.catalog,
@@ -327,6 +343,7 @@ impl StepRun for Run {
                 skill_stat: stat.index,
                 fishing: &mut self.fishing,
             },
+            snapshot,
         );
         // This is an authored local resource step, not Gatherer's site/Auto
         // survey. Never widen the area or circle unloaded placements.
@@ -336,11 +353,8 @@ impl StepRun for Run {
         else {
             return Poll::Pending;
         };
-        if !super::reach::within(here.value, target.plan.tile, 1) {
-            self.walk = Some(cx.tick.actions.begin::<Walk>(
-                super::reach::walk_request(target.plan.tile, 1, None, cx.required_after),
-                &mut cx.tick.cx,
-            )?);
+        if let Some(request) = target.approach(snapshot, cx.required_after) {
+            self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
             return Poll::Pending;
         }
         if self.last_attempt == Some(cx.tick.cx.evidence().tick) {
@@ -457,6 +471,15 @@ mod tests {
             members: true,
             ..Default::default()
         });
+        snapshot.seed_scene(api::snapshot::SceneView {
+            available: true,
+            base_x: spot.origin.x - 50,
+            base_z: spot.origin.z - 50,
+            level: spot.origin.level,
+            width: 104,
+            height: 104,
+            collision_flags: vec![0; 104 * 104],
+        });
         snapshot.seed_npcs(vec![]);
         snapshot.seed_locs(vec![LocView {
             id,
@@ -536,6 +559,248 @@ mod tests {
                 .poll(cx))),
             Poll::Ready(Ok(_))
         ));
+    }
+
+    #[test]
+    fn ordinary_gatherer_defers_supply_refusal_to_server_for_revalidation() {
+        let plan = plan("mining.copper", 1);
+        let mut snapshot = snapshot(&plan, 1);
+        let loc = snapshot.locs()[0].clone();
+        snapshot.seed_inventory(vec![], 28);
+        let target = crate::gatherer::select::TargetPlan {
+            entity: api::selected::EntityId::Loc(loc.id),
+            tile: loc.tile,
+            op: "Mine".into(),
+            alias: "mining.copper".into(),
+            products: [436, 0, 0, 0, 0, 0, 0, 0],
+            products_len: 1,
+            skill_stat: 14,
+            method_index: plan.methods[0] as u16,
+            npc_index: -1,
+        };
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<GatherRun>(
+                    GatherRunArgs {
+                        target,
+                        catalog: Arc::clone(&plan.catalog),
+                        stall_ticks: DEFAULT_STALL_TICKS,
+                        quest_owned: false,
+                    },
+                    &mut tick.cx,
+                )
+                .expect("ordinary Gatherer waits for server refusal")
+        });
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
+            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                if action == "Mine"
+        )));
+        snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+            sequence: 1,
+            type_: 0,
+            text: "You can't use this tool.".into(),
+            username: None,
+        }]);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(crate::gatherer::gather::GatherResult {
+                end: GatherEnd::Refused,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn gather_observed_fishing_npc_owns_approach_without_a_walk() {
+        let mut plan = plan("fishing.saltfish.op1", 1);
+        plan.skill = Skill::Fishing;
+        plan.item_id = 317;
+        let method = &plan.catalog.methods()[plan.methods[0]];
+        let spot = api::gather_methods::known_rows(&method.spots)
+            .iter()
+            .find(|spot| matches!(spot.entity, api::selected::EntityId::Npc(_)))
+            .unwrap();
+        let api::selected::EntityId::Npc(id) = spot.entity else {
+            unreachable!()
+        };
+        let tile = spot.origin;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![held(303, 1, 0)], 28);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            effective: 1,
+            base: 1,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: tile.x + 5,
+            ..tile
+        }));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: tile.x - 50,
+            map_base_z: tile.z - 50,
+            level: tile.level,
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_locs(vec![]);
+        snapshot.seed_npcs(vec![api::snapshot::NpcView {
+            index: 7,
+            r#type: Some(id as usize),
+            name: Some("Fishing spot".into()),
+            actions: vec![Some("Net".into())],
+            tile,
+            distance: 5,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: tile,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert!(!outbox
+            .iter()
+            .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
+        assert!(outbox.iter().any(|op| matches!(
+            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc { action, index, .. })
+                if action == "Net" && *index == Some(7)
+        )));
+    }
+
+    // content/scripts/levelup/scripts/levelup.rs2 opens the skill chat interface.
+    // Retain the reviewer's copper qty=2 probe through continue and resumed yield.
+    #[test]
+    fn review_probe_level_up_modal_mid_goal() {
+        let plan = plan("mining.copper", 2);
+        let mut snapshot = snapshot(&plan, 1);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_inventory(vec![held(1265, 1, 0), held(436, 1, 1)], 28);
+        snapshot.seed_chat_modal(
+            233,
+            vec!["Congratulations, you just advanced a Mining level.".into()],
+        );
+        snapshot.seed_chat_options(vec![], 233);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
+            op.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+        )));
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
+            &op.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                if action == "Mine"
+        )));
+        snapshot.seed_inventory(vec![held(1265, 1, 0), held(436, 2, 1)], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn gather_takes_a_usable_method_even_when_another_method_is_level_gated() {
+        let mut plan = plan("mining.copper", 1);
+        let snapshot = snapshot(&plan, 1);
+        let iron = plan
+            .catalog
+            .methods()
+            .iter()
+            .position(|method| method.id.0.as_ref() == "mining.iron")
+            .unwrap();
+        plan.methods = Arc::from([iron, plan.methods[0]]);
+        // The fixture observes copper only, not the first (unusable) method.
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
+            &op.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                if action == "Mine"
+        )));
+    }
+
+    #[test]
+    fn gather_arrives_at_a_loc_footprint_not_its_origin() {
+        let plan = plan("mining.copper", 1);
+        let mut snapshot = snapshot(&plan, 1);
+        let mut loc = snapshot.locs()[0].clone();
+        loc.width = 3;
+        loc.footprint_width = 3;
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: loc.tile.x + 3,
+            ..loc.tile
+        }));
+        snapshot.seed_locs(vec![loc]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert!(!outbox
+            .iter()
+            .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
+        assert!(outbox.iter().any(|op| matches!(
+            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                if action == "Mine"
+        )));
     }
 
     #[test]

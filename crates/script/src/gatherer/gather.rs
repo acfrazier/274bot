@@ -1,4 +1,6 @@
+use super::oneop::{OneOp, OneOpArgs};
 use super::select::TargetPlan;
+use super::supply::method_ready;
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod, TargetClass};
@@ -25,102 +27,6 @@ pub struct GatherResult {
     pub xp: i32,
 }
 
-/// Shared admission for a native resource action. The Quester calls this
-/// before selection; GatherRun repeats it at the actual dispatch boundary.
-pub(crate) fn method_ready(
-    snapshot: api::snapshot::SnapshotView<'_>,
-    method: &GatherMethod,
-    quest_owned: bool,
-) -> Result<bool, ActionError> {
-    let (Some(stats), Some(inventory), Some(equipment), Some(world)) = (
-        snapshot.stats(),
-        snapshot.inventory(),
-        snapshot.equipment(),
-        snapshot.world(),
-    ) else {
-        return Ok(false);
-    };
-    let Some(requirements) = super::settings::method_requirements(method, quest_owned) else {
-        return Err(ActionError::Unavailable(
-            "gather requirements are incomplete".into(),
-        ));
-    };
-    let count = |id| {
-        inventory
-            .value
-            .iter()
-            .filter(|row| row.def.id == id)
-            .fold(0i32, |count, row| count.saturating_add(row.count))
-    };
-    for requirement in requirements.iter() {
-        match requirement.kind {
-            api::selected::RequirementKind::Skill(minimum) => {
-                let Some(stat) = stats
-                    .value
-                    .iter()
-                    .find(|stat| stat.index == i32::from(minimum.skill))
-                else {
-                    return Ok(false);
-                };
-                if stat.effective < i32::from(minimum.level) {
-                    return Err(ActionError::Unavailable("gather level too low".into()));
-                }
-            }
-            api::selected::RequirementKind::MembersWorld if !world.value.members => {
-                return Err(ActionError::Unavailable(
-                    "gather requires a members world".into(),
-                ));
-            }
-            api::selected::RequirementKind::MembersWorld => {}
-            api::selected::RequirementKind::Item(item)
-                if i64::from(count(item.item)) < i64::from(item.count) =>
-            {
-                return Err(ActionError::Unavailable(
-                    "gather required item missing".into(),
-                ));
-            }
-            api::selected::RequirementKind::Item(_) => {}
-            _ => {
-                return Err(ActionError::Unavailable(
-                    "gather requirement is not observed".into(),
-                ))
-            }
-        }
-    }
-    let (Knowledge::Known(tools), Knowledge::Known(consumes)) = (&method.tools, &method.consumes)
-    else {
-        return Err(ActionError::Unavailable(
-            "gather supplies are incomplete".into(),
-        ));
-    };
-    if !tools.is_empty()
-        && !tools.iter().any(|tool| {
-            let held = count(tool.item) > 0
-                || equipment
-                    .value
-                    .iter()
-                    .any(|row| row.def.id == tool.item && row.count > 0);
-            held && tool.use_gate.is_none_or(|minimum| {
-                stats.value.iter().any(|stat| {
-                    stat.index == i32::from(minimum.skill)
-                        && stat.effective >= i32::from(minimum.level)
-                })
-            })
-        })
-    {
-        return Err(ActionError::Unavailable(
-            "gather usable tool missing".into(),
-        ));
-    }
-    if consumes
-        .iter()
-        .any(|item| i64::from(count(item.item)) < i64::from(item.count))
-    {
-        return Err(ActionError::Unavailable("gather bait missing".into()));
-    }
-    Ok(true)
-}
-
 pub struct GatherRunArgs {
     pub target: TargetPlan,
     pub catalog: Arc<GatherCatalog>,
@@ -140,6 +46,7 @@ pub struct GatherRun {
     xp_gain: i32,
     quiet_ticks: u64,
     retried: bool,
+    tend: Option<OneOp>,
 }
 
 impl NativeMachine for GatherRun {
@@ -157,7 +64,10 @@ impl NativeMachine for GatherRun {
                 "gather method is not in the prepared catalog".into(),
             ));
         };
-        if !method_ready(snapshot, method, args.quest_owned)? {
+        if args.quest_owned
+            && !method_ready(snapshot, method, true)
+                .map_err(|reason| ActionError::Unavailable(reason.into()))?
+        {
             return Err(ActionError::Unavailable(
                 "gather prerequisites are not observed".into(),
             ));
@@ -202,12 +112,32 @@ impl NativeMachine for GatherRun {
             xp_gain: 0,
             quiet_ticks: 0,
             retried: false,
+            tend: None,
         };
-        machine.emit_click(cx)?;
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            machine.tend = Some(OneOp::begin(args, cx)?);
+        } else {
+            machine.emit_click(cx)?;
+        }
         Ok(machine)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(tend) = &mut self.tend {
+            match tend.poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.tend = None;
+                    // Re-select and revalidate after a skill/unlock page.
+                    return Poll::Ready(Ok(GatherResult {
+                        end: GatherEnd::Refused,
+                        gained: self.gained,
+                        xp: self.xp_gain,
+                    }));
+                }
+            }
+        }
         let snapshot = cx.snapshot();
         let refused = self
             .request_id
@@ -243,6 +173,10 @@ impl NativeMachine for GatherRun {
                 gained: self.gained,
                 xp: self.xp_gain,
             }));
+        }
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            self.tend = Some(OneOp::begin(args, cx)?);
+            return Poll::Pending;
         }
         if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
             return Poll::Ready(Ok(GatherResult {

@@ -541,6 +541,11 @@ Optional `anchor` is `{"tile":[x,z,level],"source":"content citation"}`.
 The deadline covers the whole step, including waits for usable observations.
 Admission checks selected effective skill, tools, bait, membership and products.
 
+Set the outer step's completion `skip_if` to the same held-count
+`item_count_at_least` predicate as its `settle`. A staged Path can reselect
+the current stage; this guard skips an already-satisfied gather goal instead
+of selecting it again.
+
 Fishing Contest's selected method is `fishing.0_41_53_sinisterfishspot.op1`.
 It requires Fishing 10, a rod and red-vine worms, and awards carp but no Fishing XP.
 The authored quest Path owns its quest-stage gate. Bonzo can consume the third carp
@@ -558,6 +563,20 @@ It reuses the native thieving action, checks selected level requirements, and
 does not bank, train or silently retry a refused walk. Declare the outer step's
 `advances` and completion `skip_if` predicate as for other repeatable-stage steps.
 
+### Compatibility NPC pickpocketing
+
+`Npc.interact('Pickpocket' | 'Steal-from')` remains a one-shot queued NPC
+operation: an open or unknown chat modal and unobserved inventory do not
+suppress the click. The host refuses only when an observed effective Thieving
+level is below the selected NPC requirement; an NPC without a selected
+pickpocket row defaults to level 1, and an unobserved stat does not refuse.
+This intentional native-wins gate diverges from the frozen queue-only helper
+because content itself checks `stat(thieving)` against the pickpocket row
+(`content/scripts/skill_thieving/scripts/pickpocketing/pickpocket.rs2`).
+`stat(thieving)` is effective level, so this check uses effective rather than
+base level. It does not attach the native Thieving machine's attempt, stun,
+completion, inventory, or dialogue policy to this compat click.
+
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
@@ -565,6 +584,12 @@ equipped tool, at the Start area, a named Site, a Custom location or an Auto-sel
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
+
+Gatherer resource and tool-use gates, and Quester gather admission, use the
+observed effective skill level: boosts can satisfy a gate and drains can block
+it. Equipment's separate Attack requirement still uses base Attack.
+An ordinary Gatherer server supply refusal returns to modal tending and
+supply revalidation; it is not a terminal native `action-error`.
 
 With random-event handling enabled, a lost axe or pickaxe head is picked up
 before the two held pieces are reattached. Recovery is bounded to twelve

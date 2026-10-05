@@ -194,6 +194,9 @@ impl NativeMachine for Reach {
 }
 
 impl Reach {
+    pub(crate) fn interaction_request_id(&self) -> Option<u64> {
+        (self.request_id != 0).then_some(self.request_id)
+    }
     fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
         let request = match &self.args.kind {
             ReachKind::Npc { id, name } => {

@@ -3095,14 +3095,11 @@ fn run_case(case: Case) {
     let source_path = path_root.join(case.path_relative());
     let source = std::fs::read(&source_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
-    let path = api::selected::FamilyPreparation::run({
+    let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
         move |cap| compile_path(&source, &selected, &quests, cap)
     })
-    .expect("start combat Path preparation")
-    .join()
-    .expect("join combat Path preparation")
     .unwrap_or_else(|error| panic!("compile {}: {error:?}", source_path.display()));
 
     let names = super::mint_live_names(1);

@@ -213,6 +213,58 @@ pub struct SelectedTarget {
     pub class: PlacementClass,
 }
 
+impl SelectedTarget {
+    /// One approach policy for Gatherer and finite quest gathering.
+    /// Live NPC ops own client-side approach; locs settle at their footprint.
+    pub(crate) fn approach(
+        &self,
+        snapshot: api::snapshot::SnapshotView<'_>,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<crate::native::WalkRequest> {
+        let observation_approach =
+            self.class == PlacementClass::Unloaded && matches!(self.plan.entity, EntityId::Npc(_));
+        let loc_id = match self.plan.entity {
+            EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let needs_walk = if self.class == PlacementClass::Unloaded {
+            true
+        } else if self.plan.npc_index >= 0 {
+            false
+        } else {
+            !snapshot.here().is_some_and(|here| match loc_id {
+                Some(id) => snapshot.walk_loc_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                    id,
+                ),
+                None => snapshot.walk_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                ),
+            })
+        };
+        needs_walk.then(|| crate::native::WalkRequest {
+            target: self.plan.tile,
+            loc_id,
+            radius: RESOURCE_APPROACH_RADIUS,
+            arrival: if observation_approach {
+                nav::arrival::ArrivalKind::Area
+            } else {
+                nav::arrival::ArrivalKind::Reach
+            },
+            options: crate::native::WalkOptions::default(),
+            required_after,
+            evidence: None,
+            cross: Vec::new().into_boxed_slice(),
+            protect: false,
+            allow: Default::default(),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectionResult {
     pub target: Option<SelectedTarget>,
@@ -396,7 +448,7 @@ pub fn select(
         area,
         avoided,
         observation,
-        AccessPolicy::Usable,
+        None,
     )
 }
 
@@ -408,6 +460,7 @@ pub(crate) fn select_for_quest(
     settings: &GathererSettings,
     area: WorkArea,
     observation: SelectionObservation<'_>,
+    snapshot: api::snapshot::SnapshotView<'_>,
 ) -> SelectionResult {
     select_with_access(
         catalog,
@@ -416,7 +469,7 @@ pub(crate) fn select_for_quest(
         area,
         &[AvoidedTile::EMPTY; MAX_AVOID],
         observation,
-        AccessPolicy::Possible,
+        Some(snapshot),
     )
 }
 
@@ -427,8 +480,13 @@ fn select_with_access(
     area: WorkArea,
     avoided: &[AvoidedTile; MAX_AVOID],
     observation: SelectionObservation<'_>,
-    access: AccessPolicy,
+    quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
 ) -> SelectionResult {
+    let access = if quest_snapshot.is_some() {
+        AccessPolicy::Possible
+    } else {
+        AccessPolicy::Usable
+    };
     let SelectionObservation {
         world,
         locs,
@@ -450,6 +508,11 @@ fn select_with_access(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
@@ -562,6 +625,11 @@ fn select_with_access(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
