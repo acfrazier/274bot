@@ -1077,8 +1077,13 @@ mod tests {
             .expect("native zero-QP miniquest identity");
         assert_eq!(identity.quest_points, 0);
         assert_eq!(identity.varp_id, 77);
-        let path: PathDocument =
-            serde_json::from_str(include_str!("../../script/paths/289/barcrawl.json")).unwrap();
+        // The fixture builder needs a miniquest document, not the private
+        // production Path or a made-up quest-tab identity.
+        let mut path = document();
+        path.id = FactKey::new("barcrawl");
+        path.kind = script::quester::path::PathKind::Miniquest;
+        path.quest.as_mut().unwrap().quest_points = 0;
+        path.roles[0].sequences[0].stage = FactKey::new("barcrawl:tour");
         let card = selected.item_by_alias("barcrawl_card").unwrap().id;
         let fixture = miniquest_stage(MiniquestStage {
             name: "barcrawl_fixture_unit",
