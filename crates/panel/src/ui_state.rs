@@ -466,6 +466,12 @@ mod tests {
         .unwrap();
         host_play::persist_panel_ui_value_at(&path, "unrelated", serde_json::json!({"keep": 7}))
             .unwrap();
+        host_play::persist_panel_ui_value_at(
+            &path,
+            "quester_paths",
+            serde_json::json!({"enabled": true, "folder": "checkout/quester/paths/289"}),
+        )
+        .unwrap();
         let panel_state = PanelUiState {
             last_focus: Some("panel-save".into()),
             capture: true,
@@ -505,6 +511,11 @@ mod tests {
         assert_eq!(after_panel_save["nav"]["allow_bank_fetch"], false);
         assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
         assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
+        assert_eq!(after_panel_save["quester_paths"]["enabled"], true);
+        assert_eq!(
+            after_panel_save["quester_paths"]["folder"],
+            "checkout/quester/paths/289"
+        );
         let nav = serde_json::json!({
             "allow_teleports": false,
             "allow_wilderness": true,

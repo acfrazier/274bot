@@ -2936,6 +2936,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
 /// updates the host policy immediately. FirstUseEver docks as a 274bot
 /// panel tab; undock to float.
 fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    session.poll_quester_paths_reload();
     if !session.nav_settings_open {
         return;
     }
@@ -3063,6 +3064,44 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 });
             }
 
+            ui.spacing();
+            ui.separator();
+            ui.text_colored(ACCENT, "Quest Paths");
+            ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
+            let before_paths = session.quester_paths.clone();
+            let mut after_paths = before_paths.clone();
+            let mut paths_changed = false;
+            let path_reload_running = session.quester_paths_reload.is_running();
+            let _path_controls_disabled = if path_reload_running {
+                Some(ui.begin_disabled())
+            } else {
+                None
+            };
+            let mut enabled = after_paths.enabled;
+            if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
+                after_paths.enabled = enabled;
+                paths_changed = true;
+            }
+            ui.text("Folder");
+            ui.set_next_item_width(-1.0);
+            ui.input_text("##quester-path-folder", &mut session.quester_paths_folder_edit)
+                .build();
+            if ui.is_item_deactivated_after_edit() {
+                after_paths.folder =
+                    PathBuf::from(session.quester_paths_folder_edit.clone());
+                paths_changed |= after_paths.folder != before_paths.folder;
+            }
+            drop(_path_controls_disabled);
+
+            let mut reload_requested = false;
+            if path_reload_running {
+                let _disabled = ui.begin_disabled();
+                ui.button(frontend_core::RELOAD_PATHS_LABEL);
+                ui.set_item_tooltip("Wait for the current Path reload to finish.");
+            } else {
+                reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
+            }
+
             if changed {
                 session.ui.nav = nav;
                 let after_permissions = frontend_core::WalkGlobalsView {
@@ -3101,6 +3140,17 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     (Err(error), _) | (_, Err(error)) => {
                         session.error = Some(format!("Nav config: {error}"));
                     }
+                }
+            }
+            if paths_changed {
+                let _ = session.persist_quester_paths(after_paths);
+            } else if reload_requested {
+                session.start_quester_paths_reload();
+            }
+            if let Some(notice) = &session.quester_paths_notice {
+                match notice {
+                    Ok(summary) => ui.text_wrapped(summary.as_ref()),
+                    Err(error) => ui.text_colored(ERROR, format!("Quest Paths: {error}")),
                 }
             }
         });
