@@ -900,9 +900,11 @@ be used with or without that guard.
 The guard holds protection without attacking or flicking. It uses Combat's eat
 line, choosing the largest ordinary food that fits the HP deficit (or the
 smallest available heal if none fits) and respecting the observed food eat
-clock. At or below the emergency line, an available Eat takes priority over
-protection; otherwise protection is proposed first. Message-delay food keeps
-its input lock. A Prayer-level shortfall, or zero points with no prayer potion,
+clock. A sent Eat remains pending for a six-tick observation window so its
+count drop or HP rise can arrive independently of that clock. At or below the
+emergency line, an available Eat takes priority over protection; otherwise
+protection is proposed first. Message-delay food keeps its input lock. A
+Prayer-level shortfall, or zero points with no prayer potion,
 produces one non-terminal `WalkEventKind::Unprotectable` warning for that
 style and cause. The native owner consumes it with
 `NativeActions::take_walk_event`; the walk keeps following and any other held

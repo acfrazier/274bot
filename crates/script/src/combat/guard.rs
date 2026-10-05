@@ -4,7 +4,9 @@ use super::arbiter;
 use super::frame::Frame;
 use super::policy;
 use super::prayer::RaisedPrayers;
-use super::schedule::{elapsed, reached, InputEffect, OpKind, Schedule};
+use super::schedule::{
+    elapsed, reached, InputEffect, OpKind, Schedule, EAT_OBSERVATION_WINDOW_TICKS,
+};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
 use super::threats::ThreatSet;
@@ -85,6 +87,7 @@ pub struct WalkGuard {
     eat_id: i32,
     eat_count: u16,
     eat_hp: i16,
+    eat_admission_tick: u16,
 }
 
 const FLAG_FOLLOW: u8 = 1;
@@ -185,6 +188,7 @@ impl WalkGuard {
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
+            eat_admission_tick: 0,
         })
     }
 
@@ -288,6 +292,7 @@ impl WalkGuard {
                 let (hp, _) = arbiter::stat(&frame, HITPOINTS_STAT);
                 self.schedule
                     .admitted(OpKind::Eat, tick, 0, false, InputEffect::Food(food));
+                self.eat_admission_tick = tick;
                 self.eat_id = id;
                 self.eat_count = food_count(&frame, id);
                 self.eat_hp = hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
@@ -476,11 +481,14 @@ impl WalkGuard {
             self.eat_id = 0;
             self.eat_count = 0;
             self.eat_hp = 0;
-        } else if self.schedule.ready(OpKind::Eat, tick) {
+            self.eat_admission_tick = 0;
+        } else if elapsed(tick, self.eat_admission_tick) >= u16::from(EAT_OBSERVATION_WINDOW_TICKS)
+        {
             self.schedule.timeout(OpKind::Eat);
             self.eat_id = 0;
             self.eat_count = 0;
             self.eat_hp = 0;
+            self.eat_admission_tick = 0;
         }
     }
 
@@ -1614,6 +1622,58 @@ mod tests {
     }
 
     #[test]
+    fn lagged_karambwan_settles_and_retries_at_the_emergency_line() {
+        let mut scene = Scene::new(43);
+        scene.launch_unknown();
+        for slot in 0..4 {
+            scene.add_food("tbwt_cooked_karambwan", slot, 1);
+        }
+        let emergency = {
+            let frame = Frame::borrow(scene.view_at(0)).unwrap();
+            let mut threats = ThreatSet::default();
+            threats.observe(&frame, &scene.tables, 0);
+            let danger = threats.danger(&frame, &scene.tables, 0, false, false);
+            assert_ne!(danger, Some(0));
+            select::lines(danger, 40).emergency
+        };
+        scene.stats[3].effective = emergency;
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+
+        for tick in [0, 4, 8, 12] {
+            assert_eq!(scene.stats[3].effective, emergency);
+            let eat = guard.tick(&scene.view_at(tick)).unwrap();
+            assert_eat(Some(&eat), "Cooked karambwan");
+            guard.admitted(&eat, &scene.view_at(tick));
+
+            let pending = guard.tick(&scene.view_at(tick.wrapping_add(1)));
+            assert!(
+                !is_eat(&pending),
+                "a pending Eat must not repeat: {pending:?}"
+            );
+            assert!(
+                guard.schedule.pending(OpKind::Eat),
+                "the observation window must outlast the food clock"
+            );
+            assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
+
+            scene.inventory.remove(0);
+            scene.refresh();
+            let settled = guard.tick(&scene.view_at(tick.wrapping_add(2)));
+            assert!(
+                !is_eat(&settled),
+                "the combo input lock is still active: {settled:?}"
+            );
+            assert!(!guard.schedule.pending(OpKind::Eat));
+            assert_eq!(
+                guard.schedule.unsettled[OpKind::Eat.index()],
+                0,
+                "each two-tick count-drop observation must settle the Eat"
+            );
+        }
+    }
+
+    #[test]
     fn an_unobserved_eat_times_out_three_times_then_stops() {
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 1;
@@ -1624,20 +1684,21 @@ mod tests {
         let first = guard.tick(&scene.view_at(0)).unwrap();
         assert_eat(Some(&first), "Lobster");
         guard.admitted(&first, &scene.view_at(0));
-        for tick in [1, 2] {
+        let window = u16::from(EAT_OBSERVATION_WINDOW_TICKS);
+        for tick in 1..window {
             let op = guard.tick(&scene.view_at(tick));
             assert!(!is_eat(&op), "a pending Eat must not repeat: {op:?}");
             assert!(guard.schedule.pending(OpKind::Eat));
         }
 
-        for (tick, unsettled) in [(3, 1), (6, 2)] {
+        for (tick, unsettled) in [(window, 1), (window * 2, 2)] {
             let op = guard.tick(&scene.view_at(tick));
             assert_eat(op.as_ref(), "Lobster");
             assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], unsettled);
             guard.admitted(op.as_ref().unwrap(), &scene.view_at(tick));
         }
 
-        let stopped = guard.tick(&scene.view_at(9));
+        let stopped = guard.tick(&scene.view_at(window * 3));
         assert!(
             !is_eat(&stopped),
             "third timeout must stop food: {stopped:?}"
