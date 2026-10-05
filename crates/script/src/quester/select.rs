@@ -560,6 +560,85 @@ mod tests {
         );
     }
 
+    fn assert_nearest_approach_for_family(kind: &str, args: serde_json::Value) {
+        let data = selected();
+        let quests = quests(&data);
+        let mut document: serde_json::Value =
+            serde_json::from_str(crate::quester::compile::COOK_JSON).unwrap();
+        document["roles"][0]["prelude"] = serde_json::json!([]);
+        document["roles"][0]["sequences"][0]["order"] = serde_json::json!("nearest");
+        document["roles"][0]["sequences"][0]["steps"] = serde_json::json!([
+            ("far", [3227, 3300, 0], [3208, 3213, 0]),
+            ("near", [3208, 3213, 0], [3227, 3300, 0]),
+        ]
+        .into_iter()
+        .map(|(id, approach, exact_target)| {
+            let mut args = args.clone();
+            args["anchor"] = serde_json::json!({
+                "tile": approach,
+                "source": "nearest selection fixture"
+            });
+            if let Some(tile) = args.pointer_mut("/target/tile") {
+                *tile = serde_json::json!(exact_target);
+            }
+            serde_json::json!({
+                "id": id, "kind": kind, "version": 1, "args": args,
+                "advances": false,
+                "skip_if": {"Any": []}, "settle": {"All": []}
+            })
+        })
+        .collect::<Vec<_>>());
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        let bank = known_empty_bank();
+        for (x, z, expected) in [(3208, 3213, "near"), (3227, 3300, "far")] {
+            snapshot.seed_local_player(crate::quester::families::tests::local_player(
+                api::WorldTile { x, z, level: 0 },
+            ));
+            assert_eq!(
+                choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+                Choice::Step(expected.into()),
+                "{kind} must select by its authored approach, not authored order or exact target"
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_talk() {
+        assert_nearest_approach_for_family("talk", serde_json::json!({"npc": "cook"}));
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_interact() {
+        assert_nearest_approach_for_family(
+            "interact",
+            serde_json::json!({
+                "target": {
+                    "loc": "priestperiltempledoorl",
+                    "tile": [0, 0, 0],
+                    "source": "nearest selection fixture"
+                },
+                "op": "Knock-at"
+            }),
+        );
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_use_on() {
+        assert_nearest_approach_for_family(
+            "use_on",
+            serde_json::json!({
+                "item": "shears",
+                "target": {
+                    "ground": "wool",
+                    "tile": [0, 0, 0],
+                    "source": "nearest selection fixture"
+                }
+            }),
+        );
+    }
+
     #[test]
     fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
         use crate::native::ActionError;

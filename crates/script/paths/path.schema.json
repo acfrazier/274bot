@@ -1638,7 +1638,6 @@
         },
         "qty": {
           "type": "integer",
-          "format": "int32",
           "description": "Minimum quantity in the current reciprocal role's backpack, from 1 to 28."
         }
       },
@@ -3487,11 +3486,10 @@
             "integer",
             "null"
           ],
-          "format": "uint16",
+          "default": null,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Optional finite local trade budget, in game ticks.",
-          "default": null
+          "description": "Optional finite local trade budget, in game ticks."
         }
       },
       "required": [
@@ -3512,7 +3510,6 @@
         },
         "qty": {
           "type": "integer",
-          "format": "int32",
           "description": "Exact quantity, never all held valuables."
         }
       },
@@ -3528,8 +3525,7 @@
         "tile": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "minItems": 3,
           "maxItems": 3,

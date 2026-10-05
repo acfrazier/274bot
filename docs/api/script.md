@@ -195,6 +195,8 @@ Miniquest Paths use an owned typed progress reader instead of inventing a quest-
 row. The reader runs initially and after advancing steps, and only matching fresh
 run, selected-pin, binding and role evidence is accepted. Nearest-first sequences
 choose the closest uncompleted authored anchor; unknown guards still block selection.
+For `talk`, `interact`, and `use_on`, that anchor is the authored approach `anchor`,
+not an exact `target.tile`. Nearest-first compilation refuses a step without that approach anchor.
 
 Progress returned by a completed step must be newer than that step's begin
 stamp and must have the same stamp as its final outcome. These are separate

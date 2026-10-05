@@ -668,6 +668,7 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
                 with_step(tick, |cx| {
                     predicate.evaluate(&PredicateContext {
                         cx: &cx.tick.cx,
+                        pairs: cx.tick.pairs,
                         quests: cx.quests,
                         progress: cx.progress,
                         required_after: cx.required_after,
