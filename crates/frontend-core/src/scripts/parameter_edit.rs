@@ -137,21 +137,12 @@ fn move_unselectable_to_preserved(
     options.preserved += initial - end;
 }
 
-/// Release-roster quests this server can't run stay visible for a stored pick,
-/// labelled with the reason, but are never picker choices.
+/// Release-roster quests this server can't run stay visible for a stored pick
+/// (the card labels them with the reason) but are never picker choices.
 fn preserve_unavailable_quests(options: &mut ParameterOptions) {
     move_unselectable_to_preserved(options, |id| {
         script::quester::card::unavailable_quest(id).is_none()
     });
-    let start = options.selectable().len();
-    for (value, label) in options.values[start..]
-        .iter()
-        .zip(&mut options.labels[start..])
-    {
-        if let Some(reason) = script::quester::card::unavailable_quest(value) {
-            *label = format!("{label} — {reason}");
-        }
-    }
 }
 
 /// Resolve a schema row once for both front ends. The renderers only choose
@@ -1145,27 +1136,41 @@ mod tests {
         );
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        let card_settings = (script::quester::card::CARD.schema)();
         for (id, source) in [
             ("quests", "released-paths"),
             ("order_override", "released-path-order"),
         ] {
-            let mut def = source_setting(id, "string[]", source);
-            def.options = vec!["cook".into(), "hauntedmine".into()];
-            def.option_labels = vec!["Cook's Assistant".into(), "Haunted Mine".into()];
+            // The card's own picker rows, so the cached reason label is used.
+            let def = card_settings
+                .iter()
+                .find(|setting| setting.id == id)
+                .expect("Quester picker setting");
+            assert_eq!(def.options_from.as_deref(), Some(source));
             if id == "order_override" {
                 bag.insert(id.into(), serde_json::json!(["hauntedmine"]));
             }
             let mut empty = bag.clone();
             empty.insert("quests".into(), serde_json::json!([]));
-            let offered = resolve_parameter_options(&def, &empty, &loadouts, None);
-            assert_eq!(offered.selectable(), ["cook"], "{source}");
+            let offered = resolve_parameter_options(def, &empty, &loadouts, None);
+            assert!(offered.selectable().iter().any(|value| value == "cook"));
+            assert!(
+                offered
+                    .selectable()
+                    .iter()
+                    .all(|value| script::quester::card::unavailable_quest(value).is_none()),
+                "{source}: {:?}",
+                offered.selectable()
+            );
+            assert!(offered.values[offered.selectable().len()..]
+                .iter()
+                .any(|value| value == "hauntedmine"));
 
-            let stored = resolve_parameter_options(&def, &bag, &loadouts, None);
+            let stored = resolve_parameter_options(def, &bag, &loadouts, None);
             assert!(stored
                 .selectable()
                 .iter()
                 .all(|value| value != "hauntedmine"));
-            assert_eq!(stored.preserved, 1, "{source}");
             assert!(
                 stored
                     .label_for("hauntedmine")

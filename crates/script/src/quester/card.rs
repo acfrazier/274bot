@@ -126,15 +126,16 @@ fn settings_schema() -> &'static [SettingDef] {
 }
 
 /// Quest picker rows in release order: released Paths with their display
-/// names, plus unavailable rows the picker shows as non-selectable.
+/// names, plus unavailable rows labelled once with their reason, which the
+/// picker shows as non-selectable.
 fn released_setting_paths() -> &'static [(String, String)] {
     static PATHS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
         RELEASE_INDEX
             .paths
             .iter()
             .filter_map(|entry| {
-                if let (Some(name), Some(_)) = (&entry.name, &entry.unavailable) {
-                    return Some((entry.id.clone(), name.clone()));
+                if let (Some(name), Some(reason)) = (&entry.name, &entry.unavailable) {
+                    return Some((entry.id.clone(), format!("{name} — {reason}")));
                 }
                 let bytes = released_path(&entry.id)?;
                 let document: super::path::PathDocument =
@@ -609,9 +610,10 @@ mod tests {
         assert!(!reason.is_empty());
         assert!(released_path("hauntedmine").is_none());
         assert!(unavailable_quest("cook").is_none());
+        let label = format!("Haunted Mine — {reason}");
         assert!(released_setting_paths()
             .iter()
-            .any(|(id, name)| id == "hauntedmine" && name == "Haunted Mine"));
+            .any(|(id, name)| id == "hauntedmine" && *name == label));
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let expected = format!("Haunted Mine: {reason}");
         FamilyPreparation::run(move |families| {
