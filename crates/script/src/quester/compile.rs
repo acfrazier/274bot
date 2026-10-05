@@ -401,8 +401,8 @@ pub fn compile_path_for_gang(
             return Ok(hit);
         }
     }
-    let document: PathDocument =
-        serde_json::from_slice(bytes).map_err(|_| CompileError::code("invalid-json"))?;
+    let document: PathDocument = serde_json::from_slice(bytes)
+        .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
     let compiled = Arc::new(compile_uncached(&document, digest, selected, quests, gang)?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
@@ -488,7 +488,7 @@ fn skill_index(name: &str) -> Option<u8> {
         .and_then(|id| u8::try_from(id).ok())
 }
 
-fn compile_uncached(
+pub(super) fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
     selected: &SelectedGameData,

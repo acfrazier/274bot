@@ -956,7 +956,7 @@ mod tests {
     fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-        let bytes = crate::quester::card::released_path("romeojuliet").unwrap();
+        let bytes = crate::quester::registry::bundled_path("romeojuliet").unwrap();
         let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
         let completed = resolve_journal(
             &path,
@@ -981,7 +981,7 @@ mod tests {
     fn released_sheep_complete_journal_resolves_complete_not_collect_more() {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-        let bytes = crate::quester::card::released_path("sheep").unwrap();
+        let bytes = crate::quester::registry::bundled_path("sheep").unwrap();
         let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
         let in_progress = resolve_journal(
             &path,

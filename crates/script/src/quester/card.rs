@@ -1,6 +1,8 @@
-//! Compiled card `Quester`: prepare validates settings + release index only.
-use super::compile::{path_bytes, INDEX_JSON};
-use super::queue::{Queue, QueueSettings, ReleaseIndex};
+//! Compiled card `Quester`: Start snapshots the shared Path registry.
+#[cfg(test)]
+use super::compile::INDEX_JSON;
+use super::queue::{Queue, QueueSettings};
+use super::registry::{self, BUNDLED_INDEX};
 use super::runner::QueuedQuester;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
@@ -63,15 +65,12 @@ pub(crate) fn is_pair_path(id: &str) -> bool {
 
 pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
     let settings = decode_settings(bag)?;
-    Ok(RELEASE_INDEX.paths.iter().any(|entry| {
+    Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
         is_pair_path(&entry.id)
             && !settings.skip.contains(&entry.id)
             && (settings.quests.is_empty() || settings.quests.contains(&entry.id))
     }))
 }
-
-static RELEASE_INDEX: LazyLock<ReleaseIndex> =
-    LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
 
 fn settings_schema() -> &'static [SettingDef] {
     static SETTINGS: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
@@ -151,18 +150,10 @@ fn settings_schema() -> &'static [SettingDef] {
 /// picker shows as non-selectable.
 fn released_setting_paths() -> &'static [(String, String)] {
     static PATHS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
-        RELEASE_INDEX
-            .paths
+        registry::PathRegistry::Bundled
+            .rows()
             .iter()
-            .filter_map(|entry| {
-                if let (Some(name), Some(reason)) = (&entry.name, &entry.unavailable) {
-                    return Some((entry.id.clone(), format!("{name} — {reason}")));
-                }
-                let bytes = released_path(&entry.id)?;
-                let document: super::path::PathDocument =
-                    serde_json::from_slice(bytes).expect("released Path document");
-                Some((entry.id.clone(), document.display_name))
-            })
+            .map(|row| (row.id.clone(), row.label.clone()))
             .collect()
     });
     PATHS.as_slice()
@@ -171,7 +162,7 @@ fn released_setting_paths() -> &'static [(String, String)] {
 /// End-user reason a release-roster quest can't run on this server, if any.
 /// Pickers show such quests as non-selectable; the queue keeps them blocked.
 pub fn unavailable_quest(id: &str) -> Option<&'static str> {
-    RELEASE_INDEX
+    BUNDLED_INDEX
         .paths
         .iter()
         .find(|entry| entry.id == id)?
@@ -227,34 +218,13 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
     definition
 }
 
-fn released(index: &ReleaseIndex, id: &str) -> bool {
-    index.schema == 1
-        && index.paths.iter().any(|path| {
-            path.id == id
-                && path.unavailable.is_none()
-                && path
-                    .file
-                    .as_deref()
-                    .and_then(|file| file.strip_suffix(".json"))
-                    == Some(id)
-                && path_bytes(id).is_some()
-        })
-}
-
-/// The released document gate shared by the card and script progress API.
-pub fn released_path(id: &str) -> Option<&'static [u8]> {
-    released(&RELEASE_INDEX, id)
-        .then(|| path_bytes(id))
-        .flatten()
-}
-
 #[cfg(feature = "load")]
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
-        RELEASE_INDEX
+        BUNDLED_INDEX
             .paths
             .iter()
-            .filter_map(|entry| released_path(&entry.id))
+            .filter_map(|entry| registry::bundled_path(&entry.id))
             .map(|bytes| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
@@ -306,7 +276,7 @@ struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
-    queue: Queue<'static>,
+    queue: Queue,
     max_deaths: u8,
     choices: super::choices::QuestChoices,
 }
@@ -358,8 +328,8 @@ fn prepare(
         }),
         gang,
     };
-    for entry in &RELEASE_INDEX.paths {
-        if entry.unavailable.is_none() && released_path(&entry.id).is_none() {
+    for entry in &BUNDLED_INDEX.paths {
+        if entry.unavailable.is_none() && registry::bundled_path(&entry.id).is_none() {
             return Err(StartError::Unavailable(Arc::from(format!(
                 "release index Path is unavailable: {} ({})",
                 entry.id,
@@ -367,15 +337,25 @@ fn prepare(
             ))));
         }
     }
-    let queue = Queue::from_index(&RELEASE_INDEX, queue_settings).map_err(|error| {
+    let quests =
+        QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
+    let registry = registry::reload_with_catalog(&cx.selected, Some(&quests)).map_err(|error| {
+        StartError::Unavailable(
+            format!(
+                "{}: {}",
+                error.code,
+                error.detail.as_deref().unwrap_or("Path reload failed")
+            )
+            .into(),
+        )
+    })?;
+    let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
         StartError::Config(ConfigError::new(
             error.field,
             "invalid-queue",
             error.message,
         ))
     })?;
-    let quests =
-        QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
@@ -418,12 +398,13 @@ fn create(
 
 #[cfg(test)]
 mod tests {
+    use super::super::queue::ReleaseIndex;
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
 
     fn released(index_json: &str, id: &str) -> bool {
         serde_json::from_str::<ReleaseIndex>(index_json)
-            .is_ok_and(|index| super::released(&index, id))
+            .is_ok_and(|index| registry::bundled_in(&index, id))
     }
 
     #[test]
@@ -453,7 +434,10 @@ mod tests {
     fn release_index_is_authoritative_and_includes_imp_when_embedded() {
         for id in ["cook", "sheep", "runemysteries", "romeojuliet", "imp"] {
             assert!(released(INDEX_JSON, id), "{id} missing from release index");
-            assert!(released_path(id).is_some(), "{id} body is not embedded");
+            assert!(
+                registry::bundled_path(id).is_some(),
+                "{id} body is not embedded"
+            );
         }
         assert!(released(
             r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#,
@@ -638,7 +622,7 @@ mod tests {
     fn unavailable_rows_are_picker_rows_never_released_and_refuse_an_only_pick() {
         let reason = unavailable_quest("hauntedmine").expect("Haunted Mine row");
         assert!(!reason.is_empty());
-        assert!(released_path("hauntedmine").is_none());
+        assert!(registry::bundled_path("hauntedmine").is_none());
         assert!(unavailable_quest("cook").is_none());
         let label = format!("Haunted Mine — {reason}");
         assert!(released_setting_paths()

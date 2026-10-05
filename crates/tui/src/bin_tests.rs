@@ -2569,6 +2569,31 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
 }
 
 #[test]
+fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
+    let iso = IsolatedEnv::enter("tui-quester-paths-save-failure");
+    let blocker = iso.dir.join("not-a-directory");
+    std::fs::write(&blocker, b"file").unwrap();
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(blocker.join("panel-ui.json"));
+    let before = app.quester_paths_persisted.clone();
+    app.quester_paths.enabled = true;
+    app.quester_paths.folder = iso.dir.join("paths");
+    app.quester_paths_dirty = true;
+
+    session.project_quester_paths(&mut app);
+
+    assert_eq!(app.quester_paths, before);
+    assert!(!session.quester_paths_reload.is_running());
+    assert!(app.quester_paths_notice_error);
+    assert!(app
+        .quester_paths_notice
+        .as_deref()
+        .unwrap()
+        .starts_with("settings: quest Paths:"));
+}
+
+#[test]
 fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     let iso = IsolatedEnv::enter("tui-reap-finished");
     let mut play = empty_play();
