@@ -2,6 +2,9 @@
 //! their own offer policy; this core owns the bounded offer/confirm/close waits.
 use std::time::{Duration, Instant};
 
+/// Selected tradeside:inv component, shared by native and Load callers.
+pub const OFFER_INV: i32 = 3322;
+
 pub const TRADE_OFFER_WAIT_MS: u64 = 5_000;
 pub const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
 pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;

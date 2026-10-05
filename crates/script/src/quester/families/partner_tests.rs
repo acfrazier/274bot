@@ -136,7 +136,7 @@ fn item(id: i32, qty: i32, container: ItemContainer) -> ItemView {
         slot: 0,
         count: qty,
         actions: vec![],
-        component_id: crate::trade::OFFER_INV,
+        component_id: crate::trade_screen::OFFER_INV,
     }
 }
 
@@ -228,7 +228,7 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
             InteractReq::InvButton {
                 id: 1,
                 operation: 1,
-                component: crate::trade::OFFER_INV,
+                component: crate::trade_screen::OFFER_INV,
                 ..
             }
         ));
