@@ -202,6 +202,7 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
             id: FactKey::new("policy-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
+            skip_if_summary: Arc::from("never"),
             settle: Arc::new(AllPlan { items: vec![] }),
             plan: Arc::new(WaitPlan {
                 until: Arc::new(AllPlan { items: vec![] }),
@@ -218,6 +219,7 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
         selection_since: None,
         prayer_cleanup_owned: crate::combat::RaisedPrayers::empty(),
         clear_prayers: None,
+        trace_events: std::collections::VecDeque::new(),
     })
 }
 
@@ -1945,6 +1947,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
             id: FactKey::new("flour-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
+            skip_if_summary: Arc::from("never"),
             settle: Arc::new(Message {
                 needles: vec!["grain in the hopper".into()],
             }),

@@ -8,8 +8,8 @@ pub mod s2;
 pub mod setting;
 
 use super::compile::{
-    CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
-    StepPlan, StepRun,
+    AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
+    StepContext, StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
@@ -21,6 +21,7 @@ use api::selected::{FactKey, Truth};
 use api::snapshot::{ChatLineView, QuestListStatus};
 use api::WorldTile;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -2717,6 +2718,7 @@ pub struct CompiledAcquireStep {
     pub id: FactKey,
     pub advances: bool,
     pub skip_if: Arc<dyn PredicatePlan>,
+    pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
 }
@@ -2745,6 +2747,7 @@ impl StepPlan for AcquirePlan {
             selection_since: None,
             prayer_cleanup_owned: RaisedPrayers::empty(),
             clear_prayers: None,
+            trace_events: VecDeque::new(),
         }))
     }
 }
@@ -2762,8 +2765,32 @@ struct AcquireRun {
     selection_since: Option<Duration>,
     prayer_cleanup_owned: RaisedPrayers,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
+    trace_events: VecDeque<StepTraceEvent>,
 }
 impl AcquireRun {
+    fn trace_child(&mut self, outcome: AcquisitionTraceOutcome) {
+        let Some(step) = self.steps.get(self.index) else {
+            return;
+        };
+        self.trace_events.push_back(StepTraceEvent::Acquisition {
+            recipe: Arc::clone(&self.recipe),
+            child_step: Arc::clone(&step.id.0),
+            outcome,
+        });
+    }
+
+    fn trace_child_failure(&mut self, error: &ActionError) {
+        let reason = match error {
+            ActionError::Unavailable(reason)
+            | ActionError::Failed(reason)
+            | ActionError::Blocked(reason) => Arc::clone(reason),
+            ActionError::NeedsEvidence(_) => Arc::from("needs evidence"),
+            ActionError::UserInput => Arc::from(MANUAL_MOVEMENT_MESSAGE),
+            _ => Arc::from(format!("{error:?}")),
+        };
+        self.trace_child(AcquisitionTraceOutcome::Failed(reason));
+    }
+
     fn poll_prayer_cleanup(
         &mut self,
         cx: &mut StepContext<'_, '_>,
@@ -2819,12 +2846,13 @@ impl StepRun for AcquireRun {
             });
             if truth != Truth::True {
                 if cx.tick.cx.active_now() >= self.settle_deadline {
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                        "acquire settle timeout",
-                    ))));
+                    let error = ActionError::Failed(Arc::from("acquire settle timeout"));
+                    self.trace_child_failure(&error);
+                    return Poll::Ready(Err(error));
                 }
                 return Poll::Pending;
             }
+            self.trace_child(AcquisitionTraceOutcome::Settled);
             self.settling = false;
             self.index += 1;
         }
@@ -2842,19 +2870,33 @@ impl StepRun for AcquireRun {
                 if skip == Truth::Unknown {
                     let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
                     if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        let error = ActionError::Failed(Arc::from(
                             "acquire skip predicate evidence unavailable",
-                        ))));
+                        ));
+                        self.trace_child_failure(&error);
+                        return Poll::Ready(Err(error));
                     }
                     return Poll::Pending;
                 }
                 self.selection_since = None;
                 if skip == Truth::True {
+                    self.trace_child(AcquisitionTraceOutcome::Skipped(Arc::clone(
+                        &self.steps[self.index].skip_if_summary,
+                    )));
                     self.index += 1;
                     continue;
                 }
                 self.chat_since = reach::last_chat_seq(&cx.tick.cx);
-                let run = self.steps[self.index].plan.begin(cx)?;
+                let child_index = self.index;
+                let result = self.steps[child_index].plan.begin(cx);
+                self.trace_child(AcquisitionTraceOutcome::Begin);
+                let run = match result {
+                    Ok(run) => run,
+                    Err(error) => {
+                        self.trace_child_failure(&error);
+                        return Poll::Ready(Err(error));
+                    }
+                };
                 self.current = Some(run);
                 self.child_outcome = None;
                 break;
@@ -2867,9 +2909,16 @@ impl StepRun for AcquireRun {
                 }));
             }
         }
-        match self.current.as_mut().unwrap().poll(cx) {
+        let child_poll = self.current.as_mut().unwrap().poll(cx);
+        while let Some(event) = self.current.as_mut().and_then(|run| run.take_trace_event()) {
+            self.trace_events.push_back(event);
+        }
+        match child_poll {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Err(error)) => {
+                self.trace_child_failure(&error);
+                Poll::Ready(Err(error))
+            }
             Poll::Ready(Ok(outcome)) => {
                 self.prayer_cleanup_owned
                     .merge(self.current.as_ref().unwrap().prayer_cleanup());
@@ -2915,13 +2964,15 @@ impl StepRun for AcquireRun {
             .and_then(|run| run.in_flight_outcome())
             .or(self.child_outcome.as_ref())
     }
+    fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
+        self.trace_events.pop_front()
+    }
     fn child_recipe_id(&self) -> Option<&Arc<str>> {
-        self.current.as_ref()?;
+        self.steps.get(self.index)?;
         Some(&self.recipe)
     }
     fn child_step_id(&self) -> Option<&FactKey> {
-        self.current.as_ref()?;
-        Some(&self.steps[self.index].id)
+        self.steps.get(self.index).map(|step| &step.id)
     }
 }
 

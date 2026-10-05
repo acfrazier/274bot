@@ -58,6 +58,21 @@ impl ScriptOwner {
             .or_else(|| dropped.err())
             .map(|payload| format!("script teardown panic: {}", panic_message(&payload)))
     }
+    pub(super) fn stop_with_output(
+        &mut self,
+        reason: StopReason,
+        output: &mut dyn NativeOutput,
+    ) -> Option<String> {
+        let mut script = self.0.take()?;
+        let stopped = catch_unwind(AssertUnwindSafe(|| {
+            script.on_stop_with_output(reason, output)
+        }));
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(script)));
+        stopped
+            .err()
+            .or_else(|| dropped.err())
+            .map(|payload| format!("script teardown panic: {}", panic_message(&payload)))
+    }
 }
 impl Drop for ScriptOwner {
     fn drop(&mut self) {
@@ -515,7 +530,7 @@ pub(super) fn prepare_run(
 }
 
 pub(super) fn destroy_run(mut run: Box<CompiledRun>, reason: StopReason) -> Option<String> {
-    let stopped = run.script.stop(reason);
+    let stopped = run.script.stop_with_output(reason, &mut run.output);
     let dropped = catch_unwind(AssertUnwindSafe(|| drop(run)));
     stopped.or_else(|| {
         dropped
