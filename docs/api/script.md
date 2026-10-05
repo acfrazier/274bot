@@ -414,13 +414,20 @@ Omission is strict Continue-only for observed chat pages and selected Scroll/Boo
 pages. It drains Continue pages and refuses option menus without sending an
 answer. It leaves unrelated main interfaces untouched. If no page opens, the
 operation waits for acceptance and a newer evidence tick with an observed player
-who is not moving and has no primary animation. Scene targets also need a
-post-acceptance observation of movement or a primary animation, so a pre-effect
-idle tick cannot complete the step. Loc/Npc/name interactions require their own
-accepted dispatch receipt. This observation boundary covers pages that open on
-arrival or during the primary animation, without a fixed no-page delay.
-Once the boundary is reached with no page, the normal success conditions can
-complete the step. A page that opens later is outside this optional window.
+who is not moving and has no primary animation. Scene targets also need
+post-acceptance movement or a primary animation unless the player was already
+within interaction range at acceptance. A fresh idle tick is required in either
+case. Adjacent instant scene actions can therefore settle without visible
+activity, while a distant target still requires activity. Loc/Npc/name
+interactions require their own accepted dispatch receipt. This observation
+boundary covers pages that open on arrival or during the primary animation,
+without a fixed no-page delay.
+A reached `until` count completes after any page opened by its accepted action
+is drained, before the no-page gate. For other omission-mode success
+conditions, once the boundary is reached with no page, normal completion can
+proceed. `settle_ms` remains active through the no-page gate; a count first
+observed after its deadline does not complete the step. A page that opens later
+is outside this optional window.
 Use explicit `"continue"` when content requires a page, or the object form when
 it requires menu answers. Explicit `"none"` never touches dialogue and leaves
 those pages to the next owner, including during count repetition.
@@ -451,9 +458,10 @@ approach `anchor` still applies to held operations such as Dig.
 Loc/name interaction targets may add `tile: [x,z,level]` and `source` inside
 `target` to select an exact loc rather than the nearest same-definition loc.
 `reachable_only: true` requires a known reachable candidate. `interact.until`
-uses the same `{obj,qty}` inventory-count goal as `use_on.until`; it waits for
-active work, re-arms after progress and idle, and remains bounded by `settle_ms`.
-Count-repeated loc operations also require known reach evidence.
+uses the same `{obj,qty}` inventory-count goal as `use_on.until`; while the
+count is short, it waits for active work and re-arms after progress and idle.
+A reached count completes after any page opened by that accepted action is
+drained. `settle_ms` remains active and bounds the accepted step.
 
 If the clicked loc disappears or transforms, reach completes only after acceptance
 of that exact dispatched interaction. It does not select a replacement. Authored
