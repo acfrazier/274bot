@@ -370,7 +370,8 @@ mod tests {
     ) -> Arc<str> {
         let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
             .expect("quest facts");
-        let registry = PathRegistry::load(source, selected, &quests, worker).expect("folder Path load");
+        let registry =
+            PathRegistry::load(source, selected, &quests, worker).expect("folder Path load");
         let mut summary = registry
             .report()
             .map_or_else(|| "bundled Paths".to_owned(), ToString::to_string);
@@ -476,9 +477,7 @@ mod tests {
         let first_source = source.clone();
         let first_selected = Arc::clone(&selected);
         reload
-            .start_with(move |worker| {
-                Ok(registry_summary(&first_source, &first_selected, worker))
-            })
+            .start_with(move |worker| Ok(registry_summary(&first_source, &first_selected, worker)))
             .expect("start asynchronous reload");
         let summary = finish_reload(&mut reload).expect("folder reload report");
         assert!(summary.contains("Folder Cook [folder]"), "{summary}");
@@ -499,9 +498,7 @@ mod tests {
         write_cook(&folder, "cook", "Edited Again", false);
         let second_source = source.clone();
         reload
-            .start_with(move |worker| {
-                Ok(registry_summary(&second_source, &selected, worker))
-            })
+            .start_with(move |worker| Ok(registry_summary(&second_source, &selected, worker)))
             .expect("restart asynchronous reload");
         let edited = finish_reload(&mut reload).expect("second folder reload report");
         assert!(edited.contains("Edited Again [folder]"), "{edited}");
