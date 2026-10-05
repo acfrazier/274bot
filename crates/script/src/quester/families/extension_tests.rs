@@ -460,21 +460,56 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         ))
         .is_pending()
     );
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().request_id,
+        first_request,
+        "an idle tick before observed scene activity must not rearm"
+    );
+    let mut player = local_player(tile(5, 5));
+    player.player.actor.animation = 625;
+    snapshot.seed_local_player(player);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| with_step(
+            tick,
+            |cx| run.poll(cx)
+        ))
+        .is_pending()
+    );
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| with_step(
+            tick,
+            |cx| run.poll(cx)
+        ))
+        .is_pending()
+    );
     assert_ne!(
         ledger.as_ref().unwrap().outbox.last().unwrap().request_id,
         first_request,
-        "progress followed by idle must rearm promptly"
+        "observed activity followed by idle must rearm promptly"
     );
     snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
-    accept_last(&mut ledger, 6, true);
+    accept_last(&mut ledger, 8, true);
     assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 8, |tick| with_step(
+            tick,
+            |cx| run.poll(cx)
+        ))
         .is_pending()
     );
+    let mut player = local_player(tile(5, 5));
+    player.player.actor.animation = 625;
+    snapshot.seed_local_player(player);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 9, |tick| with_step(
+            tick,
+            |cx| run.poll(cx)
+        ))
+        .is_pending()
+    );
+    snapshot.seed_local_player(local_player(tile(5, 5)));
     assert!(matches!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| with_step(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 10, |tick| with_step(
             tick,
             |cx| run.poll(cx)
         )),
@@ -1513,6 +1548,174 @@ fn operation_omission_waits_for_fresh_idle_player_before_no_page() {
                 assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
             }
         }
+    });
+}
+
+#[test]
+fn interact_omission_settle_timeout_remains_active_during_perpetual_activity() {
+    compile_context_test(|compile| {
+        for (moving, animation) in [(true, -1), (false, 123)] {
+            let (mut snapshot, plan, _) = operation_fixture(compile, "interact", None, false);
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.cx.active_now = Duration::ZERO;
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            accept_last(&mut ledger, 3, true);
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            let mut player = local_player(tile(5, 5));
+            player.player.actor.moving = moving;
+            player.player.actor.animation = animation;
+            snapshot.seed_local_player(player);
+            assert!(
+                matches!(
+                    with_tick(&snapshot, &mut ledger, 4, |tick| {
+                        tick.cx.active_now = Duration::from_millis(60_001);
+                        with_step(tick, |cx| run.poll(cx))
+                    }),
+                    Poll::Ready(Err(ActionError::Failed(reason)))
+                        if reason.as_ref() == "interact settle timeout"
+                ),
+                "moving={moving}, animation={animation}: activity must not bypass the settle deadline"
+            );
+        }
+    });
+}
+
+#[test]
+fn interact_omission_requires_scene_activity_before_fresh_idle_completion() {
+    compile_context_test(|compile| {
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "priestperiltempledoorl"},
+                "op": "Knock-at",
+                "radius": 8
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        let mut target = loc(
+            resolve_loc(compile, "priestperiltempledoorl").unwrap(),
+            "Door",
+            "Knock-at",
+        );
+        target.distance = 8;
+        let destination = target.tile;
+        let start = tile(destination.x - 8, destination.z);
+        snapshot.seed_locs(vec![target]);
+        snapshot.seed_local_player(local_player(start));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::Loc { .. }));
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "a distant scene target must not settle on an idle tick before click activity"
+        );
+        let mut moving_player = local_player(tile(start.x + 2, start.z));
+        moving_player.player.actor.moving = true;
+        snapshot.seed_local_player(moving_player);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_local_player(local_player(destination));
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+    });
+}
+
+#[test]
+fn use_on_omission_requires_scene_activity_before_fresh_idle_completion() {
+    compile_context_test(|compile| {
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "doogleleaves",
+                "target": {"loc": "priestperiltempledoorl"}
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        let mut target = loc(
+            resolve_loc(compile, "priestperiltempledoorl").unwrap(),
+            "Door",
+            "Knock-at",
+        );
+        target.tile = tile(6, 5);
+        target.distance = 1;
+        snapshot.seed_locs(vec![target]);
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(
+            vec![held(
+                resolve_obj(compile, "doogleleaves").unwrap(),
+                "Doogle leaves",
+                1,
+                3,
+                None,
+            )],
+            28,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "a scene use-on must not settle on an idle tick before click activity"
+        );
+        let mut moving_player = local_player(tile(5, 5));
+        moving_player.player.actor.moving = true;
+        snapshot.seed_local_player(moving_player);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
     });
 }
 

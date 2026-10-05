@@ -1573,6 +1573,7 @@ pub(crate) struct InteractArgs {
     pub(crate) settle_ms: Option<u64>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Scene targets also require post-acceptance movement or primary animation.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -1733,6 +1734,7 @@ impl StepPlan for InteractPlan {
             dialogue_started: None,
             dialogue_completed: false,
             accepted_tick: None,
+            scene_activity_observed: false,
             until: begin_until(self.until.as_ref(), cx)?,
             target_tile: self.target_tile,
             reachable_only: self.reachable_only,
@@ -1768,6 +1770,7 @@ struct InteractRun {
     dialogue_started: Option<Duration>,
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
+    scene_activity_observed: bool,
     until: Option<(i32, i32)>,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
@@ -1787,6 +1790,7 @@ impl InteractRun {
         self.dialogue_started = None;
         self.dialogue_completed = false;
         self.accepted_tick = None;
+        self.scene_activity_observed = false;
     }
 }
 impl StepRun for InteractRun {
@@ -1827,9 +1831,24 @@ impl StepRun for InteractRun {
                 self.dialogue_started = Some(cx.tick.cx.active_now());
                 return Poll::Pending;
             }
-            // A fresh idle-player observation anchors absence after arrival or
-            // the primary animation, without a fixed opening delay.
-            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick) {
+            if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d)
+                && !until_reached(self.until, &cx.tick.cx)
+            {
+                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "interact settle timeout",
+                ))));
+            }
+            let scene_target = matches!(
+                &self.kind,
+                reach::ReachKind::Loc { .. }
+                    | reach::ReachKind::Npc { .. }
+                    | reach::ReachKind::Name { .. }
+            );
+            self.scene_activity_observed |=
+                scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
+            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                || (scene_target && !self.scene_activity_observed)
+            {
                 return Poll::Pending;
             }
         }
@@ -2116,6 +2135,19 @@ fn primary_animation_active(cx: &crate::native::ActionContext<'_>) -> bool {
         .is_some_and(|player| player.value.player.actor.animation >= 0)
 }
 
+/// Moving or primary-animation activity ties scene completion to the accepted click
+/// without rescanning target lists to infer interaction range.
+fn player_activity_after(
+    cx: &crate::native::ActionContext<'_>,
+    accepted_tick: Option<u64>,
+) -> bool {
+    accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
+        && cx.snapshot().local_player().is_some_and(|player| {
+            let actor = &player.value.player.actor;
+            actor.moving || actor.animation >= 0
+        })
+}
+
 fn fresh_idle_after(cx: &crate::native::ActionContext<'_>, accepted_tick: Option<u64>) -> bool {
     accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
         && cx.snapshot().local_player().is_some_and(|player| {
@@ -2154,6 +2186,7 @@ pub(super) struct UseOnArgs {
     no_product: Option<PredicateDocument>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Scene targets also require post-acceptance movement or primary animation.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -2308,6 +2341,7 @@ impl StepPlan for UseOnPlan {
             dialogue_started: None,
             dialogue_completed: false,
             accepted_tick: None,
+            scene_activity_observed: false,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -2341,6 +2375,7 @@ struct UseOnRun {
     dialogue_started: Option<Duration>,
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
+    scene_activity_observed: bool,
 }
 impl UseOnRun {
     fn clear_round(&mut self) {
@@ -2352,6 +2387,7 @@ impl UseOnRun {
         self.dialogue_started = None;
         self.dialogue_completed = false;
         self.accepted_tick = None;
+        self.scene_activity_observed = false;
     }
 }
 
@@ -2574,6 +2610,7 @@ impl StepRun for UseOnRun {
                 self.dialogue_completed = false;
                 self.dialogue_started = None;
                 self.accepted_tick = None;
+                self.scene_activity_observed = false;
                 return Poll::Pending;
             }
             if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
@@ -2634,9 +2671,13 @@ impl StepRun for UseOnRun {
                 }
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
             }
+            let scene_target = matches!(self.kind.as_ref(), "loc" | "npc");
+            self.scene_activity_observed |=
+                scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
             if self.default_dialogue
                 && !self.dialogue_completed
-                && !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                && (!fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                    || (scene_target && !self.scene_activity_observed))
             {
                 return Poll::Pending;
             }

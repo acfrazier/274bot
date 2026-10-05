@@ -414,9 +414,11 @@ Omission is strict Continue-only for observed chat pages and selected Scroll/Boo
 pages. It drains Continue pages and refuses option menus without sending an
 answer. It leaves unrelated main interfaces untouched. If no page opens, the
 operation waits for acceptance and a newer evidence tick with an observed player
-who is not moving and has no primary animation. Loc/Npc/name interactions require
-their own accepted dispatch receipt. This observation boundary covers pages that
-open on arrival or during the primary animation, without a fixed no-page delay.
+who is not moving and has no primary animation. Scene targets also need a
+post-acceptance observation of movement or a primary animation, so a pre-effect
+idle tick cannot complete the step. Loc/Npc/name interactions require their own
+accepted dispatch receipt. This observation boundary covers pages that open on
+arrival or during the primary animation, without a fixed no-page delay.
 Once the boundary is reached with no page, the normal success conditions can
 complete the step. A page that opens later is outside this optional window.
 Use explicit `"continue"` when content requires a page, or the object form when
