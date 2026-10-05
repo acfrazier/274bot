@@ -210,7 +210,6 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
-
 Acquisition recipes can call other recipes with `acquire` steps. The compiler
 binds dependencies first and compiles each recipe once, independent of its
 declaration order. A chain can contain at most 32 recipes. A cycle returns
@@ -279,6 +278,9 @@ for optional per-kill looting, not a promised total. A loot phase may finish
 below that threshold; authored `until` or `settle` must prove any required total.
 Manual movement, cancellation and missing-evidence outcomes still end the
 operation. Non-loot Reach door-recovery failures still park Quester.
+Combat `finish` answers its dialogue through the shared selector: flat `prefer`,
+`choose`, `strict` and `line_rules` fields select exactly as `talk` does, and
+`max_ticks` measures observed game ticks, not host polls.
 
 ### Dialogue page acknowledgements
 
@@ -309,11 +311,16 @@ retains the final-option fallback. `continue_only: true` omits `npc` and drains
 an already-open conversation without talking or walking.
 
 `interact` and `use_on` may declare `dialogue` with the same options object.
-`"continue"` drains pages in strict mode and refuses an unconfigured menu.
-For `interact`, omission or `"none"` leaves continuation to the next owner.
-An accepted `use_on` with omitted dialogue options drains an observed chat modal
-or visible Continue control with the shared default continuation. Explicit
-`"none"` leaves those pages to the next owner, including during count repetition.
+`"continue"` drives strict Continue-only continuation and refuses an unconfigured
+menu. The options-object form uses its authored answer rules and `strict` value.
+Both forms expect a page after every accepted round, including every `until`
+round. No page after the bounded opening wait fails with
+`expected dialogue did not open`. For `interact`, omission or
+`"none"` leaves continuation to the next owner. For `use_on`, omission drains
+observed pages in strict Continue-only mode without requiring a page: it never
+answers an option menu, and an encountered menu fails with a clear reason.
+Authors who need menu choices use the object form. Explicit `"none"` leaves
+those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
 Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`

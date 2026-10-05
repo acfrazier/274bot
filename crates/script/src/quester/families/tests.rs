@@ -2869,6 +2869,16 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
         })
         .is_pending());
         assert!(
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "begin the shared driver without dispatching another product round"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
             matches!(
                 emitted(&ledger),
                 InteractReq::ContinueDialog { component_id: None }

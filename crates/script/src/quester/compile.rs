@@ -250,10 +250,6 @@ pub trait StepPlan: Send + Sync {
     fn compile_warning(&self) -> Option<&'static str> {
         None
     }
-    /// The compiled approach anchor, if this family declares one.
-    fn anchor(&self) -> Option<api::WorldTile> {
-        None
-    }
 }
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;

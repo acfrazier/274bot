@@ -1239,10 +1239,7 @@ fn compile_dialogue(
     match args {
         None | Some(DialogueDocument::Mode(DialogueMode::None)) => Ok(None),
         Some(DialogueDocument::Mode(DialogueMode::Continue)) => {
-            Ok(Some(dialogue::DialogueOptions {
-                strict: true,
-                ..Default::default()
-            }))
+            Ok(Some(dialogue::DialogueOptions::continue_only()))
         }
         Some(DialogueDocument::Options(args)) => compile_dialogue_options(args).map(Some),
     }
@@ -1390,9 +1387,6 @@ impl StepPlan for TalkPlan {
             dialogue: None,
             started: false,
         }))
-    }
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
     }
 }
 
@@ -1608,7 +1602,7 @@ pub(crate) fn compile_interact(
         let item = cx
             .selected
             .item_by_alias(&held)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(held.as_str()))?;
         reach::ReachKind::Held {
             id: item.id,
             obj: Arc::from(item.name.as_deref().unwrap_or(&held)),
@@ -1693,9 +1687,6 @@ struct InteractPlan {
     reachable_only: bool,
 }
 impl StepPlan for InteractPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
@@ -1796,17 +1787,17 @@ impl StepRun for InteractRun {
             self.reachable_only || self.until.is_some(),
         ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
             || cx.tick.cx.snapshot().inventory().is_some());
-        if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "interact settle timeout",
-            ))));
-        }
         if until_reached(self.until, &cx.tick.cx) {
             return Poll::Ready(Ok(StepOutcome {
                 progress: None,
                 evidence: cx.tick.cx.evidence(),
                 receipt: None,
             }));
+        }
+        if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "interact settle timeout",
+            ))));
         }
         if self.round_accepted {
             let (id, _) = self.until.unwrap();
@@ -1922,13 +1913,6 @@ impl StepRun for InteractRun {
         if let Some(handle) = &self.reach {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(false)) if self.until.is_some() => {
-                    self.reach = None;
-                    self.round_accepted = true;
-                    self.round_deadline =
-                        Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
-                    Poll::Pending
-                }
                 Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
                     "interact target not reached",
                 )))),
@@ -2167,7 +2151,7 @@ pub(super) fn compile_use_on(
             .selected
             .item_by_alias(ground)
             .and_then(|row| row.name.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(ground.as_str()))?;
         ("obj", id, Arc::<str>::from(name))
     } else {
         return Err(CompileError::code("invalid-args"));
@@ -2219,9 +2203,6 @@ struct UseOnPlan {
     dialogue_options: Option<dialogue::DialogueOptions>,
 }
 impl StepPlan for UseOnPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let until = begin_until(self.until.as_ref(), cx)?;
         Ok(Box::new(UseOnRun {
@@ -2318,7 +2299,8 @@ impl StepRun for UseOnRun {
                     }
                 }
             }
-            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
+            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d)
+                && !until_reached(self.until, &cx.tick.cx);
             if let Some(handle) = &self.walk {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                     Poll::Ready(Ok(receipt))
@@ -2369,13 +2351,17 @@ impl StepRun for UseOnRun {
                 if self.until.is_some()
                     && self.default_dialogue
                     && cx.tick.cx.snapshot().chat_modal().is_some_and(|chat| {
-                        chat.value.root >= 0 && chat.value.continue_component_id >= 0
+                        chat.value.root >= 0 || chat.value.continue_component_id >= 0
                     })
                 {
-                    self.interaction = Some(cx.tick.actions.begin::<UseOnAction>(
-                        InteractReq::ContinueDialog { component_id: None },
+                    self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                        dialogue::DialogueArgs {
+                            target: dialogue::DialogueTarget::Continuation,
+                            options: dialogue::DialogueOptions::continue_only(),
+                        },
                         &mut cx.tick.cx,
                     )?);
+                    self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
                 self.deadline
@@ -2536,7 +2522,7 @@ impl StepRun for UseOnRun {
                         .is_some_and(|chat| {
                             chat.value.root >= 0 || chat.value.continue_component_id >= 0
                         })
-                        .then(dialogue::DialogueOptions::default)
+                        .then(dialogue::DialogueOptions::continue_only)
                 });
                 if let Some(options) = options {
                     self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2549,11 +2535,6 @@ impl StepRun for UseOnRun {
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
-            }
-            if self.until.is_some() && self.round_before.is_none() {
-                // ContinueDialog for an objbox/page is not a product round.
-                self.clear_round();
-                return Poll::Pending;
             }
             let pred = PredicateContext {
                 cx: &cx.tick.cx,
