@@ -265,22 +265,11 @@ impl<'a> ParamsPane<'a> {
                 let Some(index) = visible.get(self.state.choice_cursor).copied() else {
                     return ParamsKey::None;
                 };
-                let Some(opt) = opts.values.get(index) else {
-                    return ParamsKey::None;
-                };
-                if self
-                    .state
-                    .choice_selected
-                    .iter()
-                    .any(|value| opts.matches_option(value, opt))
-                {
-                    self.state
-                        .choice_selected
-                        .retain(|value| !opts.matches_option(value, opt));
+                if opts.toggle_array_choice(&mut self.state.choice_selected, index) {
+                    ParamsKey::Toggle
                 } else {
-                    self.state.choice_selected.push(opt.clone());
+                    ParamsKey::None
                 }
-                ParamsKey::Toggle
             }
             _ => ParamsKey::None,
         }
@@ -525,6 +514,23 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Wrapped detail for stored quest picks that are no longer choices (an
+/// unavailable quest and its reason), so the narrow row never clips it.
+fn stored_quest_reason(
+    bag: &serde_json::Map<String, serde_json::Value>,
+    def: &SettingDef,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> Option<String> {
+    if !matches!(
+        def.options_from.as_deref(),
+        Some("released-paths" | "released-path-order")
+    ) || options.preserved == 0
+    {
+        return None;
+    }
+    options.preserved_stored_labels(bag.get(&def.id)?)
+}
+
 fn display_value(
     bag: &serde_json::Map<String, serde_json::Value>,
     def: &SettingDef,
@@ -581,12 +587,16 @@ impl Widget for ParamsPane<'_> {
         let mut cursor_line = 0usize;
         let mut unavailable_current = None;
         let mut site_reason_detail = false;
+        let mut quest_reason_detail = false;
         if self.state.editing && (self.state.multi_select || self.state.choice_single) {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
                 if def.options_from.as_deref() == Some("gather:sites") && opts.preserved > 0 {
                     unavailable_current = Some(display_value(self.bag, def, &opts));
                     site_reason_detail = true;
+                } else if let Some(detail) = stored_quest_reason(self.bag, def, &opts) {
+                    unavailable_current = Some(detail);
+                    quest_reason_detail = true;
                 }
                 let label = def.label.as_deref().unwrap_or(&def.id);
                 lines.push(Line::from(format!("{label} choices")));
@@ -642,8 +652,10 @@ impl Widget for ParamsPane<'_> {
                             .any(|selected| opts.matches_option(selected, opt))
                         {
                             "[x]"
-                        } else {
+                        } else if opts.is_selectable_index(index) {
                             "[ ]"
+                        } else {
+                            "[-]"
                         };
                         lines.push(Line::from(format!(
                             "{mark}{status} {}",
@@ -732,6 +744,13 @@ impl Widget for ParamsPane<'_> {
                         {
                             unavailable_current = Some(current.clone());
                             site_reason_detail = true;
+                        } else if !self.state.editing
+                            && (i == self.state.cursor || unavailable_current.is_none())
+                        {
+                            if let Some(detail) = stored_quest_reason(self.bag, def, &options) {
+                                unavailable_current = Some(detail);
+                                quest_reason_detail = true;
+                            }
                         }
                         current
                     }
@@ -744,6 +763,15 @@ impl Widget for ParamsPane<'_> {
             // Keep the full saved-site label and reason visible beneath the row or picker.
             let reserve = if site_reason_detail {
                 inner.height.min(3)
+            } else if quest_reason_detail {
+                // Every wrapped row of the stored quests' reasons, one spare
+                // for word wrapping, never more than half the pane.
+                let width = usize::from(inner.width.max(1));
+                let rows = current.chars().count().div_ceil(width) + 1;
+                u16::try_from(rows)
+                    .unwrap_or(u16::MAX)
+                    .min(inner.height / 2)
+                    .max(1)
             } else {
                 inner.height.saturating_sub(5).max(1)
             };
@@ -2192,6 +2220,112 @@ mod tests {
         assert!(pane.state.choice_selected.is_empty());
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
         assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!([])));
+    }
+
+    #[test]
+    fn unavailable_quest_is_never_added_by_the_real_picker() {
+        let dir = temp_dir("quest-unavailable-add");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let quests_row = schema
+            .iter()
+            .position(|field| field.id == "quests")
+            .unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        let mut state = ParamsState {
+            open: true,
+            cursor: quests_row,
+            ..Default::default()
+        };
+        let mut pane = ParamsPane {
+            schema,
+            bag: &mut bag,
+            commit: &mut store_commit(&mut store, "Quester"),
+            loadouts: &loadouts,
+            game_data: None,
+            state: &mut state,
+        };
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        let options = pane.resolved_options(&schema[quests_row]);
+        pane.state.choice_cursor = options
+            .values
+            .iter()
+            .position(|value| value == "hauntedmine")
+            .unwrap();
+        pane.on_key(KeyCode::Char(' '));
+        assert_eq!(pane.state.choice_selected, ["cook"]);
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+        assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!(["cook"])));
+    }
+
+    #[test]
+    fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
+        let dir = temp_dir("quest-unavailable-reason");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
+        let full = format!("Haunted Mine — {reason}")
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        let quests_row = schema
+            .iter()
+            .position(|field| field.id == "quests")
+            .unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: quests_row,
+            ..Default::default()
+        };
+
+        let render = |bag: &mut serde_json::Map<String, serde_json::Value>,
+                      state: &mut ParamsState,
+                      store: &mut ScriptSettingsStore| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema,
+                        bag,
+                        commit: &mut store_commit(store, "Quester"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+        };
+        bag.insert("quests".into(), serde_json::json!(["cook", "hauntedmine"]));
+        let rows = render(&mut bag, &mut state, &mut store);
+        assert!(rows.contains(&full), "rows view clips the reason: {rows}");
+        {
+            let mut pane = ParamsPane {
+                schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        }
+        let picker = render(&mut bag, &mut state, &mut store);
+        assert!(picker.contains(&full), "picker clips the reason: {picker}");
     }
 
     #[test]
