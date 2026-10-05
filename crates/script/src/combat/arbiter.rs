@@ -3,6 +3,8 @@
 use super::frame::Frame;
 use super::policy;
 use super::tables::{CombatTables, PotionKind};
+pub(crate) const ARM_SIDE_TAB_FLAG: u8 = 1 << 7;
+pub(crate) const ARM_WAIT_MASK: u8 = !ARM_SIDE_TAB_FLAG;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -30,7 +32,7 @@ impl PlanRow {
         Self { kind, id, aux }
     }
     pub fn cost(self) -> u8 {
-        if self.kind == RowKind::Arm && self.aux & 0x80 != 0 {
+        if self.kind == RowKind::Arm && self.aux & ARM_SIDE_TAB_FLAG != 0 {
             return 0;
         }
         if matches!(self.kind, RowKind::Attack | RowKind::Cast) {

@@ -298,6 +298,12 @@ over-255-entry orders fail compilation. `fallback_spells: false` is the default;
 exhausted. Spell-specific refusal and rune evidence still belong to the native
 combat core.
 
+Magic and ranged combat use protection prayers, not melee offensive prayers.
+Manual casts are acknowledged by observed rune consumption; a silent settle
+timeout is retried rather than treated as an autocast-arm failure. Open PvM
+sends the targeted interaction and lets the server approach the target; it
+does not perform a client-side magic range or line-of-sight check.
+
 ### Exact loc use-on targets
 
 Item/widget use-on dispatch keeps the exact loc tile and applies every supplied

@@ -149,6 +149,59 @@ fn case17_autocast_initial_armed_spell_is_replaced_and_rune_out_rearms_strike() 
 }
 
 #[test]
+fn mage_fight_enables_only_the_protect_prayer() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 35);
+    scene.stat(5, 43, 43);
+    scene.install();
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.npcs[0].animation_frame = 0;
+    scene.refresh();
+
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap();
+    let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        },
+    ))
+    .unwrap();
+    harness.machine.engage(
+        ActorRef {
+            kind: ActorKind::Npc,
+            index: 7,
+        },
+        &frame,
+    );
+    harness.machine.phase = Phase::Fight;
+    assert_ne!(harness.machine.flags & BOOST_WORTH, 0);
+
+    harness.pending_batch(&scene, 1);
+    let mut prayers = harness
+        .machine
+        .plan
+        .iter()
+        .filter(|row| row.kind == RowKind::Prayer);
+    assert_eq!(prayers.next().map(|row| row.id), Some(protect.button_com));
+    assert!(
+        prayers.next().is_none(),
+        "mage combat enabled a melee offensive prayer"
+    );
+}
+
+#[test]
 fn case24_manual_order_with_armed_staff_never_arms_or_attacks_and_casts_five_ticks_apart() {
     let mut scene = magic_scene(Some("staff_of_fire"), 60);
     let order = ["wind_blast", "water_blast", "earth_blast", "fire_blast"];
@@ -278,6 +331,45 @@ fn manual_order_fallback_flag_is_required_at_rune_exhaustion() {
             );
         }
     }
+}
+
+#[test]
+fn manual_cast_timeout_retries_once_then_reports_unresponsive() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 35);
+    let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
+    cast(harness.pending(&scene, 1), component(&scene, "fire_bolt"));
+
+    for tick in 2..11 {
+        refresh_magic(&mut scene, 3, false);
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert_eq!(harness.machine.magic().rejected, 0);
+    cast(harness.pending(&scene, 11), component(&scene, "fire_bolt"));
+    assert_eq!(harness.machine.end, None);
+
+    for tick in 12..21 {
+        refresh_magic(&mut scene, 3, false);
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert_eq!(
+        harness.ready(&scene, 21).end,
+        CombatEnd::Aborted(AbortReason::Unresponsive)
+    );
+}
+
+#[test]
+fn manual_classified_refusal_exhaustion_is_unresponsive_not_arm_failure() {
+    let scene = magic_scene(Some("ibanstaff"), 60);
+    let mut harness = Harness::new(&scene, request(&scene, Some(&["ibans_blast"]), false));
+    cast(harness.pending(&scene, 1), component(&scene, "ibans_blast"));
+    harness
+        .machine
+        .magic_refusal("You have no charges left on the staff.");
+
+    assert_eq!(
+        harness.ready(&scene, 2).end,
+        CombatEnd::Aborted(AbortReason::Unresponsive)
+    );
 }
 
 #[test]
@@ -472,42 +564,6 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
 }
 
 #[test]
-fn both_cast_modes_use_ten_tile_range_full_footprint_and_a_borrowed_los_ray() {
-    let mut collision = api::snapshot::SceneView {
-        available: true,
-        base_x: 2600,
-        base_z: 3200,
-        level: 0,
-        width: 24,
-        height: 24,
-        collision_flags: vec![0; 24 * 24],
-    };
-    let here = tile(2600, 3200);
-    assert_eq!(
-        magic::in_reach(here, tile(2610, 3200), 1, Some(&collision)),
-        Some(true)
-    );
-    assert_eq!(
-        magic::in_reach(here, tile(2611, 3200), 3, Some(&collision)),
-        Some(false)
-    );
-    assert_eq!(
-        magic::in_reach(tile(2612, 3200), here, 3, Some(&collision)),
-        Some(true)
-    );
-    assert_eq!(
-        magic::in_reach(tile(2613, 3200), here, 3, Some(&collision)),
-        Some(false)
-    );
-    assert_eq!(magic::in_reach(here, tile(2610, 3200), 1, None), None);
-    collision.collision_flags[5 * 24] = i32::MAX;
-    assert_eq!(
-        magic::in_reach(here, tile(2610, 3200), 1, Some(&collision)),
-        Some(false)
-    );
-}
-
-#[test]
 fn mage_boosts_never_select_melee_attack_or_strength_potions() {
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let first_free = scene.inventory.len();
@@ -563,4 +619,37 @@ fn steady_autocast_observation_and_ranking_allocate_nothing_for_two_hundred_tick
     }
     assert_eq!(allocations, 0);
     assert_eq!(harness.machine.casts(), 40);
+}
+
+#[test]
+fn steady_manual_order_selection_allocates_nothing_between_casts() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 60);
+    let order = ["wind_blast", "water_blast"];
+    refresh_magic(&mut scene, 3, false);
+    let mut harness = Harness::new(&scene, request(&scene, Some(&order), false));
+    cast(harness.pending(&scene, 1), component(&scene, order[0]));
+
+    let mut last_cast_tick = 1;
+    let mut last_alias = order[0];
+    let mut next_spell = 1;
+    let mut allocations = 0;
+    for tick in 2..102 {
+        if tick == last_cast_tick + 1 {
+            spend(&mut scene, last_alias);
+        }
+        refresh_magic(&mut scene, 3, false);
+        if (tick - 1) % 5 == 0 {
+            last_alias = order[next_spell];
+            cast(harness.pending(&scene, tick), component(&scene, last_alias));
+            last_cast_tick = tick;
+            next_spell = (next_spell + 1) % order.len();
+        } else {
+            allocations += allocation_counter::measure(|| {
+                assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+                assert!(harness.runtime.ledger.as_ref().unwrap().outbox.is_empty());
+            })
+            .count_total;
+        }
+    }
+    assert_eq!(allocations, 0);
 }

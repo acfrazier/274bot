@@ -1939,12 +1939,16 @@ fn magic_batch_contract(case: Case, capture: &CombatCapture) -> bool {
         }
 }
 
-fn magic_ready(case: Case, capture: &CombatCapture) -> bool {
-    let expected_end = if case == Case::MageManualNoFallback {
+fn magic_expected_end(case: Case) -> &'static str {
+    if case == Case::MageManualNoFallback {
         "Aborted(Unprotected(NoRunes))"
     } else {
         "Killed"
-    };
+    }
+}
+
+fn magic_ready(case: Case, capture: &CombatCapture) -> bool {
+    let expected_end = magic_expected_end(case);
     let Some(report) = report_with_end(capture, expected_end) else {
         return false;
     };
@@ -1966,7 +1970,9 @@ fn magic_ready(case: Case, capture: &CombatCapture) -> bool {
     let no_budget = !combat_outcomes(capture)
         .iter()
         .any(|fields| fields["combat_end"] == json!("Budget"));
-    let killed = expected_end != "Killed" || every_killed_report_has_corpse(capture);
+    let killed = expected_end != "Killed"
+        || (every_killed_report_has_corpse(capture)
+            && prayer_off_plan_after_corpse(capture, report));
     rune_order_ok
         && rune_cast_count(casts, MageSpell::FireBolt) == 12
         && cast_mode_ok
@@ -2090,11 +2096,7 @@ fn magic_receipt(capture: &CombatCapture, case: Case) -> Value {
         .copied()
         .filter(|distance| *distance >= 2)
         .collect::<std::collections::BTreeSet<_>>();
-    let expected_end = if case == Case::MageManualNoFallback {
-        "Aborted(Unprotected(NoRunes))"
-    } else {
-        "Killed"
-    };
+    let expected_end = magic_expected_end(case);
     let onset_tick = first_warlord_attack_onset(capture);
     let batch_events = batch_plans(capture)
         .iter()
@@ -2323,11 +2325,7 @@ fn case_invalid_reason(case: Case, capture: &CombatCapture) -> Option<String> {
                 case.key()
             ));
         }
-        let expected_end = if case == Case::MageManualNoFallback {
-            "Aborted(Unprotected(NoRunes))"
-        } else {
-            "Killed"
-        };
+        let expected_end = magic_expected_end(case);
         if let Some(report) = report_with_end(capture, expected_end) {
             let report_tick = integer(report, "combat_evidence_tick");
             let last_tick = capture
@@ -2732,10 +2730,30 @@ fn has_corpse(capture: &CombatCapture, report: &Value) -> bool {
     let begin_tick = integer(report, "combat_ticks")
         .filter(|ticks| *ticks >= 0)
         .map_or(evidence_tick, |ticks| evidence_tick.saturating_sub(ticks));
-    // S3 §3.2 step5 latches the kill, then §3.4 WindDown settles prayer-off
-    // before Ready publishes the report. The latest bar in that engagement
-    // must be its exact HP0 corpse; a later revival or type change rejects it.
-    capture
+    // The first exact HP0 bar is the latched end; the latest bar still has to
+    // remain that corpse. A later Ready status is bounded by WindDown's lock
+    // end + 2, with one publication tick because the retained G2 publishes
+    // Ready one tick after its final prayer-off observation.
+    let latch_tick = capture.frames.iter().find_map(|frame| {
+        let tick = frame["tick"].as_i64()?;
+        if tick < begin_tick || tick > evidence_tick {
+            return None;
+        }
+        frame["nearby_npcs"]
+            .as_array()?
+            .iter()
+            .find(|npc| {
+                npc["index"].as_i64() == Some(index)
+                    && npc["health"] == json!(0)
+                    && npc["total_health"].as_i64().is_some_and(|total| total > 0)
+                    && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
+            })
+            .map(|_| tick)
+    });
+    let Some(latch_tick) = latch_tick else {
+        return false;
+    };
+    let latest_bar = capture
         .frames
         .iter()
         .rev()
@@ -2749,12 +2767,16 @@ fn has_corpse(capture: &CombatCapture, report: &Value) -> bool {
                 .as_array()?
                 .iter()
                 .find(|npc| npc["index"].as_i64() == Some(index))
-        })
-        .is_some_and(|npc| {
-            npc["health"] == json!(0)
-                && npc["total_health"].as_i64().is_some_and(|total| total > 0)
-                && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
-        })
+                .map(|npc| (frame, npc))
+        });
+    let Some((_, npc)) = latest_bar else {
+        return false;
+    };
+    let report_deadline = winddown_lock_end(capture, latch_tick).saturating_add(3);
+    evidence_tick <= report_deadline
+        && npc["health"] == json!(0)
+        && npc["total_health"].as_i64().is_some_and(|total| total > 0)
+        && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
 }
 
 fn every_killed_report_has_corpse(capture: &CombatCapture) -> bool {
@@ -3539,6 +3561,32 @@ fn protection_timing_ok(capture: &CombatCapture) -> bool {
         && prayer_echo_after(capture, protect_varp, protect_action)
 }
 
+fn winddown_lock_end(capture: &CombatCapture, latch_tick: i64) -> i64 {
+    capture
+        .actions
+        .iter()
+        .filter_map(|action| {
+            if !accepted(action) {
+                return None;
+            }
+            let tick = action["tick"].as_i64()?;
+            if tick > latch_tick {
+                return None;
+            }
+            let end = if is_drink(action) {
+                tick.saturating_add(3)
+            } else if is_eat(action) && held_item_id(action) == Some(i64::from(COOKED_KARAMBWAN_ID))
+            {
+                tick.saturating_add(4)
+            } else {
+                return None;
+            };
+            (end > latch_tick).then_some(end)
+        })
+        .max()
+        .unwrap_or(latch_tick)
+}
+
 fn prayer_off_plan_after_corpse(capture: &CombatCapture, report: &Value) -> bool {
     let Some(index) = integer(report, "combat_engaged_index") else {
         return false;
@@ -3570,15 +3618,7 @@ fn prayer_off_plan_after_corpse(capture: &CombatCapture, report: &Value) -> bool
     if active_components.is_empty() {
         return all_prayer_bits_off(corpse);
     }
-    let lock_end = capture
-        .actions
-        .iter()
-        .filter(|action| is_drink(action))
-        .filter_map(|action| action["tick"].as_i64())
-        .map(|tick| tick + 3)
-        .filter(|end| *end > corpse_tick)
-        .max()
-        .unwrap_or(corpse_tick);
+    let lock_end = winddown_lock_end(capture, corpse_tick);
     let plans = batch_plans(capture);
     let off_plan = plans.iter().find(|plan| {
         (lock_end..=lock_end + 2).contains(&plan.tick)
@@ -4842,6 +4882,75 @@ fn latched_corpse_survives_winddown_but_rejects_every_missing_identity_case() {
     assert!(!has_corpse(&capture, &report), "bar after report");
     capture.frames = vec![corpse(11, 7, 477, 1)];
     assert!(!has_corpse(&capture, &report), "no HP0 bar");
+}
+
+#[test]
+fn latched_corpse_report_is_bounded_by_winddown_and_publication() {
+    let report = |evidence_tick, combat_ticks| {
+        json!({"fields": {
+            "combat_end": "Killed", "combat_evidence_tick": evidence_tick,
+            "combat_ticks": combat_ticks, "combat_engaged_index": 7,
+            "combat_engaged_npc_type": 477
+        }})
+    };
+    let corpse = |tick| {
+        json!({
+            "tick": tick,
+            "nearby_npcs": [{"index": 7, "type": 477, "health": 0, "total_health": 170}]
+        })
+    };
+    let mut capture = CombatCapture::default();
+    capture.frames = vec![
+        corpse(261),
+        corpse(263),
+        json!({"tick": 264, "nearby_npcs": []}),
+    ];
+    capture.actions.push(json!({
+        "kind": "interaction", "tick": 261, "batch": 1, "accepted": true,
+        "request": {"op": "held", "action": "Drink"}
+    }));
+    assert!(
+        has_corpse(&capture, &report(267, 215)),
+        "allow one publication tick after lock_end + 2"
+    );
+
+    capture.actions.clear();
+    capture.actions.push(json!({
+        "kind": "interaction", "tick": 320, "batch": 2, "accepted": true,
+        "request": {"op": "held", "action": "Drink"}
+    }));
+    assert!(
+        !has_corpse(&capture, &report(324, 272)),
+        "a future drink cannot extend WindDown for a late Killed report"
+    );
+}
+
+#[test]
+fn manual_protect_terminal_rejects_non_npc_widget_and_protect_alone() {
+    let mut capture = CombatCapture::default();
+    capture.prayer_facts.push(json!({
+        "name": "Protect from Melee", "button_com": 5623, "varp": 97,
+    }));
+    capture.actions = vec![
+        json!({
+            "kind": "interaction", "tick": 8, "batch": 1,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+        }),
+        json!({
+            "kind": "interaction", "tick": 8, "batch": 1,
+            "request": {"op": "use-widget-on", "kind": "obj", "index": 9}
+        }),
+    ];
+    assert!(
+        !protect_plan_ends_with_terminal(&capture),
+        "a manual Protect plus a non-NPC widget-on is not a restoring Cast"
+    );
+    capture.actions.pop();
+    assert!(
+        !protect_plan_ends_with_terminal(&capture),
+        "a manual capture with Protect alone has no restoring terminal"
+    );
 }
 
 #[test]

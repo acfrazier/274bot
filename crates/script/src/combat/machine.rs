@@ -73,10 +73,12 @@ enum StyleState {
     Magic(Box<MagicState>),
 }
 
-#[derive(Default)]
 struct MagicState {
     arm: Option<Arm>,
     rejected: u32,
+    spell_order: [u8; u8::MAX as usize],
+    spell_order_len: u8,
+    ordered_mask: u32,
     rune_base: i32,
     arm_since: u16,
     arm_wait: u8,
@@ -86,6 +88,42 @@ struct MagicState {
     mode: Option<CastMode>,
     armed: bool,
     rune_seen: bool,
+}
+
+impl Default for MagicState {
+    fn default() -> Self {
+        Self {
+            arm: None,
+            rejected: 0,
+            spell_order: [0; u8::MAX as usize],
+            spell_order_len: 0,
+            ordered_mask: 0,
+            rune_base: 0,
+            arm_since: 0,
+            arm_wait: 0,
+            selected: None,
+            last_launched: None,
+            cursor: 0,
+            mode: None,
+            armed: false,
+            rune_seen: false,
+        }
+    }
+}
+
+impl MagicState {
+    fn reset_for_engagement(&mut self) {
+        self.arm = None;
+        self.rejected = 0;
+        self.rune_base = 0;
+        self.arm_since = 0;
+        self.arm_wait = 0;
+        self.selected = None;
+        self.last_launched = None;
+        self.cursor = 0;
+        self.armed = false;
+        self.rune_seen = false;
+    }
 }
 /// One shared planner and one host owner. Observation commits are independent
 /// from admitted-operation commits; no-op ticks are real progress.
@@ -190,19 +228,10 @@ impl NativeMachine for Combat {
                 return Err(unavailable("unattackable npc target"));
             }
         }
-        if request.style == Style::Mage {
-            if tables.selected().spells().is_empty() || tables.selected().spells().len() > 32 {
-                return Err(unavailable("combat spell facts"));
-            }
-            if request.spells.as_ref().is_some_and(|order| {
-                order.is_empty()
-                    || order.len() > 255
-                    || order
-                        .iter()
-                        .any(|spell| magic::spell_index(&tables, &spell.alias).is_none())
-            }) {
-                return Err(unavailable("combat spell order"));
-            }
+        if request.style == Style::Mage
+            && (tables.selected().spells().is_empty() || tables.selected().spells().len() > 32)
+        {
+            return Err(unavailable("combat spell facts"));
         }
         let ticks = if request.budget_ticks == 0 {
             1500
@@ -216,7 +245,23 @@ impl NativeMachine for Combat {
                 mode_fallback: None,
             }),
             Style::Ranged => StyleState::Ranged,
-            Style::Mage => StyleState::Magic(Box::default()),
+            Style::Mage => {
+                let mut state = Box::<MagicState>::default();
+                if let Some(order) = &request.spells {
+                    if order.is_empty() || order.len() > u8::MAX as usize {
+                        return Err(unavailable("combat spell order"));
+                    }
+                    for (slot, spell) in order.iter().enumerate() {
+                        let Some(index) = magic::spell_index(&tables, &spell.alias) else {
+                            return Err(unavailable("combat spell order"));
+                        };
+                        state.spell_order[slot] = index;
+                        state.ordered_mask |= 1u32 << index;
+                    }
+                    state.spell_order_len = order.len() as u8;
+                }
+                StyleState::Magic(state)
+            }
         };
         let mut machine = Self {
             request,
@@ -381,13 +426,9 @@ impl NativeMachine for Combat {
             }
             if self.phase != Phase::WindDown {
                 let failure = if self.flags & FAILED_WEAPON != 0 {
-                    Some(AbortReason::PrepFailed(
-                        if self.request.style == Style::Mage {
-                            PrepItem::Staff
-                        } else {
-                            PrepItem::Weapon
-                        },
-                    ))
+                    Some(AbortReason::PrepFailed(weapon_prep_item(
+                        self.request.style,
+                    )))
                 } else if self.flags & FAILED_SHIELD != 0 {
                     Some(AbortReason::PrepFailed(PrepItem::Shield))
                 } else if self.flags & FAILED_ATTACK != 0 {
@@ -574,14 +615,7 @@ impl Combat {
             flick_fallback: false,
         }
     }
-    fn reject_spell(&mut self) {
-        if let Some(index) = self.magic().selected {
-            self.magic_mut().rejected |= 1 << index;
-        }
-        self.magic_mut().selected = None;
-        self.magic_mut().armed = false;
-        self.magic_mut().arm = None;
-        self.magic_mut().rune_seen = false;
+    fn clear_pending_cast(&mut self) {
         for pending in &mut self.pending {
             if pending.row.kind == RowKind::Cast {
                 *pending = PendingRow::default();
@@ -589,25 +623,29 @@ impl Combat {
         }
         self.schedule.settle(OpKind::Cast);
     }
+    fn deselect(&mut self, reject: bool) {
+        if reject {
+            if let Some(index) = self.magic().selected {
+                self.magic_mut().rejected |= 1 << index;
+            }
+        }
+        {
+            let state = self.magic_mut();
+            state.selected = None;
+            state.armed = false;
+            state.arm = None;
+            state.rune_seen = false;
+        }
+        self.clear_pending_cast();
+    }
     fn magic_refusal(&mut self, line: &str) {
         let Some(index) = self.magic().selected else {
             return;
         };
         let spell = &self.tables.selected().spells()[usize::from(index)];
         match magic::refusal(line, spell) {
-            Some(Refusal::Spell) => self.reject_spell(),
-            Some(Refusal::Runes) => {
-                self.magic_mut().selected = None;
-                self.magic_mut().armed = false;
-                self.magic_mut().arm = None;
-                self.magic_mut().rune_seen = false;
-                for pending in &mut self.pending {
-                    if pending.row.kind == RowKind::Cast {
-                        *pending = PendingRow::default();
-                    }
-                }
-                self.schedule.settle(OpKind::Cast);
-            }
+            Some(Refusal::Spell) => self.deselect(true),
+            Some(Refusal::Runes) => self.deselect(false),
             None => {}
         }
     }
@@ -651,12 +689,7 @@ impl Combat {
             }
             if self.magic().mode == Some(CastMode::Manual) {
                 self.magic_mut().cursor = self.magic().cursor.wrapping_add(1);
-                for pending in &mut self.pending {
-                    if pending.row.kind == RowKind::Cast {
-                        *pending = PendingRow::default();
-                    }
-                }
-                self.schedule.settle(OpKind::Cast);
+                self.clear_pending_cast();
             }
         }
         self.magic_mut().rune_base = runes.map_or(0, |(count, _)| count);
@@ -664,49 +697,43 @@ impl Combat {
     }
     fn choose_spell(&mut self, frame: &Frame<'_>) -> bool {
         let mode = self.magic().mode.expect("magic mode resolved");
-        let selected = if let Some(order) = &self.request.spells {
-            (0..order.len())
-                .filter_map(|offset| {
-                    let cursor = (usize::from(self.magic().cursor) + offset) % order.len();
-                    let index = magic::spell_index(&self.tables, &order[cursor].alias)?;
-                    let spell = &self.tables.selected().spells()[usize::from(index)];
-                    (self.magic().rejected & (1 << index) == 0
-                        && magic::castable(spell, frame, &self.tables, self.engaged))
-                    .then_some((index, cursor as u8))
-                })
-                .next()
-                .map(|(index, cursor)| {
-                    self.magic_mut().cursor = cursor;
-                    index
-                })
-                .or_else(|| {
-                    self.request
-                        .fallback_spells
-                        .then(|| {
-                            magic::strongest(
-                                frame,
-                                &self.tables,
-                                self.engaged,
-                                CastMode::Manual,
-                                self.magic().rejected,
-                            )
-                        })
-                        .flatten()
-                })
+        let rejected = self.magic().rejected;
+        let selected = if self.request.spells.is_some() {
+            let order_len = usize::from(self.magic().spell_order_len);
+            let cursor = usize::from(self.magic().cursor);
+            let mut selected = None;
+            for offset in 0..order_len {
+                let order_cursor = (cursor + offset) % order_len;
+                let index = self.magic().spell_order[order_cursor];
+                let spell = &self.tables.selected().spells()[usize::from(index)];
+                if rejected & (1 << index) == 0
+                    && magic::castable(spell, frame, &self.tables, self.engaged)
+                {
+                    self.magic_mut().cursor = order_cursor as u8;
+                    selected = Some(index);
+                    break;
+                }
+            }
+            selected.or_else(|| {
+                self.request
+                    .fallback_spells
+                    .then(|| {
+                        magic::strongest(
+                            frame,
+                            &self.tables,
+                            self.engaged,
+                            CastMode::Manual,
+                            rejected,
+                        )
+                    })
+                    .flatten()
+            })
         } else {
-            magic::strongest(
-                frame,
-                &self.tables,
-                self.engaged,
-                mode,
-                self.magic().rejected,
-            )
+            magic::strongest(frame, &self.tables, self.engaged, mode, rejected)
         };
         if selected != self.magic().selected {
+            self.deselect(false);
             self.magic_mut().selected = selected;
-            self.magic_mut().armed = false;
-            self.magic_mut().arm = None;
-            self.magic_mut().rune_seen = false;
             if let Some(index) = selected {
                 let spell = &self.tables.selected().spells()[usize::from(index)];
                 let runes = magic::rune_count(spell, frame, &self.tables);
@@ -735,6 +762,9 @@ impl Combat {
             return self.magic().mode == Some(CastMode::Manual);
         }
         if !self.choose_spell(frame) {
+            let ordered_mask = self.magic().ordered_mask;
+            let rejected = self.magic().rejected;
+            let mode = self.magic().mode.expect("magic mode resolved");
             let rune_exhausted =
                 self.tables
                     .selected()
@@ -742,27 +772,22 @@ impl Combat {
                     .iter()
                     .enumerate()
                     .any(|(index, spell)| {
-                        let ordered = self.request.spells.as_ref().is_none_or(|order| {
-                            self.request.fallback_spells
-                                || order.iter().any(|entry| {
-                                    magic::spell_index(&self.tables, &entry.alias)
-                                        == Some(index as u8)
-                                })
-                        });
+                        let ordered = self.request.spells.is_none()
+                            || self.request.fallback_spells
+                            || ordered_mask & (1u32 << index) != 0;
                         ordered
-                            && self.magic().rejected & (1 << index) == 0
-                            && (self.magic().mode == Some(CastMode::Manual)
-                                || spell.autocast_selectable)
+                            && rejected & (1u32 << index) == 0
+                            && (mode == CastMode::Manual || spell.autocast_selectable)
                             && magic::eligible(spell, frame, &self.tables, self.engaged)
                     });
-            self.finish(
-                CombatEnd::Aborted(if rune_exhausted {
-                    AbortReason::Unprotected(Unprotected::NoRunes)
-                } else {
-                    AbortReason::PrepFailed(PrepItem::Arm)
-                }),
-                tick,
-            );
+            let reason = if rune_exhausted {
+                AbortReason::Unprotected(Unprotected::NoRunes)
+            } else if mode == CastMode::Manual {
+                AbortReason::Unresponsive
+            } else {
+                AbortReason::PrepFailed(PrepItem::Arm)
+            };
+            self.finish(CombatEnd::Aborted(reason), tick);
             return true;
         }
         if self.magic().mode == Some(CastMode::Manual) {
@@ -788,8 +813,9 @@ impl Combat {
         else {
             return true;
         };
+        // Borrow only the style field: arming also reads the shared tables.
         let StyleState::Magic(state) = &mut self.style_state else {
-            unreachable!("autocast arm requires the magic style");
+            unreachable!("magic preparation requires magic state")
         };
         if state.armed && value.value == controls.armed_value {
             return false;
@@ -822,7 +848,9 @@ impl Combat {
             ArmStep::Emit(request, ms) => {
                 let wait = ms.div_ceil(600) as u8;
                 let row = match request {
-                    InteractReq::SideTab { .. } => PlanRow::new(RowKind::Arm, 0, wait | 0x80),
+                    InteractReq::SideTab { .. } => {
+                        PlanRow::new(RowKind::Arm, 0, wait | arbiter::ARM_SIDE_TAB_FLAG)
+                    }
                     InteractReq::IfButton { component_id } => {
                         PlanRow::new(RowKind::Arm, component_id, wait)
                     }
@@ -874,10 +902,7 @@ impl Combat {
     fn engage(&mut self, actor: ActorRef, frame: &Frame<'_>) {
         if self.engaged != Some(actor) {
             if let StyleState::Magic(state) = &mut self.style_state {
-                **state = MagicState {
-                    mode: state.mode,
-                    ..MagicState::default()
-                };
+                state.reset_for_engagement();
             }
             for pending in &mut self.pending {
                 if pending.row.kind == RowKind::Attack {
@@ -1176,7 +1201,7 @@ impl Combat {
         let mut schedule = self.schedule;
         if self.plan_first_id != 0 {
             for row in self.plan.iter() {
-                if row.kind == RowKind::Arm && row.aux & 0x80 != 0 {
+                if row.kind == RowKind::Arm && row.aux & arbiter::ARM_SIDE_TAB_FLAG != 0 {
                     continue;
                 }
                 schedule.admitted(
@@ -1236,9 +1261,9 @@ impl Combat {
                     if let Some(arm) = &mut self.magic_mut().arm {
                         arm.emitted();
                         self.magic_mut().arm_since = self.emitted_tick;
-                        self.magic_mut().arm_wait = row.aux & 0x7f;
+                        self.magic_mut().arm_wait = row.aux & arbiter::ARM_WAIT_MASK;
                     }
-                    if row.aux & 0x80 == 0 {
+                    if row.aux & arbiter::ARM_SIDE_TAB_FLAG == 0 {
                         self.schedule.clear(self.emitted_tick, 1, fight);
                     }
                 }
@@ -1500,9 +1525,8 @@ impl Combat {
                 }
                 let failures = self.schedule.unsettled[kind.index()];
                 match row.kind {
-                    RowKind::Cast => {
-                        self.reject_spell();
-                    }
+                    RowKind::Cast if failures >= 2 => self.deselect(true),
+                    RowKind::Cast => {}
                     RowKind::Wear => {
                         let shift = u32::from(row.aux) * 3;
                         let count = (((self.prep_failures >> shift) & 3) + 1).min(3);
@@ -2025,11 +2049,7 @@ impl Combat {
                     CombatEnd::Aborted(AbortReason::PrepFailed(if conflict {
                         PrepItem::Shield
                     } else {
-                        if self.request.style == Style::Mage {
-                            PrepItem::Staff
-                        } else {
-                            PrepItem::Weapon
-                        }
+                        weapon_prep_item(self.request.style)
                     })),
                     tick,
                 );
@@ -2149,7 +2169,8 @@ impl Combat {
         if plan.closed(&self.tables) {
             return Ok(plan);
         }
-        let offense = self.flags & BOOST_WORTH != 0
+        let offense = self.request.style == Style::Melee
+            && self.flags & BOOST_WORTH != 0
             && prayer_allowed
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
@@ -2515,7 +2536,9 @@ impl Combat {
                     name: item_name(frame.inventory, row.id)?.to_owned(),
                 },
                 RowKind::Retaliate => InteractReq::SetRetaliate { on: row.aux != 0 },
-                RowKind::Arm if row.aux & 0x80 != 0 => InteractReq::SideTab { tab: 0 },
+                RowKind::Arm if row.aux & arbiter::ARM_SIDE_TAB_FLAG != 0 => {
+                    InteractReq::SideTab { tab: 0 }
+                }
                 RowKind::Arm => InteractReq::IfButton {
                     component_id: row.id,
                 },
@@ -2648,6 +2671,12 @@ impl Combat {
         Ok(())
     }
 }
+fn weapon_prep_item(style: Style) -> PrepItem {
+    match style {
+        Style::Mage => PrepItem::Staff,
+        Style::Melee | Style::Ranged => PrepItem::Weapon,
+    }
+}
 fn op_kind(kind: RowKind) -> OpKind {
     match kind {
         RowKind::Eat => OpKind::Eat,
@@ -2658,6 +2687,8 @@ fn op_kind(kind: RowKind) -> OpKind {
         RowKind::Retaliate => OpKind::Retaliate,
         RowKind::Attack => OpKind::Attack,
         RowKind::Cast => OpKind::Cast,
+        // Autocast buttons share Style's IfButton cadence; the zero-wire
+        // SideTab row is skipped in projected_schedule and settled separately.
         RowKind::Arm => OpKind::Style,
         RowKind::Empty => unreachable!("empty pending operation"),
     }
