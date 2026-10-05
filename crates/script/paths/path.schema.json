@@ -1941,7 +1941,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets also require post-acceptance movement or primary animation.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, a reached `until` count completes after its accepted action's page drains.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -2235,7 +2235,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets also require post-acceptance movement or primary animation.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, a reached `until` count completes after its accepted action's page drains.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         }
       },
       "required": [

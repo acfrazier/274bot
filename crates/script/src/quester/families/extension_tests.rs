@@ -397,7 +397,7 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
 }
 
 #[test]
-fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
+fn interact_until_rearms_after_adjacent_instant_progress() {
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut resource = loc(1000, "Rock", "Mine");
@@ -441,10 +441,9 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
     player.player.actor.animation = 625;
     snapshot.seed_local_player(player);
     assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
         .is_pending()
     );
     assert_eq!(
@@ -452,67 +451,35 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         first_request,
         "do not re-click while mining is active"
     );
+
     snapshot.seed_local_player(local_player(tile(5, 5)));
     assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 5, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
-        .is_pending()
-    );
-    assert_eq!(
-        ledger.as_ref().unwrap().outbox.last().unwrap().request_id,
-        first_request,
-        "an idle tick before observed scene activity must not rearm"
-    );
-    let mut player = local_player(tile(5, 5));
-    player.player.actor.animation = 625;
-    snapshot.seed_local_player(player);
-    assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
-        .is_pending()
-    );
-    snapshot.seed_local_player(local_player(tile(5, 5)));
-    assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
         .is_pending()
     );
     assert_ne!(
         ledger.as_ref().unwrap().outbox.last().unwrap().request_id,
         first_request,
-        "observed activity followed by idle must rearm promptly"
+        "an adjacent instant target can rearm after a fresh idle tick"
     );
+
     snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
-    accept_last(&mut ledger, 8, true);
-    assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 8, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
-        .is_pending()
-    );
     let mut player = local_player(tile(5, 5));
     player.player.actor.animation = 625;
     snapshot.seed_local_player(player);
+    accept_last(&mut ledger, 6, true);
     assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 9, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        ))
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
         .is_pending()
     );
-    snapshot.seed_local_player(local_player(tile(5, 5)));
     assert!(matches!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 10, |tick| with_step(
-            tick,
-            |cx| run.poll(cx)
-        )),
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
         Poll::Ready(Ok(_))
     ));
 }
@@ -990,32 +957,27 @@ fn operation_until_requires_explicit_dialogue_again_after_each_accepted_round() 
 #[test]
 fn use_on_omitted_dialogue_does_not_require_a_page() {
     compile_context_test(|compile| {
-        for until in [false, true] {
-            let (mut snapshot, plan, goal) = operation_fixture(compile, "use_on", None, until);
-            let mut ledger = None;
-            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-                with_step(tick, |cx| plan.begin(cx).unwrap())
-            });
-            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        let (snapshot, plan, _) = operation_fixture(compile, "use_on", None, false);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
                 with_step(tick, |cx| run.poll(cx))
-            })
-            .is_pending());
-            accept_last(&mut ledger, 3, true);
-            if until {
-                set_operation_count(&mut snapshot, goal, 2);
-            }
-            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-                with_step(tick, |cx| run.poll(cx))
-            })
-            .is_pending());
-            assert!(matches!(
-                with_tick(&snapshot, &mut ledger, 4, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                }),
-                Poll::Ready(Ok(_))
-            ));
-            assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
-        }
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
     });
 }
 
@@ -1501,52 +1463,44 @@ fn operation_omission_waits_for_arrival_and_drains_distant_loc_page() {
 fn operation_omission_waits_for_fresh_idle_player_before_no_page() {
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
-            for until in [false, true] {
-                let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, until);
-                let mut ledger = None;
-                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-                    with_step(tick, |cx| plan.begin(cx).unwrap())
-                });
-                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                })
-                .is_pending());
-                accept_last(&mut ledger, 3, true);
-                assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                })
-                .is_pending());
-                if until {
-                    set_operation_count(&mut snapshot, goal, 2);
-                }
-                for (tick, moving, animation) in [(4, true, -1), (5, false, 123)] {
-                    let active_now = Duration::from_millis(1_800 + tick - 3);
-                    let mut player = local_player(tile(5, 5));
-                    player.player.actor.moving = moving;
-                    player.player.actor.animation = animation;
-                    snapshot.seed_local_player(player);
-                    assert!(
-                        with_tick(&snapshot, &mut ledger, tick, |tick| {
-                            tick.cx.active_now = active_now;
-                            with_step(tick, |cx| run.poll(cx))
-                        })
-                        .is_pending(),
-                        "{kind}, until={until}: movement or primary animation cannot prove completion"
-                    );
-                }
-                snapshot.seed_local_player(local_player(tile(5, 5)));
+            let (mut snapshot, plan, _) = operation_fixture(compile, kind, None, false);
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            accept_last(&mut ledger, 3, true);
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            for (tick, moving, animation) in [(4, true, -1), (5, false, 123)] {
+                let active_now = Duration::from_millis(1_800 + tick - 3);
+                let mut player = local_player(tile(5, 5));
+                player.player.actor.moving = moving;
+                player.player.actor.animation = animation;
+                snapshot.seed_local_player(player);
                 assert!(
-                    matches!(
-                        with_tick(&snapshot, &mut ledger, 6, |tick| {
-                            tick.cx.active_now = Duration::from_millis(1_803);
-                            with_step(tick, |cx| run.poll(cx))
-                        }),
-                        Poll::Ready(Ok(_))
-                    ),
-                    "{kind}, until={until}: fresh idle evidence needs no fixed delay"
+                    with_tick(&snapshot, &mut ledger, tick, |tick| {
+                        tick.cx.active_now = active_now;
+                        with_step(tick, |cx| run.poll(cx))
+                    })
+                    .is_pending(),
+                    "{kind}: movement or primary animation cannot prove completion"
                 );
-                assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
             }
+            snapshot.seed_local_player(local_player(tile(5, 5)));
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 6, |tick| {
+                    tick.cx.active_now = Duration::from_millis(1_803);
+                    with_step(tick, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Ok(_))
+            ));
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
         }
     });
 }
@@ -1651,7 +1605,7 @@ fn interact_omission_requires_scene_activity_before_fresh_idle_completion() {
 }
 
 #[test]
-fn use_on_omission_requires_scene_activity_before_fresh_idle_completion() {
+fn use_on_omission_completes_adjacent_instant_loc_without_activity() {
     compile_context_test(|compile| {
         let plan = compile_use_on(
             test_args::<UseOnArgs>(serde_json::json!({
@@ -1695,23 +1649,8 @@ fn use_on_omission_requires_scene_activity_before_fresh_idle_completion() {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
-        assert!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
-                with_step(tick, |cx| run.poll(cx))
-            })
-            .is_pending(),
-            "a scene use-on must not settle on an idle tick before click activity"
-        );
-        let mut moving_player = local_player(tile(5, 5));
-        moving_player.player.actor.moving = true;
-        snapshot.seed_local_player(moving_player);
-        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
-        snapshot.seed_local_player(local_player(tile(5, 5)));
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
@@ -1932,4 +1871,277 @@ fn operation_explicit_none_never_adopts_chat_after_acceptance() {
             }
         }
     });
+}
+fn loc_interact_plan(settle_ms: u64, until: Option<(i32, s2::QuantityPlan)>) -> InteractPlan {
+    InteractPlan {
+        kind: reach::ReachKind::Loc {
+            id: Some(1000),
+            name: None,
+        },
+        op: Arc::from("Mine"),
+        tile: None,
+        radius: 10,
+        wait_if_missing: false,
+        settle_ms: Some(settle_ms),
+        ambiguous: false,
+        default_dialogue: true,
+        dialogue_options: None,
+        until,
+        target_tile: None,
+        reachable_only: false,
+    }
+}
+
+#[test]
+fn interact_reached_until_completes_before_optional_scene_gate() {
+    compile_context_test(|compile| {
+        // Probe A: a held action reaches its goal after acceptance while the
+        // player remains in motion. The no-page idle gate must not hide success.
+        let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_000);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        set_operation_count(&mut snapshot, goal, 2);
+        let mut moving = local_player(tile(5, 5));
+        moving.player.actor.moving = true;
+        snapshot.seed_local_player(moving);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_600);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.cx.active_now = Duration::from_millis(2_200);
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+
+        // Probe B: a scene action reaches its goal on the acceptance poll while
+        // the player is idle and no movement or animation is visible.
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(vec![held(1, "Ore", 0, 0, None)], 28);
+        let mut resource = loc(1000, "Rock", "Mine");
+        resource.tile = tile(5, 5);
+        resource.distance = 1;
+        snapshot.seed_locs(vec![resource]);
+        let plan = loc_interact_plan(5_000, Some((1, s2::QuantityPlan::Fixed(2))));
+        let reach_view = super::wall_door_reach_view();
+        let mut ledger = None;
+        let mut run = with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(
+            with_tick_reach(&snapshot, &reach_view, &mut ledger, 2, |tick| {
+                tick.cx.active_now = Duration::from_millis(1_000);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending()
+        );
+        accept_last(&mut ledger, 3, true);
+        snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
+        assert!(
+            with_tick_reach(&snapshot, &reach_view, &mut ledger, 3, |tick| {
+                tick.cx.active_now = Duration::from_millis(1_600);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending()
+        );
+        assert!(matches!(
+            with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
+                tick.cx.active_now = Duration::from_millis(2_200);
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    });
+}
+
+#[test]
+fn use_on_reached_until_completes_before_optional_gate() {
+    compile_context_test(|compile| {
+        // Probe C: item use reaches its goal after acceptance while the player
+        // remains in motion, without waiting for the omitted-dialogue gate.
+        let (mut snapshot, plan, goal) = operation_fixture(compile, "use_on", None, true);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_000);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        set_operation_count(&mut snapshot, goal, 2);
+        let mut moving = local_player(tile(5, 5));
+        moving.player.actor.moving = true;
+        snapshot.seed_local_player(moving);
+        let mut outcome = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_600);
+            with_step(tick, |cx| run.poll(cx))
+        });
+        if outcome.is_pending() {
+            outcome = with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.cx.active_now = Duration::from_millis(2_200);
+                with_step(tick, |cx| run.poll(cx))
+            });
+        }
+        assert!(
+            matches!(outcome, Poll::Ready(Ok(_))),
+            "a reached count must bypass the omitted-dialogue gate while the player is moving"
+        );
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    });
+}
+
+#[test]
+fn reached_until_never_skips_the_settle_deadline() {
+    compile_context_test(|compile| {
+        for (kind, timeout) in [
+            ("interact", "interact settle timeout"),
+            ("use_on", "use_on timeout"),
+        ] {
+            let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, true);
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.cx.active_now = Duration::from_millis(1_000);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            accept_last(&mut ledger, 3, true);
+            let mut moving = local_player(tile(5, 5));
+            moving.player.actor.moving = true;
+            snapshot.seed_local_player(moving);
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.cx.active_now = Duration::from_millis(1_600);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            set_operation_count(&mut snapshot, goal, 2);
+            assert!(
+                matches!(
+                    with_tick(&snapshot, &mut ledger, 4, |tick| {
+                        tick.cx.active_now = Duration::from_millis(61_001);
+                        with_step(tick, |cx| run.poll(cx))
+                    }),
+                    Poll::Ready(Err(ActionError::Failed(reason)))
+                        if reason.as_ref() == timeout
+                ),
+                "{kind}: a reached goal must not extend settle_ms"
+            );
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+    });
+}
+
+#[test]
+fn adjacent_instant_interact_completes_on_fresh_idle_without_activity() {
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    let mut resource = loc(1000, "Rock", "Mine");
+    resource.tile = tile(5, 5);
+    resource.distance = 1;
+    snapshot.seed_locs(vec![resource]);
+    let plan = loc_interact_plan(5_000, None);
+    let reach_view = super::wall_door_reach_view();
+    let mut ledger = None;
+    let mut run = with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_000);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    accept_last(&mut ledger, 3, true);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_600);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    assert!(matches!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_millis(2_200);
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+}
+
+#[test]
+fn distant_instant_interact_still_requires_activity_then_fresh_idle() {
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    let mut resource = loc(1000, "Rock", "Mine");
+    resource.tile = tile(13, 5);
+    resource.distance = 8;
+    snapshot.seed_locs(vec![resource]);
+    let plan = loc_interact_plan(5_000, None);
+    let reach_view = super::wall_door_reach_view();
+    let mut ledger = None;
+    let mut run = with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_000);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    accept_last(&mut ledger, 3, true);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_600);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_millis(2_200);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending(),
+        "a fresh idle tick alone is insufficient for a distant scene target"
+    );
+    let mut moving = local_player(tile(5, 5));
+    moving.player.actor.moving = true;
+    snapshot.seed_local_player(moving);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 5, |tick| {
+            tick.cx.active_now = Duration::from_millis(2_800);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    assert!(matches!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
+            tick.cx.active_now = Duration::from_millis(3_400);
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 }
