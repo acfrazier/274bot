@@ -372,13 +372,20 @@ without talking or walking, under the same adopted-page rule.
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
 after every accepted round, including every `until` round. No page after the
-bounded opening wait fails with `expected dialogue did not open`. Omission is
-strict Continue-only: Continue pages opened by the step's own accepted action
-are drained; an option menu fails with a clear reason and is never answered;
-the step never requires a page, has no fixed wall-clock no-page delay, and does
-not settle while its own page is open. Authors who need menu choices use the
-object form. Explicit `"none"` never touches dialogue and leaves those pages to
-the next owner, including during count repetition.
+bounded opening wait fails with `expected dialogue did not open`.
+
+Omission is strict Continue-only for observed chat pages and selected Scroll/Book
+pages. It drains Continue pages and refuses option menus without sending an
+answer. It leaves unrelated main interfaces untouched. If no page opens, the
+operation waits for acceptance and a newer evidence tick with an observed player
+who is not moving and has no primary animation. Loc/Npc/name interactions require
+their own accepted dispatch receipt. This observation boundary covers pages that
+open on arrival or during the primary animation, without a fixed no-page delay.
+Once the boundary is reached with no page, the normal success conditions can
+complete the step. A page that opens later is outside this optional window.
+Use explicit `"continue"` when content requires a page, or the object form when
+it requires menu answers. Explicit `"none"` never touches dialogue and leaves
+those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
 Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`

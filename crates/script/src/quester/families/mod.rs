@@ -1565,7 +1565,8 @@ pub(crate) struct InteractArgs {
     #[serde(default)]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     pub(crate) settle_ms: Option<u64>,
-    /// Omission drains optional Continue pages without answering menus.
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -1820,12 +1821,9 @@ impl StepRun for InteractRun {
                 self.dialogue_started = Some(cx.tick.cx.active_now());
                 return Poll::Pending;
             }
-            // Acceptance is not a post-action page observation. A newer
-            // evidence tick is enough when no page opens; no timer is added.
-            if self
-                .accepted_tick
-                .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
-            {
+            // A fresh idle-player observation anchors absence after arrival or
+            // the primary animation, without a fixed opening delay.
+            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick) {
                 return Poll::Pending;
             }
         }
@@ -2112,6 +2110,14 @@ fn primary_animation_active(cx: &crate::native::ActionContext<'_>) -> bool {
         .is_some_and(|player| player.value.player.actor.animation >= 0)
 }
 
+fn fresh_idle_after(cx: &crate::native::ActionContext<'_>, accepted_tick: Option<u64>) -> bool {
+    accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
+        && cx.snapshot().local_player().is_some_and(|player| {
+            let actor = &player.value.player.actor;
+            !actor.moving && actor.animation < 0
+        })
+}
+
 /// Use a selected held item on one target, with optional observed settlement.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -2140,7 +2146,8 @@ pub(super) struct UseOnArgs {
     /// Optional predicate that can end the repeated use-on attempt.
     #[serde(default)]
     no_product: Option<PredicateDocument>,
-    /// Omission drains optional Continue pages without answering menus.
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -2623,9 +2630,7 @@ impl StepRun for UseOnRun {
             }
             if self.default_dialogue
                 && !self.dialogue_completed
-                && self
-                    .accepted_tick
-                    .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
+                && !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
             {
                 return Poll::Pending;
             }
