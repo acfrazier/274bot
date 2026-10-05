@@ -2118,6 +2118,173 @@ fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
     panic!("the native Provisioner scan must expose a cached BankReceipt");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ProgressOutcomeStamp {
+    Fresh,
+    PreviousPoll,
+    StepBegin,
+    BeforeStep,
+    Uncorrelated,
+    Future,
+    ForeignRun,
+}
+
+struct ProgressOutcomePlan {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+}
+
+impl super::super::compile::StepPlan for ProgressOutcomePlan {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let mut progress = self.progress.clone();
+        progress.evidence = cx.required_after;
+        Ok(Box::new(ProgressOutcomeRun {
+            progress,
+            stamp: self.stamp,
+            previous_poll: None,
+        }))
+    }
+}
+
+struct ProgressOutcomeRun {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+    previous_poll: Option<api::quest_progress::EvidenceStamp>,
+}
+
+impl StepRun for ProgressOutcomeRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let current = cx.tick.cx.evidence();
+        let begin = self.progress.evidence;
+        self.progress.evidence = match self.stamp {
+            ProgressOutcomeStamp::StepBegin => begin,
+            ProgressOutcomeStamp::BeforeStep => api::quest_progress::EvidenceStamp {
+                tick: begin.tick - 1,
+                sequence: begin.sequence - 1,
+                ..begin
+            },
+            ProgressOutcomeStamp::Future => api::quest_progress::EvidenceStamp {
+                tick: current.tick + 1,
+                sequence: current.sequence + 1,
+                ..current
+            },
+            ProgressOutcomeStamp::ForeignRun => api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    session: current.run.session + 1,
+                    ..current.run
+                },
+                ..current
+            },
+            ProgressOutcomeStamp::PreviousPoll => {
+                let Some(previous) = self.previous_poll.replace(current) else {
+                    return Poll::Pending;
+                };
+                previous
+            }
+            ProgressOutcomeStamp::Fresh | ProgressOutcomeStamp::Uncorrelated => current,
+        };
+        Poll::Ready(Ok(StepOutcome {
+            evidence: if matches!(self.stamp, ProgressOutcomeStamp::Uncorrelated) {
+                begin
+            } else {
+                self.progress.evidence
+            },
+            progress: Some(Arc::new(self.progress.clone())),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
+fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot, Ledger) {
+    let (mut script, snapshot) = fixture(false);
+    let mut ledger = None;
+    let progress = with_tick(&snapshot, &mut ledger, 0, |tick| {
+        resolve_colour(
+            &script.path,
+            QuestListStatus::Complete,
+            tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        )
+    });
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
+        Arc::new(ProgressOutcomePlan { progress, stamp });
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        script.step.is_some(),
+        "the runner must begin the authored step"
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    (script, snapshot, ledger)
+}
+
+#[test]
+fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
+    for stamp in [
+        ProgressOutcomeStamp::Fresh,
+        ProgressOutcomeStamp::PreviousPoll,
+    ] {
+        let (mut script, mut snapshot, mut ledger) = step_progress_fixture(stamp);
+        let poll_tick = if matches!(stamp, ProgressOutcomeStamp::PreviousPoll) {
+            drive(&mut script, &snapshot, &mut ledger, 2);
+            assert!(script.step.is_some() && !script.settling);
+            3
+        } else {
+            2
+        };
+        drive(&mut script, &snapshot, &mut ledger, poll_tick);
+        assert!(
+            script.settling,
+            "fresh progress correlated with its final outcome must settle: {stamp:?}, {:?}",
+            script.last_error
+        );
+        let outcome = script.last_outcome.as_ref().expect("accepted outcome");
+        assert_eq!(outcome.evidence, script.progress().unwrap().evidence);
+        assert_eq!(outcome.evidence.tick, 2);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:2");
+        assert_eq!(script.progress().unwrap().complete, Truth::True);
+        assert!(script.last_error.is_none());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0x00f800,
+            }],
+            true,
+        );
+        drive(&mut script, &snapshot, &mut ledger, poll_tick + 1);
+        assert!(!script.settling);
+        assert!(matches!(
+            drive(&mut script, &snapshot, &mut ledger, poll_tick + 2),
+            ScriptFlow::Complete
+        ));
+    }
+}
+
+#[test]
+fn step_outcome_progress_rejects_stale_uncorrelated_future_and_foreign_receipts() {
+    for stamp in [
+        ProgressOutcomeStamp::StepBegin,
+        ProgressOutcomeStamp::BeforeStep,
+        ProgressOutcomeStamp::Uncorrelated,
+        ProgressOutcomeStamp::Future,
+        ProgressOutcomeStamp::ForeignRun,
+    ] {
+        let (mut script, snapshot, mut ledger) = step_progress_fixture(stamp);
+        let prior = script.progress().unwrap().evidence;
+        drive(&mut script, &snapshot, &mut ledger, 2);
+        assert!(
+            !script.settling,
+            "invalid progress must not settle: {stamp:?}"
+        );
+        assert!(script.last_outcome.is_none());
+        assert_eq!(script.progress().unwrap().evidence, prior);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+        assert_eq!(script.last_error.as_deref(), Some("step error: Stale"));
+    }
+}
+
 #[test]
 fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
     let (script, snapshot) = fixture(false);

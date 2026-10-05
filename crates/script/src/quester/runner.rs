@@ -93,6 +93,8 @@ pub struct Quester {
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
+    /// Freshness boundary for the active step; overwritten at each successful begin.
+    step_after: api::quest_progress::EvidenceStamp,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
@@ -407,6 +409,11 @@ impl Quester {
             seq_index: 0,
             step_index: 0,
             step: None,
+            step_after: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 0,
+                sequence: 0,
+            },
             clear_prayers: None,
             prayer_cleanup_pending: false,
             prayer_cleanup_owned: RaisedPrayers::empty(),
@@ -1870,6 +1877,7 @@ impl Script for Quester {
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
                     self.step = Some(run);
+                    self.step_after = required_after;
                     self.last_outcome = None;
                     self.dirty = true;
                     self.clear_last_error();
@@ -1934,7 +1942,9 @@ impl Script for Quester {
             }
             Poll::Ready(Ok(outcome)) => {
                 if let Some(progress) = &outcome.progress {
-                    if !self.valid_progress(tick, progress, outcome.evidence) {
+                    if outcome.evidence != progress.evidence
+                        || !self.valid_progress(tick, progress, self.step_after)
+                    {
                         self.record_step_failure(ActionError::Stale, tick);
                         self.step = None;
                         return Ok(ScriptFlow::Continue);
