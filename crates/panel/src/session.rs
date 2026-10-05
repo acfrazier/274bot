@@ -944,6 +944,12 @@ pub struct Session {
     pub(crate) walk_permissions_path: PathBuf,
     /// Last observed metadata for the shared policy projection.
     walk_permissions_stamp: Option<WalkPermissionsFileStamp>,
+    /// Shared durable Quester Paths source and folder edit buffer.
+    pub(crate) quester_paths: frontend_core::QuesterPathsView,
+    pub(crate) quester_paths_folder_edit: String,
+    /// One non-blocking reload worker and its latest visible result.
+    pub(crate) quester_paths_reload: frontend_core::ReloadPaths,
+    pub(crate) quester_paths_notice: Option<Result<Arc<str>, String>>,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1340,6 +1346,9 @@ impl Session {
         let walk_permissions_path = crate::ui_state::path();
         let walk_permissions_stamp = walk_permissions_file_stamp_at(&walk_permissions_path);
         let walk_permissions = frontend_core::WalkGlobalsView::read_at(&walk_permissions_path);
+        let quester_paths = frontend_core::QuesterPathsView::read_at(&walk_permissions_path);
+        quester_paths.apply();
+        let quester_paths_folder_edit = quester_paths.folder.to_string_lossy().into_owned();
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
@@ -1403,6 +1412,10 @@ impl Session {
             walk_permissions,
             walk_permissions_path,
             walk_permissions_stamp,
+            quester_paths,
+            quester_paths_folder_edit,
+            quester_paths_reload: frontend_core::ReloadPaths::default(),
+            quester_paths_notice: None,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -4896,6 +4909,64 @@ impl Session {
     pub fn selected_game_data(&self) -> Option<std::sync::Arc<api::game_data::SelectedGameData>> {
         let profile = self.server_profile.as_ref()?;
         profile.game_data()
+    }
+
+    pub(crate) fn persist_quester_paths(
+        &mut self,
+        after: frontend_core::QuesterPathsView,
+    ) -> Result<(), String> {
+        let before = self.quester_paths.clone();
+        if let Err(error) = frontend_core::QuesterPathsView::persist_changed_at(
+            &self.walk_permissions_path,
+            &before,
+            &after,
+        ) {
+            let message = format!("Quest Paths settings were not saved: {error}");
+            self.set_quester_paths_notice(Err(message.clone()));
+            return Err(message);
+        }
+        if before != after {
+            self.quester_paths = after;
+            self.quester_paths_folder_edit =
+                self.quester_paths.folder.to_string_lossy().into_owned();
+            self.quester_paths.apply();
+            self.start_quester_paths_reload();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn start_quester_paths_reload(&mut self) {
+        let Some(selected) = self.selected_game_data() else {
+            self.set_quester_paths_notice(Err(
+                "Load a profile before reloading quest Paths.".into()
+            ));
+            return;
+        };
+        match self.quester_paths_reload.start(selected) {
+            Ok(()) => {
+                self.quester_paths_notice = Some(Ok(Arc::from("Reloading quest Paths…")));
+            }
+            Err(error) => self.set_quester_paths_notice(Err(error)),
+        }
+    }
+
+    pub(crate) fn poll_quester_paths_reload(&mut self) {
+        if let Some(result) = self.quester_paths_reload.poll() {
+            self.set_quester_paths_notice(result);
+        }
+    }
+
+    fn set_quester_paths_notice(&mut self, result: Result<Arc<str>, String>) {
+        let (level, message) = match &result {
+            Ok(summary) => (frontend_core::log::Level::Info, summary.to_string()),
+            Err(error) => (frontend_core::log::Level::Error, error.clone()),
+        };
+        frontend_core::log::global().process_line(
+            frontend_core::log::Source::Host,
+            level,
+            &message,
+        );
+        self.quester_paths_notice = Some(result);
     }
 
     /// Observed equipment names/ids for the focused ingame character.

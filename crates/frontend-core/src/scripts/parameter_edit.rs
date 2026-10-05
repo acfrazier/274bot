@@ -202,22 +202,33 @@ fn move_unselectable_to_preserved(
     options.preserved += initial - end;
 }
 
-/// Release-roster quests this server can't run stay visible for a stored pick
-/// (the card labels them with the reason) but are never picker choices.
-fn preserve_unavailable_quests(options: &mut ParameterOptions) {
-    move_unselectable_to_preserved(options, |id| {
-        script::quester::card::unavailable_quest(id).is_none()
-    });
-}
-
-/// Resolve a schema row once for both front ends. The renderers only choose
-/// among these rows; aliases normalize only after an explicit user pick.
+/// Resolve a schema row once for both front ends. Released Paths use the
+/// current immutable registry snapshot, so renderers never scan the folder.
 pub fn resolve_parameter_options(
     def: &script::SettingDef,
     bag: &serde_json::Map<String, Value>,
     loadouts: &script::LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ParameterOptions {
+    resolve_parameter_options_with_registry(def, bag, loadouts, game_data, None)
+}
+
+fn resolve_parameter_options_with_registry(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, Value>,
+    loadouts: &script::LoadoutsStore,
+    game_data: Option<&api::game_data::SelectedGameData>,
+    path_registry: Option<&script::quester::registry::PathRegistry>,
+) -> ParameterOptions {
+    let source = def.options_from.as_deref().unwrap_or_default();
+    if source == "released-paths" || source == "released-path-order" {
+        if let Some(registry) = path_registry {
+            return resolve_released_path_options(def, bag, registry);
+        }
+        let registry = script::quester::registry::snapshot();
+        return resolve_released_path_options(def, bag, &registry);
+    }
+
     let base = script::resolve_setting_options_with_labels(def, loadouts, game_data);
     let mut options = ParameterOptions {
         values: base.values,
@@ -227,8 +238,6 @@ pub fn resolve_parameter_options(
     if options.labels.len() != options.values.len() {
         options.labels.clone_from(&options.values);
     }
-
-    let source = def.options_from.as_deref().unwrap_or_default();
     options.case_insensitive = source == "gatherer-food" || source.starts_with("gather:");
     if source == "gather:sites" {
         if let Some(data) = game_data {
@@ -253,76 +262,90 @@ pub fn resolve_parameter_options(
         }
     }
 
-    if source == "released-path-order" {
-        let candidate_values = options.values.clone();
-        let candidate_labels = options.labels.clone();
-        let quests = bag
-            .get("quests")
-            .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let mut ids: Vec<String> = if quests.is_empty() {
-            candidate_values.clone()
-        } else {
-            quests
-                .into_iter()
-                .filter(|id| {
-                    candidate_values
-                        .iter()
-                        .any(|candidate| candidate.as_str() == *id)
-                })
-                .map(str::to_owned)
-                .collect()
-        };
-        let priority = setting_values(def, bag);
-        // A stored unavailable priority keeps its roster label (and reason)
-        // even outside the selected subset; it is never a choice.
-        for id in &priority {
-            if !ids.contains(id)
-                && candidate_values.contains(id)
-                && script::quester::card::unavailable_quest(id).is_some()
-            {
-                ids.push(id.clone());
-            }
+    if source.starts_with("gather:") || source == "gatherer-food" {
+        preserve_unknown_values(def, bag, &mut options);
+    }
+    options
+}
+
+fn resolve_released_path_options(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, Value>,
+    registry: &script::quester::registry::PathRegistry,
+) -> ParameterOptions {
+    let rows = registry.rows();
+    let source = def.options_from.as_deref().unwrap_or_default();
+    let mut options = ParameterOptions::default();
+
+    if source == "released-paths" {
+        for row in rows {
+            options.values.push(row.id.clone());
+            options.labels.push(row.label.clone());
         }
-        options.values.clear();
-        options.labels.clear();
-        options.preserved = 0;
-        for id in &ids {
-            if options.values.iter().any(|existing| existing == id) {
-                continue;
-            }
-            let Some(index) = candidate_values
-                .iter()
-                .position(|candidate| candidate == id)
-            else {
-                continue;
-            };
-            let label = candidate_labels
-                .get(index)
-                .map_or(id.as_str(), String::as_str);
-            let label = priority
-                .iter()
-                .position(|selected| selected == id)
-                .map_or_else(
-                    || label.to_owned(),
-                    |number| format!("{}. {label}", number + 1),
-                );
-            options.values.push(id.clone());
-            options.labels.push(label);
-        }
-        options.aliases.clear();
-        preserve_unavailable_quests(&mut options);
+        move_unselectable_to_preserved(&mut options, |id| {
+            rows.iter()
+                .find(|row| row.id == id)
+                .is_some_and(|row| row.unavailable.is_none())
+        });
         preserve_unknown_values(def, bag, &mut options);
         return options;
     }
 
-    if source == "released-paths" {
-        preserve_unavailable_quests(&mut options);
+    let quests = bag
+        .get("quests")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut ids: Vec<String> = if quests.is_empty() {
+        rows.iter().map(|row| row.id.clone()).collect()
+    } else {
+        quests
+            .into_iter()
+            .filter(|id| rows.iter().any(|row| row.id == *id))
+            .map(str::to_owned)
+            .collect()
+    };
+    let priority = setting_values(def, bag);
+    for id in &priority {
+        if !ids.contains(id)
+            && rows
+                .iter()
+                .any(|row| row.id == *id && row.unavailable.is_some())
+        {
+            ids.push(id.clone());
+        }
     }
-    if source.starts_with("gather:") || source == "gatherer-food" || source == "released-paths" {
-        preserve_unknown_values(def, bag, &mut options);
+    for id in ids {
+        let Some(row) = rows.iter().find(|row| row.id == id) else {
+            continue;
+        };
+        let display = if row.source == script::quester::registry::PathSource::Bundled
+            && row.unavailable.is_none()
+        {
+            def.options
+                .iter()
+                .position(|option| option == &id)
+                .and_then(|index| def.option_labels.get(index))
+                .unwrap_or(&row.label)
+        } else {
+            &row.label
+        };
+        let label = priority
+            .iter()
+            .position(|selected| selected == &id)
+            .map_or_else(
+                || display.clone(),
+                |number| format!("{}. {}", number + 1, display),
+            );
+        options.values.push(id);
+        options.labels.push(label);
     }
+    move_unselectable_to_preserved(&mut options, |id| {
+        rows.iter()
+            .find(|row| row.id == id)
+            .is_some_and(|row| row.unavailable.is_none())
+    });
+    preserve_unknown_values(def, bag, &mut options);
     options
 }
 
@@ -1027,7 +1050,9 @@ fn validate_edit(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_parameter_text, resolve_parameter_options};
+    use super::{
+        parse_parameter_text, resolve_parameter_options, resolve_parameter_options_with_registry,
+    };
     use script::{LoadoutsStore, SettingDef};
 
     fn setting(ty: &str) -> SettingDef {
@@ -1576,5 +1601,156 @@ mod tests {
         );
         assert!(selectable.iter().all(|value| cycle.contains(value)));
         assert!(refused.iter().all(|value| !cycle.contains(value)));
+    }
+
+    #[test]
+    fn released_path_pickers_use_registry_labels_and_preserve_failed_drafts() {
+        use api::selected::{ClientRevision, FamilyPreparation};
+        use script::quester::registry::{FolderSource, PathRegistry};
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let folder = std::env::temp_dir().join(format!(
+            "parameter-path-rows-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        struct RemoveFolder(PathBuf);
+        impl Drop for RemoveFolder {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _remove = RemoveFolder(folder.clone());
+
+        let write_path = |id: &str, display_name: &str, invalid: bool| {
+            let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../script/paths/289/cook.json"
+            )))
+            .unwrap();
+            document["id"] = serde_json::json!(id);
+            document["display_name"] = serde_json::json!(display_name);
+            document["roles"][0]["sequences"][0]["steps"][0]["comment"] =
+                serde_json::json!("folder edit");
+            if invalid {
+                document["roles"][0]["sequences"][0]["steps"][0]["args"]["not_a_real_argument"] =
+                    serde_json::json!(true);
+            }
+            std::fs::write(
+                folder.join(format!("{id}.json")),
+                serde_json::to_vec(&document).unwrap(),
+            )
+            .unwrap();
+        };
+        write_path("cook", "Folder Cook", false);
+        write_path("fresh-draft", "Fresh Draft", false);
+        write_path("broken-draft", "Broken Draft", true);
+        std::fs::write(
+            folder.join("index.json"),
+            r#"{
+                "schema": 1,
+                "paths": [{
+                    "id": "broken-draft",
+                    "file": "broken-draft.json",
+                    "name": "Broken Draft",
+                    "unavailable": "Authoring in progress"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let selected = FamilyPreparation::run(|_| {
+            api::game_data::for_revision(ClientRevision::R289).expect("selected 289 data")
+        })
+        .expect("spawn family preparation")
+        .join()
+        .expect("selected data worker");
+        let source = FolderSource {
+            enabled: true,
+            folder,
+        };
+        let registry = FamilyPreparation::run(move |_| {
+            let quests =
+                api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            PathRegistry::load(&source, &selected, &quests).unwrap()
+        })
+        .expect("spawn Path compilation")
+        .join()
+        .expect("Path compilation worker");
+        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "parameter-path-loadouts-{}.json",
+            std::process::id()
+        )));
+
+        let mut bag = serde_json::Map::new();
+        bag.insert(
+            "quests".into(),
+            serde_json::json!(["cook", "fresh-draft", "broken-draft"]),
+        );
+        let mut paths = source_setting("quests", "string[]", "released-paths");
+        paths.options = vec!["stale-schema-option".into()];
+        paths.option_labels = vec!["Stale schema label".into()];
+        let options =
+            resolve_parameter_options_with_registry(&paths, &bag, &loadouts, None, Some(&registry));
+        assert!(!options
+            .values
+            .iter()
+            .any(|value| value == "stale-schema-option"));
+        let cook = options
+            .values
+            .iter()
+            .position(|value| value == "cook")
+            .unwrap();
+        assert_eq!(options.labels[cook], "Folder Cook [folder]");
+        let draft = options
+            .values
+            .iter()
+            .position(|value| value == "fresh-draft")
+            .unwrap();
+        assert_eq!(options.labels[draft], "Fresh Draft [draft]");
+        assert!(options.is_selectable_index(draft));
+        let broken = options
+            .values
+            .iter()
+            .position(|value| value == "broken-draft")
+            .unwrap();
+        assert!(!options.is_selectable_index(broken));
+        for expected in [
+            "Broken Draft [draft]",
+            "broken-draft.json",
+            "step=start",
+            "code=invalid-args",
+            "not_a_real_argument",
+        ] {
+            assert!(
+                options.labels[broken].contains(expected),
+                "{}",
+                options.labels[broken]
+            );
+        }
+
+        let mut order = source_setting("order_override", "string[]", "released-path-order");
+        order.options = vec!["stale-schema-option".into()];
+        order.option_labels = vec!["Stale schema label".into()];
+        bag.insert(
+            "order_override".into(),
+            serde_json::json!(["fresh-draft", "cook", "broken-draft"]),
+        );
+        let ordered =
+            resolve_parameter_options_with_registry(&order, &bag, &loadouts, None, Some(&registry));
+        assert!(!ordered
+            .values
+            .iter()
+            .any(|value| value == "stale-schema-option"));
+        assert_eq!(ordered.label_for("fresh-draft"), "1. Fresh Draft [draft]");
+        assert_eq!(ordered.label_for("cook"), "2. Folder Cook [folder]");
+        assert!(!ordered
+            .selectable()
+            .iter()
+            .any(|value| value == "broken-draft"));
+        assert!(ordered.label_for("broken-draft").contains("invalid-args"));
     }
 }
