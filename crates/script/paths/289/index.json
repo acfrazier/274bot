@@ -6,6 +6,8 @@
     { "id": "runemysteries", "file": "runemysteries.json" },
     { "id": "romeojuliet", "file": "romeojuliet.json" },
     { "id": "imp", "file": "imp.json" },
-    { "id": "vampire", "file": "vampire.json" }
+    { "id": "vampire", "file": "vampire.json" },
+    { "id": "prince", "file": "prince.json" },
+    { "id": "hunt", "file": "hunt.json" }
   ]
 }
