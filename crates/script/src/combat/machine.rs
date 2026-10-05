@@ -3,7 +3,9 @@ use super::frame::Frame;
 use super::policy;
 use super::prayer::{PrayerSweep, RaisedPrayers};
 use super::request::*;
-use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
+use super::schedule::{
+    elapsed, reached, Interaction, OpKind, Schedule, EAT_OBSERVATION_WINDOW_TICKS,
+};
 use super::select;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
@@ -1014,7 +1016,7 @@ impl Combat {
             } else {
                 self.pending[slot].age = pending.age.saturating_add(1);
                 let window = match row.kind {
-                    RowKind::Eat => 6,
+                    RowKind::Eat => EAT_OBSERVATION_WINDOW_TICKS,
                     RowKind::Drink | RowKind::Wear | RowKind::Retaliate | RowKind::Style => 4,
                     RowKind::Prayer if row.aux == 0 => 4,
                     RowKind::Prayer | RowKind::Attack => 8,
