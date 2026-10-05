@@ -104,6 +104,22 @@ fn with_tick_output_reach<R>(
     };
     f(&mut native)
 }
+fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted,
+            chat_since: 0,
+        },
+    );
+}
 fn ready() -> GameSnapshot {
     let mut s = GameSnapshot::new();
     s.seed_ingame(2);
@@ -846,6 +862,7 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
         let mut replacement = original;
         replacement.tile.x += 1;
         s.seed_locs(vec![replacement]);
+        accept_last(&mut ledger, 2, false);
         assert!(matches!(
             with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)),
             Poll::Ready(Ok(false))
@@ -1371,6 +1388,7 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
 #[test]
 fn missing_spawn_recovers_when_the_observed_stack_respawns() {
     let mut s = ready();
+    s.seed_local_player(local_player(tile(3229, 3302)));
     let mut ledger = None;
     let plan = InteractPlan {
         kind: egg(true).kind,
@@ -2682,6 +2700,7 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
             ..shears.clone()
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears.clone()], 28);
         // The target is held to isolate round settlement from movement. This
         // drives the same compiled UseOn machine used by the sheep Path.
@@ -2780,6 +2799,7 @@ fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears], 28);
         let plan = compile_use_on(
             test_args::<UseOnArgs>(serde_json::json!({
@@ -3231,6 +3251,7 @@ fn sheep_partial_hand_in_use_on_stops_at_only_the_missing_raw_count() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(
             vec![
                 item(1735, "Shears", 0, 1),
@@ -4449,6 +4470,9 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             with_sheep_step(tick, 12, |cx| step.plan.begin(cx).unwrap())
         });
         for game_tick in 2..=4 {
+            if game_tick == 3 {
+                accept_last(&mut ledger, game_tick, true);
+            }
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 with_sheep_step(tick, 12, |cx| run.poll(cx))
             });

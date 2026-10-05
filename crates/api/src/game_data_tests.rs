@@ -152,8 +152,8 @@ fn minimal_json(tail: &str) -> String {
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [243, 33, 31]),
-        (ClientRevision::R289, [246, 33, 31]),
+        (ClientRevision::R274, [243, 33, 32]),
+        (ClientRevision::R289, [246, 33, 32]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();
@@ -1266,7 +1266,7 @@ fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).unwrap();
         let groups = data.gather_resources_for("fishing").collect::<Vec<_>>();
-        assert_eq!(groups.len(), 12, "{revision:?} fishing group count");
+        assert_eq!(groups.len(), 13, "{revision:?} fishing group count");
         let labels = groups
             .iter()
             .map(|row| row.label.as_str())

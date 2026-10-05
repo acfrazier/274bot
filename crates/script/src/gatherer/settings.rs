@@ -565,7 +565,36 @@ pub(super) fn resolve_methods_for_prepare(
     })
 }
 
-fn admit_method(field: &str, method: &GatherMethod) -> Result<(), StartError> {
+/// The quest Path owns stage gates; it does not own unknown tools, yields or
+/// resource identity. Ordinary Gatherer admission still requires every gate.
+pub(crate) fn method_requirements(
+    method: &GatherMethod,
+    quest_owned: bool,
+) -> Option<&[api::selected::Requirement]> {
+    match &method.requirements {
+        Knowledge::Known(rows) => Some(rows),
+        Knowledge::Partial { known, gaps }
+            if quest_owned && gaps.iter().all(|gap| gap.code.as_ref() == "varp-gate") =>
+        {
+            Some(known)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn admit_method(field: &str, method: &GatherMethod) -> Result<(), StartError> {
+    admit_method_with_quest_gates(field, method, false)
+}
+
+pub(crate) fn admit_quest_method(field: &str, method: &GatherMethod) -> Result<(), StartError> {
+    admit_method_with_quest_gates(field, method, true)
+}
+
+fn admit_method_with_quest_gates(
+    field: &str,
+    method: &GatherMethod,
+    quest_owned: bool,
+) -> Result<(), StartError> {
     if !target_admits_method(field, method)? {
         let reason = first_gap(&method.targets).map_or_else(
             || "no-resource-target".to_owned(),
@@ -577,9 +606,14 @@ fn admit_method(field: &str, method: &GatherMethod) -> Result<(), StartError> {
             reason,
         )));
     }
+    let requirement_gap = if method_requirements(method, quest_owned).is_some() {
+        None
+    } else {
+        first_gap(&method.requirements)
+    };
     let missing = first_gap(&method.tools)
         .or_else(|| first_gap(&method.consumes))
-        .or_else(|| first_gap(&method.requirements))
+        .or(requirement_gap)
         .or_else(|| first_gap(&method.spots));
     if let Some(gap) = missing {
         return Err(StartError::Config(ConfigError::new(

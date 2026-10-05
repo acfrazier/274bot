@@ -1,7 +1,8 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
 use api::gather_methods::{
-    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput, TargetClass,
+    known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
+    SceneRegionInput, TargetClass,
 };
 use api::selected::{EntityId, Knowledge, Truth};
 use api::snapshot::{LocView, NpcView, WorldStateView, WorldTile};
@@ -212,6 +213,58 @@ pub struct SelectedTarget {
     pub class: PlacementClass,
 }
 
+impl SelectedTarget {
+    /// One approach policy for Gatherer and finite quest gathering.
+    /// Live NPC ops own client-side approach; locs settle at their footprint.
+    pub(crate) fn approach(
+        &self,
+        snapshot: api::snapshot::SnapshotView<'_>,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<crate::native::WalkRequest> {
+        let observation_approach =
+            self.class == PlacementClass::Unloaded && matches!(self.plan.entity, EntityId::Npc(_));
+        let loc_id = match self.plan.entity {
+            EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let needs_walk = if self.class == PlacementClass::Unloaded {
+            true
+        } else if self.plan.npc_index >= 0 {
+            false
+        } else {
+            !snapshot.here().is_some_and(|here| match loc_id {
+                Some(id) => snapshot.walk_loc_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                    id,
+                ),
+                None => snapshot.walk_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                ),
+            })
+        };
+        needs_walk.then(|| crate::native::WalkRequest {
+            target: self.plan.tile,
+            loc_id,
+            radius: RESOURCE_APPROACH_RADIUS,
+            arrival: if observation_approach {
+                nav::arrival::ArrivalKind::Area
+            } else {
+                nav::arrival::ArrivalKind::Reach
+            },
+            options: crate::native::WalkOptions::default(),
+            required_after,
+            evidence: None,
+            cross: Vec::new().into_boxed_slice(),
+            protect: false,
+            allow: Default::default(),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectionResult {
     pub target: Option<SelectedTarget>,
@@ -388,6 +441,52 @@ pub fn select(
     avoided: &[AvoidedTile; MAX_AVOID],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        avoided,
+        observation,
+        None,
+    )
+}
+
+/// Quest Paths own their quest-state gates. They may attempt a state-gated
+/// resource, but never an intercepted or substituted yield.
+pub(crate) fn select_for_quest(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    observation: SelectionObservation<'_>,
+    snapshot: api::snapshot::SnapshotView<'_>,
+) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        &[AvoidedTile::EMPTY; MAX_AVOID],
+        observation,
+        Some(snapshot),
+    )
+}
+
+fn select_with_access(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    avoided: &[AvoidedTile; MAX_AVOID],
+    observation: SelectionObservation<'_>,
+    quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
+) -> SelectionResult {
+    let access = if quest_snapshot.is_some() {
+        AccessPolicy::Possible
+    } else {
+        AccessPolicy::Usable
+    };
     let SelectionObservation {
         world,
         locs,
@@ -409,6 +508,11 @@ pub fn select(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
@@ -419,7 +523,7 @@ pub fn select(
             for spot in spots.iter().filter(|spot| {
                 fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -427,6 +531,9 @@ pub fn select(
                     continue;
                 };
                 for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+                    if access == AccessPolicy::Possible && !area.contains(npc.tile) {
+                        continue;
+                    }
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
@@ -458,7 +565,7 @@ pub fn select(
                 continue;
             };
             for spot in spots.filter(|spot| known_resource_target(method, spot.entity)) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -518,6 +625,11 @@ pub fn select(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
@@ -948,6 +1060,19 @@ fn better_candidate(
             (distance, -level, i64::from(spot_id))
                 < (current_distance, -current_level, i64::from(current_spot))
         }
+    }
+}
+
+fn access_allowed(
+    catalog: &GatherCatalog,
+    method: &GatherMethod,
+    spot: &GatherSpot,
+    policy: AccessPolicy,
+) -> bool {
+    match catalog.access(method, spot) {
+        Ok(Truth::True) => true,
+        Ok(Truth::Unknown) => policy == AccessPolicy::Possible,
+        Ok(Truth::False) | Err(_) => false,
     }
 }
 

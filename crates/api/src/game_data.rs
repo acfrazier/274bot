@@ -1882,6 +1882,19 @@ impl SelectedGameData {
         })
     }
 
+    /// Required Thieving level for a generated pickpocket NPC id.
+    ///
+    /// Conflicting selected rows are unknown: the caller must not choose a
+    /// gate from a display name shared by unrelated NPCs.
+    pub fn required_thieving_npc(&self, id: i32) -> Option<i32> {
+        let mut facts = self
+            .pickpocket
+            .iter()
+            .filter(|fact| fact.npcs.iter().any(|npc| npc.id == id));
+        let level = facts.next()?.level;
+        facts.all(|fact| fact.level == level).then_some(level)
+    }
+
     pub fn spells(&self) -> &[SpellFact] {
         &self.spells
     }

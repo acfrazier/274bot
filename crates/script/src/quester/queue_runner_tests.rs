@@ -202,11 +202,18 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         .expect("selected Cook's Assistant");
     assert_eq!(queued.queue.id(active_index), Some("cook"));
     queued.active_index = Some(active_index);
-    let path = super::super::compile::compile_path(
-        super::super::registry::bundled_path("cook").unwrap(),
-        &selected,
-        &queued.quests,
-    )
+    let path = super::super::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&queued.quests);
+        move |cap| {
+            super::super::compile::compile_path(
+                super::super::registry::bundled_path("cook").unwrap(),
+                &selected,
+                &quests,
+                cap,
+            )
+        }
+    })
     .unwrap();
     let mut ledger = None;
     let mut output = Capture::default();
@@ -339,7 +346,7 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
         let selected = Arc::clone(&queued.selected);
         let quests = Arc::clone(&queued.quests);
         let source_folder = folder.clone();
-        let registry = api::selected::FamilyPreparation::run(move |_| {
+        let registry = api::selected::FamilyPreparation::run(move |worker| {
             PathRegistry::load(
                 &FolderSource {
                     enabled: true,
@@ -347,6 +354,7 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
                 },
                 &selected,
                 &quests,
+                worker,
             )
             .unwrap()
         })

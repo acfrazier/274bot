@@ -15950,6 +15950,7 @@
       "npc 1331 0_41_57_saltfish",
       "npc 1332 0_41_57_rarefish",
       "npc 1333 0_41_57_memberfish",
+      "obj 25 red_vine_worm",
       "obj 301 lobster_pot",
       "obj 303 net",
       "obj 305 big_net",
@@ -15963,6 +15964,7 @@
       "obj 327 raw_sardine",
       "obj 331 raw_salmon",
       "obj 335 raw_trout",
+      "obj 338 raw_giant_carp",
       "obj 341 raw_cod",
       "obj 345 raw_herring",
       "obj 349 raw_pike",
@@ -23059,6 +23061,99 @@
         "sources": [
           "scripts/skill_fishing/scripts/fishing_spots/slimeyfish.rs2:1-1"
         ]
+      },
+      {
+        "id": "fishing.0_41_53_sinisterfishspot.op1",
+        "skill": "fishing",
+        "resources": [
+          "raw_giant_carp"
+        ],
+        "op": {
+          "slot": 1,
+          "label": "Fish"
+        },
+        "targets": {
+          "state": "known",
+          "value": [
+            {
+              "kind": "npc",
+              "id": 234,
+              "op": 1,
+              "class": "resource",
+              "respawn": {
+                "state": "known",
+                "value": null
+              }
+            }
+          ]
+        },
+        "products": {
+          "state": "known",
+          "value": [
+            {
+              "item": 338,
+              "level": 10
+            }
+          ]
+        },
+        "tools": {
+          "state": "known",
+          "value": [
+            {
+              "item": 307,
+              "use_gate": null,
+              "wield_gate": null
+            }
+          ]
+        },
+        "consumes": {
+          "state": "known",
+          "value": [
+            {
+              "item": 25,
+              "count": 1
+            }
+          ]
+        },
+        "requirements": {
+          "state": "partial",
+          "value": [
+            {
+              "id": "fishing.0_41_53_sinisterfishspot.op1.level",
+              "source": "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:70-70",
+              "kind": "skill",
+              "skill": 10,
+              "level": 10
+            }
+          ],
+          "gaps": [
+            {
+              "code": "varp-gate",
+              "sources": [
+                "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:55-101",
+                "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:103-122",
+                "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:26-53",
+                "scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant:8-8",
+                "scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant:10-10"
+              ]
+            }
+          ]
+        },
+        "spots": {
+          "state": "known",
+          "value": null
+        },
+        "sources": [
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:2-2",
+          "scripts/skill_fishing/configs/fishing.npc:16-28",
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:55-101",
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:20-24",
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:26-53",
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:103-122",
+          "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:70-70",
+          "scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant:8-8",
+          "scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant:10-10"
+        ]
       }
     ],
     "loose": [
@@ -23072,19 +23167,6 @@
           "sources": [
             "scripts/skill_fishing/configs/fishing.npc:2-14",
             "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:1-1"
-          ]
-        }
-      },
-      {
-        "skill": "fishing",
-        "kind": "npc",
-        "id": 234,
-        "class": "unclassified",
-        "gap": {
-          "code": "handler-outside-skill-scripts",
-          "sources": [
-            "scripts/skill_fishing/configs/fishing.npc:16-28",
-            "scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:2-2"
           ]
         }
       },
@@ -23283,6 +23365,13 @@
       }
     ],
     "movements": [
+      {
+        "npc": 234,
+        "region": {
+          "state": "known",
+          "value": null
+        }
+      },
       {
         "npc": 309,
         "region": {
@@ -29379,7 +29468,8 @@
           "6656 0 62 42 l1278 2",
           "6658 0 62 45 l1278 0",
           "6662 0 62 55 l1278 1",
-          "6664 0 62 58 l1278 3"
+          "6664 0 62 58 l1278 3",
+          "7630 0 13 52 n234 0"
         ]
       },
       {

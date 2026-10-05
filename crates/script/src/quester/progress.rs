@@ -959,7 +959,10 @@ mod tests {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("romeojuliet").unwrap();
-        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let document = serde_json::from_slice(bytes).unwrap();
+        let path =
+            crate::quester::compile::compile_uncached_for_test(&document, &selected, &quests)
+                .unwrap();
         let completed = resolve_journal(
             &path,
             &read_lines(
@@ -984,7 +987,10 @@ mod tests {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("sheep").unwrap();
-        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let document = serde_json::from_slice(bytes).unwrap();
+        let path =
+            crate::quester::compile::compile_uncached_for_test(&document, &selected, &quests)
+                .unwrap();
         let in_progress = resolve_journal(
             &path,
             &read_lines(
