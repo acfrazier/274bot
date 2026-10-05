@@ -654,8 +654,7 @@ impl TuiApp {
             }
             SettingsKey::QuesterPathsChanged => {
                 self.quester_paths_dirty = true;
-                self.quester_paths_notice = None;
-                self.quester_paths_notice_error = false;
+                self.quester_paths_controller.clear_notice();
             }
             SettingsKey::ReloadPaths => return AppAction::ReloadPaths,
             SettingsKey::Consumed | SettingsKey::Ignored => {}

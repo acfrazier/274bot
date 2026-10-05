@@ -7,6 +7,7 @@ use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::queue::QueueStatus;
+use super::registry::PathSource;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
@@ -2276,9 +2277,9 @@ impl QueuedQuester {
                 static SOURCES: std::sync::LazyLock<[Arc<str>; 3]> =
                     std::sync::LazyLock::new(|| {
                         [
-                            Arc::from("bundled"),
-                            Arc::from("folder"),
-                            Arc::from("draft"),
+                            Arc::from(PathSource::Bundled.label()),
+                            Arc::from(PathSource::Folder.label()),
+                            Arc::from(PathSource::Draft.label()),
                         ]
                     });
                 let source = self.queue.path_source(index);

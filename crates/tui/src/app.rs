@@ -421,14 +421,10 @@ pub struct TuiApp {
     pub map_bake: MapBakeChoice,
     /// Shared host/folder source settings for Quester Paths.
     pub quester_paths: QuesterPathsView,
-    /// Last successfully persisted Quester Paths source settings.
-    pub(crate) quester_paths_persisted: QuesterPathsView,
+    /// Shared settings persistence, reload worker, and user-visible notice.
+    pub(crate) quester_paths_controller: frontend_core::QuesterPathsController,
     /// The folder gate or path changed; the session persists it on pump.
     pub(crate) quester_paths_dirty: bool,
-    /// Most recent async Path registry reload status/report.
-    pub(crate) quester_paths_notice: Option<Arc<str>>,
-    pub(crate) quester_paths_reloading: bool,
-    pub(crate) quester_paths_notice_error: bool,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
     pub map_bake_dirty: bool,
     /// Global nav preference: pause a script after its owned walk is
@@ -551,11 +547,8 @@ impl TuiApp {
             settings_memory: None,
             map_bake: MapBakeChoice::Ask,
             quester_paths: QuesterPathsView::default(),
-            quester_paths_persisted: QuesterPathsView::default(),
+            quester_paths_controller: frontend_core::QuesterPathsController::default(),
             quester_paths_dirty: false,
-            quester_paths_notice: None,
-            quester_paths_notice_error: false,
-            quester_paths_reloading: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
             shared_preferences_path: None,
@@ -600,12 +593,8 @@ impl TuiApp {
     /// are refreshed again for every relevant render and admission.
     pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
         let path = path.into();
-        self.quester_paths = QuesterPathsView::read_at(&path);
-        self.quester_paths_persisted.enabled = self.quester_paths.enabled;
-        self.quester_paths_persisted
-            .folder
-            .clone_from(&self.quester_paths.folder);
-        self.quester_paths.apply();
+        self.quester_paths_controller.restore_at(&path);
+        self.quester_paths = self.quester_paths_controller.settings().clone();
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
             &path,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,

@@ -3068,10 +3068,10 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             ui.separator();
             ui.text_colored(ACCENT, "Quest Paths");
             ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-            let before_paths = session.quester_paths.clone();
+            let before_paths = session.quester_paths.settings().clone();
             let mut after_paths = before_paths.clone();
             let mut paths_changed = false;
-            let path_reload_running = session.quester_paths_reload.is_running();
+            let path_reload_running = session.quester_paths.is_running();
             let _path_controls_disabled = if path_reload_running {
                 Some(ui.begin_disabled())
             } else {
@@ -3147,10 +3147,10 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             } else if reload_requested {
                 session.start_quester_paths_reload();
             }
-            if let Some(notice) = &session.quester_paths_notice {
+            if let Some(notice) = session.quester_paths.notice() {
                 match notice {
                     Ok(summary) => ui.text_wrapped(summary.as_ref()),
-                    Err(error) => ui.text_colored(ERROR, format!("Quest Paths: {error}")),
+                    Err(error) => ui.text_colored(ERROR, error.as_ref()),
                 }
             }
         });

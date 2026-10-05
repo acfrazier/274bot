@@ -121,11 +121,11 @@ impl TuiApp {
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
             pane.quester_paths_notice = self
-                .quester_paths_notice
-                .as_deref()
+                .quester_paths_controller
+                .notice_text()
                 .and_then(|notice| notice.lines().next());
-            pane.quester_paths_notice_error = self.quester_paths_notice_error;
-            pane.quester_paths_reloading = self.quester_paths_reloading;
+            pane.quester_paths_notice_error = self.quester_paths_controller.notice_is_error();
+            pane.quester_paths_reloading = self.quester_paths_controller.is_running();
             let settings_area = if self.regions.message.is_empty() {
                 area
             } else {
