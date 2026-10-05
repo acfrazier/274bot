@@ -1386,6 +1386,9 @@ struct TalkPlan {
     expect_combat: Option<i32>,
 }
 impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
             target: self.target.clone(),
@@ -1701,6 +1704,9 @@ struct InteractPlan {
     reachable_only: bool,
 }
 impl StepPlan for InteractPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
@@ -2258,6 +2264,9 @@ struct UseOnPlan {
     dialogue_options: Option<dialogue::DialogueOptions>,
 }
 impl StepPlan for UseOnPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let until = begin_until(self.until.as_ref(), cx)?;
         Ok(Box::new(UseOnRun {

@@ -1934,6 +1934,7 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
         with_tick(&fixture.snapshot, &mut fixture.ledger, 49, |tick| {
             let cx = PredicateContext {
                 cx: &tick.cx,
+                pairs: tick.pairs,
                 quests: &fixture.script.quests,
                 progress: &[],
                 required_after: tick.cx.evidence(),
