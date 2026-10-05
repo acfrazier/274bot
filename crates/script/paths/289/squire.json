@@ -874,45 +874,6 @@
               }
             }
           }
-        },
-        {
-          "id": "GAP-mine-iron-ore-needs-gather",
-          "kind": "wait",
-          "version": 1,
-          "args": {
-            "until": {
-              "Fact": {
-                "kind": "item_count_at_least",
-                "version": 1,
-                "args": {
-                  "obj": "iron_bar",
-                  "qty": 2
-                }
-              }
-            },
-            "max_ticks": 10
-          },
-          "comment": "GAP: mining iron ore is the gather family, which is not on release 6ba83abfc. Rimmington iron rocks (ironrock1/ironrock2) are at 2968-2971,3237-3242 and 2981-2982,3233-3234 (maps/m46_50.jm2:5666-6201). This placeholder fails after 10 ticks so the park reason names the gap.",
-          "skip_if": {
-            "Fact": {
-              "kind": "item_count_at_least",
-              "version": 1,
-              "args": {
-                "obj": "iron_bar",
-                "qty": 2
-              }
-            }
-          },
-          "settle": {
-            "Fact": {
-              "kind": "item_count_at_least",
-              "version": 1,
-              "args": {
-                "obj": "iron_bar",
-                "qty": 2
-              }
-            }
-          }
         }
       ],
       "acquire:blurite": [
@@ -924,7 +885,7 @@
             "loadout": "ice",
             "at": "nearest"
           },
-          "comment": "Rune kit plus lobsters for the ice-warrior corridor. Skipped once underground so a restart never tries to walk back to a bank through the zones.",
+          "comment": "Rune kit plus six lobsters for the ice-warrior corridor. Nothing in this recipe eats them: the walk guard holds a prayer only (docs/api/script.md:893-894), so they are the operator's food after a Stop, not an automatic sustain. Skipped once underground so a restart never tries to walk back to a bank through the zones.",
           "skip_if": {
             "Any": [
               {
@@ -973,7 +934,7 @@
           "args": {
             "retaliate": false
           },
-          "comment": "A returned swing would cancel the walk (AIO dungeon.ts:66-67 lesson); the walks go through with Protect from Melee instead.",
+          "comment": "A returned swing would cancel the walk (AIO dungeon.ts:66-67 lesson); the walks rely on the best-effort walk guard instead (see ice-walk-4), so at Base40 the crossings are unprotected and nothing hits back.",
           "skip_if": {
             "Any": [
               {
@@ -1316,7 +1277,7 @@
             ],
             "guard": "protect"
           },
-          "comment": "Protect from Melee (Prayer 43) is held for the hobgoblin cave. C maps/m47_149.jm2:6627-6632 (hobgoblin_unarmed spawns, level 28, wander 15, aggressive up to combat 56)",
+          "comment": "guard 'protect' asks for Protect from Melee, which needs Prayer 43 (C skill_prayer/configs/prayers.dbrow:121-128). The guard is best-effort: it admits any base Prayer >= 37, warns once ('Prayer 43 needed for Protect from Melee' under Walk protection) when the level is short, keeps walking unprotected and never eats (combat/guard.rs:130-150,295-304; docs/api/script.md:889-899). At the Base40 fixture this leg is an unprotected crossing. C maps/m47_149.jm2:6627-6632 (hobgoblin_unarmed spawns, level 28, wander 15, aggressive up to combat 56)",
           "skip_if": {
             "Any": [
               {
@@ -1378,7 +1339,7 @@
               9567,
               0
             ],
-            "source": "C maps/m47_149.jm2:5521 (bluriterock at 3049,9566); the tile south-west of the rock",
+            "source": "C maps/m47_149.jm2:5521 (bluriterock at 3049,9566); the tile north-west of the rock",
             "radius": 1,
             "cross": [
               "hobgoblin_unarmed@3016,9578,0",
@@ -1390,7 +1351,7 @@
             ],
             "guard": "protect"
           },
-          "comment": "Protect from Melee held through four ice-warrior zones (the two eastern hobgoblin zones still cover the cave mouth). C maps/m47_149.jm2:6634-6639 (icewarrior spawns, level 57, hunt radius 6, aggressive up to combat 114)",
+          "comment": "Same best-effort guard as ice-walk-4: unprotected at Base40 through four ice-warrior zones (the two eastern hobgoblin zones still cover the cave mouth). C maps/m47_149.jm2:6634-6639 (icewarrior spawns, level 57, hunt radius 6, aggressive up to combat 114)",
           "skip_if": {
             "Any": [
               {
@@ -1429,42 +1390,6 @@
                   0
                 ],
                 "radius": 2
-              }
-            }
-          }
-        },
-        {
-          "id": "GAP-mine-blurite-needs-gather",
-          "kind": "wait",
-          "version": 1,
-          "args": {
-            "until": {
-              "Fact": {
-                "kind": "has_item",
-                "version": 1,
-                "args": {
-                  "obj": "blurite_ore"
-                }
-              }
-            },
-            "max_ticks": 10
-          },
-          "comment": "GAP: mining the blurite rock (bluriterock, op Mine, Mining 10; skill_mining/configs/rocks.loc:364-377, mine.dbrow:143-152) is the gather family, which is not on release 6ba83abfc. Blurite ore has no other source in the content. This placeholder fails after 10 ticks so the park names the gap; Stop the run here, the ice warriors keep attacking a parked bot.",
-          "skip_if": {
-            "Fact": {
-              "kind": "has_item",
-              "version": 1,
-              "args": {
-                "obj": "blurite_ore"
-              }
-            }
-          },
-          "settle": {
-            "Fact": {
-              "kind": "has_item",
-              "version": 1,
-              "args": {
-                "obj": "blurite_ore"
               }
             }
           }
@@ -2346,6 +2271,94 @@
               "args": {
                 "recipe": "acquire:iron_bars"
               },
+              "comment": "Bars from the bank, else banked ore smelted at Falador. Skipped once the bank is known to hold neither bars nor ore and no ore is held, so the GAP step below is the one that fails and the parked Step field names the gap.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "iron_bar",
+                        "qty": 2
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "iron_bar"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "iron_ore"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "has_item",
+                            "version": 1,
+                            "args": {
+                              "obj": "iron_ore"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "GAP-mine-iron-ore-needs-gather",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "iron_bar",
+                      "qty": 2
+                    }
+                  }
+                },
+                "max_ticks": 10
+              },
+              "comment": "GAP: mining iron ore is the gather family, which is not on release 6ba83abfc. Rimmington iron rocks (ironrock1/ironrock2) are at 2968-2971,3237-3242 and 2981-2982,3233-3234 (maps/m46_50.jm2:5666-6201). Reached only when iron-bars above is skipped because neither bars nor ore are banked or held; it fails after 10 ticks with 'wait exhausted' and, as a top-level step, the parked Step field shows this id. The bot parks wherever it stands (usually the bank it just checked). Replace with the mining step when gather lands.",
               "skip_if": {
                 "Fact": {
                   "kind": "item_count_at_least",
@@ -2429,7 +2442,66 @@
               "args": {
                 "recipe": "acquire:blurite"
               },
-              "comment": "Walks into the Asgarnian Ice Dungeon to the nearest blurite rock and stops at the recorded mining gap.",
+              "comment": "Walks into the Asgarnian Ice Dungeon to the nearest blurite rock. The recipe ends there (gather gap), so it settles on arrival and is skipped once beside the rock; the GAP step below is then the one that fails, so the parked Step field names the gap. When gather lands, put the mining step after ice-walk-5 and return both skip_if and settle to has_item blurite_ore.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blurite_ore"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3048,
+                          9567,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3048,
+                      9567,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "GAP-mine-blurite-needs-gather",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "blurite_ore"
+                    }
+                  }
+                },
+                "max_ticks": 10
+              },
+              "comment": "GAP: mining the blurite rock (bluriterock, op Mine, Mining 10; skill_mining/configs/rocks.loc:364-377, mine.dbrow:143-152) is the gather family, which is not on release 6ba83abfc. Blurite ore has no other source in the content. Reached once the blurite recipe above has brought the bot beside the rock; it fails after 10 ticks with 'wait exhausted' and, as a top-level step, the parked Step field shows this id. Stop the run as soon as the bot stands beside the rock: it is unprotected at Base40 (see ice-walk-4), nothing eats, and the ice warriors keep attacking a parked bot.",
               "skip_if": {
                 "Fact": {
                   "kind": "has_item",
@@ -2471,7 +2543,7 @@
                 ],
                 "guard": "protect"
               },
-              "comment": "Return leg with the ore; mirrors ice-walk-5.",
+              "comment": "Return leg with the ore; mirrors ice-walk-5, same best-effort guard.",
               "skip_if": {
                 "Any": [
                   {
@@ -2535,7 +2607,7 @@
                 ],
                 "guard": "protect"
               },
-              "comment": "Mirrors ice-walk-4.",
+              "comment": "Mirrors ice-walk-4, same best-effort guard.",
               "skip_if": {
                 "Any": [
                   {
