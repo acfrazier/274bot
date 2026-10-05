@@ -4,11 +4,7 @@ use crate::combat::frame::Frame;
 use crate::combat::request::{ActorKind, ActorRef, CombatRequest};
 use crate::combat::tables::{CombatTab, CombatTables};
 use api::game_data::SpellFact;
-use api::line_of_sight::{has_line_of_sight_local, Footprint};
-use api::snapshot::SceneView;
 
-/// Both the server autocast attack range and targeted manual AP range.
-pub const CAST_RANGE: i32 = 10;
 pub const CAST_TICKS: u16 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,47 +194,4 @@ pub(crate) fn strongest(
         })
         .max_by_key(|(_, spell)| (spell.maxhit, spell.level))
         .map(|(index, _)| index as u8)
-}
-
-/// Borrowed collision ray, with the actor's full network footprint. Missing
-/// collision is unknown, never clear LOS. Open actor ops may approach on the
-/// server; safespot consumers use this gate before sending a cast.
-pub fn in_reach(
-    here: api::WorldTile,
-    target: api::WorldTile,
-    size: i32,
-    scene: Option<&SceneView>,
-) -> Option<bool> {
-    if here.level != target.level {
-        return Some(false);
-    }
-    let size = size.max(1);
-    let dx = (target.x - here.x).max(here.x - target.x - size + 1).max(0);
-    let dz = (target.z - here.z).max(here.z - target.z - size + 1).max(0);
-    if dx.max(dz) > CAST_RANGE {
-        return Some(false);
-    }
-    let scene = scene.filter(|scene| scene.available && scene.level == here.level)?;
-    let lookup = |x: i32, z: i32| {
-        if x < 0 || z < 0 || x >= scene.width || z >= scene.height {
-            return None;
-        }
-        scene
-            .collision_flags
-            .get((x * scene.height + z) as usize)
-            .copied()
-    };
-    Some(has_line_of_sight_local(
-        &lookup,
-        Footprint {
-            lx: here.x - scene.base_x,
-            lz: here.z - scene.base_z,
-            size: 1,
-        },
-        Footprint {
-            lx: target.x - scene.base_x,
-            lz: target.z - scene.base_z,
-            size,
-        },
-    ))
 }

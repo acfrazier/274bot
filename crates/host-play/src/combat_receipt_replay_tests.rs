@@ -26,6 +26,19 @@ fn capture(value: &Value) -> CombatCapture {
     capture
 }
 
+fn set_prayer_varp_off_through(value: &mut Value, varp: i64, through_tick: Option<i64>) {
+    for frame in value["frames"].as_array_mut().unwrap() {
+        if through_tick.is_some_and(|end| frame["tick"].as_i64().is_none_or(|tick| tick > end)) {
+            continue;
+        }
+        for row in frame["prayer_varps"].as_array_mut().unwrap() {
+            if row["index"] == json!(varp) {
+                row["value"] = json!(0);
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore = "offline replay requires retained evidence; COMBAT_RECEIPT_ROOTS and COMBAT_REPLAY_OUTPUT"]
 fn replay_all_retained_combat_receipts() {
@@ -327,6 +340,17 @@ fn replay_all_retained_combat_receipts() {
                 }
             }
             Case::MageAuto | Case::MageManualFallback | Case::MageManualNoFallback => {
+                if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains("latekill60"))
+                {
+                    assert!(
+                        !every_killed_report_has_corpse(&c),
+                        "retained latekill60 mutant accepted"
+                    );
+                    leaves["latekill60_mutant_rejected"] = json!(true);
+                }
                 let evidence = magic_rune_evidence(&c);
                 leaves["runes_coherent"] = json!(evidence.coherent);
                 leaves["cast_cadence"] = json!(rune_cast_cadence_ok(&evidence.casts));
@@ -344,13 +368,7 @@ fn replay_all_retained_combat_receipts() {
                 }
                 if ready {
                     let mut never_on = value.clone();
-                    for frame in never_on["frames"].as_array_mut().unwrap() {
-                        for row in frame["prayer_varps"].as_array_mut().unwrap() {
-                            if row["index"] == json!(97) {
-                                row["value"] = json!(0);
-                            }
-                        }
-                    }
+                    set_prayer_varp_off_through(&mut never_on, 97, None);
                     assert!(
                         !protection_timing_ok(&capture(&never_on)),
                         "never-on mutant accepted"
@@ -367,20 +385,59 @@ fn replay_all_retained_combat_receipts() {
                         .find(|row| prayer_action(row, component))
                         .unwrap();
                     action["tick"] = json!(onset + 3);
-                    for frame in late["frames"].as_array_mut().unwrap() {
-                        if frame["tick"].as_i64().is_some_and(|tick| tick <= onset + 2) {
-                            for row in frame["prayer_varps"].as_array_mut().unwrap() {
-                                if row["index"] == json!(97) {
-                                    row["value"] = json!(0);
-                                }
-                            }
-                        }
-                    }
+                    set_prayer_varp_off_through(&mut late, 97, Some(onset + 2));
                     assert!(
                         !protection_timing_ok(&capture(&late)),
                         "late-on mutant accepted"
                     );
                     leaves["late_on_mutant_rejected"] = json!(true);
+
+                    if case.is_manual_magic() {
+                        let protect = c
+                            .actions
+                            .iter()
+                            .find(|row| prayer_action(row, component))
+                            .unwrap();
+                        let rows = plan_rows(&c, protect);
+                        let terminal = rows.last().unwrap();
+                        assert_eq!(
+                            terminal["request"]["op"],
+                            json!("use-widget-on"),
+                            "manual Protect plan should terminate in its targeted Cast"
+                        );
+                        let batch = terminal["batch"].clone();
+
+                        let mut non_npc_widget = value.clone();
+                        let widget = non_npc_widget["actions"]
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|row| {
+                                row["batch"] == batch
+                                    && row["request"]["op"] == json!("use-widget-on")
+                            })
+                            .unwrap();
+                        widget["request"]["kind"] = json!("obj");
+                        assert!(
+                            !protect_plan_ends_with_terminal(&capture(&non_npc_widget)),
+                            "manual Protect plus non-NPC widget-on mutant accepted"
+                        );
+                        leaves["non_npc_widget_terminal_mutant_rejected"] = json!(true);
+
+                        let mut protect_alone = value.clone();
+                        protect_alone["actions"]
+                            .as_array_mut()
+                            .unwrap()
+                            .retain(|row| {
+                                !(row["batch"] == batch
+                                    && row["request"]["op"] == json!("use-widget-on"))
+                            });
+                        assert!(
+                            !protect_plan_ends_with_terminal(&capture(&protect_alone)),
+                            "manual Protect without a Cast terminal accepted"
+                        );
+                        leaves["manual_protect_alone_mutant_rejected"] = json!(true);
+                    }
                 }
             }
             _ => {}
