@@ -706,6 +706,7 @@ impl Quester {
             api::hostlog::Level::Warn,
             format_args!("quester {}: park: {reason}", self.path.id.0),
         );
+        self.trace.terminal_logged = true;
     }
 
     fn poll_provision(&mut self, tick: &mut NativeTick<'_>, mode: ProvisionMode) -> bool {
@@ -1685,6 +1686,7 @@ impl Script for Quester {
                     QuesterFailureKind::MaxDeaths,
                     Arc::from("maximum deaths exceeded; Stop/Start required"),
                 );
+                self.trace_parked(tick.output);
                 self.emit_status(tick.output, NativePhase::Blocked);
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
             }
@@ -3894,6 +3896,11 @@ mod tests {
             }
         }
         assert!(script.parked, "the repeated wait failures must park");
+        for tick in 41..=43 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+        }
 
         let messages: Vec<&str> = output
             .logs
@@ -3933,6 +3940,14 @@ mod tests {
             "one original and one retry-count summary should represent all failures"
         );
         assert!(messages.last().unwrap().contains("park: wait exhausted"));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|line| line.contains(": park: "))
+                .count(),
+            1,
+            "a parked run logs its park once, not on every later tick: {messages:#?}"
+        );
         assert!(output.logs.iter().any(|(level, message)| {
             *level == api::hostlog::Level::Warn && message.contains("repeated 4 additional times")
         }));
