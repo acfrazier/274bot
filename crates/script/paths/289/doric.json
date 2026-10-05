@@ -1,0 +1,169 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "doric",
+  "display_name": "Doric's Quest",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "clay", "qty": 6, "kind": "must_have" },
+      { "obj": "copper_ore", "qty": 4, "kind": "must_have" },
+      { "obj": "iron_ore", "qty": 2, "kind": "must_have" }
+    ],
+    "acquire": {
+      "acquire:materials": [
+        {
+          "id": "withdraw-clay",
+          "kind": "bank",
+          "version": 1,
+          "comment": "Withdraws only owned ores. The gather family is unavailable; if any ore is absent from the inventory and bank, the enclosing acquisition will stop here.",
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "clay", "qty": 6 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "clay" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "clay" } } }
+        },
+        {
+          "id": "withdraw-copper",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "copper_ore", "qty": 4 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "copper_ore" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "copper_ore" } } }
+        },
+        {
+          "id": "withdraw-iron",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "iron_ore", "qty": 2 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "iron_ore" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_ore" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:clay", "obj:copper_ore", "obj:iron_ore"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:doric",
+      "progress": {
+        "colour": { "not_started": "doric:0", "in_progress": "doric:10", "complete": "doric:100" },
+        "rules": [
+          { "stage": "doric:100", "all": ["quest complete!"], "varp": 100 },
+          { "stage": "doric:10", "all": ["i have spoken to doric", "i need to collect some items"], "varp": 10 },
+          { "stage": "doric:0", "all": ["i can start this quest by talking to", "doric"], "varp": 0 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "doric:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-doric",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "doric",
+                "anchor": {
+                  "tile": [2952, 3451, 0],
+                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:34-61; tile from the unreviewed AIO draft, not checked against binary placement"
+                },
+                "leash": 6,
+                "prefer": ["I wanted to use your anvils.", "Yes, I will get you materials."]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "doric", "any": ["doric:10"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "doric:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "scan-bank-for-ores",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "All": [
+                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
+                ] }
+              ] },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "acquire-doric-materials",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:materials" },
+              "skip_if": { "All": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
+              ] },
+              "settle": { "All": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
+              ] }
+            },
+            {
+              "id": "hand-in-mining-ore",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "The gather family is not available in 0.2.0. This Path can withdraw owned ores from the bank, but has no mining fallback; supply 6 clay, 4 copper ore and 2 iron ore manually if absent.",
+              "args": {
+                "npc": "doric",
+                "anchor": {
+                  "tile": [2952, 3451, 0],
+                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:68-84; tile from the unreviewed AIO draft, not checked against binary placement"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "All": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
+              ] } },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "doric", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "doric:100", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}
