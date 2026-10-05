@@ -230,6 +230,12 @@ An observed empty bank is known zero stock; missing bank evidence remains unknow
 Finishing a provisioning recipe still invalidates the memo because the recipe
 may have changed inventory; cancel or Stop discards its pending child evidence.
 
+When an acquisition child fails, parked status retains its recipe and child
+step IDs alongside the failure reason. A settle-timeout park shows the timed-out
+step and its index while keeping the existing runtime reset to the stage's first
+step for retry selection; Start still rereads server quest evidence. Panel and
+TUI consume the same status fields.
+
 Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
 the display-name rows consumed by Loadouts; operator overrides remain ordinary

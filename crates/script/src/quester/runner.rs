@@ -70,6 +70,13 @@ enum QuesterFailureKind {
     NeedsEvidence,
 }
 
+struct ParkedStep {
+    sequence_index: usize,
+    step_index: usize,
+    in_prelude: bool,
+    id: Arc<str>,
+}
+
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
@@ -88,6 +95,8 @@ pub struct Quester {
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
+    failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
+    parked_step: Option<ParkedStep>,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
@@ -418,6 +427,8 @@ impl Quester {
             empty_reads: 0,
             park_reason: "no progress",
             last_error: None,
+            failed_acquisition_child: None,
+            parked_step: None,
             last_error_kind: QuesterFailureKind::Other,
             waiting: None,
             deaths: 0,
@@ -575,12 +586,22 @@ impl Quester {
     fn clear_last_error(&mut self) {
         self.last_error = None;
         self.last_error_kind = QuesterFailureKind::Other;
+        self.failed_acquisition_child = None;
+        self.parked_step = None;
     }
 
     fn set_last_error(&mut self, kind: QuesterFailureKind, message: Arc<str>) {
         self.last_error = Some(message);
         self.last_error_kind = kind;
         self.dirty = true;
+    }
+    fn capture_failed_acquisition_child(&mut self) {
+        self.failed_acquisition_child = self.step.as_ref().and_then(|run| {
+            Some((
+                Arc::clone(run.child_recipe_id()?),
+                Arc::clone(&run.child_step_id()?.0),
+            ))
+        });
     }
 
     fn record_failure(&mut self, error: ActionError) {
@@ -710,8 +731,28 @@ impl Quester {
                 }),
             },
         ];
-        let current = self.current_step();
-        let sequence = self.path.sequences.get(self.seq_index);
+        let parked_step = if self.parked {
+            self.parked_step.as_ref()
+        } else {
+            None
+        };
+        let display_sequence_index =
+            parked_step.map_or(self.seq_index, |parked| parked.sequence_index);
+        let display_step_index = parked_step.map_or(self.step_index, |parked| parked.step_index);
+        let sequence = self.path.sequences.get(display_sequence_index);
+        let current = parked_step
+            .and_then(|parked| {
+                if parked.in_prelude {
+                    self.path.prelude.get(parked.step_index)
+                } else {
+                    self.path
+                        .sequences
+                        .get(parked.sequence_index)?
+                        .steps
+                        .get(parked.step_index)
+                }
+            })
+            .or_else(|| self.current_step());
         let colour = if self.stage.as_ref() == Some(&self.path.colour_complete) {
             "complete"
         } else if self.stage.as_ref() == Some(&self.path.colour_not_started) {
@@ -749,11 +790,6 @@ impl Quester {
             ("quest_id", "Quest ID", self.path.id.0.as_ref()),
             ("colour", "Quest colour", colour),
             ("action_state", "Action", action),
-            (
-                "step_id",
-                "Step",
-                current.map_or("", |step| step.id.0.as_ref()),
-            ),
         ] {
             fields.push(StatusField {
                 key,
@@ -761,31 +797,53 @@ impl Quester {
                 value: StatusValue::Text(Arc::from(text)),
             });
         }
+        fields.push(StatusField {
+            key: "step_id",
+            label: "Step",
+            value: StatusValue::Text(parked_step.map_or_else(
+                || current.map_or_else(|| Arc::from(""), |step| Arc::clone(&step.id.0)),
+                |parked| Arc::clone(&parked.id),
+            )),
+        });
+        let active_child = self.step.as_ref().and_then(|run| {
+            Some((
+                Arc::clone(run.child_recipe_id()?),
+                Arc::clone(&run.child_step_id()?.0),
+            ))
+        });
+        let child = active_child.or_else(|| self.failed_acquisition_child.clone());
         static EMPTY_CHILD: std::sync::LazyLock<Arc<str>> =
             std::sync::LazyLock::new(|| Arc::from(""));
+        fields.push(StatusField {
+            key: "child_recipe_id",
+            label: "Acquisition recipe",
+            value: StatusValue::Text(child.as_ref().map_or_else(
+                || Arc::clone(&EMPTY_CHILD),
+                |(recipe, _)| Arc::clone(recipe),
+            )),
+        });
         fields.push(StatusField {
             key: "child_step_id",
             label: "Acquisition child",
             value: StatusValue::Text(
-                self.step
+                child
                     .as_ref()
-                    .and_then(|run| run.child_step_id())
-                    .map_or_else(|| Arc::clone(&EMPTY_CHILD), |id| Arc::clone(&id.0)),
+                    .map_or_else(|| Arc::clone(&EMPTY_CHILD), |(_, step)| Arc::clone(step)),
             ),
         });
+        let remaining_steps = parked_step.filter(|parked| parked.in_prelude).map_or_else(
+            || sequence.map_or(0, |seq| seq.steps.len().saturating_sub(display_step_index)),
+            |_| self.path.prelude.len().saturating_sub(display_step_index),
+        );
         for (key, label, value) in [
-            ("sequence", "Sequence", self.seq_index as i64),
+            ("sequence", "Sequence", display_sequence_index as i64),
             (
                 "sequence_count",
                 "Sequence count",
                 self.path.sequences.len() as i64,
             ),
-            ("step_index", "Step index", self.step_index as i64),
-            (
-                "remaining_steps",
-                "Remaining steps",
-                sequence.map_or(0, |seq| seq.steps.len().saturating_sub(self.step_index)) as i64,
-            ),
+            ("step_index", "Step index", display_step_index as i64),
+            ("remaining_steps", "Remaining steps", remaining_steps as i64),
             ("attempts", "Attempts", i64::from(self.attempts)),
             (
                 "no_progress",
@@ -1511,7 +1569,16 @@ impl Script for Quester {
                     if self.fail_streak >= 5 {
                         self.parked = true;
                     }
+                    let failed_step = self.current_step().map(|step| ParkedStep {
+                        sequence_index: self.seq_index,
+                        step_index: self.step_index,
+                        in_prelude: self.in_prelude,
+                        id: Arc::clone(&step.id.0),
+                    });
                     self.on_step_boundary(tick);
+                    if self.parked {
+                        self.parked_step = failed_step;
+                    }
                     if let Some(stage) = self.stage.as_ref() {
                         self.seq_index =
                             sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
@@ -1727,6 +1794,7 @@ impl Script for Quester {
                     });
                 }
                 self.capture_prayer_cleanup();
+                self.capture_failed_acquisition_child();
                 self.record_failure(error);
                 self.step = None;
                 self.last_outcome = None;
@@ -1738,6 +1806,7 @@ impl Script for Quester {
             }
             Poll::Ready(Err(error)) => {
                 self.capture_prayer_cleanup();
+                self.capture_failed_acquisition_child();
                 self.step = None;
                 self.last_outcome = None;
                 self.record_step_failure(error, tick);
@@ -2892,6 +2961,212 @@ mod tests {
             ),
             s,
         )
+    }
+    fn status_fixture(
+        mut document: super::super::path::PathDocument,
+    ) -> (Quester, api::snapshot::GameSnapshot) {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let stage = script.path.colour_not_started.clone();
+        script.seq_index =
+            sequence_for_stage(&script.path, stage.0.as_ref()).expect("not-started sequence");
+        script.stage = Some(stage);
+        script.needs_read = false;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        (script, snapshot)
+    }
+
+    #[derive(Default)]
+    struct StatusCapture(Vec<ScriptStatus>);
+
+    impl NativeOutput for StatusCapture {
+        fn status(&mut self, status: ScriptStatus) {
+            self.0.push(status);
+        }
+        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+        fn settings_applied(&mut self, _: u64) {}
+    }
+
+    #[test]
+    fn acquisition_child_failure_is_visible_in_parked_status() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::{PredicateDocument, StepDocument};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:child-failure".into(),
+            vec![StepDocument {
+                id: FactKey::new("child-failing-step"),
+                kind: "wait".into(),
+                version: 1,
+                args: serde_json::json!({"until":{"Any":[]},"max_ticks":1}),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: PredicateDocument::All(vec![]),
+            }],
+        );
+        document.roles[0].sequences[0].steps = vec![StepDocument {
+            id: FactKey::new("root-acquire-step"),
+            kind: "acquire".into(),
+            version: 1,
+            args: serde_json::json!({"recipe":"test:child-failure"}),
+            comment: None,
+            advances: Some(false),
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: PredicateDocument::All(vec![]),
+        }];
+        let (mut script, snapshot) = status_fixture(document);
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        for tick in 1..=40 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+
+        assert!(
+            script.parked,
+            "the repeated child failures must park the run"
+        );
+        let status = output.0.last().expect("parked status was published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert!(status.fields.iter().any(|field| {
+            field.key == "step_id"
+                && field.value == StatusValue::Text(Arc::from("root-acquire-step"))
+        }));
+        assert!(status.fields.iter().any(|field| {
+            field.key == "child_recipe_id"
+                && field.value == StatusValue::Text(Arc::from("test:child-failure"))
+        }));
+        assert!(status.fields.iter().any(|field| {
+            field.key == "child_step_id"
+                && field.value == StatusValue::Text(Arc::from("child-failing-step"))
+        }));
+        assert!(status.fields.iter().any(|field| {
+            field.key == "last_failure"
+                && field.value == StatusValue::Text(Arc::from("wait exhausted"))
+        }));
+        assert_eq!(
+            status.failure.as_ref().unwrap().message.as_ref(),
+            "wait exhausted"
+        );
+    }
+
+    #[test]
+    fn settle_timeout_park_keeps_timed_out_step_in_status() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::{PredicateDocument, StepDocument};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let wait_step = |id: &str, skip_if, settle| StepDocument {
+            id: FactKey::new(id),
+            kind: "wait".into(),
+            version: 1,
+            args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
+            comment: None,
+            advances: Some(false),
+            skip_if,
+            settle,
+        };
+        document.roles[0].sequences[0].steps = vec![
+            wait_step(
+                "settle-skipped-step",
+                PredicateDocument::Fact {
+                    kind: "has_item".into(),
+                    version: 1,
+                    args: serde_json::json!({"obj":"egg"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+            wait_step(
+                "settle-timeout-step",
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::Any(vec![]),
+            ),
+        ];
+        let (mut script, mut snapshot) = status_fixture(document);
+        let egg_id = script.selected.item_by_alias("egg").unwrap().id;
+        snapshot.seed_inventory(
+            vec![api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: egg_id,
+                    name: Some("Egg".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            }],
+            28,
+        );
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        for tick in 1..=100 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+
+        assert!(script.parked, "repeated settle timeouts must park the run");
+        assert_eq!(script.step_index, 0, "timeout retry cursor still restarts");
+        let status = output.0.last().expect("parked status was published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert!(status
+            .fields
+            .iter()
+            .any(|field| { field.key == "step_index" && field.value == StatusValue::Integer(1) }));
+        assert!(status.fields.iter().any(|field| {
+            field.key == "step_id"
+                && field.value == StatusValue::Text(Arc::from("settle-timeout-step"))
+        }));
+        assert!(status.fields.iter().any(|field| {
+            field.key == "last_failure"
+                && field.value == StatusValue::Text(Arc::from("step settle timeout"))
+        }));
+        assert_eq!(
+            status.failure.as_ref().unwrap().message.as_ref(),
+            "step settle timeout"
+        );
     }
 
     #[test]

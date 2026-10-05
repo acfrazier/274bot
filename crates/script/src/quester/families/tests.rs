@@ -197,6 +197,7 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
 
 pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
     Box::new(AcquireRun {
+        recipe: Arc::from("policy-s2-recipe"),
         steps: Arc::from(vec![CompiledAcquireStep {
             id: FactKey::new("policy-child"),
             advances: false,

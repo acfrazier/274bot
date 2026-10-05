@@ -2733,6 +2733,7 @@ impl Default for AcquirePlan {
 impl StepPlan for AcquirePlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(AcquireRun {
+            recipe: Arc::clone(&self.recipe),
             steps: Arc::clone(&self.steps),
             current: None,
             child_outcome: None,
@@ -2749,6 +2750,7 @@ impl StepPlan for AcquirePlan {
 }
 
 struct AcquireRun {
+    recipe: Arc<str>,
     steps: Arc<[CompiledAcquireStep]>,
     current: Option<Box<dyn StepRun>>,
     child_outcome: Option<StepOutcome>,
@@ -2912,6 +2914,10 @@ impl StepRun for AcquireRun {
             .as_ref()
             .and_then(|run| run.in_flight_outcome())
             .or(self.child_outcome.as_ref())
+    }
+    fn child_recipe_id(&self) -> Option<&Arc<str>> {
+        self.current.as_ref()?;
+        Some(&self.recipe)
     }
     fn child_step_id(&self) -> Option<&FactKey> {
         self.current.as_ref()?;

@@ -277,6 +277,10 @@ pub trait StepRun: Send {
     fn child_step_id(&self) -> Option<&FactKey> {
         None
     }
+    /// Current acquisition recipe, available without formatting during polls.
+    fn child_recipe_id(&self) -> Option<&Arc<str>> {
+        None
+    }
 }
 pub type CompileStep =
     fn(&serde_json::Value, &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError>;
