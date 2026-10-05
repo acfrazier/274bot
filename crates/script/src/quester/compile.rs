@@ -505,14 +505,23 @@ fn compile_uncached(
     validate_header(header, selected).map_err(|err| err.with_path(document.id.clone()))?;
     validate_nav_coverage(document).map_err(|err| err.with_path(document.id.clone()))?;
     let role = if let Some(declaration) = &document.partner {
-        if document.roles.len() != 2 || declaration.roles[0].id == declaration.roles[1].id
-            || declaration.roles[0].gang == declaration.roles[1].gang {
+        if document.roles.len() != 2
+            || declaration.roles[0].id == declaration.roles[1].id
+            || declaration.roles[0].gang == declaration.roles[1].gang
+        {
             return Err(CompileError::code("invalid-partner-roles").with_path(document.id.clone()));
         }
-        let gang = gang.ok_or_else(|| CompileError::code("missing-gang").with_path(document.id.clone()))?;
-        let selected_role = declaration.roles.iter().find(|role| role.gang == gang)
+        let gang =
+            gang.ok_or_else(|| CompileError::code("missing-gang").with_path(document.id.clone()))?;
+        let selected_role = declaration
+            .roles
+            .iter()
+            .find(|role| role.gang == gang)
             .ok_or_else(|| CompileError::code("invalid-partner-role"))?;
-        document.roles.iter().find(|role| role.role.as_ref() == Some(&selected_role.id))
+        document
+            .roles
+            .iter()
+            .find(|role| role.role.as_ref() == Some(&selected_role.id))
             .ok_or_else(|| CompileError::code("missing-partner-role"))?
     } else {
         if document.roles.len() != 1 {
@@ -672,9 +681,15 @@ fn compile_uncached(
         path: &document.id,
         kind: document.kind,
         progress: &compiled_progress,
-        pair: document.partner.as_ref().zip(role.role.as_ref()).map(|(declaration, role)| {
-            PairCompileContext { declaration, role, digest }
-        }),
+        pair: document
+            .partner
+            .as_ref()
+            .zip(role.role.as_ref())
+            .map(|(declaration, role)| PairCompileContext {
+                declaration,
+                role,
+                digest,
+            }),
         selected,
         quests,
         gathering: None,
@@ -701,10 +716,14 @@ fn compile_uncached(
         )?;
     }
     recipe_ctx.recipes = &recipes;
-    let progress_reader = role.progress_reader.as_ref().map(|reader| {
-        compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
-            .map(|mut steps| Box::new(steps.remove(0)))
-    }).transpose()?;
+    let progress_reader = role
+        .progress_reader
+        .as_ref()
+        .map(|reader| {
+            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
+                .map(|mut steps| Box::new(steps.remove(0)))
+        })
+        .transpose()?;
     let mut warnings: Vec<Arc<str>> = Vec::new();
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
@@ -751,8 +770,11 @@ fn compile_uncached(
         }
         let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
         if sequence.order == super::path::SequenceOrder::Nearest
-            && steps.iter().any(|step| step.plan.anchor().is_none()) {
-            return Err(CompileError::code("nearest-step-missing-anchor").with_path(document.id.clone()));
+            && steps.iter().any(|step| step.plan.anchor().is_none())
+        {
+            return Err(
+                CompileError::code("nearest-step-missing-anchor").with_path(document.id.clone())
+            );
         }
         sequences.push(CompiledSequence {
             stage: sequence.stage.clone(),

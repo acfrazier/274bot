@@ -17,6 +17,11 @@
     "display_name": {
       "type": "string"
     },
+    "kind": {
+      "$ref": "#/$defs/PathKind",
+      "description": "Miniquests use an owned typed reader instead of a quest-list binding.",
+      "default": "Quest"
+    },
     "required": {
       "type": "array",
       "items": {
@@ -74,6 +79,13 @@
     "FactKey": {
       "type": "string",
       "minLength": 1
+    },
+    "PathKind": {
+      "type": "string",
+      "enum": [
+        "Quest",
+        "Miniquest"
+      ]
     },
     "SkillMinimum": {
       "type": "object",
@@ -406,6 +418,9 @@
         },
         {
           "$ref": "#/$defs/step.combat.v1"
+        },
+        {
+          "$ref": "#/$defs/step.partner.v1"
         }
       ]
     },
@@ -605,6 +620,9 @@
                 },
                 {
                   "$ref": "#/$defs/fact.equipment_only.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.partner_item_count_at_least.v1"
                 }
               ]
             }
@@ -1601,6 +1619,45 @@
         },
         "args": {
           "$ref": "#/$defs/EquipmentOnlyArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "PartnerItemCountArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Unnoted Arrav shield-half or certificate alias."
+        },
+        "qty": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Minimum quantity in the current reciprocal role's backpack, from 1 to 28."
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ]
+    },
+    "fact.partner_item_count_at_least.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "partner_item_count_at_least"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/PartnerItemCountArgs"
         }
       },
       "required": [
@@ -3399,6 +3456,137 @@
       ],
       "additionalProperties": false
     },
+    "Args": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string",
+          "description": "Stable protocol phase identity, distinct from admission."
+        },
+        "give": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemArg"
+          },
+          "description": "Exact unnoted quest items this role gives."
+        },
+        "take": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemArg"
+          },
+          "description": "Exact unnoted quest items this role receives."
+        },
+        "rendezvous": {
+          "$ref": "#/$defs/Anchor",
+          "description": "Verified shared world rendezvous."
+        },
+        "timeout_ticks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Optional finite local trade budget, in game ticks.",
+          "default": null
+        }
+      },
+      "required": [
+        "phase",
+        "give",
+        "take",
+        "rendezvous"
+      ],
+      "description": "One mirrored phase; both roles author the same rendezvous and opposite items."
+    },
+    "ItemArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Selected object alias."
+        },
+        "qty": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Exact quantity, never all held valuables."
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ]
+    },
+    "Anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "World x, z and level."
+        },
+        "source": {
+          "type": "string",
+          "description": "Content placement receipt."
+        }
+      },
+      "required": [
+        "tile",
+        "source"
+      ]
+    },
+    "step.partner.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "partner"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
     "QuestBankDocument": {
       "anyOf": [
         {
@@ -3524,6 +3712,18 @@
               "type": "null"
             }
           ],
+          "default": null
+        },
+        "progress_reader": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "An owned reader invoked initially and after every advancing step.",
           "default": null
         },
         "prelude": {
@@ -3694,6 +3894,10 @@
             }
           ]
         },
+        "order": {
+          "$ref": "#/$defs/SequenceOrder",
+          "default": "authored"
+        },
         "steps": {
           "type": "array",
           "items": {
@@ -3706,6 +3910,13 @@
         "required",
         "terminal",
         "steps"
+      ]
+    },
+    "SequenceOrder": {
+      "type": "string",
+      "enum": [
+        "authored",
+        "nearest"
       ]
     }
   }

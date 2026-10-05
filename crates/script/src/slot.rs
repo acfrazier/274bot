@@ -358,7 +358,6 @@ impl SlotScript {
         }
     }
 
-
     /// True when either a compiled script or a JS isolate is installed.
     fn has_instance(&self) -> bool {
         self.compiled.is_some() || self.load_active()
@@ -1868,9 +1867,14 @@ impl SlotScript {
                 pairs.gameplay_progress(evidence.run, evidence, now);
             }
         }
-        let pair_wait = self.quest_pairs.as_ref().zip(self.native_run())
+        let pair_wait = self
+            .quest_pairs
+            .as_ref()
+            .zip(self.native_run())
             .is_some_and(|(pairs, run)| pairs.waiting(run));
-        let action = self.watchdog.observe_with_pair_wait(now, running && self.want_run, pair_wait);
+        let action = self
+            .watchdog
+            .observe_with_pair_wait(now, running && self.want_run, pair_wait);
         if action == WatchdogAction::RequestAnchor {
             if let Some(run) = &self.compiled {
                 let anchor = match catch_unwind(AssertUnwindSafe(|| run.script.recovery_anchor())) {
@@ -2124,7 +2128,12 @@ impl SlotScript {
                     tick: ctx.tick,
                     sequence: ctx.tick,
                 });
-                run.tick(ctx, &mut retained, &mut self.native_runtime, self.quest_pairs.as_deref())
+                run.tick(
+                    ctx,
+                    &mut retained,
+                    &mut self.native_runtime,
+                    self.quest_pairs.as_deref(),
+                )
             }
         };
         if result.is_ok() {

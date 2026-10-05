@@ -169,8 +169,10 @@ impl ProgressWatchdog {
         }
         Some(ScriptProgress {
             running_for: now.saturating_duration_since(run.started),
-            idle_for: (self.state != WatchdogState::Idle && !self.frozen && self.pair_wait_since.is_none())
-                .then(|| self.gameplay_elapsed(now)),
+            idle_for: (self.state != WatchdogState::Idle
+                && !self.frozen
+                && self.pair_wait_since.is_none())
+            .then(|| self.gameplay_elapsed(now)),
             gained,
         })
     }
@@ -487,7 +489,12 @@ impl ProgressWatchdog {
 
     /// Only the admitted waiter's gameplay clock is suspended. Scheduler
     /// failure and the peer's active-action watchdog remain fully live.
-    pub fn observe_with_pair_wait(&mut self, now: Instant, running: bool, waiting: bool) -> WatchdogAction {
+    pub fn observe_with_pair_wait(
+        &mut self,
+        now: Instant,
+        running: bool,
+        waiting: bool,
+    ) -> WatchdogAction {
         if waiting {
             self.pair_wait_since.get_or_insert(now);
         } else if let Some(since) = self.pair_wait_since.take() {
@@ -1309,16 +1316,32 @@ mod tests {
         waiting.arm_fresh(t);
         acting.arm_fresh(t);
         waiting.stamp_scheduler(t + Duration::from_secs(1));
-        assert_eq!(waiting.observe_with_pair_wait(t + Duration::from_secs(1), true, true), WatchdogAction::None);
+        assert_eq!(
+            waiting.observe_with_pair_wait(t + Duration::from_secs(1), true, true),
+            WatchdogAction::None
+        );
         let later = t + WEDGE * 2;
         waiting.stamp_scheduler(later);
         acting.stamp_scheduler(later);
-        assert_eq!(waiting.observe_with_pair_wait(later, true, true), WatchdogAction::None);
+        assert_eq!(
+            waiting.observe_with_pair_wait(later, true, true),
+            WatchdogAction::None
+        );
         assert_eq!(waiting.progress(later).unwrap().idle_for, None);
         assert_eq!(acting.observe(later, true), WatchdogAction::RequestAnchor);
         waiting.stamp_scheduler(later + Duration::from_secs(1));
-        assert_eq!(waiting.observe_with_pair_wait(later + Duration::from_secs(1), true, false), WatchdogAction::None);
-        assert!(waiting.progress(later + Duration::from_secs(1)).unwrap().idle_for.unwrap() < WEDGE);
+        assert_eq!(
+            waiting.observe_with_pair_wait(later + Duration::from_secs(1), true, false),
+            WatchdogAction::None
+        );
+        assert!(
+            waiting
+                .progress(later + Duration::from_secs(1))
+                .unwrap()
+                .idle_for
+                .unwrap()
+                < WEDGE
+        );
     }
 
     #[test]
@@ -1327,7 +1350,11 @@ mod tests {
         let mut waiting = ProgressWatchdog::new();
         waiting.arm_fresh(t);
         waiting.observe_with_pair_wait(t, true, true);
-        assert!(matches!(waiting.observe_with_pair_wait(t + HARD_STALL, true, true),
-            WatchdogAction::Restart { reason: RestartReason::Stall }));
+        assert!(matches!(
+            waiting.observe_with_pair_wait(t + HARD_STALL, true, true),
+            WatchdogAction::Restart {
+                reason: RestartReason::Stall
+            }
+        ));
     }
 }

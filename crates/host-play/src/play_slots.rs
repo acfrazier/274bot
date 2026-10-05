@@ -416,9 +416,14 @@ impl Play {
             .lock()
             .unwrap()
             .bind_native_input(slot_input.authority());
-        slot_script.lock().unwrap().bind_quest_pairs(
-            self.quest_pairs.seat(&username, self.connection.game_host(), self.connection.game_port()),
-        );
+        slot_script
+            .lock()
+            .unwrap()
+            .bind_quest_pairs(self.quest_pairs.seat(
+                &username,
+                self.connection.game_host(),
+                self.connection.game_port(),
+            ));
         self.cheats
             .lock()
             .unwrap()

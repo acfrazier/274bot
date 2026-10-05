@@ -61,8 +61,8 @@ pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
 pub mod slot;
-pub mod watchdog;
 pub mod trade_screen;
+pub mod watchdog;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]

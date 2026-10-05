@@ -330,23 +330,31 @@ impl CompiledRun {
         pairs: Option<&dyn crate::quester::pair::QuestPairPort>,
     ) -> Result<ScriptFlow, ScriptFailure> {
         if let Some(port) = pairs {
-            let ready = ctx.snapshot.is_some_and(api::snapshot::GameSnapshot::ingame)
+            let ready = ctx
+                .snapshot
+                .is_some_and(api::snapshot::GameSnapshot::ingame)
                 && !crate::native::death::hitpoints_zero(
                     ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
                 )
                 && !ctx.compiled.hold;
-            let evidence = EvidenceStamp { run: self.run, tick: ctx.tick, sequence: ctx.tick };
-            let binding = self.script.pair_binding();
-            let inventory = binding.and_then(|_| {
-                api::snapshot::SnapshotView::new(ctx.snapshot, evidence).inventory()
-            });
-            port.observe(crate::quester::pair::PairRegistration {
+            let evidence = EvidenceStamp {
                 run: self.run,
-                pin: Arc::clone(&self.pin),
-                settings: self.script.pair_settings(),
-                ready,
-                evidence,
-            }, crate::quester::pair::PairFrame { binding, inventory });
+                tick: ctx.tick,
+                sequence: ctx.tick,
+            };
+            let binding = self.script.pair_binding();
+            let inventory = binding
+                .and_then(|_| api::snapshot::SnapshotView::new(ctx.snapshot, evidence).inventory());
+            port.observe(
+                crate::quester::pair::PairRegistration {
+                    run: self.run,
+                    pin: Arc::clone(&self.pin),
+                    settings: self.script.pair_settings(),
+                    ready,
+                    evidence,
+                },
+                crate::quester::pair::PairFrame { binding, inventory },
+            );
         }
         #[cfg(feature = "load")]
         let interacts = ctx.compiled.interacts.take();
@@ -571,9 +579,13 @@ impl SlotScript {
         }
         let card = crate::compiled_card(id)
             .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
-        if id == crate::CompiledId("Quester") && self.quest_pairs.is_none()
-            && crate::quester::card::requires_pairs(&bag).map_err(StartError::Config)? {
-            return Err(StartError::Unavailable("partner capability is not installed in this Play".into()));
+        if id == crate::CompiledId("Quester")
+            && self.quest_pairs.is_none()
+            && crate::quester::card::requires_pairs(&bag).map_err(StartError::Config)?
+        {
+            return Err(StartError::Unavailable(
+                "partner capability is not installed in this Play".into(),
+            ));
         }
         let generation = self
             .control_generation
@@ -855,7 +867,10 @@ impl SlotScript {
         let Some(run) = self.compiled.as_mut() else {
             return;
         };
-        if matches!(event, Interrupt::Pause | Interrupt::SessionEnded | Interrupt::Hold(true)) {
+        if matches!(
+            event,
+            Interrupt::Pause | Interrupt::SessionEnded | Interrupt::Hold(true)
+        ) {
             if let Some(pairs) = &self.quest_pairs {
                 pairs.invalidate(run.run);
             }

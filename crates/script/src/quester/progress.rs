@@ -97,8 +97,12 @@ pub(crate) fn compile_progress(
     // for synthetic/cache fixtures whose deliberately changed path id is not
     // present in the identity roster.
     if document.kind == super::path::PathKind::Miniquest {
-        if role.role.is_some() || role.progress_binding.0.as_ref() != format!("card:{}", document.id.0) {
-            return Err(super::compile::CompileError::code("miniquest-progress-binding"));
+        if role.role.is_some()
+            || role.progress_binding.0.as_ref() != format!("card:{}", document.id.0)
+        {
+            return Err(super::compile::CompileError::code(
+                "miniquest-progress-binding",
+            ));
         }
     } else if let Ok(facts) = quests.quest(document.id.0.as_ref()) {
         if let Knowledge::Known(expected) = &facts.progress_binding {
