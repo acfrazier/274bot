@@ -546,7 +546,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
     ] {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = api::selected::FamilyPreparation::run({
+        let path = super::super::compile::prepare_for_test({
             let data = Arc::clone(&data);
             let quests = Arc::clone(&quests);
             move |cap| {
@@ -558,9 +558,6 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                 )
             }
         })
-        .unwrap()
-        .join()
-        .unwrap()
         .unwrap();
         let mut script = Quester::new(
             RunKey {

@@ -1,5 +1,13 @@
 use std::time::Duration;
 
+pub(crate) const PICKPOCKET: &str = "Pickpocket";
+pub(crate) const STEAL_FROM: &str = "Steal-from";
+
+pub(crate) fn level_ready(effective: Option<i32>, required: i32) -> Option<bool> {
+    effective.map(|level| level >= required)
+}
+
+#[cfg(test)]
 pub(crate) const DEFAULT_ACTION_DEADLINE: Duration = Duration::from_secs(60);
 const ATTEMPT_WINDOW: Duration = Duration::from_millis(2_500);
 const RETRY_GAP: Duration = Duration::from_millis(600);
@@ -11,14 +19,28 @@ pub(crate) struct ChatEvidence {
     pub response: bool,
     pub failure: bool,
     pub stunned: bool,
+    pub level_refusal: bool,
     pub through_sequence: i32,
 }
 
 impl ChatEvidence {
     pub(crate) fn observe(&mut self, action: &str, text: &str, sequence: i32) {
         self.through_sequence = self.through_sequence.max(sequence);
-        if contains_ascii(text, "stun") || contains_ascii(text, "fail to pick") {
+        if contains_ascii(text, "attempt to pick")
+            || contains_ascii(text, "attempt to steal")
+            || contains_ascii(text, "can't reach")
+            || contains_ascii(text, "cannot reach")
+        {
+            return;
+        }
+        if contains_ascii(text, "stunned") {
             self.stunned = true;
+            return;
+        }
+        if contains_ascii(text, "need to be at level") || contains_ascii(text, "need to be a level")
+        {
+            self.level_refusal = true;
+            self.failure = true;
             return;
         }
         if contains_ascii(text, "fail")
@@ -28,10 +50,11 @@ impl ChatEvidence {
             self.failure = true;
             return;
         }
-        let pickpocket = action.eq_ignore_ascii_case("Pickpocket")
-            && (contains_ascii(text, "pocket") || contains_ascii(text, "pickpocket"));
-        let steal = action.eq_ignore_ascii_case("Steal-from")
-            && (contains_ascii(text, "steal") || contains_ascii(text, "pocket"));
+        let pickpocket = action.eq_ignore_ascii_case(PICKPOCKET)
+            && (contains_ascii(text, "you pick the")
+                || contains_ascii(text, "you steal")
+                || contains_ascii(text, "you find"));
+        let steal = action.eq_ignore_ascii_case(STEAL_FROM) && contains_ascii(text, "you steal");
         self.response |= pickpocket || steal;
     }
 }
@@ -88,6 +111,7 @@ struct Attempt {
     before_target_count: Option<i32>,
     before_chat_dialog_open: bool,
     before_chat_dialog_fingerprint: Option<u64>,
+    failure_observed: bool,
 }
 
 pub(crate) struct ThieveCore {
@@ -141,6 +165,10 @@ impl ThieveCore {
             .is_some_and(|attempt| attempt.request_id.is_some() && attempt.accepted.is_none())
     }
 
+    pub(crate) fn stun_active(&self, now: Duration) -> bool {
+        self.stunned_until.is_some_and(|until| now < until)
+    }
+
     pub(crate) fn receipt(&mut self, request_id: u64, accepted: bool, chat_since: i32) {
         let Some(attempt) = self.pending.as_mut() else {
             return;
@@ -178,6 +206,7 @@ impl ThieveCore {
             before_target_count: observation.target_count,
             before_chat_dialog_open: observation.chat_dialog_open,
             before_chat_dialog_fingerprint: observation.chat_dialog_fingerprint,
+            failure_observed: false,
         });
         Ok(())
     }
@@ -207,23 +236,40 @@ impl ThieveCore {
                 held: observation.target_count.unwrap_or_default(),
             };
         }
+        if observation.chat.level_refusal {
+            self.pending = None;
+            return Decision::Failed(Failure::Level);
+        }
+        if observation.chat.stunned {
+            let until = now.saturating_add(STUN_LOCK);
+            self.stunned_until = Some(until);
+            self.next_attempt = until;
+            self.pending = None;
+            return Decision::Stunned;
+        }
 
         if let Some(attempt) = self.pending {
-            if observation.chat.stunned {
-                let until = now.saturating_add(STUN_LOCK);
-                self.stunned_until = Some(until);
-                self.next_attempt = until;
-                self.pending = None;
-                return Decision::Stunned;
-            }
-            if observation.chat.failure {
-                self.pending = None;
-                self.next_attempt = now.saturating_add(RETRY_GAP);
+            if observation.chat.failure && !attempt.failure_observed {
+                // Generic failures still have p_delay(0) calls before the stun.
+                // Keep this attempt pending until that real line arrives.
+                self.pending = Some(Attempt {
+                    started: now,
+                    failure_observed: true,
+                    ..attempt
+                });
                 return if self.attempts_left == Some(0) {
                     Decision::Failed(Failure::Attempts)
                 } else {
                     Decision::AttemptFailed
                 };
+            }
+            if attempt.failure_observed {
+                if now.saturating_sub(attempt.started) < ATTEMPT_WINDOW {
+                    return Decision::Wait;
+                }
+                self.pending = None;
+                self.next_attempt = now.saturating_add(RETRY_GAP);
+                return Decision::AttemptTimedOut;
             }
             let new_dialogue = observation.chat_dialog_open
                 && (!attempt.before_chat_dialog_open
@@ -276,7 +322,7 @@ impl ThieveCore {
         let Some(required) = observation.required_level else {
             return Decision::Wait;
         };
-        if effective < required {
+        if level_ready(Some(effective), required) == Some(false) {
             return Decision::Failed(Failure::Level);
         }
         if !observation.inventory_ready || now < self.next_attempt {
@@ -336,6 +382,228 @@ mod tests {
         assert_eq!(
             low.poll(Duration::ZERO, observation(Some(29), Some(30))),
             Decision::Failed(Failure::Level)
+        );
+    }
+
+    #[test]
+    fn level_ready_distinguishes_unobserved_from_below_requirement() {
+        assert_eq!(level_ready(None, 30), None);
+        assert_eq!(level_ready(Some(29), 30), Some(false));
+        assert_eq!(level_ready(Some(30), 30), Some(true));
+    }
+
+    #[test]
+    fn pickpocket_success_line_is_a_response_but_attempt_is_not() {
+        // `scripts/skill_thieving/scripts/thieving.rs2`, [proc,pick_pocket]
+        // emits the attempt at line 4 and the success line at line 24.
+        let mut attempt = ChatEvidence::default();
+        attempt.observe("Pickpocket", "You attempt to pick the man's pocket.", 1);
+        assert!(!attempt.response && !attempt.failure && !attempt.stunned);
+
+        let mut success = ChatEvidence::default();
+        success.observe("Pickpocket", "You pick the man's pocket.", 2);
+        assert!(success.response);
+
+        // `scripts/quests/quest_itexam/scripts/digsite_workman.rs2`
+        // [label,pickpocket_digworkman1] reports loot as success too.
+        let mut workman_success = ChatEvidence::default();
+        workman_success.observe("Pickpocket", "You steal some money.", 3);
+        assert!(workman_success.response);
+    }
+
+    #[test]
+    fn generic_pickpocket_failure_then_delayed_stun_follow_content_order() {
+        // `scripts/skill_thieving/scripts/thieving.rs2`: attempt and p_delay(0)
+        // are lines 4-5; failure is line 32, then the actual stun is line 48.
+        let mut core = core(None, 2, true);
+        let mut observation = observation(Some(30), Some(1));
+        assert_eq!(core.poll(Duration::ZERO, observation), Decision::Dispatch);
+        start(&mut core, Duration::ZERO, Some(7), observation);
+        core.receipt(7, true, 0);
+
+        let mut attempt = ChatEvidence::default();
+        attempt.observe("Pickpocket", "You attempt to pick the man's pocket.", 1);
+        observation.chat = attempt;
+        assert_eq!(
+            core.poll(Duration::from_millis(600), observation),
+            Decision::Wait,
+            "attempt text is not the attempt outcome"
+        );
+
+        let mut failure = ChatEvidence::default();
+        failure.observe("Pickpocket", "You fail to pick the man's pocket.", 2);
+        assert!(failure.failure && !failure.stunned && !failure.response);
+        observation.chat = failure;
+        assert_eq!(
+            core.poll(Duration::from_millis(1_200), observation),
+            Decision::AttemptFailed
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 2,
+            ..ChatEvidence::default()
+        };
+        for millis in [1_800, 2_399] {
+            assert_eq!(
+                core.poll(Duration::from_millis(millis), observation),
+                Decision::Wait,
+                "the two p_delay(0) calls after failure must not admit another pick"
+            );
+        }
+
+        let mut stun = ChatEvidence::default();
+        stun.observe("Pickpocket", "You've been stunned!", 3);
+        assert!(stun.stunned && !stun.response);
+        observation.chat = stun;
+        assert_eq!(
+            core.poll(Duration::from_millis(2_400), observation),
+            Decision::Stunned,
+            "only the real stun line starts the stun lock"
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 3,
+            ..ChatEvidence::default()
+        };
+        assert_eq!(
+            core.poll(Duration::from_millis(11_399), observation),
+            Decision::Wait
+        );
+        assert_eq!(
+            core.poll(Duration::from_millis(11_400), observation),
+            Decision::Dispatch
+        );
+    }
+
+    #[test]
+    fn troll_guard_failure_is_a_failure_not_a_stun() {
+        // `scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2`,
+        // [proc,troll_prison_guard_steal] attempt/failure lines 50-63 have no stun.
+        let mut core = core(None, 2, false);
+        let mut observation = observation(Some(30), Some(30));
+        assert_eq!(core.poll(Duration::ZERO, observation), Decision::Dispatch);
+        start(&mut core, Duration::ZERO, None, observation);
+
+        let mut attempt = ChatEvidence::default();
+        attempt.observe("Pickpocket", "You attempt to pick the guard's pocket.", 1);
+        observation.chat = attempt;
+        assert_eq!(
+            core.poll(Duration::from_millis(600), observation),
+            Decision::Wait
+        );
+
+        let mut failure = ChatEvidence::default();
+        failure.observe("Pickpocket", "You fail to pick the guard's pocket.", 2);
+        assert!(failure.failure && !failure.stunned && !failure.response);
+        observation.chat = failure;
+        assert_eq!(
+            core.poll(Duration::from_millis(1_200), observation),
+            Decision::AttemptFailed
+        );
+    }
+
+    #[test]
+    fn workman_level_refusal_is_terminal_not_a_pickpocket_response() {
+        // `scripts/quests/quest_itexam/scripts/digsite_workman.rs2`,
+        // [label,pickpocket_digworkman1] attempt/p_delay(2) lines 58-59 and
+        // level refusal lines 62-64.
+        let mut core = core(None, 2, false);
+        let mut observation = observation(Some(30), Some(25));
+        assert_eq!(core.poll(Duration::ZERO, observation), Decision::Dispatch);
+        start(&mut core, Duration::ZERO, None, observation);
+
+        let mut attempt = ChatEvidence::default();
+        attempt.observe(
+            "Pickpocket",
+            "You attempt to pick the workman's pocket...",
+            1,
+        );
+        observation.chat = attempt;
+        assert_eq!(
+            core.poll(Duration::from_millis(600), observation),
+            Decision::Wait
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 1,
+            ..ChatEvidence::default()
+        };
+        assert_eq!(
+            core.poll(Duration::from_millis(1_799), observation),
+            Decision::Wait,
+            "workman p_delay(2) must not admit another pick"
+        );
+
+        let mut refusal = ChatEvidence::default();
+        refusal.observe(
+            "Pickpocket",
+            "You need to be at level 25 Thieving to pick the workman's pocket.",
+            2,
+        );
+        assert!(refusal.failure && !refusal.response && !refusal.stunned);
+        observation.chat = refusal;
+        assert_eq!(
+            core.poll(Duration::from_millis(1_800), observation),
+            Decision::Failed(Failure::Level)
+        );
+    }
+
+    #[test]
+    fn workman_failure_waits_through_content_delays_for_the_real_stun() {
+        // `scripts/quests/quest_itexam/scripts/digsite_workman.rs2`:
+        // attempt/p_delay(2) at 58-59, failure/p_delay(0) at 69-71, stun at 78.
+        let mut core = core(None, 2, false);
+        let mut observation = observation(Some(30), Some(25));
+        start(&mut core, Duration::ZERO, None, observation);
+        let mut attempt = ChatEvidence::default();
+        attempt.observe(
+            "Pickpocket",
+            "You attempt to pick the workman's pocket...",
+            1,
+        );
+        observation.chat = attempt;
+        assert_eq!(
+            core.poll(Duration::from_millis(600), observation),
+            Decision::Wait
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 1,
+            ..ChatEvidence::default()
+        };
+        assert_eq!(
+            core.poll(Duration::from_millis(1_799), observation),
+            Decision::Wait
+        );
+        let mut failure = ChatEvidence::default();
+        failure.observe("Pickpocket", "You fail to pick the workman's pocket.", 2);
+        observation.chat = failure;
+        assert_eq!(
+            core.poll(Duration::from_millis(1_800), observation),
+            Decision::AttemptFailed
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 2,
+            ..ChatEvidence::default()
+        };
+        assert_eq!(
+            core.poll(Duration::from_millis(2_399), observation),
+            Decision::Wait
+        );
+        let mut stun = ChatEvidence::default();
+        stun.observe("Pickpocket", "You've been stunned!", 3);
+        observation.chat = stun;
+        assert_eq!(
+            core.poll(Duration::from_millis(2_400), observation),
+            Decision::Stunned
+        );
+        observation.chat = ChatEvidence {
+            through_sequence: 3,
+            ..ChatEvidence::default()
+        };
+        assert_eq!(
+            core.poll(Duration::from_millis(11_399), observation),
+            Decision::Wait
+        );
+        assert_eq!(
+            core.poll(Duration::from_millis(11_400), observation),
+            Decision::Dispatch
         );
     }
 

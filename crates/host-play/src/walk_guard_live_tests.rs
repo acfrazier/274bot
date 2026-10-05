@@ -1573,14 +1573,11 @@ fn run_live_w1(mode: W1Mode) {
     let quests = Arc::new(
         QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog"),
     );
-    let path = api::selected::FamilyPreparation::run({
+    let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
         move |cap| compile_path(path_json(dest).as_bytes(), &selected, &quests, cap)
     })
-    .expect("start W1 Path preparation")
-    .join()
-    .expect("join W1 Path preparation")
     .unwrap_or_else(|error| panic!("compile W1 path: {error:?}"));
     let names = super::mint_live_names(1);
     let account = names.first().expect("mint W1 account").clone();

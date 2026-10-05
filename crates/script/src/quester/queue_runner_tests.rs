@@ -200,7 +200,7 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         .expect("selected Cook's Assistant");
     assert_eq!(queued.queue.id(active_index), Some("cook"));
     queued.active_index = Some(active_index);
-    let path = api::selected::FamilyPreparation::run({
+    let path = super::super::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&queued.quests);
         move |cap| {
@@ -212,9 +212,6 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
             )
         }
     })
-    .unwrap()
-    .join()
-    .unwrap()
     .unwrap();
     let mut ledger = None;
     let mut output = Capture::default();

@@ -1,3 +1,4 @@
+use super::super::select::PlacementClass;
 use super::*;
 use crate::quester::families::tests::with_tick;
 use api::gather_methods::{known_rows, TargetClass};

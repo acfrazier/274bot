@@ -10,6 +10,7 @@ use super::super::compile::{
 };
 use super::item_arg::ItemArg;
 use crate::native::thieve::{Target, Thieve, ThieveActionArgs};
+use crate::native::thieving_core::{PICKPOCKET, STEAL_FROM};
 use crate::native::{ActionError, ActionHandle, NativeActions};
 use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
@@ -17,9 +18,6 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-
-const PICKPOCKET: &str = "Pickpocket";
-const STEAL_FROM: &str = "Steal-from";
 
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]

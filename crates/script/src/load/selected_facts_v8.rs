@@ -53,6 +53,7 @@ fn run_selected_facts<'s>(
         "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         "required-thieving" => required_thieving(scope, args.get(1)),
+        "thieving-ready" => thieving_ready(scope, args.get(1), args.get(2)),
         "gas-rock-ids" => gas_rock_ids(scope),
         _ => Err("invalid selected facts op".into()),
     }
@@ -382,6 +383,40 @@ fn required_thieving<'s>(
     };
     let level = data.required_thieving(&target).unwrap_or(1);
     Ok(v8::Integer::new(scope, level).into())
+}
+
+/// Frozen `Npc.interact` admission is kept on the host: only a known
+/// insufficient effective Thieving level refuses the queued NPC op.
+fn thieving_ready<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    npc_id: v8::Local<v8::Value>,
+    action: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let action = js_to_string(scope, action)?;
+    if !action.eq_ignore_ascii_case(crate::native::thieving_core::PICKPOCKET)
+        && !action.eq_ignore_ascii_case(crate::native::thieving_core::STEAL_FROM)
+    {
+        return Ok(v8::Boolean::new(scope, true).into());
+    }
+    let Some(npc_id) = js_i32(scope, npc_id)? else {
+        return Ok(v8::Boolean::new(scope, true).into());
+    };
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::Boolean::new(scope, true).into());
+    };
+    let required = data.required_thieving_npc(npc_id).unwrap_or(1);
+    let effective = crate::observed::with(|scene| {
+        scene
+            .latest()
+            .stats()
+            .and_then(|stats| stats.thieving)
+            .map(|stat| stat.effective)
+    });
+    let ready = !matches!(
+        crate::native::thieving_core::level_ready(effective, required),
+        Some(false)
+    );
+    Ok(v8::Boolean::new(scope, ready).into())
 }
 
 /// Frozen `GAS_ROCK_IDS`: this isolate's one ordinary, mutable `Set`, built once at module evaluation from the

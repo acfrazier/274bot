@@ -3374,7 +3374,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     .unwrap();
     let args = &mut document["roles"][0]["sequences"][0]["steps"][0]["args"];
     args["target"]["npc"] = serde_json::json!("ardougne_archer");
-    let path = api::selected::FamilyPreparation::run({
+    let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
         move |cap| {
@@ -3386,9 +3386,6 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
             )
         }
     })
-    .unwrap()
-    .join()
-    .unwrap()
     .unwrap();
     let quester = script::quester::runner::Quester::new(
         api::selected::RunKey {

@@ -3027,7 +3027,7 @@ mod tests {
 
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = api::selected::FamilyPreparation::run({
+        let path = super::super::compile::prepare_for_test({
             let data = Arc::clone(&data);
             let quests = Arc::clone(&quests);
             move |cap| {
@@ -3039,9 +3039,6 @@ mod tests {
                 )
             }
         })
-        .unwrap()
-        .join()
-        .unwrap()
         .unwrap();
         let run = RunKey {
             slot: 1,

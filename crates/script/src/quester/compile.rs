@@ -32,7 +32,7 @@ pub struct CompileContext<'a> {
     pub pair: Option<PairCompileContext<'a>>,
     pub selected: &'a SelectedGameData,
     pub quests: &'a QuestCatalog,
-    pub gathering: Option<&'a GatherCatalog>,
+    pub gathering: Option<&'a Arc<GatherCatalog>>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
     pub recipes: &'a HashMap<String, Arc<[CompiledAcquireStep]>>,
     /// `None` uses the shared eligible-bank cost selector at step start.
@@ -434,6 +434,17 @@ fn uses_gathering(document: &PathDocument) -> bool {
     })
 }
 
+/// Run test-only family preparation on the same off-pump worker as production.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn prepare_for_test<R: Send + 'static>(
+    work: impl FnOnce(&mut FamilyPreparation) -> R + Send + 'static,
+) -> R {
+    FamilyPreparation::run(work)
+        .expect("start test family preparation")
+        .join()
+        .expect("join test family preparation")
+}
+
 /// Test helper: compile without the process cache.
 pub fn compile_uncached_for_test(
     document: &PathDocument,
@@ -720,7 +731,7 @@ fn compile_uncached(
             }),
         selected,
         quests,
-        gathering: gathering.as_deref(),
+        gathering: gathering.as_ref(),
         areas: &areas,
         recipes: &empty_recipes,
         bank,

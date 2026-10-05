@@ -1,15 +1,15 @@
-use super::thieving_core::{ChatEvidence, Decision, Failure, Observation, ThieveCore};
-use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
-use crate::shim::InteractReq;
+use super::thieving_core::{
+    level_ready, ChatEvidence, Decision, Failure, Observation, ThieveCore, PICKPOCKET, STEAL_FROM,
+};
+use super::{ActionContext, ActionError, NativeMachine, WalkEnd};
+use crate::gatherer::oneop::{OneOp, OneOpArgs};
+use crate::quester::families::reach::{self, Reach, ReachArgs, ReachKind};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{NpcView, SnapshotView, StatView};
 use api::WorldTile;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-
-const PICKPOCKET: &str = "Pickpocket";
-const STEAL_FROM: &str = "Steal-from";
 
 #[derive(Clone)]
 pub(crate) struct Target {
@@ -39,7 +39,12 @@ pub(crate) struct Thieve {
     core: ThieveCore,
     area_anchor: Option<WorldTile>,
     walk: Option<PendingWalk>,
+    reach: Option<Reach>,
+    reach_request_id: Option<u64>,
+    reach_target: Option<(i32, &'static str)>,
+    modal: Option<OneOp>,
     pending_action: Option<&'static str>,
+    pending_target_id: Option<i32>,
 }
 
 struct PendingWalk {
@@ -77,7 +82,7 @@ impl NativeMachine for Thieve {
             Some(args.goal_qty),
             None,
             true,
-            last_chat_sequence(snapshot),
+            reach::last_chat_seq(cx),
         )
         .map_err(|_| failed("invalid thieving action configuration"))?;
         Ok(Self {
@@ -85,16 +90,17 @@ impl NativeMachine for Thieve {
             core,
             area_anchor,
             walk: None,
+            reach: None,
+            reach_request_id: None,
+            reach_target: None,
+            modal: None,
             pending_action: None,
+            pending_target_id: None,
         })
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         let now = cx.active_now();
-        let walk_pending = match self.poll_walk(cx) {
-            Ok(pending) => pending,
-            Err(error) => return Poll::Ready(Err(error)),
-        };
         if let Some(request_id) = self.core.pending_request_id() {
             if let Some(receipt) = cx.interaction_receipt(request_id).copied() {
                 self.core
@@ -103,6 +109,60 @@ impl NativeMachine for Thieve {
         }
 
         let snapshot = cx.snapshot();
+        if let Some(result) = self.modal.as_mut().map(|modal| modal.poll(cx)) {
+            match result {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => {
+                    self.modal = None;
+                    return Poll::Ready(Err(error));
+                }
+                Poll::Ready(Ok(true)) => self.modal = None,
+                Poll::Ready(Ok(false)) => {
+                    self.modal = None;
+                    return Poll::Pending;
+                }
+            }
+        }
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            self.cancel_walk(cx);
+            if self.core.waiting_for_receipt() {
+                let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
+                let observation = Observation {
+                    effective_thieving: None,
+                    required_level: None,
+                    experience: None,
+                    inventory_used: None,
+                    target_count: None,
+                    inventory_ready: false,
+                    chat: ChatEvidence::default(),
+                    chat_dialog_open,
+                    chat_dialog_fingerprint,
+                };
+                return match self.core.poll(now, observation) {
+                    Decision::Failed(reason) => Poll::Ready(Err(action_failure(reason))),
+                    _ => Poll::Pending,
+                };
+            }
+            self.modal = match OneOp::begin(args, cx) {
+                Ok(modal) => Some(modal),
+                Err(error) => return Poll::Ready(Err(error)),
+            };
+            return Poll::Pending;
+        }
+
+        let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
+        if chat_dialog_open {
+            self.cancel_walk(cx);
+        }
+        let walk_pending = if chat_dialog_open {
+            false
+        } else {
+            match self.poll_walk(cx) {
+                Ok(pending) => pending,
+                Err(error) => return Poll::Ready(Err(error)),
+            }
+        };
+
         let skills = snapshot.stats();
         let skill = skills.and_then(|stats| thieving_stat(stats.value));
         let inventory = snapshot.inventory();
@@ -129,13 +189,11 @@ impl NativeMachine for Thieve {
                 .map(|candidate| action_name(&candidate.target.action))
                 .unwrap_or(PICKPOCKET)
         };
-        let skip_chat = self.core.waiting_for_receipt();
-        let chat = if skip_chat {
+        let chat = if self.core.waiting_for_receipt() {
             ChatEvidence::default()
         } else {
             observe_chat(snapshot, self.core.chat_since(), pending_action)
         };
-        let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
         let observation = Observation {
             effective_thieving: skill.map(|(effective, _)| effective),
             required_level,
@@ -148,21 +206,15 @@ impl NativeMachine for Thieve {
             chat_dialog_fingerprint,
         };
         let mut core_observation = observation;
-        if walk_pending {
-            core_observation.inventory_ready = false;
-        }
+        core_observation.inventory_ready &=
+            !walk_pending && self.reach.is_none() && !chat_dialog_open;
         let decision = self.core.poll(now, core_observation);
-        if !walk_pending
-            && self.core.pending_request_id().is_none()
-            && skill.is_some()
-            && inventory.is_some()
-            && !chat_dialog_open
-            && matches!(decision, Decision::Wait | Decision::Dispatch)
+
+        if decision == Decision::Dispatch
+            && !walk_pending
+            && self.reach.is_none()
             && self.area_anchor.is_some_and(|center| {
-                here.is_none_or(|here| {
-                    tile_distance(here, center)
-                        .is_none_or(|distance| distance > u32::from(self.args.radius))
-                })
+                here.is_none_or(|here| !reach::within(here, center, i32::from(self.args.radius)))
             })
         {
             let center = self.area_anchor.expect("approach anchor was checked");
@@ -171,14 +223,42 @@ impl NativeMachine for Thieve {
                 Err(error) => Poll::Ready(Err(error)),
             };
         }
+
         match decision {
-            Decision::Wait => Poll::Pending,
+            Decision::Wait => {
+                if !chat_dialog_open && !self.core.stun_active(now) {
+                    if let Err(error) = self.poll_reach(cx, now, &observation) {
+                        return Poll::Ready(Err(error));
+                    }
+                }
+                Poll::Pending
+            }
             Decision::AttemptResolved
             | Decision::AttemptFailed
             | Decision::AttemptTimedOut
-            | Decision::Stunned
             | Decision::Dialogue => {
+                if decision == Decision::AttemptFailed
+                    && self.pending_target_id.is_some_and(is_troll_guard)
+                {
+                    self.pending_action = None;
+                    self.pending_target_id = None;
+                    self.cancel_walk(cx);
+                    return Poll::Ready(Err(failed(
+                        "troll prison guard attacked after failed pickpocket",
+                    )));
+                }
                 self.pending_action = None;
+                self.pending_target_id = None;
+                if !chat_dialog_open && !self.core.stun_active(now) {
+                    if let Err(error) = self.poll_reach(cx, now, &observation) {
+                        return Poll::Ready(Err(error));
+                    }
+                }
+                Poll::Pending
+            }
+            Decision::Stunned => {
+                self.pending_action = None;
+                self.pending_target_id = None;
                 Poll::Pending
             }
             Decision::Complete { held } => {
@@ -186,34 +266,47 @@ impl NativeMachine for Thieve {
                 Poll::Ready(Ok(held))
             }
             Decision::Dispatch => {
-                if walk_pending {
+                if walk_pending || chat_dialog_open || self.reach.is_some() {
                     return Poll::Pending;
                 }
                 let Some(candidate) = candidate else {
                     return Poll::Pending;
                 };
-                if candidate.npc.distance > 1 {
-                    return match self.begin_walk(candidate.npc.tile, 1, cx) {
-                        Ok(()) => Poll::Pending,
-                        Err(error) => Poll::Ready(Err(error)),
-                    };
-                }
-                let Some(request) = interaction_request(candidate) else {
-                    return Poll::Pending;
-                };
-                let request_id = match cx.emit(request) {
-                    Ok(request_id) => request_id,
+                let action = action_name(&candidate.target.action);
+                let reach = match Reach::begin(
+                    ReachArgs {
+                        kind: ReachKind::Npc {
+                            id: candidate.target.id,
+                            name: Arc::clone(&candidate.target.display),
+                        },
+                        op: Arc::clone(&candidate.target.action),
+                        anchor: self.area_anchor,
+                        radius: candidate.npc.distance.max(1),
+                        wait_if_missing: true,
+                        target_tile: None,
+                        reachable_only: false,
+                    },
+                    cx,
+                ) {
+                    Ok(reach) => reach,
                     Err(error) => return Poll::Ready(Err(error)),
                 };
-                if self
-                    .core
-                    .start_attempt(now, Some(request_id), &observation, self.core.chat_since())
-                    .is_err()
-                {
-                    cx.cancel_request(request_id);
-                    return Poll::Ready(Err(failed("invalid thieving attempt state")));
+                self.reach_target = Some((candidate.target.id, action));
+                self.reach_request_id = None;
+                let request_id = reach.interaction_request_id();
+                self.reach = Some(reach);
+                if let Some(request_id) = request_id {
+                    if let Err(error) = self.track_reach_request(request_id, now, &observation) {
+                        cx.cancel_request(request_id);
+                        if let Some(reach) = self.reach.as_mut() {
+                            reach.cancel();
+                        }
+                        self.reach = None;
+                        self.reach_target = None;
+                        self.reach_request_id = None;
+                        return Poll::Ready(Err(error));
+                    }
                 }
-                self.pending_action = Some(action_name(&candidate.target.action));
                 Poll::Pending
             }
             Decision::Failed(reason) => {
@@ -223,7 +316,14 @@ impl NativeMachine for Thieve {
         }
     }
 
-    fn cancel(&mut self) {}
+    fn cancel(&mut self) {
+        if let Some(reach) = self.reach.as_mut() {
+            reach.cancel();
+        }
+        if let Some(modal) = self.modal.as_mut() {
+            modal.cancel();
+        }
+    }
 }
 
 impl Thieve {
@@ -234,7 +334,7 @@ impl Thieve {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let request_id = cx.walk(walk_request(target, radius, required_after))?;
+        let request_id = cx.walk(reach::walk_request(target, radius, None, required_after))?;
         self.walk = Some(PendingWalk {
             request_id,
             required_after,
@@ -267,20 +367,62 @@ impl Thieve {
             cx.cancel_request(walk.request_id);
         }
     }
-}
 
-fn walk_request(target: WorldTile, radius: u16, required_after: EvidenceStamp) -> WalkRequest {
-    WalkRequest {
-        target,
-        loc_id: None,
-        radius,
-        arrival: nav::arrival::ArrivalKind::Reach,
-        options: super::WalkOptions::default(),
-        required_after,
-        evidence: None,
-        cross: Vec::new().into_boxed_slice(),
-        protect: false,
-        allow: Default::default(),
+    fn track_reach_request(
+        &mut self,
+        request_id: u64,
+        now: Duration,
+        observation: &Observation,
+    ) -> Result<(), ActionError> {
+        if self.reach_request_id == Some(request_id) || self.core.pending_request_id().is_some() {
+            return Ok(());
+        }
+        let Some((target_id, action)) = self.reach_target else {
+            return Err(failed("invalid thieving reach state"));
+        };
+        self.core
+            .start_attempt(now, Some(request_id), observation, self.core.chat_since())
+            .map_err(|_| failed("invalid thieving attempt state"))?;
+        self.reach_request_id = Some(request_id);
+        self.pending_action = Some(action);
+        self.pending_target_id = Some(target_id);
+        Ok(())
+    }
+
+    fn poll_reach(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        now: Duration,
+        observation: &Observation,
+    ) -> Result<(), ActionError> {
+        let Some(mut reach) = self.reach.take() else {
+            return Ok(());
+        };
+        if let Some(request_id) = reach.interaction_request_id() {
+            if let Err(error) = self.track_reach_request(request_id, now, observation) {
+                self.reach = Some(reach);
+                return Err(error);
+            }
+        }
+        let result = reach.poll(cx);
+        if let Some(request_id) = reach.interaction_request_id() {
+            if let Err(error) = self.track_reach_request(request_id, now, observation) {
+                self.reach = Some(reach);
+                return Err(error);
+            }
+        }
+        match result {
+            Poll::Pending => self.reach = Some(reach),
+            Poll::Ready(Ok(_)) => {
+                self.reach_request_id = None;
+                self.reach_target = None;
+            }
+            Poll::Ready(Err(error)) => {
+                self.reach = Some(reach);
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -311,18 +453,15 @@ fn action_name(action: &str) -> &'static str {
     }
 }
 
+fn is_troll_guard(target_id: i32) -> bool {
+    matches!(target_id, 1_128 | 1_129)
+}
+
 fn thieving_stat(stats: &[StatView]) -> Option<(i32, i32)> {
     stats
         .iter()
         .find(|stat| stat.name.eq_ignore_ascii_case("thieving"))
         .map(|stat| (stat.effective, stat.xp))
-}
-
-fn last_chat_sequence(snapshot: SnapshotView<'_>) -> i32 {
-    snapshot
-        .chat_lines(0)
-        .and_then(|lines| lines.value.iter().map(|line| line.sequence).max())
-        .unwrap_or_default()
 }
 
 fn observe_chat(snapshot: SnapshotView<'_>, since: i32, action: &str) -> ChatEvidence {
@@ -360,10 +499,6 @@ fn item_count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
         .fold(0i32, |count, item| count.saturating_add(item.count.max(0)))
 }
 
-fn tile_distance(a: WorldTile, b: WorldTile) -> Option<u32> {
-    (a.level == b.level).then(|| a.x.abs_diff(b.x).max(a.z.abs_diff(b.z)))
-}
-
 fn nearer(a: Candidate<'_>, b: Candidate<'_>) -> bool {
     let a_distance = a.npc.distance.max(0);
     let b_distance = b.npc.distance.max(0);
@@ -390,9 +525,7 @@ fn select_target<'a>(
         let Some(index) = i32::try_from(npc.index).ok() else {
             continue;
         };
-        if index < 0
-            || tile_distance(center, npc.tile).is_none_or(|distance| distance > u32::from(radius))
-        {
+        if index < 0 || !reach::within(center, npc.tile, i32::from(radius)) {
             continue;
         }
         for target in targets.iter().filter(|target| target.id == npc_id) {
@@ -409,7 +542,7 @@ fn select_target<'a>(
             if nearest.is_none_or(|best| nearer(candidate, best)) {
                 nearest = Some(candidate);
             }
-            if effective_level.is_some_and(|level| level >= target.required_level)
+            if level_ready(effective_level, target.required_level) == Some(true)
                 && eligible.is_none_or(|best| nearer(candidate, best))
             {
                 eligible = Some(candidate);
@@ -419,16 +552,6 @@ fn select_target<'a>(
     eligible.or(nearest)
 }
 
-fn interaction_request(candidate: Candidate<'_>) -> Option<InteractReq> {
-    let index = i32::try_from(candidate.npc.index).ok()?;
-    let name = candidate.npc.name.as_ref()?.clone();
-    Some(InteractReq::Npc {
-        name,
-        action: candidate.target.action.to_string(),
-        index: Some(index),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,12 +559,15 @@ mod tests {
     use crate::quester::families::tests::{
         def, local_player, post_user_input_walk_receipt, with_tick,
     };
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use api::snapshot::{
+        ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
+    };
+
     fn target(id: i32, required_level: i32) -> Target {
         Target {
             id,
             display: Arc::from("Man"),
-            action: Arc::from(PICKPOCKET),
+            action: Arc::from("Pickpocket"),
             required_level,
         }
     }
@@ -451,7 +577,7 @@ mod tests {
             index,
             r#type: Some(id),
             name: Some("Man".into()),
-            actions: vec![Some(PICKPOCKET.into())],
+            actions: vec![Some("Pickpocket".into())],
             tile: WorldTile {
                 x: 3,
                 z: 4,
@@ -530,6 +656,23 @@ mod tests {
         snapshot
     }
 
+    fn accept_last_interaction(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u64) {
+        let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+        ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {
         let stats = [StatView {
@@ -570,27 +713,30 @@ mod tests {
 
     #[test]
     fn interaction_keeps_the_selected_npc_instance_index() {
-        let targets = [target(1, 1)];
-        let npcs = [npc(4, 1, 3), npc(19, 1, 1)];
-        let candidate = select_target(
-            &npcs,
-            &targets,
-            Some(WorldTile {
-                x: 3,
-                z: 4,
-                level: 0,
-            }),
-            12,
-            Some(1),
-        )
-        .unwrap();
-        match interaction_request(candidate).unwrap() {
-            InteractReq::Npc { index, action, .. } => {
-                assert_eq!(index, Some(19));
-                assert_eq!(action, PICKPOCKET);
-            }
-            _ => panic!("thieving emits an NPC interaction"),
-        }
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![npc(4, 1, 3), npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                index: Some(19),
+                action,
+                ..
+            }) if action == "Pickpocket"
+        ));
     }
 
     #[test]
@@ -663,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn native_action_walks_to_a_remote_target_inside_its_fixed_area() {
+    fn native_reach_interacts_with_a_remote_target_before_route_recovery() {
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -688,17 +834,241 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        let action = ledger.as_ref().unwrap().outbox.last().unwrap();
-        let crate::native::HostEffect::Walk(request) = &action.effect else {
-            panic!("thieving must approach a remote target before interacting");
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                index: Some(19),
+                action,
+                ..
+            }) if action == "Pickpocket"
+        ));
+    }
+
+    #[test]
+    fn level_up_modal_is_continued_and_thieving_resumes_without_duplicate_clicks() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
         };
-        assert_eq!(request.target, target_tile);
-        assert_eq!(request.radius, 1);
-        assert!(!ledger.as_ref().is_some_and(|ledger| {
+        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let mut action_args = args(anchor, 12);
+        action_args.goal_qty = 2;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(action_args, &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+
+        let mut snapshot = snapshot;
+        snapshot.seed_stats(vec![StatView {
+            index: 17,
+            name: "thieving".into(),
+            effective: 30,
+            base: 30,
+            xp: 1_008,
+            used: true,
+        }]);
+        snapshot.seed_inventory(vec![held(995, 1, 0)], 28);
+        snapshot.seed_chat_lines(vec![
+            ChatLineView {
+                sequence: 1,
+                type_: 0,
+                username: None,
+                text: "You attempt to pick the man's pocket.".into(),
+            },
+            ChatLineView {
+                sequence: 2,
+                type_: 0,
+                username: None,
+                text: "You pick the man's pocket.".into(),
+            },
+        ]);
+        snapshot.seed_chat_modal(100, vec!["Congratulations, you advanced Thieving.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+                component_id: None
+            })
+        ));
+        accept_last_interaction(&mut ledger, 4);
+
+        snapshot.seed_chat_modal(-1, Vec::new());
+        snapshot.seed_chat_options(Vec::new(), -1);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        let npc_clicks = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
             ledger
+                .as_ref()
+                .unwrap()
                 .outbox
                 .iter()
-                .any(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::Npc { .. }
+                        )
+                    )
+                })
+                .count()
+        };
+        assert_eq!(npc_clicks(&ledger), 1);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_clicks(&ledger), 2);
+    }
+
+    #[test]
+    fn troll_guard_failure_returns_a_combat_failure_instead_of_a_stun() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let mut guard_target = target(1_128, 30);
+        guard_target.display = Arc::from("Troll prison guard");
+        let mut guard = npc(19, 1_128, 1);
+        guard.name = Some("Troll prison guard".into());
+        let snapshot = game_snapshot(anchor, vec![guard], vec![]);
+        let mut ledger = None;
+        let mut action_args = args(anchor, 12);
+        action_args.targets = Arc::from([guard_target]);
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(action_args, &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+
+        let mut snapshot = snapshot;
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            sequence: 1,
+            type_: 0,
+            username: None,
+            text: "You attempt to pick the guard's pocket.".into(),
+        }]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        let mut guard = npc(19, 1_128, 1);
+        guard.name = Some("Troll prison guard".into());
+        guard.in_combat = true;
+        snapshot.seed_npcs(vec![guard]);
+        snapshot.seed_chat_lines(vec![
+            ChatLineView {
+                sequence: 1,
+                type_: 0,
+                username: None,
+                text: "You attempt to pick the guard's pocket.".into(),
+            },
+            ChatLineView {
+                sequence: 2,
+                type_: 0,
+                username: None,
+                text: "You fail to pick the guard's pocket.".into(),
+            },
+        ]);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "troll prison guard attacked after failed pickpocket"
+        ));
+    }
+
+    #[test]
+    fn cannot_reach_chat_reuses_reach_door_route() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let target_tile = WorldTile {
+            x: 10,
+            z: 4,
+            level: 0,
+        };
+        let door_tile = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let mut target = npc(19, 1, 7);
+        target.tile = target_tile;
+        target.network = target_tile;
+        let mut snapshot = game_snapshot(anchor, vec![target], vec![]);
+        snapshot.seed_locs(vec![LocView {
+            id: 1516,
+            name: Some("Door".into()),
+            actions: vec![Some("Open".into())],
+            tile: door_tile,
+            distance: 1,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer: LocLayer::Wall,
+            shape: 0,
+            angle: 2,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            sequence: 1,
+            type_: 0,
+            username: None,
+            text: "I can't reach that!".into(),
+        }]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+            matches!(
+                &action.effect,
+                crate::native::HostEffect::Walk(request) if request.target == door_tile
+            )
         }));
     }
 }
