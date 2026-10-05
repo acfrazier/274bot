@@ -54,6 +54,9 @@ const pack = path.join(content, 'pack');
 const consumption = path.join(content, 'scripts/player/configs/consumption');
 const consumeScript = path.join(content, 'scripts/player/scripts/consumption');
 const thieving = path.join(content, 'scripts/skill_thieving/configs/pickpocking');
+const digsiteScript = path.join(content, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2');
+const trollGuardScript = path.join(content, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2');
+for (const file of [digsiteScript, trollGuardScript]) fs.mkdirSync(path.dirname(file), { recursive: true });
 for (const directory of [pack, consumption, consumeScript, thieving]) fs.mkdirSync(directory, { recursive: true });
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n6=category_5\n');
 fs.writeFileSync(path.join(pack, 'enum.pack'), '0=potion_prayerrestore\n');
@@ -111,6 +114,18 @@ data=pocket,coins
 data=loot,coin,1,5,10
 data=loot,coin,2,3,20
 `);
+fs.writeFileSync(digsiteScript, `[opnpc3,digworkman1] @pickpocket_digworkman1;
+[opnpc3,digworkman2] @pickpocket_digworkman1;
+if (stat (thieving) < 25) {
+    return;
+}
+`);
+fs.writeFileSync(trollGuardScript, `[opnpc3,troll_prison_guard1]
+[opnpc3,troll_prison_guard2]
+if (stat(thieving) < 30) {
+    return;
+}
+`);
 const facts = extractFacts(content,
     [
         { id: 1, debugname: 'bread', name: 'Bread', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map() },
@@ -124,6 +139,10 @@ const facts = extractFacts(content,
     [
         { id: 10, debugname: 'guard1', name: 'Guard' },
         { id: 11, debugname: 'guard2', name: 'Guard' },
+        { id: 12, debugname: 'digworkman1', name: 'Digsite workman' },
+        { id: 13, debugname: 'digworkman2', name: 'Digsite workman' },
+        { id: 14, debugname: 'troll_prison_guard1', name: 'Twig' },
+        { id: 15, debugname: 'troll_prison_guard2', name: 'Berry' },
     ],
 );
 assert.equal(facts.consumption.length, 5);
@@ -153,9 +172,33 @@ assert.equal(potionFact.skill_delay_arg, null);
 assert.equal(potionFact.message_delay, 1);
 assert.equal(potionFact.dose_family, 'potion_prayerrestore');
 assert.equal(potionFact.dose_count, 1);
-assert.deepEqual(facts.pickpocket[0].npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
-assert.equal(facts.pickpocket[0].loot.length, 2);
-assert.deepEqual(facts.pickpocket[0].success_chance, { numerator: 1, denominator: 2 });
+const fullPickpocket = facts.pickpocket.find((fact) => !('kind' in fact))!;
+assert.deepEqual(fullPickpocket.npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
+assert.equal(fullPickpocket.loot.length, 2);
+assert.deepEqual(fullPickpocket.success_chance, { numerator: 1, denominator: 2 });
+const levelOnlyPickpocket = facts.pickpocket.filter((fact) => 'kind' in fact);
+assert.deepEqual(
+    levelOnlyPickpocket.map((fact) => ({
+        alias: fact.npcs[0].alias,
+        id: fact.npcs[0].id,
+        level: fact.level,
+        kind: fact.kind,
+        source_file: fact.source_file,
+        target_row: fact.target_row,
+        source_row: fact.source_row,
+    })),
+    [
+        { alias: 'digworkman1', id: 12, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman1] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'digworkman2', id: 13, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman2] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'troll_prison_guard1', id: 14, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard1]', source_row: 'if (stat(thieving) < 30) {' },
+        { alias: 'troll_prison_guard2', id: 15, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard2]', source_row: 'if (stat(thieving) < 30) {' },
+    ],
+);
+for (const fact of levelOnlyPickpocket) {
+    for (const key of ['experience', 'stun_ticks', 'stun_damage', 'success_chance', 'loot', 'pocket']) {
+        assert.equal(Object.hasOwn(fact, key), false, `${fact.npcs[0].alias} must stay level-only`);
+    }
+}
 
 const combat = path.join(content, 'scripts/skill_combat/configs/magic');
 const magic = path.join(content, 'scripts/skill_magic/configs');
@@ -2548,6 +2591,9 @@ const gatheringPins = [
     { revision: 274, root: pinContentRoot(274) },
     { revision: 289, root: pinContentRoot(289) },
 ];
+const hemensterFishingScript = 'scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2';
+const hemensterSpot = '0_41_53_sinisterfishspot';
+const hemensterCarpMethod = `fishing.${hemensterSpot}.op1`;
 
 function gatherView(family: GatheringFamily) {
     const alias = new Map<string, string>();
@@ -2634,7 +2680,7 @@ for (const { revision, root } of gatheringPins) {
     const facts: GatheringFacts = family.payload;
     assert.equal(family.schema, GATHERING_SCHEMA);
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
-    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 15 }, `${revision} method inventory`);
+    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 16 }, `${revision} method inventory`);
 
     // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
     // a global handler fails closed at index time, so reaching here proves there is none
@@ -2728,6 +2774,58 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(bigNet.state, revision === 289 ? 'partial' : 'known', `${revision} the 289 monkey-form gate is not modelled, so big-net requirements are partial there; 274 has no such gate`);
     assert.equal(bigNet.state !== 'partial' || bigNet.gaps.every((each) => each.code === 'monkey-form-forbidden'), true);
     assert.equal(targetsOf(view.method('fishing.freshfish.op1'), 'hazard').map((target) => view.name('npc', target.id)).join(), 'macro_whirlpool_freshfish', `${revision} whirlpool spots are hazards, not fishing targets`);
+    const method = view.method(hemensterCarpMethod);
+    const target = targetsOf(method, 'resource')[0]!;
+    const npcPack = parsePack(fs.readFileSync(path.join(root, 'pack/npc.pack'), 'utf8'));
+    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
+    assert.equal(method.id, hemensterCarpMethod);
+    assert.equal(target.kind, 'npc');
+    assert.equal(target.id, npcPack.get(hemensterSpot));
+    assert.equal(target.id, 234);
+    assert.equal(target.op, 1);
+    assert.equal(view.name('npc', target.id), hemensterSpot);
+    assert.equal(target.respawn.state, 'known');
+    assert.equal(target.respawn.state === 'known' ? target.respawn.value : undefined, null);
+    assert.deepEqual(fishing(hemensterCarpMethod), {
+        tools: ['fishing_rod'],
+        consumes: ['red_vine_wormx1'],
+        products: ['raw_giant_carp@10'],
+        op: { slot: 1, label: 'Fish' },
+    });
+    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, objPack.get('fishing_rod'));
+    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, 307);
+    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, objPack.get('red_vine_worm'));
+    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, 25);
+    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, objPack.get('raw_giant_carp'));
+    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, 338);
+    assert.equal(method.resources[0], 'raw_giant_carp');
+    assert.equal(gatherMethodGap(method), 'varp-gate', 'quest progress stays an explicit blocker, not a fabricated gather requirement');
+    assert.equal(method.requirements.state, 'partial');
+    assert.deepEqual(method.requirements.state === 'partial' ? method.requirements.gaps.map((each) => each.code) : [], ['varp-gate']);
+    assert.deepEqual(knownValue(method.requirements, `${method.id} requirements`).map((each) =>
+        each.kind === 'skill' ? [each.kind, each.skill, each.level] : [each.kind]), [['skill', 10, 10]]);
+    assert.ok(method.sources.some((source) => source.startsWith(`${hemensterFishingScript}:`)));
+
+    const targetId = new Set([target.id]);
+    const sourcePlacements = mapRowKeys(root, 'NPC', targetId);
+    const northRow = revision === 289 ? 'maps/m41_53.jm2:7631:0:13:52:234' : 'maps/m41_53.jm2:7630:0:13:52:234';
+    assert.ok(sourcePlacements.has(northRow), 'the exact north-spot NPC row comes from the selected map');
+    assert.deepEqual([...familyRowKeys(family, 'n', targetId)].sort(), [...sourcePlacements].sort());
+
+    const contestSource = fs.readFileSync(path.join(root, hemensterFishingScript), 'utf8');
+    assert.match(contestSource, /p_delay\(4\);\s*@hemenster_catch\(\$bait\);/);
+    const catchStart = contestSource.indexOf('[label,hemenster_catch]');
+    const catchEnd = contestSource.indexOf('[label,attempt_fish_hemenster]', catchStart);
+    assert.ok(catchStart >= 0 && catchEnd > catchStart, 'the selected carp catch handler is present');
+    assert.doesNotMatch(contestSource.slice(catchStart, catchEnd), /stat_advance\(fishing,/);
+    assert.match(contestSource, /if\s*\(%hemenster_comp_stage = \^hemenster_comp_all_fish_caught\)[\s\S]*?~bonzo_handover_catch/);
+    const contestConstants = fs.readFileSync(path.join(root, 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant'), 'utf8');
+    const stageValue = (name: string) => {
+        const match = new RegExp(`^\\^${name}\\s*=\\s*(\\d+)\\s*$`, 'm').exec(contestConstants);
+        assert.ok(match, `${name} is a selected content constant`);
+        return Number(match[1]);
+    };
+    assert.equal(stageValue('hemenster_comp_all_fish_caught') - stageValue('hemenster_comp_paidfee'), 3, 'the third catch reaches the handover check; the handler only calls Bonzo when he is within 12 tiles');
 
     // Placements are the map rows themselves.
     for (const [id, kind] of [['mining.iron', 'l'], ['mining.coal', 'l'], ['woodcutting.oak', 'l'], ['fishing.freshfish.op1', 'n']] as const) {
@@ -2766,7 +2864,7 @@ for (const { revision, root } of gatheringPins) {
         `${revision} woodcutting/mining resource rows follow family content order`,
     );
     const fishingRows = resourceRows.filter((row) => row.skill === 'fishing');
-    assert.equal(fishingRows.length, 12, `${revision} fishing groups`);
+    assert.equal(fishingRows.length, 13, `${revision} fishing groups`);
     assert.equal(new Set(fishingRows.map((row) => row.label)).size, fishingRows.length, `${revision} fishing labels are unique`);
     assert.deepEqual(
         fishingRows.flatMap((row) => row.methods).sort(compareCodepoint),
@@ -2780,6 +2878,11 @@ for (const { revision, root } of gatheringPins) {
         true,
         `${revision} fishing members and legacy aliases are sorted together`,
     );
+    const contestPicker = fishingRows.find((row) => row.methods.includes(hemensterCarpMethod));
+    assert.ok(contestPicker, 'the direct carp method keeps its own operation/tool/bait/product option');
+    assert.equal(contestPicker.selectable, false);
+    assert.equal(contestPicker.gap, 'varp-gate');
+    assert.equal(contestPicker.level, 10);
     const resourceRow = (skill: string, key: string): GatherResourceWire => {
         const found = rowByKey.get(`${skill}:${key}`);
         assert.ok(found, `${revision} ${skill}:${key} is published`);
@@ -2820,10 +2923,10 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, revision === 289 ? 310 : 307, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, revision === 289 ? 311 : 308, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
     const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
     const site = (id: string): GatherSiteWire => {
@@ -2831,6 +2934,12 @@ for (const { revision, root } of gatheringPins) {
         assert.ok(found, `${revision} site ${id} is published`);
         return found!;
     };
+    const contestSitePicker = namedResourceRows.find((row) => row.methods.includes(hemensterCarpMethod));
+    assert.ok(contestSitePicker);
+    const contestSites = siteResult.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
+    assert.equal(contestSites.length, 1, 'the method site is joined to its selected NPC placement');
+    assert.equal(contestSites[0]!.label, 'Hemenster W18 · Fish');
+    assert.deepEqual(contestSites[0]!.region, { min_x: 2637, min_z: 3444, max_x: 2637, max_z: 3444, level: 0 });
     // Direct content names on both revisions, with the Waterfall loc camp keeping its bearing label.
     assert.equal(site('fishing.musa_point').label, 'Musa Point · Bait, Cage, Harpoon, Net');
     assert.deepEqual(site('fishing.musa_point').region, { min_x: 2923, min_z: 3179, max_x: 2926, max_z: 3181, level: 0 });
@@ -2887,13 +2996,13 @@ for (const { revision, root } of gatheringPins) {
     siteRowsByRevision.set(revision, siteResult.rows);
 
 }
-// Both revisions publish the same site ids but the three 289 tree scraps.
+// Both revisions share 308 base sites; 289 adds the three tree scraps.
 {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 307, '307 shared site ids');
-    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only rows');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 308, '308 shared site ids');
+    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
     assert.ok(rows289.some((row) => row.label.startsWith(`Mort'ton · `)), '289 keeps the Mortton camp');
     assert.ok(rows289.some((row) => row.label.includes('Troll Stronghold')), '289 keeps the Troll Stronghold scraps');
@@ -2934,6 +3043,21 @@ assert.equal(family289Rows(baseline, 'mining.copper'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
+assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
+    replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
+assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');
+const changedContestLoose = changedContestYield.payload.loose.find((each) => each.gap?.code === 'quest-handler-shape');
+assert.ok(changedContestLoose);
+assert.equal(gatherView(changedContestYield).name('npc', changedContestLoose.id), hemensterSpot);
+const missingContestSource = extractGatheringFamily(gatheringFixture((rootDir) =>
+    fs.rmSync(path.join(rootDir, hemensterFishingScript))));
+assert.equal(missingContestSource.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a missing quest handler is not promoted');
+const missingContestView = gatherView(missingContestSource);
+const missingContestLoose = missingContestSource.payload.loose.find((each) =>
+    each.gap?.code === 'no-handler' && missingContestView.name('npc', each.id) === hemensterSpot);
+assert.ok(missingContestLoose);
+assert.equal(missingContestView.name('npc', missingContestLoose.id), hemensterSpot);
 
 const sourceNpcPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/npc.pack'), 'utf8'));
 const sourceObjPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/obj.pack'), 'utf8'));
@@ -3114,7 +3238,14 @@ for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `stub ${relative}\n`);
 }
-for (const relative of baseContentFileList()) {
+const baseContentFiles = baseContentFileList();
+for (const relative of [
+    'scripts/quests/quest_itexam/scripts/digsite_workman.rs2',
+    'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2',
+]) {
+    assert.ok(baseContentFiles.includes(relative), `${relative} must be pinned as a base content input`);
+}
+for (const relative of baseContentFiles) {
     const file = path.join(isoContent, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `stub ${relative}\n`);

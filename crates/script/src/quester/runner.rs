@@ -2650,10 +2650,10 @@ impl Script for QueuedQuester {
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
             self.active_index = Some(index);
-            let worker = api::selected::FamilyPreparation::run(move |_| {
+            let worker = api::selected::FamilyPreparation::run(move |cap| {
                 let bytes = super::card::released_path(&id)
                     .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
-                super::compile::compile_path_for_gang(bytes, &selected, &quests, gang).map_err(
+                super::compile::compile_path_for_gang(bytes, &selected, &quests, cap, gang).map_err(
                     |error| {
                         let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
                         Arc::from(match &error.step {
@@ -3027,11 +3027,21 @@ mod tests {
 
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = api::selected::FamilyPreparation::run({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap()
         .unwrap();
         let run = RunKey {
             slot: 1,

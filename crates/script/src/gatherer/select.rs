@@ -1,7 +1,8 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
 use api::gather_methods::{
-    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput, TargetClass,
+    known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
+    SceneRegionInput, TargetClass,
 };
 use api::selected::{EntityId, Knowledge, Truth};
 use api::snapshot::{LocView, NpcView, WorldStateView, WorldTile};
@@ -388,6 +389,46 @@ pub fn select(
     avoided: &[AvoidedTile; MAX_AVOID],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        avoided,
+        observation,
+        AccessPolicy::Usable,
+    )
+}
+
+/// Quest Paths own their quest-state gates. They may attempt a state-gated
+/// resource, but never an intercepted or substituted yield.
+pub(crate) fn select_for_quest(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    observation: SelectionObservation<'_>,
+) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        &[AvoidedTile::EMPTY; MAX_AVOID],
+        observation,
+        AccessPolicy::Possible,
+    )
+}
+
+fn select_with_access(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    avoided: &[AvoidedTile; MAX_AVOID],
+    observation: SelectionObservation<'_>,
+    access: AccessPolicy,
+) -> SelectionResult {
     let SelectionObservation {
         world,
         locs,
@@ -419,7 +460,7 @@ pub fn select(
             for spot in spots.iter().filter(|spot| {
                 fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -427,6 +468,9 @@ pub fn select(
                     continue;
                 };
                 for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+                    if access == AccessPolicy::Possible && !area.contains(npc.tile) {
+                        continue;
+                    }
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
@@ -458,7 +502,7 @@ pub fn select(
                 continue;
             };
             for spot in spots.filter(|spot| known_resource_target(method, spot.entity)) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -948,6 +992,19 @@ fn better_candidate(
             (distance, -level, i64::from(spot_id))
                 < (current_distance, -current_level, i64::from(current_spot))
         }
+    }
+}
+
+fn access_allowed(
+    catalog: &GatherCatalog,
+    method: &GatherMethod,
+    spot: &GatherSpot,
+    policy: AccessPolicy,
+) -> bool {
+    match catalog.access(method, spot) {
+        Ok(Truth::True) => true,
+        Ok(Truth::Unknown) => policy == AccessPolicy::Possible,
+        Ok(Truth::False) | Err(_) => false,
     }
 }
 

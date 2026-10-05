@@ -523,6 +523,41 @@ start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
 
+### Quester finite gathering
+
+The `gather` step reuses the Gatherer's native resource action for Mining and
+Fishing. It has no banking, area loop or map survey. Declare exactly one selected
+`resource` key or `method` ID, an `until` inventory goal, and the outer step's
+`advances` value:
+
+```json
+{"skill":"mining","resource":"copper","until":{"obj":{"id":436},"qty":1}}
+```
+
+`until.obj` accepts a selected alias or a closed exact `{"id":436}` selector.
+`qty` accepts a positive fixed quantity or the shared counted-progress quantity.
+Optional `anchor` is `{"tile":[x,z,level],"source":"content citation"}`.
+`radius` defaults to 12 (1–32); `settle_ms` defaults to 120000 and must be positive.
+The deadline covers the whole step, including waits for usable observations.
+Admission checks selected effective skill, tools, bait, membership and products.
+
+Fishing Contest's selected method is `fishing.0_41_53_sinisterfishspot.op1`.
+It requires Fishing 10, a rod and red-vine worms, and awards carp but no Fishing XP.
+The authored quest Path owns its quest-stage gate. Bonzo can consume the third carp
+directly: use held-count goals for the first two catches and a quest-state handoff
+for the third, not an impossible held count of three.
+
+### Quester finite thieving
+
+The `thieve` step selects a pickpocketable NPC by config alias or display name
+with `target: { "npc": "man" }` and an `until` inventory goal. Item goals accept
+a selected alias or an exact `{ "id": number }`; `qty` uses the shared quantity
+form. Optional `anchor` and `radius` bound target search (radius defaults to 12,
+maximum 32); `settle_ms` is a positive overall deadline, defaulting to 60000.
+It reuses the native thieving action, checks selected level requirements, and
+does not bank, train or silently retry a refused walk. Declare the outer step's
+`advances` and completion `skip_if` predicate as for other repeatable-stage steps.
+
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or

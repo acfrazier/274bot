@@ -153,7 +153,139 @@ async function verifyRevision(revision: number) {
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
     const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
-    const fixed = new Map(payload.consumption.filter((fact: any) => fact.qualification === 'fixed_hp_heal').map((fact: any) => [fact.item.alias, fact.stat_heal[0].base])); for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`); const guard = payload.pickpocket.find((fact: any) => fact.npcs.some((npc: any) => npc.alias === 'guard1')); if (!guard || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`); if (payload.pickpocket.some((fact: any) => fact.npcs.length === 0 || fact.loot.some((loot: any) => loot.min > loot.max))) throw new Error(`${revision}: invalid pickpocket joins`);
+    const isNpc = (value: unknown): value is { alias: string; id: number; name: string } =>
+        typeof value === 'object'
+        && value !== null
+        && !Array.isArray(value)
+        && 'alias' in value
+        && typeof value.alias === 'string'
+        && 'id' in value
+        && typeof value.id === 'number'
+        && 'name' in value
+        && typeof value.name === 'string';
+    const consumption: unknown[] = Array.isArray(payload.consumption) ? payload.consumption : [];
+    const fixed = new Map<string, number>();
+    for (const value of consumption) {
+        if (
+            typeof value !== 'object'
+            || value === null
+            || Array.isArray(value)
+            || !('qualification' in value)
+            || value.qualification !== 'fixed_hp_heal'
+            || !('item' in value)
+            || typeof value.item !== 'object'
+            || value.item === null
+            || Array.isArray(value.item)
+            || !('alias' in value.item)
+            || typeof value.item.alias !== 'string'
+            || !('stat_heal' in value)
+            || !Array.isArray(value.stat_heal)
+        ) continue;
+        const heals: unknown[] = value.stat_heal;
+        const [heal] = heals;
+        if (
+            typeof heal === 'object'
+            && heal !== null
+            && !Array.isArray(heal)
+            && 'base' in heal
+            && typeof heal.base === 'number'
+        ) fixed.set(value.item.alias, heal.base);
+    }
+    for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) {
+        if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`);
+    }
+    const pickpocket: unknown[] = Array.isArray(payload.pickpocket) ? payload.pickpocket : [];
+    const guard = pickpocket.find((value: unknown) => {
+        if (
+            typeof value !== 'object'
+            || value === null
+            || Array.isArray(value)
+            || !('npcs' in value)
+            || !Array.isArray(value.npcs)
+        ) return false;
+        const npcs: unknown[] = value.npcs;
+        return npcs.some((npc) => isNpc(npc) && npc.alias === 'guard1');
+    });
+    if (
+        typeof guard !== 'object'
+        || guard === null
+        || Array.isArray(guard)
+        || !('level' in guard)
+        || guard.level !== 40
+    ) throw new Error(`${revision}: Guard thieving level mismatch`);
+    const invalidPickpocket = pickpocket.some((value: unknown) => {
+        if (
+            typeof value !== 'object'
+            || value === null
+            || Array.isArray(value)
+            || !('npcs' in value)
+            || !Array.isArray(value.npcs)
+        ) return true;
+        const npcs: unknown[] = value.npcs;
+        if (npcs.length === 0 || !npcs.every(isNpc)) return true;
+        if ('kind' in value && value.kind === 'level_only') {
+            return npcs.length !== 1
+                || !('level' in value)
+                || typeof value.level !== 'number'
+                || !Number.isInteger(value.level)
+                || !('source_file' in value)
+                || typeof value.source_file !== 'string'
+                || !('target_row' in value)
+                || typeof value.target_row !== 'string'
+                || !('source_row' in value)
+                || typeof value.source_row !== 'string'
+                || ['experience', 'stun_ticks', 'stun_damage', 'success_chance', 'loot', 'pocket']
+                    .some((key) => Object.hasOwn(value, key));
+        }
+        if ('kind' in value || !('loot' in value) || !Array.isArray(value.loot)) return true;
+        const loot: unknown[] = value.loot;
+        return loot.some((item) => {
+            if (
+                typeof item !== 'object'
+                || item === null
+                || Array.isArray(item)
+                || !('min' in item)
+                || typeof item.min !== 'number'
+                || !('max' in item)
+                || typeof item.max !== 'number'
+            ) return true;
+            return item.min > item.max;
+        });
+    });
+    if (invalidPickpocket) throw new Error(`${revision}: invalid pickpocket joins`);
+    if (revision === 274 || revision === 289) {
+        const expected = [
+            ['digworkman1', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman1] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],
+            ['digworkman2', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman2] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],
+            ['troll_prison_guard1', 30, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', '[opnpc3,troll_prison_guard1]', 'if (stat(thieving) < 30) {'],
+            ['troll_prison_guard2', 30, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', '[opnpc3,troll_prison_guard2]', 'if (stat(thieving) < 30) {'],
+        ] as const;
+        for (const [alias, level, sourceFile, targetRow, sourceRow] of expected) {
+            const fact = pickpocket.find((value: unknown) => {
+                if (
+                    typeof value !== 'object'
+                    || value === null
+                    || Array.isArray(value)
+                    || !('kind' in value)
+                    || value.kind !== 'level_only'
+                    || !('level' in value)
+                    || value.level !== level
+                    || !('source_file' in value)
+                    || value.source_file !== sourceFile
+                    || !('target_row' in value)
+                    || value.target_row !== targetRow
+                    || !('source_row' in value)
+                    || value.source_row !== sourceRow
+                    || !('npcs' in value)
+                    || !Array.isArray(value.npcs)
+                ) return false;
+                const npcs: unknown[] = value.npcs;
+                const [npc] = npcs;
+                return npcs.length === 1 && isNpc(npc) && npc.alias === alias;
+            });
+            if (!fact) throw new Error(`${revision}: missing selected Thieving level row for ${alias}`);
+        }
+    }
     const drops = payload.drop_tables ?? [];
     assertEqual(drops.length, 5, `${revision} bounded drop row count`);
     assertEqual(JSON.stringify(drops.map((row: any) => row.name)), JSON.stringify(['Giant', 'Moss giant', 'Fire giant', 'Green dragon', 'Kalphite Queen']), `${revision} bounded drop target order`);
@@ -354,7 +486,7 @@ async function verifyRevision(revision: number) {
     }
     const gatherMethod = (id: string) => { const found = gatherFacts.methods.find((each) => each.id === id); if (!found) throw new Error(`${revision}: missing gather method ${id}`); return found; };
     const gatherKnown = <T>(cell: { state: string; value?: T }, label: string): T => { if (cell.state === 'unknown' || cell.value === undefined) throw new Error(`${revision}: ${label} is unknown`); return cell.value; };
-    assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 15 }), `${revision} gather method counts`);
+    assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 16 }), `${revision} gather method counts`);
     const rocks = gathering.summary.rocks;
     assertEqual(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted`);
     assertEqual(rocks.resource, 29, `${revision} resource rocks`);
@@ -372,6 +504,17 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(gatherKnown(fly.tools, 'fly tools').map((tool) => aliases.get(`obj:${tool.item}`))), JSON.stringify(['fly_fishing_rod']), `${revision} lure tool`);
     assertEqual(JSON.stringify(gatherKnown(fly.consumes, 'lure bait').map((amount) => [aliases.get(`obj:${amount.item}`), amount.count])), JSON.stringify([['feather', 1]]), `${revision} lure bait`);
     assertEqual(JSON.stringify(gatherKnown(fly.products, 'lure products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['raw_trout', 20], ['raw_salmon', 30]]), `${revision} lure products`);
+    const contest = gatherMethod('fishing.0_41_53_sinisterfishspot.op1');
+    assertEqual(JSON.stringify(contest.resources), JSON.stringify(['raw_giant_carp']), `${revision} Hemenster carp method`);
+    assertEqual(contest.sources.some((source) => source.startsWith('scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:')), true, `${revision} Hemenster source provenance`);
+    assertEqual(JSON.stringify(contest.op), JSON.stringify({ slot: 1, label: 'Fish' }), `${revision} Hemenster spot operation`);
+    const target = gatherKnown(contest.targets, 'Hemenster carp target')[0]!;
+    assertEqual(JSON.stringify([target.kind, target.id, target.op, target.class, aliases.get(`npc:${target.id}`)]), JSON.stringify(['npc', 234, 1, 'resource', '0_41_53_sinisterfishspot']), `${revision} Hemenster target`);
+    assertEqual(JSON.stringify(gatherKnown(contest.tools, 'Hemenster carp tools').map((tool) => [aliases.get(`obj:${tool.item}`), tool.item])), JSON.stringify([['fishing_rod', 307]]), `${revision} Hemenster rod`);
+    assertEqual(JSON.stringify(gatherKnown(contest.consumes, 'Hemenster carp bait').map((amount) => [aliases.get(`obj:${amount.item}`), amount.item, amount.count])), JSON.stringify([['red_vine_worm', 25, 1]]), `${revision} Hemenster worm`);
+    assertEqual(JSON.stringify(gatherKnown(contest.products, 'Hemenster carp product').map((product) => [aliases.get(`obj:${product.item}`), product.item, product.level])), JSON.stringify([['raw_giant_carp', 338, 10]]), `${revision} Hemenster carp level`);
+    assertEqual(JSON.stringify(contest.requirements.state === 'partial' ? contest.requirements.gaps.map((each) => each.code) : []), JSON.stringify(['varp-gate']), `${revision} Hemenster quest-state gate remains explicit`);
+    assertEqual(JSON.stringify(gatherKnown(contest.requirements, 'Hemenster carp requirements').map((requirement) => requirement.kind === 'skill' ? [requirement.kind, requirement.skill, requirement.level] : [requirement.kind])), JSON.stringify([['skill', 10, 10]]), `${revision} Hemenster skill requirement`);
     const oak = gatherMethod('woodcutting.oak');
     assertEqual(JSON.stringify(gatherKnown(oak.products, 'oak products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['oak_logs', 15]]), `${revision} oak product`);
     if (gathering.summary.placements.rows === 0 || gatherFacts.placements.some((file) => !/^maps\/m\d+_\d+\.jm2$/.test(file.file))) throw new Error(`${revision}: gathering placements are map rows`);
@@ -564,10 +707,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 310 : 307, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 311 : 308, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -636,7 +779,7 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 307, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 308, 'gather_sites shared ids across revisions');
     const extra289 = pinnedSites289.filter((id) => !pinnedSites274.includes(id));
     assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw']), 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');

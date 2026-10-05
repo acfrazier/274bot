@@ -305,8 +305,15 @@ fn family_start(
 ) -> StartFamily {
     Box::new(move |handle, account, banks| {
         let bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
-        let path = compile_path(&bytes, &selected, &quests)
-            .map_err(|error| format!("compile inline family Path: {error:?}"))?;
+        let path = api::selected::FamilyPreparation::run({
+            let selected = Arc::clone(&selected);
+            let quests = Arc::clone(&quests);
+            move |cap| compile_path(&bytes, &selected, &quests, cap)
+        })
+        .map_err(|error| format!("start inline family preparation: {error}"))?
+        .join()
+        .map_err(|_| "inline family preparation panicked".to_owned())?
+        .map_err(|error| format!("compile inline family Path: {error:?}"))?;
         let script = Quester::new(
             RunKey {
                 slot: 0,

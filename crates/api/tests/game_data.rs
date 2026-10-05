@@ -185,6 +185,28 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
 }
 
 #[test]
+fn thieving_requirements_are_selected_by_exact_npc_id() {
+    let data = for_revision(ClientRevision::R289).expect("revision 289 data");
+
+    let man = data.npc_by_config("man").expect("selected Man NPC");
+    assert_eq!(data.required_thieving_npc(man.id), Some(1));
+
+    for (config, level) in [
+        ("digworkman1", 25),
+        ("digworkman2", 25),
+        ("troll_prison_guard1", 30),
+        ("troll_prison_guard2", 30),
+    ] {
+        let npc = data.npc_by_config(config).expect("selected quest NPC");
+        assert_eq!(data.required_thieving_npc(npc.id), Some(level), "{config}");
+    }
+
+    // Keep the existing display-name compatibility result despite the
+    // quest-specific Troll NPCs having different exact requirements.
+    assert_eq!(data.required_thieving("Guard"), Some(40));
+}
+
+#[test]
 fn generated_spell_and_staff_facts_match_selected_content() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");

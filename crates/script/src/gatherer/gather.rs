@@ -25,10 +25,108 @@ pub struct GatherResult {
     pub xp: i32,
 }
 
+/// Shared admission for a native resource action. The Quester calls this
+/// before selection; GatherRun repeats it at the actual dispatch boundary.
+pub(crate) fn method_ready(
+    snapshot: api::snapshot::SnapshotView<'_>,
+    method: &GatherMethod,
+    quest_owned: bool,
+) -> Result<bool, ActionError> {
+    let (Some(stats), Some(inventory), Some(equipment), Some(world)) = (
+        snapshot.stats(),
+        snapshot.inventory(),
+        snapshot.equipment(),
+        snapshot.world(),
+    ) else {
+        return Ok(false);
+    };
+    let Some(requirements) = super::settings::method_requirements(method, quest_owned) else {
+        return Err(ActionError::Unavailable(
+            "gather requirements are incomplete".into(),
+        ));
+    };
+    let count = |id| {
+        inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == id)
+            .fold(0i32, |count, row| count.saturating_add(row.count))
+    };
+    for requirement in requirements.iter() {
+        match requirement.kind {
+            api::selected::RequirementKind::Skill(minimum) => {
+                let Some(stat) = stats
+                    .value
+                    .iter()
+                    .find(|stat| stat.index == i32::from(minimum.skill))
+                else {
+                    return Ok(false);
+                };
+                if stat.effective < i32::from(minimum.level) {
+                    return Err(ActionError::Unavailable("gather level too low".into()));
+                }
+            }
+            api::selected::RequirementKind::MembersWorld if !world.value.members => {
+                return Err(ActionError::Unavailable(
+                    "gather requires a members world".into(),
+                ));
+            }
+            api::selected::RequirementKind::MembersWorld => {}
+            api::selected::RequirementKind::Item(item)
+                if i64::from(count(item.item)) < i64::from(item.count) =>
+            {
+                return Err(ActionError::Unavailable(
+                    "gather required item missing".into(),
+                ));
+            }
+            api::selected::RequirementKind::Item(_) => {}
+            _ => {
+                return Err(ActionError::Unavailable(
+                    "gather requirement is not observed".into(),
+                ))
+            }
+        }
+    }
+    let (Knowledge::Known(tools), Knowledge::Known(consumes)) = (&method.tools, &method.consumes)
+    else {
+        return Err(ActionError::Unavailable(
+            "gather supplies are incomplete".into(),
+        ));
+    };
+    if !tools.is_empty()
+        && !tools.iter().any(|tool| {
+            let held = count(tool.item) > 0
+                || equipment
+                    .value
+                    .iter()
+                    .any(|row| row.def.id == tool.item && row.count > 0);
+            held && tool.use_gate.is_none_or(|minimum| {
+                stats.value.iter().any(|stat| {
+                    stat.index == i32::from(minimum.skill)
+                        && stat.effective >= i32::from(minimum.level)
+                })
+            })
+        })
+    {
+        return Err(ActionError::Unavailable(
+            "gather usable tool missing".into(),
+        ));
+    }
+    if consumes
+        .iter()
+        .any(|item| i64::from(count(item.item)) < i64::from(item.count))
+    {
+        return Err(ActionError::Unavailable("gather bait missing".into()));
+    }
+    Ok(true)
+}
+
 pub struct GatherRunArgs {
     pub target: TargetPlan,
     pub catalog: Arc<GatherCatalog>,
     pub stall_ticks: u64,
+    /// Stage gates are enforced by an enclosing quest Path, not Gatherer.
+    pub quest_owned: bool,
 }
 
 pub struct GatherRun {
@@ -59,6 +157,11 @@ impl NativeMachine for GatherRun {
                 "gather method is not in the prepared catalog".into(),
             ));
         };
+        if !method_ready(snapshot, method, args.quest_owned)? {
+            return Err(ActionError::Unavailable(
+                "gather prerequisites are not observed".into(),
+            ));
+        }
         if target_class(method, args.target.entity) != Some(TargetClass::Resource) {
             return Err(ActionError::Unavailable(
                 "gather target is not a resource".into(),
@@ -425,6 +528,151 @@ mod tests {
     use super::*;
     use api::gather_methods::{GatherSkill, GatherTarget};
     use api::snapshot::{LocLayer, LocView, NpcView, WorldTile};
+
+    fn prepared_catalog() -> Arc<GatherCatalog> {
+        api::selected::FamilyPreparation::run(|worker| {
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            api::gather_methods::prepare(&selected, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap()
+    }
+
+    fn supply_snapshot(level: i32, items: &[i32]) -> api::snapshot::GameSnapshot {
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(vec![
+            StatView {
+                index: 14,
+                name: "mining".into(),
+                base: level,
+                effective: level,
+                xp: 0,
+                used: true,
+            },
+            StatView {
+                index: 10,
+                name: "fishing".into(),
+                base: level,
+                effective: level,
+                xp: 0,
+                used: true,
+            },
+        ]);
+        snapshot.seed_inventory(
+            items
+                .iter()
+                .enumerate()
+                .map(|(slot, &id)| ItemView {
+                    def: crate::quester::families::tests::def(id, "fixture"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                })
+                .collect(),
+            28,
+        );
+        snapshot
+    }
+
+    #[test]
+    fn native_resource_boundary_rejects_low_level_tool_and_bait_misses() {
+        let catalog = prepared_catalog();
+        let mut ledger = None;
+        for (method, level, items, expected) in [
+            ("mining.iron", 1, vec![1265], false),
+            ("mining.copper", 1, vec![], false),
+            ("mining.copper", 1, vec![1265], true),
+            ("fishing.saltfish.op3", 5, vec![307], false),
+            ("fishing.saltfish.op3", 5, vec![307, 313], true),
+        ] {
+            let snapshot = supply_snapshot(level, &items);
+            let ready =
+                crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    method_ready(tick.cx.snapshot(), catalog.method(method).unwrap(), false)
+                });
+            assert_eq!(ready.is_ok_and(|ready| ready), expected, "{method}");
+            assert!(
+                ledger.is_none(),
+                "prerequisite checks must never emit an action"
+            );
+        }
+    }
+
+    #[test]
+    fn resource_and_pickaxe_gates_use_the_source_effective_stat() {
+        let catalog = prepared_catalog();
+        let mut ledger = None;
+        for (method, base, effective, tool, expected) in [
+            ("mining.iron", 14, 15, 1265, true),
+            ("mining.iron", 15, 14, 1265, false),
+            ("mining.copper", 40, 41, 1275, true),
+            ("mining.copper", 41, 40, 1275, false),
+        ] {
+            let mut snapshot = supply_snapshot(base, &[tool]);
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 14,
+                name: "mining".into(),
+                base,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+            let ready =
+                crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    method_ready(tick.cx.snapshot(), catalog.method(method).unwrap(), false)
+                });
+            assert_eq!(ready.is_ok_and(|ready| ready), expected, "{method}");
+        }
+        assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn only_quest_state_gaps_can_be_owned_by_a_path() {
+        let mut method = fixture_method();
+        let gap = |code: &str| api::selected::Gap {
+            code: code.into(),
+            sources: Arc::from([]),
+        };
+        method.requirements = Knowledge::Partial {
+            known: Arc::from([]),
+            gaps: Arc::from([gap("varp-gate")]),
+        };
+        let snapshot = supply_snapshot(10, &[]);
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(method_ready(tick.cx.snapshot(), &method, false).is_err());
+            assert!(method_ready(tick.cx.snapshot(), &method, true).unwrap());
+            assert!(super::super::settings::admit_method("method", &method).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_ok());
+            method.requirements = Knowledge::Partial {
+                known: Arc::from([]),
+                gaps: Arc::from([gap("unknown-gate")]),
+            };
+            assert!(method_ready(tick.cx.snapshot(), &method, true).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_err());
+            method.requirements = Knowledge::Partial {
+                known: Arc::from([]),
+                gaps: Arc::from([gap("varp-gate")]),
+            };
+            method.tools = Knowledge::Unknown(gap("unknown-tool"));
+            assert!(method_ready(tick.cx.snapshot(), &method, true).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_err());
+        });
+        assert!(ledger.is_none());
+    }
 
     fn fixture_method() -> GatherMethod {
         let target = |entity, class| GatherTarget {

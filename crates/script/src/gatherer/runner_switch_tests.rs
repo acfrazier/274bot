@@ -139,6 +139,7 @@ fn assert_target_handoff(depleted: bool) {
                         target: previous.clone(),
                         catalog: Arc::clone(&gatherer.prepared.catalog),
                         stall_ticks: DEFAULT_STALL_TICKS,
+                        quest_owned: false,
                     },
                     &mut tick.cx,
                 )

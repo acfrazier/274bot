@@ -81572,6 +81572,62 @@
         }
       ],
       "pocket": "Fremennik's pocket"
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_itexam/scripts/digsite_workman.rs2",
+      "target_row": "[opnpc3,digworkman1] @pickpocket_digworkman1;",
+      "source_row": "if (stat(thieving) < 25) {",
+      "npcs": [
+        {
+          "alias": "digworkman1",
+          "id": 613,
+          "name": "Digsite workman"
+        }
+      ],
+      "level": 25
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_itexam/scripts/digsite_workman.rs2",
+      "target_row": "[opnpc3,digworkman2] @pickpocket_digworkman1;",
+      "source_row": "if (stat(thieving) < 25) {",
+      "npcs": [
+        {
+          "alias": "digworkman2",
+          "id": 614,
+          "name": "Digsite workman"
+        }
+      ],
+      "level": 25
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2",
+      "target_row": "[opnpc3,troll_prison_guard1]",
+      "source_row": "if (stat(thieving) < 30) {",
+      "npcs": [
+        {
+          "alias": "troll_prison_guard1",
+          "id": 1128,
+          "name": "Twig"
+        }
+      ],
+      "level": 30
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2",
+      "target_row": "[opnpc3,troll_prison_guard2]",
+      "source_row": "if (stat(thieving) < 30) {",
+      "npcs": [
+        {
+          "alias": "troll_prison_guard2",
+          "id": 1129,
+          "name": "Berry"
+        }
+      ],
+      "level": 30
     }
   ],
   "quest_starts": {
@@ -86201,6 +86257,24 @@
       "level": 28,
       "selectable": true,
       "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.0_41_53_sinisterfishspot.op1",
+      "methods": [
+        "fishing.0_41_53_sinisterfishspot.op1"
+      ],
+      "aliases": [
+        "fishing.0_41_53_sinisterfishspot.op1"
+      ],
+      "key": "fishing.fish.tool_307.products_338",
+      "resources": [
+        "raw_giant_carp"
+      ],
+      "label": "Raw giant carp — Fish (Fishing rod + Red vine worm)",
+      "level": 10,
+      "selectable": false,
+      "gap": "varp-gate"
     }
   ],
   "gather_sites": [
@@ -89810,6 +89884,24 @@
         },
         {
           "key": "willow",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "fishing.hemenster.w",
+      "skill": "fishing",
+      "label": "Hemenster W18 · Fish",
+      "region": {
+        "min_x": 2637,
+        "min_z": 3444,
+        "max_x": 2637,
+        "max_z": 3444,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.fish.tool_307.products_338",
           "count": 1
         }
       ]

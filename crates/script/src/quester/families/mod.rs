@@ -2,11 +2,14 @@
 
 pub mod combat;
 pub mod dialogue;
+pub mod gather;
+pub mod item_arg;
 pub mod partner;
 pub mod progress_predicates;
 pub mod reach;
 pub mod s2;
 pub mod setting;
+pub mod thieve;
 
 use super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
@@ -71,6 +74,8 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
         ),
         super::compile::step!("combat", 1, Explicit, combat::CombatArgs, combat::compile),
         super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
+        super::compile::step!("gather", 1, Explicit, gather::Args, gather::compile),
+        super::compile::step!("thieve", 1, Explicit, thieve::Args, thieve::compile),
     ];
     HANDLERS
 }

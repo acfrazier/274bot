@@ -8,10 +8,10 @@
 mod area;
 mod card;
 mod drop;
-mod gather;
+pub(crate) mod gather;
 mod oneop;
 mod runner;
-mod select;
+pub(crate) mod select;
 pub mod settings;
 pub mod status;
 mod supply;

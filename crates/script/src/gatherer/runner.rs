@@ -917,6 +917,7 @@ impl Gatherer {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
                 catalog: Arc::clone(&self.prepared.catalog),
+                quest_owned: false,
             },
             &mut tick.cx,
         ) {
