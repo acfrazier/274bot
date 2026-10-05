@@ -255,6 +255,7 @@ fn family_path(
         stage: FactKey::new(stage),
         required: Vec::new(),
         terminal,
+        order: script::quester::path::SequenceOrder::Authored,
         recovery_entry: None,
         steps,
     }];
