@@ -215,6 +215,10 @@ choose the closest uncompleted authored anchor; unknown guards still block selec
 For `talk`, `interact`, and `use_on`, that anchor is the authored approach `anchor`,
 not an exact `target.tile`. Nearest-first compilation refuses a step without that approach anchor.
 
+A Path's existing preparation worker loads selected gathering data for any
+`gather` step in its preludes, sequences, acquisition recipes or role's
+`progress_reader`. Gang-specific compilation uses that same worker capability.
+
 Progress returned by a completed step must be newer than that step's begin
 stamp and must have the same stamp as its final outcome. These are separate
 checks: matching outcome and progress stamps are required, not stale evidence.
@@ -389,13 +393,20 @@ without talking or walking, under the same adopted-page rule.
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
 after every accepted round, including every `until` round. No page after the
-bounded opening wait fails with `expected dialogue did not open`. Omission is
-strict Continue-only: Continue pages opened by the step's own accepted action
-are drained; an option menu fails with a clear reason and is never answered;
-the step never requires a page, has no fixed wall-clock no-page delay, and does
-not settle while its own page is open. Authors who need menu choices use the
-object form. Explicit `"none"` never touches dialogue and leaves those pages to
-the next owner, including during count repetition.
+bounded opening wait fails with `expected dialogue did not open`.
+
+Omission is strict Continue-only for observed chat pages and selected Scroll/Book
+pages. It drains Continue pages and refuses option menus without sending an
+answer. It leaves unrelated main interfaces untouched. If no page opens, the
+operation waits for acceptance and a newer evidence tick with an observed player
+who is not moving and has no primary animation. Loc/Npc/name interactions require
+their own accepted dispatch receipt. This observation boundary covers pages that
+open on arrival or during the primary animation, without a fixed no-page delay.
+Once the boundary is reached with no page, the normal success conditions can
+complete the step. A page that opens later is outside this optional window.
+Use explicit `"continue"` when content requires a page, or the object form when
+it requires menu answers. Explicit `"none"` never touches dialogue and leaves
+those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
 Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
@@ -533,6 +544,60 @@ start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
 
+### Quester finite gathering
+
+The `gather` step reuses the Gatherer's native resource action for Mining and
+Fishing. It has no banking, area loop or map survey. Declare exactly one selected
+`resource` key or `method` ID, an `until` inventory goal, and the outer step's
+`advances` value:
+
+```json
+{"skill":"mining","resource":"copper","until":{"obj":{"id":436},"qty":1}}
+```
+
+`until.obj` accepts a selected alias or a closed exact `{"id":436}` selector.
+`qty` accepts a positive fixed quantity or the shared counted-progress quantity.
+Optional `anchor` is `{"tile":[x,z,level],"source":"content citation"}`.
+`radius` defaults to 12 (1–32); `settle_ms` defaults to 120000 and must be positive.
+The deadline covers the whole step, including waits for usable observations.
+Admission checks selected effective skill, tools, bait, membership and products.
+
+Set the outer step's completion `skip_if` to the same held-count
+`item_count_at_least` predicate as its `settle`. A staged Path can reselect
+the current stage; this guard skips an already-satisfied gather goal instead
+of selecting it again.
+
+Fishing Contest's selected method is `fishing.0_41_53_sinisterfishspot.op1`.
+It requires Fishing 10, a rod and red-vine worms, and awards carp but no Fishing XP.
+The authored quest Path owns its quest-stage gate. Bonzo can consume the third carp
+directly: use held-count goals for the first two catches and a quest-state handoff
+for the third, not an impossible held count of three.
+
+### Quester finite thieving
+
+The `thieve` step selects a pickpocketable NPC by config alias or display name
+with `target: { "npc": "man" }` and an `until` inventory goal. Item goals accept
+a selected alias or an exact `{ "id": number }`; `qty` uses the shared quantity
+form. Optional `anchor` and `radius` bound target search (radius defaults to 12,
+maximum 32); `settle_ms` is a positive overall deadline, defaulting to 60000.
+It reuses the native thieving action, checks selected level requirements, and
+does not bank, train or silently retry a refused walk. Declare the outer step's
+`advances` and completion `skip_if` predicate as for other repeatable-stage steps.
+
+### Compatibility NPC pickpocketing
+
+`Npc.interact('Pickpocket' | 'Steal-from')` remains a one-shot queued NPC
+operation: an open or unknown chat modal and unobserved inventory do not
+suppress the click. The host refuses only when an observed effective Thieving
+level is below the selected NPC requirement; an NPC without a selected
+pickpocket row defaults to level 1, and an unobserved stat does not refuse.
+This intentional native-wins gate diverges from the frozen queue-only helper
+because content itself checks `stat(thieving)` against the pickpocket row
+(`content/scripts/skill_thieving/scripts/pickpocketing/pickpocket.rs2`).
+`stat(thieving)` is effective level, so this check uses effective rather than
+base level. It does not attach the native Thieving machine's attempt, stun,
+completion, inventory, or dialogue policy to this compat click.
+
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
@@ -540,6 +605,12 @@ equipped tool, at the Start area, a named Site, a Custom location or an Auto-sel
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
+
+Gatherer resource and tool-use gates, and Quester gather admission, use the
+observed effective skill level: boosts can satisfy a gate and drains can block
+it. Equipment's separate Attack requirement still uses base Attack.
+An ordinary Gatherer server supply refusal returns to modal tending and
+supply revalidation; it is not a terminal native `action-error`.
 
 With random-event handling enabled, a lost axe or pickaxe head is picked up
 before the two held pieces are reattached. Recovery is bounded to twelve

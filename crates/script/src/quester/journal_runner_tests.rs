@@ -546,11 +546,18 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
     ] {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = super::super::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
         .unwrap();
         let mut script = Quester::new(
             RunKey {

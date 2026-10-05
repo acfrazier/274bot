@@ -119,7 +119,9 @@ fn live_quester_folder_override_start() {
                 std::fs::write(folder.join("cook.json"), edited)
                     .map_err(|error| error.to_string())?;
                 let reload_data = Arc::clone(&selected);
-                let reloaded = FamilyPreparation::run(move |_| registry::reload(&reload_data))
+                let reloaded = FamilyPreparation::run(move |worker| {
+                    registry::reload(&reload_data, worker)
+                })
                     .map_err(|error| format!("{error:?}"))?
                     .join()
                     .map_err(|error| format!("{error:?}"))?

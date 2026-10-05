@@ -2746,10 +2746,10 @@ impl Script for QueuedQuester {
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
             self.active_index = Some(index);
-            let worker = api::selected::FamilyPreparation::run(move |_| {
+            let worker = api::selected::FamilyPreparation::run(move |cap| {
                 let bytes =
                     bytes.ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
-                super::compile::compile_path_for_gang(bytes.as_ref(), &selected, &quests, gang)
+                super::compile::compile_path_for_gang(bytes.as_ref(), &selected, &quests, cap, gang)
                     .map_err(|error| {
                         let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
                         Arc::from(match &error.step {
@@ -3122,11 +3122,18 @@ mod tests {
 
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = super::super::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
         .unwrap();
         let run = RunKey {
             slot: 1,
@@ -3931,12 +3938,19 @@ mod tests {
         blackarm.role = Some(FactKey::new("blackarm"));
         document.roles = vec![phoenix, blackarm];
         let bytes = serde_json::to_vec(&document).unwrap();
-        let path = super::super::compile::compile_path_for_gang(
-            &bytes,
-            &selected,
-            &quests,
-            Some(Gang::Phoenix),
-        )
+        let path = super::super::compile::prepare_for_test({
+            let selected = Arc::clone(&selected);
+            let quests = Arc::clone(&quests);
+            move |worker| {
+                super::super::compile::compile_path_for_gang(
+                    &bytes,
+                    &selected,
+                    &quests,
+                    worker,
+                    Some(Gang::Phoenix),
+                )
+            }
+        })
         .unwrap();
         let run = RunKey {
             slot: 1,

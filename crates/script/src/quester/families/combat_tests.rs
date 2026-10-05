@@ -1,7 +1,7 @@
 use super::*;
 use crate::native::WalkEnd;
 use crate::quester::compile::{
-    compile_path, decode_args, CompileContext, PredicateContext, StepOutcome,
+    compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
 };
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
@@ -444,7 +444,9 @@ fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
         &include_bytes!("../../../paths/289/fixtures/combat_melee_food_only.json")[..],
         &include_bytes!("../../../paths/289/fixtures/combat_unattackable.json")[..],
     ] {
-        let path = compile_path(bytes, &data, &quests).unwrap();
+        let path =
+            compile_uncached_for_test(&serde_json::from_slice(bytes).unwrap(), &data, &quests)
+                .unwrap();
         assert_eq!(
             crate::quester::progress::quest_colour(&path, &quests, view),
             Some(QuestListStatus::NotStarted),
@@ -544,8 +546,11 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
 fn unattackable_approach_is_not_reselected_after_observed_arrival() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -588,8 +593,11 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
 fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -655,8 +663,11 @@ fn unattackable_outcome() -> StepOutcome {
 fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -702,8 +713,11 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
 fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )

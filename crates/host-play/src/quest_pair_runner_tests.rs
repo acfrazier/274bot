@@ -171,8 +171,8 @@ fn rewrite_progress_path(value: &mut serde_json::Value, path_id: &str) {
 fn paired_path(
     path_id: &str,
     gang: Gang,
-    selected: &api::game_data::SelectedGameData,
-    quests: &api::quest_facts::QuestCatalog,
+    selected: &Arc<api::game_data::SelectedGameData>,
+    quests: &Arc<api::quest_facts::QuestCatalog>,
 ) -> Arc<CompiledPath> {
     let mut source: serde_json::Value =
         serde_json::from_str(include_str!("../../script/paths/289/vampire.json")).unwrap();
@@ -212,8 +212,12 @@ fn paired_path(
     blackarm.progress_binding = binding;
     document.roles = vec![phoenix, blackarm];
     let bytes = serde_json::to_vec(&document).unwrap();
-    compile_path_for_gang(&bytes, selected, quests, Some(gang))
-        .unwrap_or_else(|error| panic!("compile synthetic paired {path_id} Path: {error:?}"))
+    script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(selected);
+        let quests = Arc::clone(quests);
+        move |worker| compile_path_for_gang(&bytes, &selected, &quests, worker, Some(gang))
+    })
+    .unwrap_or_else(|error| panic!("compile synthetic paired {path_id} Path: {error:?}"))
 }
 
 fn broker_seats() -> [Arc<dyn QuestPairPort>; 2] {

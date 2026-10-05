@@ -8,7 +8,7 @@ For Paths authored against schema 2, make this clean cutover before adding new w
 
 1. Change the top-level `"schema"` value from `2` to `3`.
 2. Add `"$schema": "../path.schema.json"` to every file in `crates/script/paths/289/` (or the corresponding relative path in another Path directory).
-3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, and every `x:*` quest-specific handler. Use `true` when the server changes quest progress; use `false` when it does not. Default-class kinds can omit the key, which compiles as `false`.
+3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and every `x:*` quest-specific handler. Use `true` when the server changes quest progress; use `false` when it does not. Default-class kinds can omit the key, which compiles as `false`.
 
 A direct progress fact (`stage_in`, `flag`, or `quest_colour`) anywhere inside a step's `settle` requires `advances: true`. A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it. The schema does not accept version 2; do not mix schemas in a release. Validate the shape with the pinned AJV command in §4.6 and compile every indexed Path with `cargo test -p script bundled_paths_decode_and_compile` before asking for a live run.
 
@@ -61,6 +61,9 @@ selected-data compilation. Every folder document within the 256-file cap is
 decoded and compiled on every Reload and Start, including overrides to bundled
 ids. JSON Schema validation alone cannot resolve content aliases or validate
 runtime handler semantics.
+Validation and content-family preparation run on the existing preparation worker.
+Folder gather steps, acquisition recipes, and typed progress readers use the same
+selected gathering catalog as bundled Paths.
 
 ---
 
@@ -91,11 +94,11 @@ runtime handler semantics.
 - `quest`: provisioning and eligibility input: `members`, `quest_points`, `requirements[]`, `items[]`, `acquire` recipes, `bank`, `coin_float`, `loadouts`, `areas`, `tools`, and `owns_inventory`. The compiler requires this header.
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, and `steps[]`.
-- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, and `x:*`); Default kinds compile as `false` when it is omitted.
+- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
-Step ids must remain unique across recipes and the compiled role's prelude and sequences. The current compiler executes the first declared role; keep ids unique across every role in the file so a later role-selection change cannot introduce collisions.
+Step ids must remain unique across recipes and the selected role's prelude, sequences, and `progress_reader`. Solo Paths compile the first declared role. Paired Paths compile the role chosen by effective gang after owned membership admission.
 
 When adding a handler in Rust, register it with `step!` or `fact!`. The row names one `Args` type, which supplies both compiler decoding and the generated schema; do not maintain a separate argument-field list.
 
@@ -118,7 +121,7 @@ When adding a handler in Rust, register it with `step!` or `fact!`. The row name
 - **Sources and names.** Give each authored destination/anchor a `source` (for example, a content placement, source file and line, or dated live observation). A `near` fact is an observation and has no source. Use content config names, not display names; use a `name` target only when the content pack makes a location ambiguous.
 - **Stage keys.** Use `"<quest>:<n>"` when the content varp value is verified; otherwise use a symbolic stage key. A rule's `varp` is a fixture seed and status hint, not a runtime gate.
 - **Recipes vs sequences.** Put item acquisition in `quest.acquire` recipes referenced by `acquire` steps. Keep stage sequences focused on that stage's actions.
-- **Dialogue on `interact`/`use_on`.** One policy for both. An omitted `dialogue` is strict Continue-only: Continue pages opened by the step's own accepted action are drained; an option menu fails the step with a reason and is never answered by guess; the step never requires a page, has no fixed wall-clock no-page delay, and does not settle while its own page is open. Explicit `"continue"` or the object form requires a page after every accepted round, including every `until` round; no page after the bounded opening wait fails with `expected dialogue did not open`. Use the object form with `prefer`/`choose`/`line_rules` when the content can open a menu. `"none"` never touches dialogue; any open page belongs to the next owner. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
+- **Dialogue on `interact`/`use_on`.** One policy for both. Omission is strict Continue-only for observed chat and selected Scroll/Book pages. It drains Continue pages and refuses menus without sending an answer. It leaves unrelated main interfaces untouched. No page is required. No-page completion needs acceptance followed by a fresh tick with an observed player who is not moving and has no primary animation. Loc/Npc/name interactions require their own accepted dispatch receipt. This boundary covers arrival and primary animation without a fixed delay. A page that opens later is outside the optional window. Explicit `"continue"` or the object form requires a page after every accepted round, including every `until` round. No page after the bounded opening wait fails with `expected dialogue did not open`. Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. Any open page belongs to the next owner. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
 - **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 - **Versions.** Adding an optional Args field keeps the handler version. Renaming, removing, or retyping a field requires a new version; the generated schema will then expose the new contract.
 

@@ -29,6 +29,37 @@ fn dialogue_ui() -> DialogueUiIds {
         .expect("the selected test revision has source-proven dialogue UI ids")
 }
 
+#[test]
+fn operation_page_gate_adopts_only_chat_and_selected_documents() {
+    let ids = dialogue_ui();
+    let unsupported = ids.scroll_root.max(ids.book_root) + 100;
+    for (root, expected) in [
+        (-1, false),
+        (unsupported, false),
+        (ids.scroll_root, true),
+        (ids.book_root, true),
+    ] {
+        let mut snapshot = snapshot();
+        snapshot.seed_main_modal(root, vec![]);
+        let mut ledger = None;
+        assert_eq!(
+            with_tick(&snapshot, &mut ledger, 1, |tick| {
+                super::dialogue::page_open(&tick.cx)
+            }),
+            expected
+        );
+    }
+    for (root, continue_id) in [(100, -1), (-1, 105)] {
+        let mut snapshot = snapshot();
+        snapshot.seed_chat_modal(root, vec!["Chat page.".into()]);
+        snapshot.seed_chat_options(vec![], continue_id);
+        let mut ledger = None;
+        assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+            super::dialogue::page_open(&tick.cx)
+        }));
+    }
+}
+
 fn args(target: DialogueTarget) -> DialogueArgs {
     DialogueArgs {
         target,

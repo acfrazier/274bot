@@ -20,6 +20,8 @@ mod actions;
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
+pub mod thieve;
+pub(crate) mod thieving_core;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{HostAction, HostAuthority, HostEffect, QuietReadOwner};

@@ -197,7 +197,7 @@ impl SlotScript {
             run: generation,
             session: self.work_epoch,
         };
-        let job = FamilyPreparation::run(move |_| {
+        let job = FamilyPreparation::run(move |cap| {
             let pin = selected
                 .selected_pin()
                 .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
@@ -205,7 +205,7 @@ impl SlotScript {
                 QuestCatalog::from_identity(selected.quest_identity())
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
-            let path = crate::quester::compile::compile_path(bytes, &selected, &quests)
+            let path = crate::quester::compile::compile_path(bytes, &selected, &quests, cap)
                 .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,

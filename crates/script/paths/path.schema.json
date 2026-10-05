@@ -421,6 +421,12 @@
         },
         {
           "$ref": "#/$defs/step.partner.v1"
+        },
+        {
+          "$ref": "#/$defs/step.gather.v1"
+        },
+        {
+          "$ref": "#/$defs/step.thieve.v1"
         }
       ]
     },
@@ -1935,7 +1941,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -2229,7 +2235,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         }
       },
       "required": [
@@ -3580,6 +3586,253 @@
         "args",
         "skip_if",
         "settle"
+      ],
+      "additionalProperties": false
+    },
+    "Args2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "$ref": "#/$defs/Skill"
+        },
+        "resource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "until": {
+          "$ref": "#/$defs/Until"
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "radius": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 32
+        },
+        "settle_ms": {
+          "type": "integer",
+          "default": 120000,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "skill",
+        "until"
+      ]
+    },
+    "Skill": {
+      "type": "string",
+      "enum": [
+        "mining",
+        "fishing"
+      ]
+    },
+    "Until": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "$ref": "#/$defs/ItemArg2"
+        },
+        "qty": {
+          "$ref": "#/$defs/QuantityDocument"
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ]
+    },
+    "ItemArg2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ExactItemArg"
+        }
+      ]
+    },
+    "ExactItemArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "step.gather.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "gather"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args2"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "Args3": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetArg"
+        },
+        "until": {
+          "$ref": "#/$defs/Until2"
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "radius": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "settle_ms": {
+          "type": "integer",
+          "default": 60000,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "until"
+      ]
+    },
+    "TargetArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "npc"
+      ]
+    },
+    "Until2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "$ref": "#/$defs/ItemArg2"
+        },
+        "qty": {
+          "$ref": "#/$defs/QuantityDocument"
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ]
+    },
+    "step.thieve.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "thieve"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args3"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
       ],
       "additionalProperties": false
     },

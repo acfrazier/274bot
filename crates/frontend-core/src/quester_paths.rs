@@ -101,8 +101,8 @@ impl ReloadPaths {
     /// Re-read the configured source and publish its snapshot on a
     /// FamilyPreparation worker, never on the caller.
     fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
-        self.start_with(move || {
-            let registry = script::quester::registry::reload(&selected)
+        self.start_with(move |worker| {
+            let registry = script::quester::registry::reload(&selected, worker)
                 .map_err(|error| compile_error_message(&error))?;
             Ok(registry.report().cloned().unwrap_or_else(|| {
                 Arc::from(format!(
@@ -115,14 +115,16 @@ impl ReloadPaths {
 
     fn start_with(
         &mut self,
-        work: impl FnOnce() -> Result<Arc<str>, String> + Send + 'static,
+        work: impl FnOnce(&mut api::selected::FamilyPreparation) -> Result<Arc<str>, String>
+            + Send
+            + 'static,
     ) -> Result<(), String> {
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
         let (sender, receiver) = mpsc::channel();
-        let worker = api::selected::FamilyPreparation::run(move |_| {
-            let _ = sender.send(work());
+        let worker = api::selected::FamilyPreparation::run(move |worker| {
+            let _ = sender.send(work(worker));
         })
         .map_err(|error| format!("could not start Path reload worker: {error}"))?;
         drop(worker);
@@ -364,10 +366,11 @@ mod tests {
     fn registry_summary(
         source: &FolderSource,
         selected: &api::game_data::SelectedGameData,
+        worker: &mut api::selected::FamilyPreparation,
     ) -> Arc<str> {
         let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
             .expect("quest facts");
-        let registry = PathRegistry::load(source, selected, &quests).expect("folder Path load");
+        let registry = PathRegistry::load(source, selected, &quests, worker).expect("folder Path load");
         let mut summary = registry
             .report()
             .map_or_else(|| "bundled Paths".to_owned(), ToString::to_string);
@@ -473,7 +476,9 @@ mod tests {
         let first_source = source.clone();
         let first_selected = Arc::clone(&selected);
         reload
-            .start_with(move || Ok(registry_summary(&first_source, &first_selected)))
+            .start_with(move |worker| {
+                Ok(registry_summary(&first_source, &first_selected, worker))
+            })
             .expect("start asynchronous reload");
         let summary = finish_reload(&mut reload).expect("folder reload report");
         assert!(summary.contains("Folder Cook [folder]"), "{summary}");
@@ -494,7 +499,9 @@ mod tests {
         write_cook(&folder, "cook", "Edited Again", false);
         let second_source = source.clone();
         reload
-            .start_with(move || Ok(registry_summary(&second_source, &selected)))
+            .start_with(move |worker| {
+                Ok(registry_summary(&second_source, &selected, worker))
+            })
             .expect("restart asynchronous reload");
         let edited = finish_reload(&mut reload).expect("second folder reload report");
         assert!(edited.contains("Edited Again [folder]"), "{edited}");
