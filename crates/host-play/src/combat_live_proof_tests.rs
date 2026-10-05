@@ -256,10 +256,10 @@ impl Case {
             }
             Self::M2 | Self::M3 | Self::M6 => standable_neighbor(world, WARLORD_ANCHOR),
             Self::MageAuto | Self::MageManualFallback | Self::MageManualNoFallback => {
-                let offset = match self {
-                    Self::MageAuto => 0,
-                    Self::MageManualFallback => 32,
-                    Self::MageManualNoFallback => 64,
+                let (east, north) = match self {
+                    Self::MageAuto => (0, 0),
+                    Self::MageManualFallback => (32, 0),
+                    Self::MageManualNoFallback => (0, 32),
                     _ => unreachable!(),
                 };
                 // Stage away from the natural Warlord; each fixed cell also
@@ -267,7 +267,8 @@ impl Case {
                 magic_spawn_stand(
                     world,
                     WorldTile {
-                        x: IMP_START.x + offset,
+                        x: IMP_START.x + east,
+                        z: IMP_START.z + north,
                         ..IMP_START
                     },
                 )
@@ -4841,6 +4842,32 @@ fn latched_corpse_survives_winddown_but_rejects_every_missing_identity_case() {
     assert!(!has_corpse(&capture, &report), "bar after report");
     capture.frames = vec![corpse(11, 7, 477, 1)];
     assert!(!has_corpse(&capture, &report), "no HP0 bar");
+}
+
+#[test]
+#[ignore = "offline baked-collision probe requires the selected engine, cache and nav pack"]
+fn magic_no_fallback_corridor_uses_validated_baked_collision() {
+    let home = ThrowawayHome::enter("cm-G2-no-fallback-collision").unwrap();
+    let template = profile_options(&home.path)
+        .unwrap()
+        .resolve(None)
+        .unwrap()
+        .prepare_template()
+        .unwrap();
+    let world = template.world().unwrap();
+    let stand = Case::MageManualNoFallback.stand(&world).unwrap();
+    for east in 0..=5 {
+        for north in 0..=1 {
+            assert!(world.collision.walkable(WorldTile {
+                x: stand.x + east,
+                z: stand.z + north,
+                ..stand
+            }));
+        }
+    }
+    println!(
+        "G2-false anchor=(2632,3254,0), baked 2-wide/5-tile spawn corridor starts at {stand:?}"
+    );
 }
 
 #[test]
