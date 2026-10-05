@@ -1164,6 +1164,8 @@ pub const RUNE_MYSTERIES_JSON: &str = include_str!("../../paths/289/runemysterie
 pub const ROMEO_AND_JULIET_JSON: &str = include_str!("../../paths/289/romeojuliet.json");
 pub const IMP_JSON: &str = include_str!("../../paths/289/imp.json");
 pub const VAMPIRE_JSON: &str = include_str!("../../paths/289/vampire.json");
+pub const DEMON_JSON: &str = include_str!("../../paths/289/demon.json");
+pub const SQUIRE_JSON: &str = include_str!("../../paths/289/squire.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -1174,6 +1176,8 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
         "imp" => Some(IMP_JSON.as_bytes()),
         "vampire" => Some(VAMPIRE_JSON.as_bytes()),
+        "demon" => Some(DEMON_JSON.as_bytes()),
+        "squire" => Some(SQUIRE_JSON.as_bytes()),
         _ => None,
     }
 }
