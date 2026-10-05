@@ -1,6 +1,7 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{reach, walk_step_evidence, NoArgs};
 use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
+use crate::combat::RaisedPrayers;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
@@ -1112,7 +1113,7 @@ pub(super) fn compile_loadout(
         bank: cx.bank,
         bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
-        row: row.clone(),
+        row: Arc::new(row.clone()),
         resolved: Arc::from(resolved),
         melee_family,
         keep_ids: Arc::from(cx.keep_ids),
@@ -1122,11 +1123,12 @@ pub(super) fn compile_loadout(
     }))
 }
 
+#[derive(Clone)]
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
     memo_ids: Arc<[i32]>,
-    row: crate::loadouts_store::Loadout,
+    row: Arc<crate::loadouts_store::Loadout>,
     resolved: Arc<[BankItem]>,
     melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
     keep_ids: Arc<[i32]>,
@@ -1137,6 +1139,19 @@ struct LoadoutPlan {
 
 impl StepPlan for LoadoutPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let snapshot = cx.tick.cx.snapshot();
+        if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
+            return Ok(Box::new(LoadoutObservationWait {
+                plan: self.clone(),
+                run: None,
+            }));
+        }
+        Ok(Box::new(self.begin_observed(cx)?))
+    }
+}
+
+impl LoadoutPlan {
+    fn begin_observed(&self, cx: &mut StepContext<'_, '_>) -> Result<LoadoutRun, ActionError> {
         let snapshot = cx.tick.cx.snapshot();
         let skill = |name: &str| {
             snapshot.stats().and_then(|stats| {
@@ -1241,7 +1256,7 @@ impl StepPlan for LoadoutPlan {
                 bank_actions.push(BankAction::Close);
             }
         }
-        Ok(Box::new(LoadoutRun {
+        Ok(LoadoutRun {
             bank: if bank_actions.is_empty() {
                 None
             } else {
@@ -1262,7 +1277,60 @@ impl StepPlan for LoadoutPlan {
             exclusive: self.exclusive,
             removing: false,
             receipt: None,
-        }))
+        })
+    }
+}
+
+struct LoadoutObservationWait {
+    plan: LoadoutPlan,
+    run: Option<LoadoutRun>,
+}
+
+impl StepRun for LoadoutObservationWait {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.run.is_none() {
+            let snapshot = cx.tick.cx.snapshot();
+            if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
+                return Poll::Pending;
+            }
+            match self.plan.begin_observed(cx) {
+                Ok(run) => self.run = Some(run),
+                Err(error) => return Poll::Ready(Err(error)),
+            }
+        }
+        self.run.as_mut().expect("Loadout plan is ready").poll(cx)
+    }
+
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.run {
+            run.cancel(actions);
+        }
+    }
+
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        self.run
+            .as_ref()
+            .map_or_else(RaisedPrayers::empty, |run| run.prayer_cleanup())
+    }
+
+    fn needs_progress_read(&self) -> bool {
+        self.run
+            .as_ref()
+            .is_some_and(|run| run.needs_progress_read())
+    }
+
+    fn progress_read_completed(&mut self, now: Duration) {
+        if let Some(run) = &mut self.run {
+            run.progress_read_completed(now);
+        }
+    }
+
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        self.run.as_ref().and_then(|run| run.waiting_for())
+    }
+
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        self.run.as_ref().and_then(|run| run.in_flight_outcome())
     }
 }
 
