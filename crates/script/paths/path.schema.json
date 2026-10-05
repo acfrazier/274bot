@@ -3332,6 +3332,18 @@
           "default": null,
           "description": "Optional one-based dialogue option index."
         },
+        "line_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineRuleDocument"
+          },
+          "description": "Current-page text rules checked before the general preferences."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
+          "default": false
+        },
         "max_ticks": {
           "type": "integer",
           "description": "Positive game-tick budget for the complete transformation and dialogue.",

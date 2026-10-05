@@ -312,6 +312,11 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
             "npc": "delrith_weakened",
             "prefer": [prefer],
             "choose": 4,
+            "line_rules": [{
+                "when_line": "Choose the incantation",
+                "choose": "Option two"
+            }],
+            "strict": true,
             "max_ticks": 100
         },
         "loot": ["white_bead", {"obj": "bones", "qty": 25}]
@@ -329,8 +334,14 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
         finish.npc_name.as_ref(),
         weakened.display.as_deref().unwrap()
     );
-    assert_eq!(finish.prefer[0].as_ref(), prefer);
-    assert_eq!(finish.choose, Some(4));
+    assert_eq!(finish.options.prefer[0].as_ref(), prefer);
+    assert_eq!(finish.options.choose, Some(4));
+    assert_eq!(
+        finish.options.line_rules[0].when_line.as_ref(),
+        "Choose the incantation"
+    );
+    assert_eq!(finish.options.line_rules[0].choose.as_ref(), "Option two");
+    assert!(finish.options.strict);
     assert_eq!(finish.max_ticks, 100);
 
     let white_bead = data.item_by_alias("white_bead").unwrap();
@@ -344,6 +355,19 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
     for bad_qty in [serde_json::json!(0), serde_json::json!(-1)] {
         let mut invalid = args.clone();
         invalid["loot"] = serde_json::json!([{"obj": "bones", "qty": bad_qty}]);
+        assert!(compile_json(&invalid, &cx).is_err());
+    }
+    for bad_choose in [serde_json::json!(0), serde_json::json!(-1)] {
+        let mut invalid = args.clone();
+        invalid["finish"]["choose"] = bad_choose;
+        assert!(compile_json(&invalid, &cx).is_err());
+    }
+    for bad_rule in [
+        serde_json::json!([{"when_line": "", "choose": "Option two"}]),
+        serde_json::json!([{"when_line": "Choose the incantation", "choose": " "}]),
+    ] {
+        let mut invalid = args.clone();
+        invalid["finish"]["line_rules"] = bad_rule;
         assert!(compile_json(&invalid, &cx).is_err());
     }
     let mut invalid = args;
@@ -748,6 +772,7 @@ fn combat_test_run(
         finish: None,
         finish_target_index: None,
         finish_ticks_elapsed: 0,
+        finish_last_tick: None,
     }
 }
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
@@ -814,11 +839,21 @@ fn finish_test_run(data: &SelectedGameData, max_ticks: u32) -> CombatRun {
         npc_type: weakened.id,
         npc_name: Arc::from(weakened.display.as_deref().unwrap()),
         original_npc_types: Arc::from([original.id]),
-        prefer: Arc::from([Arc::from("Carlem Aber Camerinthum Purchai Gabindo")]),
-        choose: Some(4),
+        options: DialogueOptions {
+            prefer: Arc::from([Arc::from("Carlem Aber Camerinthum Purchai Gabindo")]),
+            choose: Some(4),
+            ..DialogueOptions::default()
+        },
         max_ticks,
     });
     run
+}
+
+fn start_finish_wait(run: &mut CombatRun, tick: u64) {
+    run.phase = Phase::FinishWait;
+    run.finish_target_index = Some(42);
+    run.finish_ticks_elapsed = 0;
+    run.finish_last_tick = Some(tick);
 }
 
 fn finish_npc(index: usize, npc_type: i32) -> api::snapshot::NpcView {
@@ -1763,8 +1798,7 @@ fn combat_finish_restart_discards_the_previous_child_pin() {
 fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 100);
-    run.phase = Phase::FinishWait;
-    run.finish_target_index = Some(42);
+    start_finish_wait(&mut run, 0);
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_chat_modal(-1, vec![]);
@@ -1854,8 +1888,7 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
 fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 2);
-    run.phase = Phase::FinishWait;
-    run.finish_target_index = Some(42);
+    start_finish_wait(&mut run, 0);
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_chat_modal(4882, vec!["Open continuation".into()]);
@@ -1873,8 +1906,7 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     ));
 
     let mut interrupted = finish_test_run(&data, 100);
-    interrupted.phase = Phase::FinishWait;
-    interrupted.finish_target_index = Some(42);
+    start_finish_wait(&mut interrupted, 0);
     snapshot.seed_chat_modal(4882, vec!["Open continuation".into()]);
     snapshot.seed_chat_options(vec![], -1);
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
@@ -1895,4 +1927,157 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
         result,
         Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("interrupted")
     ));
+}
+
+#[test]
+fn combat_finish_uses_strict_current_page_line_rules() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let make_options = || {
+        super::super::compile_dialogue_options(super::super::DialogueOptionsDocument {
+            prefer: Vec::new(),
+            choose: None,
+            line_rules: vec![super::super::LineRuleDocument {
+                when_line: "Choose the incantation".into(),
+                choose: "Rule answer".into(),
+            }],
+            strict: true,
+        })
+        .unwrap()
+    };
+
+    let mut run = finish_test_run(&data, 100);
+    run.finish.as_mut().unwrap().options = make_options();
+    start_finish_wait(&mut run, 0);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, vec!["Choose the incantation".into()]);
+    snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Fallback answer".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Rule answer".into(),
+            },
+        ],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 2 })
+    ));
+
+    let mut unmatched = finish_test_run(&data, 100);
+    unmatched.finish.as_mut().unwrap().options = make_options();
+    start_finish_wait(&mut unmatched, 0);
+    let mut unmatched_snapshot = GameSnapshot::new();
+    unmatched_snapshot.seed_ingame(2);
+    unmatched_snapshot.seed_chat_modal(4882, vec!["A different current page".into()]);
+    unmatched_snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Fallback answer".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Rule answer".into(),
+            },
+        ],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut unmatched_snapshot, false);
+    let mut unmatched_ledger = None;
+    assert!(
+        with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 1, |cx| {
+            unmatched.poll(cx)
+        })
+        .is_pending()
+    );
+    let failed = with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 2, |cx| {
+        unmatched.poll(cx)
+    });
+    assert!(matches!(
+        failed,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("combat finish dialogue failed")
+    ));
+    assert!(
+        !unmatched_ledger.as_ref().unwrap().outbox.iter().any(|row| {
+            matches!(
+                &row.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { .. })
+            )
+        })
+    );
+}
+
+#[test]
+fn combat_finish_budget_counts_evidence_tick_deltas_across_wait_and_dialogue() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 2);
+    run.finish.as_mut().unwrap().options = DialogueOptions::default();
+    start_finish_wait(&mut run, 10);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, vec!["A continuation page".into()]);
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 11,
+            text: "Continue with this".into(),
+        }],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 11, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::FinishDialogue));
+    assert_eq!(run.finish_ticks_elapsed, 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 11, |cx| run.poll(cx)).is_pending());
+    assert_eq!(
+        run.finish_ticks_elapsed, 1,
+        "a repeated poll in the same game tick spends no budget"
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.finish_ticks_elapsed, 2);
+
+    let timeout = with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx));
+    assert!(matches!(
+        timeout,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("tick budget")
+    ));
+    assert_eq!(
+        run.finish_ticks_elapsed, 5,
+        "a three-tick evidence jump spends all three ticks"
+    );
+}
+
+#[test]
+fn combat_finish_budget_ignores_duplicate_polls_and_counts_tick_jumps() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 2);
+    run.phase = Phase::FinishWait;
+    run.finish_target_index = Some(42);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    for _ in 0..4 {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending(),
+            "duplicate polls must not spend a game-tick budget"
+        );
+    }
+    assert!(
+        matches!(
+            with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)),
+            Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("tick budget")
+        ),
+        "the jump from game tick 1 to 4 must spend three ticks"
+    );
 }
