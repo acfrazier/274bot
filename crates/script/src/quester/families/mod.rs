@@ -2818,6 +2818,7 @@ impl StepRun for AcquireRun {
         if self.settling {
             let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
