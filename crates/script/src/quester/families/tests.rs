@@ -5073,6 +5073,90 @@ fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) ->
 }
 
 #[test]
+fn loadout_waits_for_inventory_observation_before_bank_plan() {
+    compile_context_test(|base| {
+        let row = crate::loadouts_store::Loadout::new("cook/carry").with_carry("Lobster", 1);
+        let loadouts =
+            crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
+        let cx = CompileContext {
+            loadouts: &loadouts,
+            ..*base
+        };
+        let plan = s2::compile_loadout(
+            test_args::<s2::LoadoutArgs>(serde_json::json!({"loadout":"carry","at":"nearest"})),
+            &cx,
+        )
+        .unwrap();
+        let lobster_id = resolve_obj(&cx, "lobster").unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "Loadout must wait until inventory and equipment are posted"
+        );
+        assert!(
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "Loadout must not select a bank from unposted observations"
+        );
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(lobster_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "inventory alone must not stand in for an unposted equipment observation"
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+        snapshot.seed_equipment(vec![]);
+        let ready_plan = s2::compile_loadout_ready(
+            test_args::<s2::LoadoutArgs>(serde_json::json!({"loadout":"carry"})),
+            &cx,
+        )
+        .unwrap();
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::True,
+            "fixture carries the complete loadout"
+        );
+        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Ok(_))),
+            "Loadout must settle from fresh observations without a bank request"
+        );
+        assert!(
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "the observed held carry must not be withdrawn again"
+        );
+    });
+}
+
+#[test]
 fn exclusive_loadout_removes_extra_then_equips_held_item_without_banking() {
     with_loadout_context(|cx| {
         let args = serde_json::json!({"loadout":"disguise","exclusive":true});

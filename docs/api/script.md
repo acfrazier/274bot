@@ -231,6 +231,9 @@ display-name Loadouts rows.
 Certificate aliases in either header section are rejected before that conversion;
 the shared display name must not erase a certificate's distinct item identity.
 
+An authored `loadout` step waits for posted inventory and equipment before
+planning bank or equipment actions. A newly observed held carry can satisfy the
+step without an unnecessary withdrawal.
 
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
