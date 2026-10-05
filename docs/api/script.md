@@ -198,6 +198,10 @@ choose the closest uncompleted authored anchor; unknown guards still block selec
 For `talk`, `interact`, and `use_on`, that anchor is the authored approach `anchor`,
 not an exact `target.tile`. Nearest-first compilation refuses a step without that approach anchor.
 
+A Path's existing preparation worker loads selected gathering data for any
+`gather` step in its preludes, sequences, acquisition recipes or role's
+`progress_reader`. Gang-specific compilation uses that same worker capability.
+
 Progress returned by a completed step must be newer than that step's begin
 stamp and must have the same stamp as its final outcome. These are separate
 checks: matching outcome and progress stamps are required, not stale evidence.

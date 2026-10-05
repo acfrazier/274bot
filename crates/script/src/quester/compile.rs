@@ -424,6 +424,7 @@ fn uses_gathering(document: &PathDocument) -> bool {
         role.prelude
             .iter()
             .chain(role.sequences.iter().flat_map(|sequence| &sequence.steps))
+            .chain(role.progress_reader.iter())
             .any(|step| step.kind == "gather")
     }) || document.quest.as_ref().is_some_and(|header| {
         header
@@ -454,8 +455,15 @@ pub fn compile_uncached_for_test(
     let gathering = uses_gathering(document)
         .then(|| api::gather_methods::cached(selected))
         .flatten();
-    compile_uncached(document, digest_bytes(b"test"), selected, quests, gathering, None)
-        .map(Arc::new)
+    compile_uncached(
+        document,
+        digest_bytes(b"test"),
+        selected,
+        quests,
+        gathering,
+        None,
+    )
+    .map(Arc::new)
 }
 
 fn compile_requirement(
@@ -1345,6 +1353,39 @@ mod tests {
         .unwrap()
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn gather_progress_reader_prepares_catalog_through_production_compiler() {
+        let _home = crate::IsolatedEnv::enter("quester-gather-progress-reader");
+        prepare_for_test(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let mut document: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
+            let mut reader = document["roles"][0]["sequences"][0]["steps"][0].clone();
+            reader["id"] = serde_json::json!("gather-progress-reader");
+            reader["kind"] = serde_json::json!("gather");
+            reader["advances"] = serde_json::json!(false);
+            reader["args"] = serde_json::json!({
+                "skill": "mining",
+                "resource": "copper",
+                "until": {"obj": "copper_ore", "qty": 1}
+            });
+            reader["settle"] = serde_json::json!({
+                "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {"obj": "copper_ore", "qty": 1}
+                }
+            });
+            document["roles"][0]["progress_reader"] = reader;
+            let bytes = serde_json::to_vec(&document).unwrap();
+            let compiled = compile_path(&bytes, &data, &quests, worker).unwrap();
+            assert_eq!(
+                compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
+                "gather-progress-reader"
+            );
+        });
     }
 
     #[test]
