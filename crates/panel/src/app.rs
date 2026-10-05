@@ -3243,6 +3243,21 @@ fn unavailable_parameter_text(
     format!("{label} (options unavailable)")
 }
 
+fn parameter_array_editor_enabled(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, serde_json::Value>,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> bool {
+    def.ty == "string[]"
+        && options.can_edit_array(
+            bag.get(&def.id)
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        )
+}
+
 fn script_parameter_text_input(
     ui: &Ui,
     session: &mut Session,
@@ -3409,7 +3424,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             &session.loadouts,
             game_data_ref,
         );
-        if def.options_from.is_some() && resolved.is_empty() {
+        let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
+        if def.options_from.is_some() && resolved.is_empty() && !array_editable {
             ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
             if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
                 session.script_parameter_filter.clear();
@@ -3519,7 +3535,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     session.script_parameter_filter_id = None;
                 }
             }
-            "string[]" if !resolved.is_empty() => {
+            "string[]" if array_editable => {
                 ui.text(&label);
                 let mut selected: Vec<String> = bag
                     .get(&def.id)
@@ -5919,6 +5935,52 @@ mod parameter_options_tests {
             bag.get("site"),
             Some(&serde_json::json!("mining.varrock_east.se")),
             "disabled rendering does not rewrite the saved site"
+        );
+    }
+
+    #[test]
+    fn preserved_only_priority_array_is_editable_for_removal() {
+        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "panel-priority-removal-{}.json",
+            std::process::id()
+        )));
+        let schema = (script::quester::card::CARD.schema)();
+        let priority = schema
+            .iter()
+            .find(|field| field.id == "order_override")
+            .expect("Quester has an order override array");
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+
+        assert!(
+            options.is_empty(),
+            "the saved priority has no selectable options"
+        );
+        assert!(parameter_array_editor_enabled(priority, &bag, &options));
+        let haunted = options
+            .values
+            .iter()
+            .position(|value| value == "hauntedmine")
+            .expect("the saved unavailable priority remains displayed");
+        let mut selected = vec!["hauntedmine".to_owned()];
+        assert!(options.toggle_array_choice(&mut selected, haunted));
+        assert!(selected.is_empty());
+        assert!(
+            !options.toggle_array_choice(&mut selected, haunted),
+            "the same preserved row cannot be selected again"
+        );
+
+        let persisted = script::coerce_setting_value(&priority.ty, &serde_json::json!(selected));
+        bag.insert(priority.id.clone(), persisted.clone());
+        assert_eq!(persisted, serde_json::json!([]));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+        assert!(
+            !parameter_array_editor_enabled(priority, &bag, &options),
+            "after removal there is no refused stored row to edit"
         );
     }
 }

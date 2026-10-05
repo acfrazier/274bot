@@ -86,26 +86,42 @@ impl ParameterOptions {
         }
     }
 
-    /// Labels of the stored values that are preserved rows (no longer
-    /// choices, e.g. an unavailable quest with its reason), joined for a
-    /// wrapped detail line. `None` when every stored value is a choice.
-    pub fn preserved_stored_labels(&self, stored: &Value) -> Option<String> {
+    /// Whether a `string[]` picker has choices or a saved preserved row to
+    /// remove. The iterator keeps this policy allocation-free for both UIs.
+    pub fn can_edit_array<'a>(&self, selected: impl IntoIterator<Item = &'a str>) -> bool {
+        if !self.is_empty() {
+            return true;
+        }
         let preserved = &self.values[self.selectable().len()..];
-        let stored: Vec<&str> = match stored {
-            Value::String(value) => vec![value.as_str()],
-            Value::Array(values) => values.iter().filter_map(Value::as_str).collect(),
-            _ => Vec::new(),
-        };
-        let labels = stored
-            .into_iter()
-            .filter(|value| {
+        selected.into_iter().any(|value| {
+            preserved
+                .iter()
+                .any(|option| self.matches_option(value, option))
+        })
+    }
+
+    /// Borrow labels for stored values that are preserved rows (no longer
+    /// choices, e.g. an unavailable quest with its reason).
+    pub fn preserved_stored_labels<'a>(
+        &'a self,
+        stored: &'a Value,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        let preserved = &self.values[self.selectable().len()..];
+        std::iter::once(stored.as_str())
+            .flatten()
+            .chain(
+                stored
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str),
+            )
+            .filter(move |value| {
                 preserved
                     .iter()
                     .any(|option| self.matches_option(value, option))
             })
-            .map(|value| self.label_for(value))
-            .collect::<Vec<_>>();
-        (!labels.is_empty()).then(|| labels.join("; "))
+            .map(move |value| self.label_for(value))
     }
 
     /// Match one option's label or value with an ASCII case-insensitive
@@ -1236,6 +1252,40 @@ mod tests {
             "a stored unavailable pick can be cleared"
         );
         assert!(!options.toggle_array_choice(&mut stored, options.values.len()));
+    }
+
+    #[test]
+    fn preserved_only_priority_array_is_removal_only() {
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("quest-priority-remove-{}.json", std::process::id())),
+        );
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let options =
+            resolve_parameter_options(quester_setting("order_override"), &bag, &loadouts, None);
+
+        assert!(
+            options.is_empty(),
+            "the saved row has no selectable choices"
+        );
+        assert!(options.can_edit_array(std::iter::once("hauntedmine")));
+        let haunted = options
+            .values
+            .iter()
+            .position(|value| value == "hauntedmine")
+            .unwrap();
+        let mut selected = vec!["hauntedmine".to_owned()];
+        assert!(options.toggle_array_choice(&mut selected, haunted));
+        assert!(selected.is_empty());
+        assert!(
+            !options.can_edit_array(std::iter::empty::<&str>()),
+            "once the saved row is removed, an empty preserved-only editor is disabled"
+        );
+        assert!(
+            !options.toggle_array_choice(&mut selected, haunted),
+            "a preserved row cannot be added back"
+        );
     }
 
     #[test]
