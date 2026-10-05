@@ -38,7 +38,7 @@ pub fn resolve(read: &JournalRead) -> GangEvidence {
 }
 
 pub(crate) fn resolve_normalized(quest: &FactKey, text: &str) -> GangEvidence {
-    if quest.0.as_ref() != "blackarmgang" {
+    if super::pair::PairQuest::from_path(quest.0.as_ref()) != Some(super::pair::PairQuest::Arrav) {
         return unknown();
     }
     let phoenix = text.contains("allowed me to join the phoenix gang");
@@ -163,7 +163,7 @@ impl GangRead {
         if self.handle.is_none() {
             match tick.actions.begin::<JournalMachine>(
                 JournalRequest {
-                    quest: FactKey::new("blackarmgang"),
+                    quest: FactKey::new(super::pair::PairQuest::Arrav.path()),
                     facts: Arc::clone(facts),
                 },
                 &mut tick.cx,

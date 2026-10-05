@@ -1277,6 +1277,11 @@ impl SlotScript {
             && self.has_instance()
             && !self.watchdog.holds_script_actions()
             && !blocked
+            && !self
+                .quest_pairs
+                .as_ref()
+                .zip(self.native_run())
+                .is_some_and(|(pairs, run)| pairs.held(run))
     }
 
     pub fn sync_native_input_gate(&self) {

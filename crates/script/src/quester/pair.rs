@@ -6,6 +6,32 @@ use api::selected::{FactKey, Knowledge, RunKey, SelectedPin};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, task::Poll, time::Instant};
 
+/// Core quest identities and their explicitly supported pair recovery policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairQuest {
+    Arrav,
+    Heroes,
+}
+impl PairQuest {
+    pub fn from_path(path: &str) -> Option<Self> {
+        [Self::Arrav, Self::Heroes]
+            .into_iter()
+            .find(|quest| quest.path() == path)
+    }
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::Arrav => "blackarmgang",
+            Self::Heroes => "hero",
+        }
+    }
+    pub const fn recovery_items(self) -> &'static [&'static str] {
+        match self {
+            Self::Arrav => &["arravshield1", "arravshield2", "arravcertificate"],
+            Self::Heroes => &[],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
@@ -188,6 +214,10 @@ pub trait QuestPairPort: Send + Sync {
         request: &PairItemRequest,
     ) -> Result<i32, PairError>;
     fn waiting(&self, caller: RunKey) -> bool;
+    /// A transient hold on either reserved account fences, but does not revoke, work.
+    fn held(&self, _caller: RunKey) -> bool {
+        false
+    }
     fn token(&self, caller: RunKey, phase: &FactKey) -> Result<PairToken, PairError>;
     fn register_action(
         &self,

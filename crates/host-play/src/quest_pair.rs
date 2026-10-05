@@ -3,6 +3,7 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey};
 use script::quester::pair::*;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
@@ -21,6 +22,7 @@ struct Entry {
     registration: PairRegistration,
     lease: Option<u64>,
     cancelled: bool,
+    admission_wait: bool,
     gang: Option<(Knowledge<Option<Gang>>, EvidenceStamp)>,
     ready_after: EvidenceStamp,
     identity: Option<u64>,
@@ -134,6 +136,7 @@ struct Lease {
     done_seen: [bool; 2],
     deadline: Instant,
     total_deadline: Instant,
+    paused_since: Option<Instant>,
     progress: [Option<EvidenceStamp>; 2],
 }
 impl Lease {
@@ -229,6 +232,7 @@ impl QuestPairCoordinator {
                 port,
             }),
             shared: weak.clone(),
+            registered: AtomicBool::new(false),
         })
     }
     fn cancel_locked(state: &mut State, id: u64) {
@@ -252,8 +256,38 @@ impl QuestPairCoordinator {
                 || entry.registration.run == lease.token.right
             {
                 entry.cancelled = true;
+                entry.admission_wait = false;
                 entry.lease = None;
             }
+        }
+    }
+    fn update_hold(state: &mut State, id: u64, now: Instant) {
+        let Some(lease) = state.leases.get(&id) else {
+            return;
+        };
+        if lease.complete() {
+            return;
+        }
+        let held = [lease.token.left, lease.token.right].iter().any(|run| {
+            state
+                .entries
+                .values()
+                .any(|entry| entry.registration.run == *run && !entry.registration.ready)
+        });
+        if held
+            && lease.paused_since.is_none()
+            && (now >= lease.deadline || now >= lease.total_deadline)
+        {
+            Self::cancel_locked(state, id);
+            return;
+        }
+        let lease = state.leases.get_mut(&id).unwrap();
+        if held {
+            lease.paused_since.get_or_insert(now);
+        } else if let Some(since) = lease.paused_since.take() {
+            let elapsed = now.saturating_duration_since(since);
+            lease.deadline += elapsed;
+            lease.total_deadline += elapsed;
         }
     }
     fn validate(state: &State, token: &PairToken, actor: RunKey) -> Result<(), PairError> {
@@ -265,6 +299,7 @@ impl QuestPairCoordinator {
         if lease.complete() {
             return Ok(());
         }
+        let mut ready = true;
         for run in [token.left, token.right] {
             let entry = state
                 .entries
@@ -274,15 +309,16 @@ impl QuestPairCoordinator {
             if entry.cancelled {
                 return Err(PairError::Cancelled);
             }
-            if !entry.registration.ready {
-                return Err(PairError::NotReady);
-            }
+            ready &= entry.registration.ready;
             if let Some(joined) = &lease.joined[lease.side(run)?] {
-                let binding = entry.binding.as_ref().ok_or(PairError::NotReady)?;
+                let binding = entry.binding.as_ref().ok_or(PairError::Stale)?;
                 if !binding.matches_plan(&lease.plan, &lease.plan.roles[joined.role].id) {
                     return Err(PairError::Stale);
                 }
             }
+        }
+        if !ready {
+            return Err(PairError::NotReady);
         }
         Ok(())
     }
@@ -296,6 +332,25 @@ impl QuestPairCoordinator {
         }
         Ok(())
     }
+    /// Recording already-owned authority/results is safe while dispatch is
+    /// fenced. In particular, a hold racing a completed role cannot lose it.
+    fn validate_bookkeeping(
+        state: &mut State,
+        token: &PairToken,
+        actor: RunKey,
+    ) -> Result<(), PairError> {
+        match Self::validate_live(state, token, actor) {
+            Err(PairError::NotReady)
+                if state
+                    .leases
+                    .get(&token.id)
+                    .is_some_and(|lease| lease.paused_since.is_some()) =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
+    }
     fn begin_at(
         &self,
         account: &AccountKey,
@@ -303,6 +358,13 @@ impl QuestPairCoordinator {
         now: Instant,
     ) -> Result<PairToken, PairError> {
         let mut state = self.state.lock().unwrap();
+        if let Some(own) = state
+            .entries
+            .get_mut(account)
+            .filter(|own| own.registration.run == request.caller)
+        {
+            own.admission_wait = false;
+        }
         let own_identity = api::snapshot::player_account_id(&account.0);
         if account == &request.partner
             || own_identity
@@ -317,17 +379,37 @@ impl QuestPairCoordinator {
             .entries
             .get(account)
             .ok_or(PairError::PartnerNotInPlay)?;
-        let peer = state
-            .entries
-            .get(&request.partner)
-            .ok_or(PairError::PartnerNotInPlay)?;
+        let Some(peer) = state.entries.get(&request.partner) else {
+            if request.plan.actions.is_none() {
+                if let Some(own) = state
+                    .entries
+                    .get_mut(account)
+                    .filter(|own| own.registration.run == request.caller)
+                {
+                    own.admission_wait = true;
+                }
+            }
+            return Err(PairError::PartnerNotInPlay);
+        };
         if own.registration.run != request.caller || request.evidence.run != request.caller {
             return Err(PairError::Stale);
         }
         if own.cancelled || peer.cancelled {
             return Err(PairError::Cancelled);
         }
+        if peer.binding.as_ref().is_some_and(|binding| {
+            binding.path != request.plan.path
+                || binding.protocol != request.plan.protocol
+                || binding.digest != request.plan.digest
+        }) {
+            return Err(PairError::Failed(Arc::from(
+                "partner is running a different Path; select the same paired Path on both accounts",
+            )));
+        }
         if !own.registration.ready || !peer.registration.ready {
+            if request.plan.actions.is_none() {
+                state.entries.get_mut(account).unwrap().admission_wait = true;
+            }
             return Err(PairError::NotReady);
         }
         if own.registration.evidence != request.evidence {
@@ -472,6 +554,7 @@ impl QuestPairCoordinator {
                     actions: [None, None],
                     deadline: now + INACTIVITY,
                     total_deadline: now + TOTAL,
+                    paused_since: None,
                     progress: [None, None],
                 },
             );
@@ -498,19 +581,35 @@ impl QuestPairCoordinator {
         let Some(id) = entry.lease else {
             return;
         };
-        let Some(lease) = state.leases.get_mut(&id) else {
+        let Some(lease) = state.leases.get(&id) else {
             return;
         };
         let Ok(side) = lease.side(actor) else {
             return;
         };
-        if lease.complete() || now >= lease.deadline || now >= lease.total_deadline {
+        if lease.joined[side].is_none()
+            && !entry.binding.as_ref().is_some_and(|binding| {
+                lease
+                    .plan
+                    .roles
+                    .iter()
+                    .any(|role| binding.matches_plan(&lease.plan, &role.id))
+            })
+        {
+            return;
+        }
+        if lease.complete()
+            || lease.paused_since.is_some()
+            || now >= lease.deadline
+            || now >= lease.total_deadline
+        {
             return;
         }
         if lease.progress[side].is_some_and(|before| !evidence.meets(before) || evidence == before)
         {
             return;
         }
+        let lease = state.leases.get_mut(&id).unwrap();
         lease.progress[side] = Some(evidence);
         lease.deadline = (now + INACTIVITY).min(lease.total_deadline);
     }
@@ -521,6 +620,8 @@ struct Seat {
     identity: Option<u64>,
     world: Mutex<World>,
     shared: std::sync::Weak<Seat>,
+    /// Tracks prior authority until an unpaired observation retires its entry.
+    registered: AtomicBool,
 }
 impl Seat {
     fn actor(&self, state: &State, actor: RunKey) -> Result<(), PairError> {
@@ -540,6 +641,12 @@ impl QuestPairPort for Seat {
         self.shared.upgrade().expect("live pair seat")
     }
     fn observe(&self, registration: PairRegistration, frame: PairFrame<'_>) {
+        if registration.settings.is_none()
+            && frame.binding.is_none()
+            && !self.registered.load(Ordering::Acquire)
+        {
+            return;
+        }
         let world = self.world.lock().unwrap().clone();
         let mut state = self.coordinator.state.lock().unwrap();
         if registration.evidence.run != registration.run {
@@ -548,6 +655,7 @@ impl QuestPairPort for Seat {
         if !state.profiles.contains(&self.account) {
             return;
         }
+        let mut admission_wait = false;
         if let Some(old) = state.entries.get(&self.account) {
             if old.registration.run == registration.run
                 && !registration.evidence.meets(old.registration.evidence)
@@ -558,10 +666,10 @@ impl QuestPairPort for Seat {
                 || old.registration.pin != registration.pin
                 || old.registration.settings != registration.settings
                 || old.world != world
-                || !registration.ready
                 || old.binding.as_ref().is_some_and(|prior| {
                     !frame.binding.is_some_and(|current| prior.matches(current))
                 });
+            admission_wait = old.admission_wait && !changed;
             if changed {
                 if let Some(id) = old.lease {
                     QuestPairCoordinator::cancel_locked(&mut state, id);
@@ -569,6 +677,10 @@ impl QuestPairPort for Seat {
             }
         }
         let mut old = state.entries.remove(&self.account);
+        if registration.settings.is_none() && frame.binding.is_none() {
+            self.registered.store(false, Ordering::Release);
+            return;
+        }
         let prior_binding = old.as_mut().and_then(|old| old.binding.take());
         let binding = frame.binding.map(|current| {
             prior_binding
@@ -587,8 +699,10 @@ impl QuestPairPort for Seat {
                 old.registration.run == registration.run && old.registration.pin == registration.pin
             })
             .map_or((None, false, None), |old| {
-                let same_ready_epoch =
-                    old.world == world && old.registration.ready && registration.ready;
+                // A reserved role's owned membership survives a transient hold.
+                // Re-reading it would compete with the retained phase action.
+                let same_ready_epoch = old.world == world
+                    && ((old.registration.ready && registration.ready) || old.lease.is_some());
                 let gang = if same_ready_epoch {
                     ready_after = old.ready_after;
                     old.gang
@@ -604,6 +718,7 @@ impl QuestPairPort for Seat {
                 registration,
                 lease,
                 cancelled,
+                admission_wait,
                 gang,
                 ready_after,
                 identity: self.identity,
@@ -611,8 +726,15 @@ impl QuestPairPort for Seat {
                 inventory,
             },
         );
+        self.registered.store(true, Ordering::Release);
+        if let Some(id) = lease {
+            QuestPairCoordinator::update_hold(&mut state, id, Instant::now());
+        }
     }
     fn invalidate(&self, run: RunKey) {
+        if !self.registered.load(Ordering::Acquire) {
+            return;
+        }
         let mut state = self.coordinator.state.lock().unwrap();
         let Some(entry) = state
             .entries
@@ -627,6 +749,7 @@ impl QuestPairPort for Seat {
         if let Some(entry) = state.entries.get_mut(&self.account) {
             entry.registration.ready = false;
             entry.gang = None;
+            entry.admission_wait = false;
             entry.inventory = None;
         }
     }
@@ -689,7 +812,7 @@ impl QuestPairPort for Seat {
         let mut state = self.coordinator.state.lock().unwrap();
         self.actor(&state, read.closed.run)?;
         let entry = state.entries.get_mut(&self.account).unwrap();
-        if read.quest.0.as_ref() != "blackarmgang"
+        if read.quest.0.as_ref() != PairQuest::Arrav.path()
             || read.pin != entry.registration.pin
             || !read.acquired.meets(entry.ready_after)
             || !read.closed.meets(read.acquired)
@@ -728,7 +851,9 @@ impl QuestPairPort for Seat {
     ) -> Result<i32, PairError> {
         let state = self.coordinator.state.lock().unwrap();
         self.actor(&state, caller.run)?;
-        if !matches!(request.path.0.as_ref(), "blackarmgang" | "hero") {
+        if !PairQuest::from_path(request.path.0.as_ref())
+            .is_some_and(|quest| !quest.recovery_items().is_empty())
+        {
             return Err(PairError::Stale);
         }
         if !state.profiles.contains(&self.account) {
@@ -802,24 +927,38 @@ impl QuestPairPort for Seat {
         Ok(inventory.count(request.obj))
     }
     fn waiting(&self, caller: RunKey) -> bool {
+        if !self.registered.load(Ordering::Acquire) {
+            return false;
+        }
         let state = self.coordinator.state.lock().unwrap();
         if self.actor(&state, caller).is_err() {
             return false;
         }
-        let Some(lease) = state
-            .entries
-            .get(&self.account)
-            .and_then(|entry| entry.lease)
-            .and_then(|id| state.leases.get(&id))
-        else {
-            return false;
+        let entry = state.entries.get(&self.account).unwrap();
+        let Some(lease) = entry.lease.and_then(|id| state.leases.get(&id)) else {
+            return entry.admission_wait;
         };
         let Ok(side) = lease.side(caller) else {
             return false;
         };
-        lease.joined[side].is_some()
-            && !lease.complete()
-            && (lease.joined.iter().any(Option::is_none) || lease.receipts[side].is_some())
+        !lease.complete()
+            && (lease.paused_since.is_some()
+                || (lease.joined[side].is_some()
+                    && (lease.joined.iter().any(Option::is_none)
+                        || lease.receipts[side].is_some())))
+    }
+    fn held(&self, caller: RunKey) -> bool {
+        if !self.registered.load(Ordering::Acquire) {
+            return false;
+        }
+        let state = self.coordinator.state.lock().unwrap();
+        state
+            .entries
+            .get(&self.account)
+            .filter(|entry| entry.registration.run == caller)
+            .and_then(|entry| entry.lease)
+            .and_then(|id| state.leases.get(&id))
+            .is_some_and(|lease| lease.paused_since.is_some())
     }
     fn token(
         &self,
@@ -848,7 +987,7 @@ impl QuestPairPort for Seat {
     ) -> Result<(), PairError> {
         let mut state = self.coordinator.state.lock().unwrap();
         self.actor(&state, actor)?;
-        QuestPairCoordinator::validate_live(&mut state, token, actor)?;
+        QuestPairCoordinator::validate_bookkeeping(&mut state, token, actor)?;
         if action.run() != actor {
             return Err(PairError::Stale);
         }
@@ -912,7 +1051,7 @@ impl QuestPairPort for Seat {
     fn report(&self, token: &PairToken, receipt: RoleReceipt) -> Result<(), PairError> {
         let mut state = self.coordinator.state.lock().unwrap();
         self.actor(&state, receipt.actor)?;
-        QuestPairCoordinator::validate_live(&mut state, token, receipt.actor)?;
+        QuestPairCoordinator::validate_bookkeeping(&mut state, token, receipt.actor)?;
         let observed = state
             .entries
             .get(&self.account)
@@ -955,7 +1094,10 @@ impl QuestPairPort for Seat {
     ) -> Result<bool, PairError> {
         let mut state = self.coordinator.state.lock().unwrap();
         self.actor(&state, actor)?;
-        QuestPairCoordinator::validate_live(&mut state, token, actor)?;
+        match QuestPairCoordinator::validate_live(&mut state, token, actor) {
+            Err(PairError::NotReady) => return Ok(false),
+            result => result?,
+        }
         let entry = state
             .entries
             .values()
@@ -994,6 +1136,9 @@ impl QuestPairPort for Seat {
         Ok(screen.iter().all(Option::is_some))
     }
     fn gameplay_progress(&self, actor: RunKey, evidence: EvidenceStamp, now: Instant) {
+        if !self.registered.load(Ordering::Acquire) {
+            return;
+        }
         let owns = self
             .actor(&self.coordinator.state.lock().unwrap(), actor)
             .is_ok();
@@ -1024,6 +1169,9 @@ mod tests {
     use api::selected::{ClientRevision, FactKey};
     use script::native::ActionError;
     use script::quester::compile::{StepContext, StepOutcome, StepPlan, StepRun};
+    mod runner_tests {
+        include!("quest_pair_runner_tests.rs");
+    }
 
     fn stamp(run: RunKey, tick: u64) -> EvidenceStamp {
         EvidenceStamp {
@@ -1039,6 +1187,16 @@ mod tests {
             .unwrap()
     }
     fn register(port: &dyn QuestPairPort, run: RunKey, partner: &str, gang: Gang, tick: u64) {
+        register_ready(port, run, partner, gang, tick, true);
+    }
+    fn register_ready(
+        port: &dyn QuestPairPort,
+        run: RunKey,
+        partner: &str,
+        gang: Gang,
+        tick: u64,
+        ready: bool,
+    ) {
         let plan = plan(false);
         let role = plan.roles.iter().find(|role| role.gang == gang).unwrap();
         port.observe(
@@ -1049,7 +1207,7 @@ mod tests {
                     partner: Some(AccountKey(Arc::from(partner))),
                     gang: Some(gang),
                 }),
-                ready: true,
+                ready,
                 evidence: stamp(run, tick),
             },
             PairFrame {
@@ -1160,6 +1318,129 @@ mod tests {
             ));
         }
         Pair { core, seats, runs }
+    }
+    #[test]
+    fn unpaired_observe_and_watchdog_waiting_never_lock_coordinator() {
+        let core = Arc::new(QuestPairCoordinator::default());
+        core.remember("alice");
+        let seat = core.seat("alice", "127.0.0.1", 44594);
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let pin = pin();
+        struct Solo(Arc<std::sync::atomic::AtomicUsize>);
+        impl script::native::Script for Solo {
+            fn tick(
+                &mut self,
+                _: &mut script::native::NativeTick<'_>,
+            ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(script::native::ScriptFlow::Continue)
+            }
+        }
+        let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut slot = script::SlotScript::new();
+        slot.bind_quest_pairs(Arc::clone(&seat));
+        slot.start_test_script(Box::new(Solo(Arc::clone(&ticks))), None)
+            .unwrap();
+        // Poisoning makes any accidental broker access fail synchronously, rather
+        // than relying on timing or a synthetic port that bypasses the real seat.
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = core.state.lock().unwrap();
+            panic!("lock-free regression probe");
+        });
+        let observed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            seat.observe(
+                PairRegistration {
+                    run,
+                    pin,
+                    settings: None,
+                    ready: true,
+                    evidence: stamp(run, 1),
+                },
+                PairFrame::default(),
+            );
+        }));
+        assert!(
+            observed.is_ok(),
+            "an unpaired compiled observation must not lock"
+        );
+        let waiting = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seat.waiting(run)));
+        assert!(
+            matches!(waiting, Ok(false)),
+            "an unpaired watchdog must not lock"
+        );
+        // Drive CompiledRun::tick too: every ordinary native card receives this
+        // installed port, but none may enter the poisoned coordinator.
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(1);
+        let mut driver = crate::tests::nav_client();
+        let mut cx = script::ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: Some((0, 0, 0)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        };
+        slot.on_game_tick(&mut cx);
+        assert_eq!(ticks.load(Ordering::Relaxed), 1);
+        assert_eq!(slot.state(), script::RunState::Running);
+    }
+
+    #[test]
+    fn unpaired_replacement_retires_prior_lease_then_returns_to_lock_free_path() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .unwrap();
+        let next = RunKey {
+            run: 2,
+            ..pair.runs[0]
+        };
+        pair.seats[0].observe(
+            PairRegistration {
+                run: next,
+                pin: pin(),
+                settings: None,
+                ready: true,
+                evidence: stamp(next, 1),
+            },
+            PairFrame::default(),
+        );
+        assert!(matches!(
+            pair.seats[1].poll(&token, pair.runs[1]),
+            Poll::Ready(Err(PairError::Cancelled))
+        ));
+        assert!(!pair
+            .core
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .contains_key("alice"));
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = pair.core.state.lock().unwrap();
+            panic!("retired entry lock-free probe");
+        });
+        pair.seats[0].observe(
+            PairRegistration {
+                run: next,
+                pin: pin(),
+                settings: None,
+                ready: true,
+                evidence: stamp(next, 2),
+            },
+            PairFrame::default(),
+        );
+        assert!(!pair.seats[0].waiting(next));
+        assert!(!pair.seats[0].held(next));
     }
 
     fn held(obj: i32, count: i32, slot: i32) -> api::snapshot::ItemView {
@@ -1566,6 +1847,305 @@ mod tests {
         assert_eq!(lease.total_deadline, now + TOTAL);
         assert_eq!(lease.deadline, now + TOTAL);
     }
+    #[test]
+    fn foreign_path_binding_refuses_reservation_without_poisoning_peer() {
+        for ready in [true, false] {
+            let pair = pair();
+            let plan = plan(false);
+            let hero = FactKey::new("hero");
+            let hero_protocol = FactKey::new("heroes");
+            pair.seats[1].observe(
+                PairRegistration {
+                    run: pair.runs[1],
+                    pin: pin(),
+                    ready,
+                    settings: Some(PairSettings {
+                        partner: Some(AccountKey(Arc::from("alice"))),
+                        gang: Some(Gang::BlackArm),
+                    }),
+                    evidence: stamp(pair.runs[1], 2),
+                },
+                PairFrame {
+                    binding: Some(PairBinding {
+                        path: &hero,
+                        protocol: &hero_protocol,
+                        digest: &[3; 32],
+                        role: &plan.roles[1].id,
+                    }),
+                    inventory: None,
+                },
+            );
+            let result = pair.seats[0].begin(request(pair.runs[0], "bob", 0, &plan));
+            assert!(
+                matches!(&result, Err(PairError::Failed(reason)) if reason.contains("different Path")),
+                "foreign Path must fail before reserving either account: {result:?}"
+            );
+            assert!(!pair.seats[0].busy() && !pair.seats[1].busy());
+            assert!(
+                !pair.core.state.lock().unwrap().entries[&AccountKey(Arc::from("bob"))].cancelled
+            );
+        }
+    }
+
+    #[test]
+    fn unbound_peer_gameplay_does_not_rearm_reserved_phase() {
+        let pair = pair();
+        pair.seats[1].observe(
+            PairRegistration {
+                run: pair.runs[1],
+                pin: pin(),
+                ready: true,
+                settings: Some(PairSettings {
+                    partner: Some(AccountKey(Arc::from("alice"))),
+                    gang: Some(Gang::BlackArm),
+                }),
+                evidence: stamp(pair.runs[1], 2),
+            },
+            PairFrame::default(),
+        );
+        let plan = plan(true);
+        let now = Instant::now();
+        let token = pair
+            .core
+            .begin_at(
+                &AccountKey(Arc::from("alice")),
+                request(pair.runs[0], "bob", 0, &plan),
+                now,
+            )
+            .unwrap();
+        pair.seats[1].gameplay_progress(
+            pair.runs[1],
+            stamp(pair.runs[1], 2),
+            now + Duration::from_secs(300),
+        );
+        assert_eq!(
+            pair.core.state.lock().unwrap().leases[&token.id].deadline,
+            now + INACTIVITY
+        );
+    }
+
+    #[test]
+    fn transient_ready_hold_keeps_reservation_and_pauses_both_deadlines() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .unwrap();
+        pair.seats[1]
+            .begin(request(pair.runs[1], "alice", 1, &plan))
+            .unwrap();
+        let (deadline, total) = {
+            let state = pair.core.state.lock().unwrap();
+            (
+                state.leases[&token.id].deadline,
+                state.leases[&token.id].total_deadline,
+            )
+        };
+        pair.seats[1].observe(
+            PairRegistration {
+                run: pair.runs[1],
+                pin: pin(),
+                ready: false,
+                settings: Some(PairSettings {
+                    partner: Some(AccountKey(Arc::from("alice"))),
+                    gang: Some(Gang::BlackArm),
+                }),
+                evidence: stamp(pair.runs[1], 3),
+            },
+            PairFrame {
+                binding: Some(PairBinding {
+                    path: &plan.path,
+                    protocol: &plan.protocol,
+                    digest: &plan.digest,
+                    role: &plan.roles[1].id,
+                }),
+                inventory: None,
+            },
+        );
+        assert!(
+            pair.seats[0].busy() && pair.seats[1].busy(),
+            "a transient hold must keep both reservations"
+        );
+        assert!(matches!(
+            pair.seats[0].poll(&token, pair.runs[0]),
+            Poll::Ready(Err(PairError::NotReady))
+        ));
+        assert!(pair.seats[0].waiting(pair.runs[0]) && pair.seats[1].waiting(pair.runs[1]));
+        // A different side's gameplay cannot advance a paused phase.
+        pair.seats[0].gameplay_progress(
+            pair.runs[0],
+            stamp(pair.runs[0], 2),
+            Instant::now() + Duration::from_secs(300),
+        );
+        assert_eq!(
+            pair.core.state.lock().unwrap().leases[&token.id].deadline,
+            deadline
+        );
+        register(
+            pair.seats[1].as_ref(),
+            pair.runs[1],
+            "alice",
+            Gang::BlackArm,
+            4,
+        );
+        assert!(matches!(
+            pair.seats[1].gang(pair.runs[1]),
+            Ok((Knowledge::Known(None), _))
+        ));
+        let state = pair.core.state.lock().unwrap();
+        assert!(state.leases[&token.id].deadline > deadline);
+        assert!(state.leases[&token.id].total_deadline > total);
+        drop(state);
+        assert!(matches!(
+            pair.seats[0].poll(&token, pair.runs[0]),
+            Poll::Ready(Ok(PairStep::Act(_)))
+        ));
+    }
+
+    #[test]
+    fn hold_racing_a_role_receipt_keeps_result_but_refuses_trade_acceptance() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .unwrap();
+        pair.seats[1]
+            .begin(request(pair.runs[1], "alice", 1, &plan))
+            .unwrap();
+        let commands = [
+            command(pair.seats[0].as_ref(), &token, pair.runs[0]),
+            command(pair.seats[1].as_ref(), &token, pair.runs[1]),
+        ];
+        register(
+            pair.seats[0].as_ref(),
+            pair.runs[0],
+            "bob",
+            Gang::Phoenix,
+            3,
+        );
+        register_ready(
+            pair.seats[1].as_ref(),
+            pair.runs[1],
+            "alice",
+            Gang::BlackArm,
+            3,
+            false,
+        );
+        assert_eq!(
+            pair.seats[0].trade_ready(&token, pair.runs[0], false, stamp(pair.runs[0], 3)),
+            Ok(false)
+        );
+        pair.seats[0]
+            .report(&token, receipt(pair.runs[0], commands[0], 3))
+            .unwrap();
+        assert!(pair.seats[0].busy() && pair.seats[1].busy());
+        register(
+            pair.seats[1].as_ref(),
+            pair.runs[1],
+            "alice",
+            Gang::BlackArm,
+            4,
+        );
+        pair.seats[1]
+            .report(&token, receipt(pair.runs[1], commands[1], 4))
+            .unwrap();
+        assert!(matches!(
+            pair.seats[0].poll(&token, pair.runs[0]),
+            Poll::Ready(Ok(PairStep::Done(_)))
+        ));
+    }
+
+    #[test]
+    fn recovery_item_queries_reject_paths_without_compiler_recovery_policy() {
+        use script::quester::compile::{
+            predicate_handlers, CompileContext, CompiledProgress, PairCompileContext,
+        };
+        use script::quester::loadouts::LoadoutOverlay;
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests =
+            api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let declaration = PartnerDeclaration {
+            protocol: FactKey::new("test-pair"),
+            roles: [
+                PartnerRole {
+                    id: FactKey::new("phoenix"),
+                    gang: Gang::Phoenix,
+                },
+                PartnerRole {
+                    id: FactKey::new("blackarm"),
+                    gang: Gang::BlackArm,
+                },
+            ],
+        };
+        let progress = CompiledProgress {
+            binding: FactKey::new("test-journal"),
+            role: Some(declaration.roles[1].id.clone()),
+            colour_not_started: FactKey::new("not-started"),
+            colour_in_progress: FactKey::new("in-progress"),
+            colour_complete: FactKey::new("complete"),
+            stage_keys: Arc::from([]),
+            rules: Arc::from([]),
+            flags: Arc::from([]),
+            monotonic: false,
+        };
+        let areas = HashMap::new();
+        let recipes = HashMap::new();
+        let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+        let handler = predicate_handlers()
+            .find(|handler| handler.kind == "partner_item_count_at_least")
+            .unwrap();
+        // Compare the real compiler's policy with the real broker, not two
+        // copies of an expected list. Either side drifting must break this test.
+        for path in ["blackarmgang", "hero", "barcrawl", "cook"] {
+            let path = FactKey::new(path);
+            let cx = CompileContext {
+                path: &path,
+                kind: script::quester::path::PathKind::Quest,
+                pair: Some(PairCompileContext {
+                    declaration: &declaration,
+                    role: &declaration.roles[1].id,
+                    digest: [3; 32],
+                }),
+                progress: &progress,
+                selected: &selected,
+                quests: &quests,
+                gathering: None,
+                areas: &areas,
+                recipes: &recipes,
+                bank: None,
+                bank_required: false,
+                bank_items: &[],
+                keep_ids: &[],
+                loadouts: &loadouts,
+            };
+            let supported =
+                (handler.compile)(&serde_json::json!({"obj":"arravshield2","qty":1}), &cx).is_ok();
+            let pair = pair();
+            let query = PairItemRequest {
+                path: path.clone(),
+                protocol: declaration.protocol.clone(),
+                digest: [3; 32],
+                own: declaration.roles[1].clone(),
+                peer: declaration.roles[0].clone(),
+                obj: 120,
+            };
+            publish_items(&pair, 0, &query, 2, vec![held(120, 1, 0)]);
+            publish_items(&pair, 1, &query, 2, vec![]);
+            let result = pair.seats[1].partner_item_count(stamp(pair.runs[1], 2), &query);
+            assert_eq!(
+                result.is_ok(),
+                supported,
+                "compiler/broker recovery policy differs for {}",
+                path.0
+            );
+            if supported {
+                assert_eq!(result, Ok(1));
+            } else {
+                assert_eq!(result, Err(PairError::Stale));
+            }
+        }
+    }
+
     fn command(port: &dyn QuestPairPort, token: &PairToken, run: RunKey) -> u64 {
         match port.poll(token, run) {
             Poll::Ready(Ok(PairStep::Act(command))) => command.command_id,
@@ -1742,7 +2322,7 @@ mod tests {
         struct Actor {
             core: Arc<QuestPairCoordinator>,
             peer: Arc<dyn QuestPairPort>,
-            remove: bool,
+            mode: u8,
             handle: Option<ActionHandle<Queued>>,
             binding: Arc<CompiledPairPlan>,
         }
@@ -1780,24 +2360,50 @@ mod tests {
                 let token = port.begin(request(own, "bob", 0, &plan)).unwrap();
                 self.peer.begin(request(peer, "alice", 1, &plan)).unwrap();
                 let handle = tick.actions.begin::<Queued>((), &mut tick.cx).unwrap();
-                port.register_action(&token, own, handle.revoker()).unwrap();
+                if self.mode != 3 {
+                    port.register_action(&token, own, handle.revoker()).unwrap();
+                }
                 self.handle = Some(handle);
                 let core = Arc::clone(&self.core);
                 let remote = Arc::clone(&self.peer);
-                let remove = self.remove;
-                std::thread::spawn(move || {
-                    if remove {
-                        core.set_accounts(["alice"]);
-                    } else {
-                        remote.invalidate(peer);
+                let mode = self.mode;
+                std::thread::spawn(move || match mode {
+                    0 => remote.invalidate(peer),
+                    1 => core.set_accounts(["alice"]),
+                    _ => {
+                        remote.observe(
+                            PairRegistration {
+                                run: peer,
+                                pin: pin(),
+                                ready: false,
+                                settings: Some(PairSettings {
+                                    partner: Some(AccountKey(Arc::from("alice"))),
+                                    gang: Some(Gang::BlackArm),
+                                }),
+                                evidence: stamp(peer, 3),
+                            },
+                            PairFrame {
+                                binding: Some(PairBinding {
+                                    path: &plan.path,
+                                    protocol: &plan.protocol,
+                                    digest: &plan.digest,
+                                    role: &plan.roles[1].id,
+                                }),
+                                inventory: None,
+                            },
+                        );
                     }
                 })
                 .join()
                 .unwrap();
+                if self.mode == 3 {
+                    port.register_action(&token, own, self.handle.as_ref().unwrap().revoker())
+                        .unwrap();
+                }
                 Ok(ScriptFlow::Continue)
             }
         }
-        for remove in [false, true] {
+        for mode in 0..4 {
             let core = Arc::new(QuestPairCoordinator::default());
             core.set_accounts(["alice", "bob"]);
             let own = core.seat("alice", "127.0.0.1", 44594);
@@ -1808,8 +2414,8 @@ mod tests {
             slot.start_test_script(
                 Box::new(Actor {
                     core,
-                    peer,
-                    remove,
+                    peer: Arc::clone(&peer),
+                    mode,
                     handle: None,
                     binding: plan(true),
                 }),
@@ -1841,12 +2447,28 @@ mod tests {
             );
             assert!(
                 !slot.has_native_actions(),
-                "the remote owner must revoke the queued authority"
+                "remote cancellation or a transient hold must fence queued authority"
             );
             assert!(
                 slot.take_native_action().is_none(),
-                "the final host fence must not drain cancelled input"
+                "the final host fence must not drain cancelled or held input"
             );
+            if mode >= 2 {
+                let own_run = slot.native_run().unwrap();
+                let peer_run = RunKey {
+                    slot: own_run.slot + 1,
+                    ..own_run
+                };
+                register(peer.as_ref(), peer_run, "alice", Gang::BlackArm, 4);
+                assert!(
+                    slot.has_native_actions(),
+                    "held work must remain queued, not revoked"
+                );
+                assert!(
+                    slot.take_native_action().is_some(),
+                    "resumption must reopen the final dispatch gate"
+                );
+            }
         }
     }
 

@@ -17,6 +17,7 @@ struct Port {
     offer: AtomicBool,
     confirm: AtomicBool,
     cancelled: AtomicBool,
+    not_ready: AtomicBool,
 }
 
 struct CommandPlan;
@@ -69,13 +70,16 @@ impl QuestPairPort for Port {
         _: RunKey,
         _: crate::native::ActionRevoker,
     ) -> Result<(), PairError> {
-        unreachable!()
+        Ok(())
     }
     fn begin(&self, _: PairRequest) -> Result<PairToken, PairError> {
         unreachable!()
     }
     fn poll(&self, token: &PairToken, caller: RunKey) -> Poll<Result<PairStep, PairError>> {
         assert_eq!(*token, pair_token());
+        if self.not_ready.load(Ordering::Relaxed) {
+            return Poll::Ready(Err(PairError::NotReady));
+        }
         assert_eq!(caller, token.left);
         if self.cancelled.load(Ordering::Relaxed) {
             return Poll::Ready(Err(PairError::Cancelled));
@@ -106,9 +110,7 @@ impl QuestPairPort for Port {
     fn gameplay_progress(&self, _: RunKey, _: EvidenceStamp, _: Instant) {
         unreachable!()
     }
-    fn cancel(&self, _: &PairToken) {
-        unreachable!()
-    }
+    fn cancel(&self, _: &PairToken) {}
 }
 
 fn pair_token() -> PairToken {
@@ -151,6 +153,7 @@ fn offer(give: i32) -> TradeView {
         side_pack: vec![item(1, 2, ItemContainer::TradeSidePack)],
         partner: Some("Bob 1".into()),
         accept_component_id: 9,
+        decline_component_id: 17,
         ..TradeView::default()
     }
 }
@@ -194,6 +197,10 @@ fn poll(
 }
 
 fn ack(ledger: &mut Ledger, tick: u64) -> InteractReq {
+    ack_result(ledger, tick, true)
+}
+
+fn ack_result(ledger: &mut Ledger, tick: u64, accepted: bool) -> InteractReq {
     let ledger = ledger.as_mut().unwrap();
     let action = ledger.outbox.remove(0);
     ledger.complete_interaction(
@@ -205,7 +212,7 @@ fn ack(ledger: &mut Ledger, tick: u64) -> InteractReq {
                 tick,
                 sequence: tick,
             },
-            accepted: true,
+            accepted,
             chat_since: 0,
         },
     );
@@ -213,6 +220,335 @@ fn ack(ledger: &mut Ledger, tick: u64) -> InteractReq {
         HostEffect::Interaction(request) => request,
         _ => panic!("expected owned trade interaction"),
     }
+}
+
+fn with_step<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    tick: u64,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
+    with_tick(snapshot, ledger, tick, |native| {
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let required_after = native.cx.evidence();
+        let bank = crate::quester::bank_memo::BankMemo::default();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        f(&mut StepContext {
+            tick: native,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            bank: &bank,
+            banks: &banks,
+            choices: &choices,
+        })
+    })
+}
+
+struct PendingAction;
+impl NativeMachine for PendingAction {
+    type Args = ();
+    type Output = ();
+
+    fn begin(_: (), _: &mut crate::native::ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self)
+    }
+
+    fn poll(&mut self, _: &mut crate::native::ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        Poll::Pending
+    }
+
+    fn cancel(&mut self) {}
+}
+
+fn trade_snapshot() -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![item(1, 2, ItemContainer::Inventory)], 28);
+    snapshot.seed_trade(offer(0));
+    snapshot
+}
+
+fn trade_args(port: &Arc<Port>, budget: u16) -> TradeArgs {
+    TradeArgs {
+        port: Arc::clone(port) as Arc<dyn QuestPairPort>,
+        token: pair_token(),
+        partner: AccountKey(Arc::from("bob_1")),
+        give: Arc::from([Item { id: 1, qty: 2 }]),
+        take: Arc::from([Item { id: 2, qty: 1 }]),
+        budget,
+    }
+}
+
+#[test]
+fn partner_run_waits_for_a_transient_pair_not_ready_observation() {
+    let snapshot = trade_snapshot();
+    let mut ledger = None;
+    let port = Arc::new(Port::default());
+    port.not_ready.store(true, Ordering::Relaxed);
+    let mut run = PartnerRun {
+        port: Arc::clone(&port) as Arc<dyn QuestPairPort>,
+        token: pair_token(),
+        phase: FactKey::new("arrav:key"),
+        command: None,
+        active: None,
+        reported: false,
+        waiting: false,
+    };
+
+    assert!(with_step(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(run.waiting);
+}
+
+#[test]
+fn trade_machine_waits_for_a_transient_pair_not_ready_observation() {
+    let (snapshot, mut ledger, handle, port) = fixture(40);
+    port.not_ready.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, Instant::now()).is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
+    for cause in 0..3 {
+        let snapshot = trade_snapshot();
+        let mut ledger = None;
+        let port = Arc::new(Port::default());
+        let mut run = TradeRun {
+            walk: None,
+            trade: None,
+            args: Some(trade_args(&port, 40)),
+        };
+        let blocker = if cause == 0 {
+            Some(with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<PendingAction>((), &mut tick.cx)
+                    .unwrap()
+            }))
+        } else {
+            None
+        };
+
+        let first = with_step(&snapshot, &mut ledger, 2, |cx| {
+            match cause {
+                0 => {}
+                1 => cx.tick.cx.eligible = false,
+                2 => {
+                    for _ in 0..32 {
+                        assert!(cx.tick.cx.budget.transition());
+                    }
+                }
+                _ => unreachable!(),
+            }
+            run.poll(cx)
+        });
+        assert!(first.is_pending(), "transient begin cause {cause}");
+        assert!(run.args.is_some(), "args must survive cause {cause}");
+        assert!(run.trade.is_none());
+        drop(blocker);
+
+        assert!(with_step(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+        assert!(run.args.is_none(), "successful begin consumes the args");
+        assert!(
+            run.trade.is_some(),
+            "retry must start the native trade machine"
+        );
+    }
+}
+
+#[test]
+fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![], 28);
+    snapshot.seed_trade(offer(0));
+    let mut ledger = None;
+    let port = Arc::new(Port::default());
+    let mut run = TradeRun {
+        walk: None,
+        trade: None,
+        args: Some(trade_args(&port, 40)),
+    };
+    let epoch = Instant::now();
+
+    assert!(with_step(&snapshot, &mut ledger, 2, |cx| {
+        cx.tick.cx.wall_now = epoch + Duration::from_millis(1_200);
+        run.poll(cx)
+    })
+    .is_pending());
+    assert_eq!(
+        ack(&mut ledger, 2),
+        InteractReq::IfButton { component_id: 17 },
+        "a permanent begin validation failure must decline the existing trade"
+    );
+
+    snapshot.seed_trade(TradeView::default());
+    assert!(with_step(&snapshot, &mut ledger, 3, |cx| {
+        cx.tick.cx.wall_now = epoch + Duration::from_millis(1_800);
+        run.poll(cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_step(&snapshot, &mut ledger, 4, |cx| {
+            cx.tick.cx.wall_now = epoch + Duration::from_millis(2_400);
+            run.poll(cx)
+        }),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner handoff quest item is missing"
+    ));
+}
+
+#[test]
+fn failed_trade_offer_mismatch_declines_and_waits_for_closed_screen() {
+    let (mut snapshot, mut ledger, handle, _) = fixture(40);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+
+    let mut mismatch = offer(2);
+    mismatch
+        .their_offer
+        .push(item(99, 1, ItemContainer::TradeTheirOffer));
+    snapshot.seed_trade(mismatch);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert_eq!(
+        ack(&mut ledger, 3),
+        InteractReq::IfButton { component_id: 17 },
+        "mismatched offer cleanup must click the posted decline button"
+    );
+
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 5, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner trade contains extra, noted or excessive items"
+    ));
+}
+
+#[test]
+fn unexpected_confirmation_declines_instead_of_leaving_the_trade_open() {
+    let (mut snapshot, mut ledger, handle, _) = fixture(40);
+    let epoch = Instant::now();
+    let mut confirm = offer(0);
+    confirm.offer_open = false;
+    confirm.confirm_open = true;
+    confirm.decline_component_id = 18;
+    snapshot.seed_trade(confirm);
+
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    assert_eq!(
+        ack(&mut ledger, 2),
+        InteractReq::IfButton { component_id: 18 },
+        "unexpected confirmation cleanup must click its posted decline button"
+    );
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 4, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "unexpected existing confirmation; reread both inventories"
+    ));
+}
+
+#[test]
+fn timed_out_trade_falls_back_to_close_modal_and_preserves_failure() {
+    let (mut snapshot, mut ledger, handle, _) = fixture(2);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert_eq!(
+        ack(&mut ledger, 3),
+        InteractReq::IfButton { component_id: 17 },
+        "timeout cleanup must first click the posted decline button"
+    );
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert_eq!(
+        ack(&mut ledger, 5),
+        InteractReq::CloseModal,
+        "an unclosed decline screen must fall back to the shared close path"
+    );
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 7, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner trade deadline exhausted"
+    ));
+}
+
+#[test]
+fn deadline_cleanup_supersedes_unacknowledged_accept_and_decline() {
+    let (mut snapshot, mut ledger, handle, port) = fixture(4);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox[0].effect,
+        HostEffect::Interaction(InteractReq::IfButton { component_id: 9 })
+    ));
+    // No dispatch receipt arrives. Failure cleanup must replace acceptance
+    // authority, not wait on it and leave the confirmation screen open.
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    let live: Vec<_> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| action.live())
+        .collect();
+    assert_eq!(live.len(), 1);
+    assert!(matches!(
+        &live[0].effect,
+        HostEffect::Interaction(InteractReq::IfButton { component_id: 17 })
+    ));
+    assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
+    let live: Vec<_> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| action.live())
+        .collect();
+    assert_eq!(live.len(), 1);
+    assert!(matches!(
+        &live[0].effect,
+        HostEffect::Interaction(InteractReq::CloseModal)
+    ));
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 8, epoch).is_pending());
+    assert!(matches!(poll(&snapshot, &mut ledger, &handle, 9, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == "partner trade deadline exhausted"));
+}
+
+#[test]
+fn refused_trade_dispatch_still_declines_the_open_screen() {
+    let (mut snapshot, mut ledger, handle, port) = fixture(40);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert_eq!(
+        ack_result(&mut ledger, 3, false),
+        InteractReq::IfButton { component_id: 9 }
+    );
+
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+    assert_eq!(
+        ack(&mut ledger, 4),
+        InteractReq::IfButton { component_id: 17 },
+        "refused accept cleanup must decline the still-open trade"
+    );
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, 6, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner trade dispatch refused"
+    ));
 }
 
 #[test]
@@ -306,9 +642,22 @@ fn counterpart_extra_noted_or_excessive_offer_blocks_before_accept() {
             _ => unreachable!(),
         }
         snapshot.seed_trade(trade);
+        assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+        assert_eq!(
+            ack(&mut ledger, 3),
+            InteractReq::IfButton { component_id: 17 },
+            "an invalid trade must decline, never accept"
+        );
+        snapshot.seed_trade(TradeView::default());
+        assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+        let expected = if fault == 0 {
+            "partner trade counterpart changed"
+        } else {
+            "partner trade contains extra, noted or excessive items"
+        };
         assert!(matches!(
-            poll(&snapshot, &mut ledger, &handle, 3, epoch),
-            Poll::Ready(Err(ActionError::Blocked(_)))
+            poll(&snapshot, &mut ledger, &handle, 5, epoch),
+            Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == expected
         ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
@@ -331,7 +680,19 @@ fn cancelled_or_expired_phase_never_emits_an_accept() {
                     if reason.as_ref() == "pair cancelled; Stop and freshly Start both accounts"
             ));
         } else {
-            assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+            assert!(result.is_pending());
+            assert_eq!(
+                ack(&mut ledger, 3),
+                InteractReq::IfButton { component_id: 17 },
+                "a locally expired trade must decline, never accept"
+            );
+            snapshot.seed_trade(TradeView::default());
+            assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+            assert!(matches!(
+                poll(&snapshot, &mut ledger, &handle, 5, epoch),
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "partner trade deadline exhausted"
+            ));
         }
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
