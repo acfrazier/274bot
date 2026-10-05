@@ -15,44 +15,7 @@
       { "obj": "copper_ore", "qty": 4, "kind": "must_have" },
       { "obj": "iron_ore", "qty": 2, "kind": "must_have" }
     ],
-    "acquire": {
-      "acquire:materials": [
-        {
-          "id": "withdraw-clay",
-          "kind": "bank",
-          "version": 1,
-          "comment": "Withdraws only owned ores. The gather family is unavailable; if any ore is absent from the inventory and bank, the enclosing acquisition will stop here.",
-          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "clay", "qty": 6 }], "partial_ok": true },
-          "skip_if": { "Any": [
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
-            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "clay" } } } }
-          ] },
-          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "clay" } } }
-        },
-        {
-          "id": "withdraw-copper",
-          "kind": "bank",
-          "version": 1,
-          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "copper_ore", "qty": 4 }], "partial_ok": true },
-          "skip_if": { "Any": [
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
-            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "copper_ore" } } } }
-          ] },
-          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "copper_ore" } } }
-        },
-        {
-          "id": "withdraw-iron",
-          "kind": "bank",
-          "version": 1,
-          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "iron_ore", "qty": 2 }], "partial_ok": true },
-          "skip_if": { "Any": [
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } },
-            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "iron_ore" } } } }
-          ] },
-          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_ore" } } }
-        }
-      ]
-    },
+    "acquire": {},
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -87,11 +50,12 @@
               "kind": "talk",
               "version": 1,
               "advances": true,
+              "comment": "Before this step, provisioning may park on the first known inventory-and-bank shortfall: Clay x6, then Copper ore x4, then Iron ore x2. Mining is unavailable; supply the missing ores manually.",
               "args": {
                 "npc": "doric",
                 "anchor": {
                   "tile": [2952, 3451, 0],
-                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:34-61; tile from the unreviewed AIO draft, not checked against binary placement"
+                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:34-61; maps/m46_53.jm2:5943 (Doric at [2952,3451,0])"
                 },
                 "leash": 6,
                 "prefer": ["I wanted to use your anvils.", "Yes, I will get you materials."]
@@ -108,47 +72,16 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "scan-bank-for-ores",
-              "kind": "bank",
-              "version": 1,
-              "args": { "op": "scan", "at": "nearest" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
-                { "All": [
-                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
-                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
-                  { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
-                ] }
-              ] },
-              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
-            },
-            {
-              "id": "acquire-doric-materials",
-              "kind": "acquire",
-              "version": 1,
-              "args": { "recipe": "acquire:materials" },
-              "skip_if": { "All": [
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
-              ] },
-              "settle": { "All": [
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
-              ] }
-            },
-            {
-              "id": "hand-in-mining-ore",
+              "id": "hand-in-ores",
               "kind": "talk",
               "version": 1,
               "advances": true,
-              "comment": "The gather family is not available in 0.2.0. This Path can withdraw owned ores from the bank, but has no mining fallback; supply 6 clay, 4 copper ore and 2 iron ore manually if absent.",
+              "comment": "This hand-in needs 6 clay, 4 copper ore and 2 iron ore in inventory. Mining is unavailable; if preparation parks on a missing ore, supply it in inventory or bank to satisfy the named shortfall.",
               "args": {
                 "npc": "doric",
                 "anchor": {
                   "tile": [2952, 3451, 0],
-                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:68-84; tile from the unreviewed AIO draft, not checked against binary placement"
+                  "source": "scripts/_unpack/225/all.npc:4900-4918; scripts/quests/quest_doric/scripts/quest_doric.rs2:68-84; maps/m46_53.jm2:5943 (Doric at [2952,3451,0])"
                 },
                 "leash": 6,
                 "prefer": []

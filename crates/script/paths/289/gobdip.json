@@ -11,10 +11,10 @@
     "quest_points": 5,
     "requirements": [],
     "items": [
-      { "obj": "goblin_armour", "qty": 3, "kind": "acquirable", "acquire": "acquire:mail" },
-      { "obj": "onion", "qty": 2, "kind": "acquirable", "acquire": "acquire:onions" },
-      { "obj": "redberries", "qty": 3, "kind": "acquirable", "acquire": "acquire:redberries" },
-      { "obj": "woadleaf", "qty": 2, "kind": "acquirable", "acquire": "acquire:woad" }
+      { "obj": "goblin_armour", "qty": 3, "kind": "acquirable", "acquire": null },
+      { "obj": "onion", "qty": 2, "kind": "acquirable", "acquire": null },
+      { "obj": "redberries", "qty": 3, "kind": "acquirable", "acquire": null },
+      { "obj": "woadleaf", "qty": 2, "kind": "acquirable", "acquire": null }
     ],
     "acquire": {
       "acquire:mail": [
@@ -40,7 +40,7 @@
             "tactic": { "kind": "open", "style": "melee", "engage_radius": 18, "auto_retaliate": true },
             "stand": {
               "tile": [2958, 3507, 0],
-              "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:43-107; scripts/drop tables/scripts/goblin.rs2:61-119; farm tile from the prior draft, binary placement unchecked"
+              "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:43-107; scripts/drop tables/scripts/goblin.rs2:61-119; maps/m46_54.jm2:5959-5981 (Goblin spawns; farm stand [2958,3507,0] is a spawn)"
             },
             "lost_radius": 18,
             "kill_budget_ticks": 240,
@@ -74,7 +74,7 @@
             "op": "Pick",
             "anchor": {
               "tile": [3188, 3267, 0],
-              "source": "scripts/_unpack/225/all.loc:15089-15096; scripts/general_use/scripts/pickables.rs2:30-40; patch tile from the prior draft, binary placement unchecked"
+              "source": "scripts/_unpack/225/all.loc:15089-15096; scripts/general_use/scripts/pickables.rs2:30-40; maps/m49_51.jm2:5693-5696 (onion locs at [3188,3266-3268,0])"
             },
             "radius": 4,
             "wait_if_missing": true,
@@ -106,7 +106,7 @@
               "npc": "wydin",
               "anchor": {
                 "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; tile from the prior draft, binary placement unchecked"
+                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
               }
             },
             "obj": "redberries",
@@ -125,7 +125,7 @@
               "npc": "wydin",
               "anchor": {
                 "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; tile from the prior draft, binary placement unchecked"
+                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
               }
             },
             "obj": "redberries",
@@ -144,7 +144,7 @@
               "npc": "wydin",
               "anchor": {
                 "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; tile from the prior draft, binary placement unchecked"
+                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
               }
             },
             "obj": "redberries",
@@ -175,8 +175,8 @@
           "args": {
             "npc": "wyson",
             "anchor": {
-              "tile": [3013, 3377, 0],
-              "source": "scripts/areas/area_falador/scripts/wyson_the_gardener.rs2:1-35; tile from the prior draft, binary placement unchecked"
+              "tile": [3027, 3379, 0],
+              "source": "scripts/areas/area_falador/scripts/wyson_the_gardener.rs2:1-35; maps/m47_52.jm2:11045 (Wyson at [3027,3379,0])"
             },
             "leash": 10,
             "prefer": ["I'm looking for woad leaves.", "How about 20 coins?"]
@@ -195,7 +195,7 @@
             "npc": "aggie",
             "anchor": {
               "tile": [3086, 3259, 0],
-              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-116; tile from the prior draft, binary placement unchecked"
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-116; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
             },
             "leash": 6,
             "prefer": ["Can you make dyes for me please?", "What do you need to make red dye?", "Okay, make me some red dye please."]
@@ -212,7 +212,7 @@
             "npc": "aggie",
             "anchor": {
               "tile": [3086, 3259, 0],
-              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-102; tile from the prior draft, binary placement unchecked"
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-102; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
             },
             "leash": 6,
             "prefer": ["Can you make dyes for me please?", "What do you need to make yellow dye?", "Okay, make me some yellow dye please."]
@@ -230,7 +230,7 @@
             "target": { "item": "yellowdye" },
             "anchor": {
               "tile": [3086, 3259, 0],
-              "source": "scripts/skill_crafting/scripts/dye_cape/dye_cape.rs2:2-8,127-139; tile from the prior draft, binary placement unchecked"
+              "source": "scripts/skill_crafting/scripts/dye_cape/dye_cape.rs2:2-8,127-139; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
             },
             "radius": 4,
             "product": "orangedye",
@@ -250,7 +250,7 @@
             "npc": "aggie",
             "anchor": {
               "tile": [3086, 3259, 0],
-              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-130; tile from the prior draft, binary placement unchecked"
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-130; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
             },
             "leash": 6,
             "prefer": ["Can you make dyes for me please?", "What do you need to make blue dye?", "Okay, make me some blue dye please."]
@@ -314,7 +314,7 @@
                 "npc": "rustyanchor_bartender",
                 "anchor": {
                   "tile": [3045, 3257, 0],
-                  "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:1-16; scripts/areas/area_port_sarim/scripts/bartender.rs2:1-23; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:1-16; scripts/areas/area_port_sarim/scripts/bartender.rs2:1-23; maps/m47_50.jm2:10014 (Rusty Anchor bartender at [3045,3257,0])"
                 },
                 "leash": 8,
                 "prefer": ["Not very busy in here today, is it?"]
@@ -339,7 +339,7 @@
                 "npc": "general_wartface",
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:81-89; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:81-89; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "leash": 6,
                 "prefer": ["Do you want me to pick an armour colour for you?"]
@@ -416,7 +416,7 @@
                 "target": { "item": "goblin_armour" },
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "radius": 6,
                 "product": "goblin_armour_orange",
@@ -434,7 +434,7 @@
                 "npc": "general_wartface",
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:89-98; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:89-98; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "leash": 6,
                 "prefer": []
@@ -499,7 +499,7 @@
                 "target": { "item": "goblin_armour" },
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "radius": 6,
                 "product": "goblin_armour_darkblue",
@@ -517,7 +517,7 @@
                 "npc": "general_wartface",
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:99-106; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:99-106; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "leash": 6,
                 "prefer": []
@@ -558,7 +558,7 @@
                 "npc": "general_wartface",
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:108-115; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:108-115; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "leash": 6,
                 "prefer": []
@@ -586,7 +586,7 @@
                 "npc": "general_wartface",
                 "anchor": {
                   "tile": [2957, 3510, 0],
-                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:71-79; tile from the prior draft, binary placement unchecked"
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:71-79; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
                 },
                 "leash": 6,
                 "prefer": []
