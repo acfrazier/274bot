@@ -739,7 +739,10 @@ impl Widget for ParamsPane<'_> {
                     }
                 } else {
                     let options = self.resolved_options(def);
-                    if def.options_from.is_some() && options.is_empty() {
+                    if def.options_from.is_some()
+                        && options.is_empty()
+                        && !self.array_editor_enabled(def, &options)
+                    {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
                         } else if options.preserved > 0 {
@@ -2511,6 +2514,66 @@ mod tests {
                 persisted.get("quests"),
                 Some(&serde_json::json!(["hauntedmine"])),
                 "removing the priority does not rewrite the quest selection"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_removable_preserved_array_shows_its_value_and_reason() {
+        let dir = temp_dir("preserved-priority-closed-row");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let row = schema
+            .iter()
+            .position(|field| field.id == "order_override")
+            .unwrap();
+        let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let mut state = ParamsState {
+            open: true,
+            cursor: row,
+            ..Default::default()
+        };
+        for (width, height) in [(80, 24), (120, 40)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema,
+                        bag: &mut bag,
+                        commit: &mut store_commit(&mut store, "Quester"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state: &mut state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                !text.contains("Order override: options unavailable"),
+                "{width}x{height}: a removable row is painted as disabled: {text}"
+            );
+            let compact = text
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            let detail = format!("Haunted Mine — {reason}")
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            assert!(
+                compact.contains(&detail),
+                "{width}x{height}: the saved row's reason is missing: {text}"
             );
         }
     }
