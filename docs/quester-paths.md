@@ -67,6 +67,8 @@ When adding a handler in Rust, register it with `step!` or `fact!`. The row name
 - **Sources and names.** Give each authored destination/anchor a `source` (for example, a content placement, source file and line, or dated live observation). A `near` fact is an observation and has no source. Use content config names, not display names; use a `name` target only when the content pack makes a location ambiguous.
 - **Stage keys.** Use `"<quest>:<n>"` when the content varp value is verified; otherwise use a symbolic stage key. A rule's `varp` is a fixture seed and status hint, not a runtime gate.
 - **Recipes vs sequences.** Put item acquisition in `quest.acquire` recipes referenced by `acquire` steps. Keep stage sequences focused on that stage's actions.
+- **Dialogue on `interact`/`use_on`.** An omitted `dialogue` on `use_on` drains an observed page in strict Continue-only mode without requiring a page: it never answers a menu, and an encountered menu fails with a clear reason. Explicit `"continue"` or the object form requires a page after every accepted round, including every `until` round; no page after the bounded opening wait fails with `expected dialogue did not open`. Use the object form with `prefer`/`choose`/`line_rules` when the content can open a menu. `"none"` — and any omission on `interact` — leaves pages to the next owner.
+- **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 - **Versions.** Adding an optional Args field keeps the handler version. Renaming, removing, or retyping a field requires a new version; the generated schema will then expose the new contract.
 
 ### 4.5 Fully annotated example — Cook's Assistant (schema-3 form)
@@ -335,6 +337,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
 The schema checks document shape, exact per-kind `args`, and which `kind@version` values are registered. It requires `advances` on Explicit handler kinds. It cannot resolve content names, verify offered actions, enforce exactly-one target choices, or establish what the server actually changes. The compiler enforces semantic relations such as direct-progress settles requiring `advances: true` and validates content references. Only a live run can confirm that an `advances` value matches the server's behavior.
 
 Compilation failures keep the Path and step identifiers. Unresolved `obj`, `npc`, and `loc` references include the authored alias in `detail`; the queue message preserves that alias and the failing step id.
+
 ### 4.6 Checking a Path before asking for a live run
 
 1. Editor: no red squiggles under the `$schema` line's document.

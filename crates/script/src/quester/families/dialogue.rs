@@ -88,6 +88,13 @@ impl Default for DialogueOptions {
 }
 
 impl DialogueOptions {
+    pub(super) fn continue_only() -> Self {
+        Self {
+            strict: true,
+            ..Self::default()
+        }
+    }
+
     fn select(&self, obs: &ChatObs<'_>) -> Option<i32> {
         if let Some(rule) = self.line_rules.iter().find(|rule| {
             obs.texts
@@ -286,7 +293,9 @@ impl NativeMachine for Dialogue {
                     return self.drive(cx, &obs);
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                    static REASON: std::sync::LazyLock<Arc<str>> =
+                        std::sync::LazyLock::new(|| Arc::from("expected dialogue did not open"));
+                    return Poll::Ready(Err(ActionError::Failed(Arc::clone(&REASON))));
                 }
                 Poll::Pending
             }
@@ -357,11 +366,7 @@ impl NativeMachine for Dialogue {
                             self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
                             return Poll::Pending;
                         }
-                        Poll::Ready(Ok(if obs.open {
-                            DialogueOutcome::Failed
-                        } else {
-                            DialogueOutcome::Completed
-                        }))
+                        Poll::Ready(Ok(DialogueOutcome::Completed))
                     } else {
                         Poll::Pending
                     }
@@ -656,6 +661,16 @@ impl Dialogue {
         }
         if !obs.options.is_empty() {
             let Some(option) = self.args.options.select(obs) else {
+                if self.args.options.strict
+                    && self.args.options.prefer.is_empty()
+                    && self.args.options.choose.is_none()
+                    && self.args.options.line_rules.is_empty()
+                {
+                    static REASON: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
+                        Arc::from("dialogue menu requires an explicit answer rule")
+                    });
+                    return Poll::Ready(Err(ActionError::Failed(Arc::clone(&REASON))));
+                }
                 return Poll::Ready(Ok(DialogueOutcome::Failed));
             };
             self.steps += 1;
