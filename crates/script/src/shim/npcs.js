@@ -1,6 +1,7 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex, notImpl } from '../../shim/_kernel.js';
+import { snap, queue, proxy, presentOps, opIndex, notImpl, machineNow } from '../../shim/_kernel.js';
+import { parkMachine } from '../../api/execution/Execution.js';
 
 export class Npc {
     constructor(row) {
@@ -95,10 +96,25 @@ export class Npc {
     interact(action) {
         const slot = opIndex(this.snap.actions, action);
         if (slot === -1) return false;
+        const verb = String(action);
+        const normalized = verb.toLowerCase();
+        if (normalized === 'pickpocket' || normalized === 'steal-from') {
+            const out = machineNow('thieve-interact', {
+                npc_id: this.snap.id,
+                npc_index: this.snap.index,
+                name: this.snap.name ?? '',
+                action: verb,
+            });
+            if (out.kind === 'running') {
+                void parkMachine(out.handle);
+                return true;
+            }
+            return out.kind === 'done' && out.value === true;
+        }
         queue({
             op: 'npc',
             name: this.snap.name ?? '',
-            action: String(action),
+            action: verb,
             index: this.snap.index,
         });
         return true;

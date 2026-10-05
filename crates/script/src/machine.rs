@@ -581,6 +581,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::periodic_bank::BankNearest>(),
     entry::<crate::periodic_bank::PeriodicBank>(),
     entry::<crate::death_recovery::DeathRecovery>(),
+    entry::<ThieveInteract>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
@@ -606,6 +607,186 @@ const FAMILIES: &[Entry] = &[
     #[cfg(test)]
     entry::<tests::Walker>(),
 ];
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ThieveInteractArgs {
+    npc_id: i32,
+    npc_index: i32,
+    name: String,
+    action: String,
+}
+
+struct ThieveInteract {
+    core: crate::native::thieving_core::ThieveCore,
+    required_level: i32,
+    action: String,
+}
+
+impl Family for ThieveInteract {
+    const NAME: &'static str = "thieve-interact";
+    const EXCLUSIVE: bool = true;
+    type Args = ThieveInteractArgs;
+    type Output = bool;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        let Some((request, required_level, chat_since, observation)) =
+            thieve_interact_request(&args)
+        else {
+            return Begin::Done(false);
+        };
+        let mut core = match crate::native::thieving_core::ThieveCore::new(
+            std::time::Duration::ZERO,
+            crate::native::thieving_core::DEFAULT_ACTION_DEADLINE,
+            None,
+            Some(1),
+            false,
+            chat_since,
+        ) {
+            Ok(core) => core,
+            Err(_) => return Begin::Done(false),
+        };
+        if core.poll(std::time::Duration::ZERO, observation)
+            != crate::native::thieving_core::Decision::Dispatch
+        {
+            return Begin::Done(false);
+        }
+        if core
+            .start_attempt(
+                std::time::Duration::ZERO,
+                None,
+                &observation,
+                core.chat_since(),
+            )
+            .is_err()
+        {
+            return Begin::Done(false);
+        }
+        cx.clock()
+            .arm(crate::native::thieving_core::DEFAULT_ACTION_DEADLINE.as_millis() as u64);
+        cx.emit(request);
+        Begin::Run(Self {
+            core,
+            required_level,
+            action: args.action,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let now = thieve_interact_clock_now(cx);
+        let observation =
+            thieve_observation(self.required_level, &self.action, self.core.chat_since());
+        match self.core.poll(now, observation) {
+            crate::native::thieving_core::Decision::Wait
+            | crate::native::thieving_core::Decision::Dispatch
+            | crate::native::thieving_core::Decision::Stunned => Step::Wait,
+            crate::native::thieving_core::Decision::Complete { .. }
+            | crate::native::thieving_core::Decision::AttemptResolved => Step::Done(true),
+            crate::native::thieving_core::Decision::AttemptFailed
+            | crate::native::thieving_core::Decision::AttemptTimedOut
+            | crate::native::thieving_core::Decision::Dialogue
+            | crate::native::thieving_core::Decision::Failed(_) => Step::Done(false),
+        }
+    }
+}
+
+fn thieve_interact_request(
+    args: &ThieveInteractArgs,
+) -> Option<(
+    InteractReq,
+    i32,
+    i32,
+    crate::native::thieving_core::Observation,
+)> {
+    if args.npc_id <= 0
+        || args.npc_index < 0
+        || args.name.is_empty()
+        || !(args.action.eq_ignore_ascii_case("Pickpocket")
+            || args.action.eq_ignore_ascii_case("Steal-from"))
+    {
+        return None;
+    }
+    let selected = crate::supply_v2::selected_data()?;
+    let required_level = selected.required_thieving_npc(args.npc_id)?;
+    if required_level < 1 {
+        return None;
+    }
+    crate::observed::with(|scene| {
+        let latest = scene.latest();
+        let npc = latest.npcs()?.iter().find(|npc| {
+            npc.id == args.npc_id
+                && npc.index == args.npc_index
+                && npc.name.as_deref() == Some(args.name.as_str())
+        })?;
+        let name = npc.name.as_deref()?.to_owned();
+        let action = npc
+            .actions
+            .iter()
+            .find(|action| action.eq_ignore_ascii_case(&args.action))?
+            .to_string();
+        let chat_since = latest
+            .chat_lines()
+            .and_then(|lines| lines.iter().map(|line| line.seq).max())
+            .unwrap_or_default();
+        let observation = thieve_observation_from_lens(latest, required_level, &action, chat_since);
+        Some((
+            InteractReq::Npc {
+                name,
+                action,
+                index: Some(args.npc_index),
+            },
+            required_level,
+            chat_since,
+            observation,
+        ))
+    })
+}
+
+fn thieve_observation(
+    required_level: i32,
+    action: &str,
+    chat_since: i32,
+) -> crate::native::thieving_core::Observation {
+    crate::observed::with(|scene| {
+        thieve_observation_from_lens(scene.latest(), required_level, action, chat_since)
+    })
+}
+
+fn thieve_observation_from_lens(
+    latest: crate::observed::Lens<'_>,
+    required_level: i32,
+    action: &str,
+    chat_since: i32,
+) -> crate::native::thieving_core::Observation {
+    let skill = latest.stats().and_then(|stats| stats.thieving);
+    let inventory = latest.inv();
+    let mut chat = crate::native::thieving_core::ChatEvidence::default();
+    if let Some(lines) = latest.chat_lines() {
+        for line in lines.iter().filter(|line| line.seq > chat_since) {
+            chat.observe(action, line.text.as_ref(), line.seq);
+        }
+    }
+    crate::native::thieving_core::Observation {
+        effective_thieving: skill.map(|skill| skill.effective),
+        required_level: Some(required_level),
+        experience: skill.map(|skill| skill.xp),
+        inventory_used: inventory.map(|items| i32::try_from(items.len()).unwrap_or(i32::MAX)),
+        target_count: None,
+        inventory_ready: inventory.is_some(),
+        chat,
+        chat_dialog_open: latest.chat_open().unwrap_or(true),
+        chat_dialog_fingerprint: latest.chat_page_fingerprint(),
+    }
+}
+
+fn thieve_interact_clock_now(cx: &mut Cx<'_>) -> std::time::Duration {
+    let clock = cx.clock();
+    let Some(deadline) = clock.deadline else {
+        return crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
+    };
+    let remaining = deadline.saturating_duration_since(clock.now());
+    crate::native::thieving_core::DEFAULT_ACTION_DEADLINE.saturating_sub(remaining)
+}
 
 /// The callback names `family` holds at start, or `None` if unregistered.
 pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {

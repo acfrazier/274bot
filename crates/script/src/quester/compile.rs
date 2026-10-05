@@ -14,8 +14,8 @@ use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{
-    ClientRevision, FactKey, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
-    Truth,
+    ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
+    SkillMinimum, SourceSpan, Truth,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -362,8 +362,9 @@ pub fn compile_path(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    worker: &mut FamilyPreparation,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_path_for_gang(bytes, selected, quests, None)
+    compile_path_for_gang(bytes, selected, quests, worker, None)
 }
 
 /// Select an immutable gang role after the owned membership read.
@@ -371,6 +372,7 @@ pub fn compile_path_for_gang(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    worker: &mut FamilyPreparation,
     gang: Option<super::pair::Gang>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
@@ -403,12 +405,33 @@ pub fn compile_path_for_gang(
     }
     let document: PathDocument =
         serde_json::from_slice(bytes).map_err(|_| CompileError::code("invalid-json"))?;
-    let compiled = Arc::new(compile_uncached(&document, digest, selected, quests, gang)?);
+    let gathering = uses_gathering(&document)
+        .then(|| selected.prepare_gathering(worker))
+        .transpose()
+        .map_err(|_| CompileError::code("gathering-unavailable").with_path(document.id.clone()))?;
+    let compiled = Arc::new(compile_uncached(
+        &document, digest, selected, quests, gathering, gang,
+    )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
         cache.insert(key, Arc::downgrade(&compiled));
     }
     Ok(compiled)
+}
+
+fn uses_gathering(document: &PathDocument) -> bool {
+    document.roles.iter().any(|role| {
+        role.prelude
+            .iter()
+            .chain(role.sequences.iter().flat_map(|sequence| &sequence.steps))
+            .any(|step| step.kind == "gather")
+    }) || document.quest.as_ref().is_some_and(|header| {
+        header
+            .acquire
+            .values()
+            .flatten()
+            .any(|step| step.kind == "gather")
+    })
 }
 
 /// Test helper: compile without the process cache.
@@ -417,7 +440,11 @@ pub fn compile_uncached_for_test(
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_uncached(document, digest_bytes(b"test"), selected, quests, None).map(Arc::new)
+    let gathering = uses_gathering(document)
+        .then(|| api::gather_methods::cached(selected))
+        .flatten();
+    compile_uncached(document, digest_bytes(b"test"), selected, quests, gathering, None)
+        .map(Arc::new)
 }
 
 fn compile_requirement(
@@ -493,6 +520,7 @@ fn compile_uncached(
     digest: [u8; 32],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    gathering: Option<Arc<GatherCatalog>>,
     gang: Option<super::pair::Gang>,
 ) -> Result<CompiledPath, CompileError> {
     if document.schema != super::path::PATH_SCHEMA {
@@ -692,7 +720,7 @@ fn compile_uncached(
             }),
         selected,
         quests,
-        gathering: None,
+        gathering: gathering.as_deref(),
         areas: &areas,
         recipes: &empty_recipes,
         bank,
@@ -1287,19 +1315,53 @@ mod tests {
 
     #[test]
     fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
-        let data = selected();
-        let quests = quests(&data);
-        let first = compile_path(cook_bytes(), &data, &quests).unwrap();
-        let hit = compile_path(cook_bytes(), &data, &quests).unwrap();
-        assert!(Arc::ptr_eq(&first, &hit));
-        let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
-        changed["id"] = serde_json::json!("cook-cache-different");
-        let bytes = serde_json::to_vec(&changed).unwrap();
-        let miss = compile_path(&bytes, &data, &quests).unwrap();
-        assert!(!Arc::ptr_eq(&first, &miss));
-        assert_eq!(first.id.0.as_ref(), "cook");
-        assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
-        assert_ne!(first.digest, miss.digest);
+        let _home = crate::IsolatedEnv::enter("quester-compile-cache");
+        FamilyPreparation::run(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let first = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            let hit = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            assert!(Arc::ptr_eq(&first, &hit));
+            let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
+            changed["id"] = serde_json::json!("cook-cache-different");
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            let miss = compile_path(&bytes, &data, &quests, worker).unwrap();
+            assert!(!Arc::ptr_eq(&first, &miss));
+            assert_eq!(first.id.0.as_ref(), "cook");
+            assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
+            assert_ne!(first.digest, miss.digest);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn gather_preparation_covers_preludes_other_roles_and_acquisition_recipes() {
+        let mut document = decode_cook().unwrap();
+        assert!(!uses_gathering(&document));
+        let mut gather = document.roles[0].sequences[0].steps[0].clone();
+        gather.kind = "gather".into();
+
+        document.roles[0].prelude.push(gather.clone());
+        assert!(uses_gathering(&document));
+        document.roles[0].prelude.pop();
+
+        let mut other = document.roles[0].clone();
+        other.sequences[0].steps[0] = gather.clone();
+        document.roles.push(other);
+        assert!(uses_gathering(&document));
+        document.roles.pop();
+
+        document
+            .quest
+            .as_mut()
+            .unwrap()
+            .acquire
+            .insert("copper".into(), vec![gather]);
+        assert!(uses_gathering(&document));
+        document.quest.as_mut().unwrap().acquire.remove("copper");
+        assert!(!uses_gathering(&document));
     }
 
     #[test]
