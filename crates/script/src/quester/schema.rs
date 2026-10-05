@@ -157,13 +157,45 @@ impl schemars::JsonSchema for super::path::PredicateDocument {
     }
 }
 
+// Schemars emits Rust-specific numeric formats (for example, "uint8" and "float")
+// that strict JSON Schema validators need not recognize. The numeric type and bounds suffice.
+#[cfg(feature = "path-schema")]
+fn strip_numeric_formats(schema: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match schema {
+        Value::Array(items) => {
+            for item in items {
+                strip_numeric_formats(item);
+            }
+        }
+        Value::Object(object) => {
+            let numeric = match object.get("type") {
+                Some(Value::String(kind)) => matches!(kind.as_str(), "integer" | "number"),
+                Some(Value::Array(kinds)) => kinds.iter().any(|kind| {
+                    kind.as_str()
+                        .is_some_and(|kind| matches!(kind, "integer" | "number"))
+                }),
+                _ => false,
+            };
+            if numeric {
+                object.remove("format");
+            }
+            for value in object.values_mut() {
+                strip_numeric_formats(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(feature = "path-schema")]
 pub fn render() -> String {
-    let schema = schemars::generate::SchemaSettings::draft2020_12()
+    let mut schema = schemars::generate::SchemaSettings::draft2020_12()
         .into_generator()
         .into_root_schema_for::<super::path::PathDocument>()
         .to_value();
-    let mut schema = schema;
+    strip_numeric_formats(&mut schema);
     if let Some(root) = schema.as_object_mut() {
         root.insert(
             "title".to_owned(),

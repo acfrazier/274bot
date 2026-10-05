@@ -4172,6 +4172,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "held has no action".to_string())?
                     .to_string(),
                 slot: None,
+                target_item_id: None,
             }),
             "inv-button" => out.push(crate::shim::InteractReq::InvButton {
                 id: row
@@ -6392,6 +6393,7 @@ pub(crate) mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: None,
+            target_item_id: None,
         };
         assert_eq!(
             decode_interact_batch(&encode_interact_batch(std::slice::from_ref(&request))).unwrap(),
@@ -6407,6 +6409,7 @@ pub(crate) mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(7),
+            target_item_id: None,
         }]);
     }
 
@@ -6425,6 +6428,7 @@ pub(crate) mod tests {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             },
             InteractReq::Walk {
                 x: 1,

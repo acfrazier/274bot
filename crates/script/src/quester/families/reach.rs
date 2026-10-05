@@ -34,6 +34,10 @@ pub struct ReachArgs {
     pub anchor: Option<WorldTile>,
     pub radius: i32,
     pub wait_if_missing: bool,
+    /// Select this exact loc tile instead of the nearest same-definition loc.
+    pub target_tile: Option<WorldTile>,
+    /// Require a known reachable loc candidate for inventory-count repetition.
+    pub reachable_only: bool,
 }
 
 #[derive(Clone)]
@@ -47,6 +51,10 @@ pub enum ReachKind {
         name: Option<Arc<str>>,
     },
     Ground {
+        id: i32,
+        obj: Arc<str>,
+    },
+    Held {
         id: i32,
         obj: Arc<str>,
     },
@@ -72,6 +80,7 @@ pub struct Reach {
     before_count: i32,
     clicked_loc: Option<(i32, WorldTile)>,
     walk: Option<Walk>,
+    request_id: u64,
 }
 
 impl NativeMachine for Reach {
@@ -88,6 +97,7 @@ impl NativeMachine for Reach {
             before_count: 0,
             clicked_loc: None,
             walk: None,
+            request_id: 0,
         };
         reach.click(cx)?;
         Ok(reach)
@@ -110,6 +120,15 @@ impl NativeMachine for Reach {
                 }
             }
             Phase::Click => {
+                if matches!(self.args.kind, ReachKind::Held { .. }) {
+                    return match cx.interaction_receipt(self.request_id) {
+                        Some(receipt) if receipt.accepted => Poll::Ready(Ok(true)),
+                        Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "held operation dispatch rejected",
+                        )))),
+                        None => Poll::Pending,
+                    };
+                }
                 if saw_cant_reach(cx, self.chat_mark) {
                     if self.clear_door(cx).is_ok() {
                         return Poll::Pending;
@@ -125,7 +144,9 @@ impl NativeMachine for Reach {
                         .iter()
                         .any(|loc| loc.id == id && loc.tile == tile)
                     {
-                        return Poll::Ready(Ok(false));
+                        return Poll::Ready(Ok(cx
+                            .interaction_receipt(self.request_id)
+                            .is_some_and(|receipt| receipt.accepted)));
                     }
                 }
                 if let ReachKind::Ground { id, .. } = self.args.kind {
@@ -194,9 +215,15 @@ impl Reach {
                 }
             }
             ReachKind::Loc { id, name } => {
-                let Some(loc) =
-                    nearest_loc(cx, *id, name.as_deref(), Some(&self.args.op), PROBE_RADIUS)
-                else {
+                let Some(loc) = nearest_loc(
+                    cx,
+                    *id,
+                    name.as_deref(),
+                    Some(&self.args.op),
+                    PROBE_RADIUS,
+                    self.args.target_tile,
+                    self.args.reachable_only,
+                ) else {
                     self.phase = Phase::Seek;
                     return Ok(false);
                 };
@@ -209,7 +236,7 @@ impl Reach {
                 }
             }
             ReachKind::Ground { id, obj } => {
-                let Some(item) = nearest_ground(cx, *id) else {
+                let Some(item) = nearest_ground(cx, *id, None, 12) else {
                     self.phase = Phase::Seek;
                     return Ok(false);
                 };
@@ -226,10 +253,46 @@ impl Reach {
                     action: self.args.op.to_string(),
                 }
             }
-            ReachKind::Name { name } => {
-                let Some(loc) =
-                    nearest_loc(cx, None, Some(name), Some(&self.args.op), self.args.radius)
+            ReachKind::Held { id, obj } => {
+                let Some(inventory) = cx.snapshot().inventory() else {
+                    self.phase = Phase::Seek;
+                    return Ok(false);
+                };
+                let Some(item) = inventory
+                    .value
+                    .iter()
+                    .find(|item| item.def.id == *id && item.count > 0)
                 else {
+                    self.phase = Phase::Seek;
+                    return Ok(false);
+                };
+                if !item
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|op| op.eq_ignore_ascii_case(&self.args.op))
+                {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "held item does not offer the authored operation",
+                    )));
+                }
+                InteractReq::Held {
+                    name: obj.to_string(),
+                    action: self.args.op.to_string(),
+                    slot: Some(item.slot),
+                    target_item_id: Some(item.def.id),
+                }
+            }
+            ReachKind::Name { name } => {
+                let Some(loc) = nearest_loc(
+                    cx,
+                    None,
+                    Some(name),
+                    Some(&self.args.op),
+                    self.args.radius,
+                    self.args.target_tile,
+                    self.args.reachable_only,
+                ) else {
                     self.phase = Phase::Seek;
                     return Ok(false);
                 };
@@ -259,7 +322,7 @@ impl Reach {
             )),
             _ => None,
         };
-        cx.emit(request)?;
+        self.request_id = cx.emit(request)?;
         self.clicked_loc = clicked_loc;
         self.phase = Phase::Click;
         self.attempts += 1;
@@ -361,7 +424,9 @@ impl Reach {
                 ReachKind::Npc { id, .. } => {
                     nearest_npc(cx, *id, &self.args.op, self.args.radius).map(|npc| npc.tile)
                 }
-                ReachKind::Ground { id, .. } => nearest_ground(cx, *id).map(|item| item.tile),
+                ReachKind::Ground { id, .. } => {
+                    nearest_ground(cx, *id, None, 12).map(|item| item.tile)
+                }
                 _ => self.args.anchor,
             });
         let target = target.ok_or_else(|| ActionError::Failed(Arc::from("no reach target")))?;
@@ -395,13 +460,47 @@ impl Reach {
     }
 }
 
-pub fn target_available(cx: &ActionContext<'_>, kind: &ReachKind, op: &str, radius: i32) -> bool {
+pub fn target_available(
+    cx: &ActionContext<'_>,
+    kind: &ReachKind,
+    op: &str,
+    radius: i32,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
+) -> bool {
     match kind {
-        ReachKind::Ground { id, .. } => nearest_ground(cx, *id).is_some(),
-        ReachKind::Loc { id, name } => {
-            nearest_loc(cx, *id, name.as_deref(), Some(op), PROBE_RADIUS).is_some()
-        }
-        ReachKind::Name { name } => nearest_loc(cx, None, Some(name), Some(op), radius).is_some(),
+        ReachKind::Ground { id, .. } => nearest_ground(cx, *id, None, 12).is_some(),
+        ReachKind::Held { id, .. } => cx.snapshot().inventory().is_some_and(|inventory| {
+            inventory.value.iter().any(|item| {
+                item.def.id == *id
+                    && item.count > 0
+                    && item
+                        .actions
+                        .iter()
+                        .flatten()
+                        .any(|action| action.eq_ignore_ascii_case(op))
+            })
+        }),
+        ReachKind::Loc { id, name } => nearest_loc(
+            cx,
+            *id,
+            name.as_deref(),
+            Some(op),
+            PROBE_RADIUS,
+            target_tile,
+            reachable_only,
+        )
+        .is_some(),
+        ReachKind::Name { name } => nearest_loc(
+            cx,
+            None,
+            Some(name),
+            Some(op),
+            radius,
+            target_tile,
+            reachable_only,
+        )
+        .is_some(),
         ReachKind::Npc { id, .. } => nearest_npc(cx, *id, op, radius).is_some(),
     }
 }
@@ -428,15 +527,21 @@ pub fn nearest_npc<'a>(
         .min_by_key(|npc| npc.distance)
 }
 
-fn nearest_ground<'a>(
+pub(super) fn nearest_ground<'a>(
     cx: &'a ActionContext<'_>,
     id: i32,
+    tile: Option<WorldTile>,
+    radius: i32,
 ) -> Option<&'a api::snapshot::GroundItemView> {
     cx.snapshot()
         .ground_items()?
         .value
         .iter()
-        .filter(|item| item.def.id == id && item.distance <= 12)
+        .filter(|item| {
+            item.def.id == id
+                && item.distance <= radius
+                && tile.is_none_or(|tile| item.tile == tile)
+        })
         .min_by_key(|item| item.distance)
 }
 
@@ -458,6 +563,8 @@ pub fn nearest_loc<'a>(
     name: Option<&str>,
     op: Option<&str>,
     radius: i32,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
 ) -> Option<&'a api::snapshot::LocView> {
     cx.snapshot()
         .locs()?
@@ -479,6 +586,17 @@ pub fn nearest_loc<'a>(
                     .flatten()
                     .any(|a| a.eq_ignore_ascii_case(op))
             }) && (radius <= 0 || loc.distance <= radius)
+                && target_tile.is_none_or(|tile| loc.tile == tile)
+                && (!reachable_only
+                    || cx.snapshot().reach().is_some_and(|reach| {
+                        reach.value.can_reach(
+                            loc.tile,
+                            &api::query::SceneReachOptions {
+                                max_steps: None,
+                                adjacent_ok: true,
+                            },
+                        )
+                    }))
         })
         .min_by_key(|loc| loc.distance)
 }

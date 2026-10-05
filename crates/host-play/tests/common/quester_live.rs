@@ -78,6 +78,20 @@ impl Mode {
 /// receipt (exact stats and kit) or refuses the Start.
 pub type ObserveStart = Box<dyn FnMut(&GameSnapshot) -> Result<Value, String> + Send>;
 
+/// A fixture-specific native Start through the same shared host pump.
+pub type StartFamily = Box<
+    dyn FnMut(
+            &ScriptStartHandle,
+            &str,
+            &Arc<api::named_banks::NamedBankFacts>,
+        ) -> Result<(), String>
+        + Send,
+>;
+
+/// Return a receipt only after the family action produces fresh evidence.
+pub type ObserveFamily =
+    Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Result<Option<Value>, String> + Send>;
+
 /// One live cell.
 pub struct Cell {
     /// Content quest id (`squire`), also the evidence sub-directory.
@@ -358,6 +372,8 @@ struct Shared {
     snapshot: GameSnapshot,
     pump: Pump,
     start_handle: Option<ScriptStartHandle>,
+    named_banks: Option<Arc<api::named_banks::NamedBankFacts>>,
+    start_family: Option<StartFamily>,
     observe_start: Option<ObserveStart>,
     start_receipt: Option<Value>,
     /// Starts issued (first by the fixture, later by Restart).
@@ -374,7 +390,20 @@ struct Shared {
 }
 
 /// Run one live cell. Returns the final receipt on PASS.
-pub fn run(mut cell: Cell) -> Result<Value, String> {
+pub fn run(cell: Cell) -> Result<Value, String> {
+    run_inner(cell, None, None)
+}
+
+/// Run an inline native family fixture without a second launcher or capture driver.
+pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
+    run_inner(cell, Some(start), Some(observe))
+}
+
+fn run_inner(
+    mut cell: Cell,
+    start_family: Option<StartFamily>,
+    mut observe_family: Option<ObserveFamily>,
+) -> Result<Value, String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
     }
@@ -420,6 +449,8 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
         snapshot: GameSnapshot::new(),
         pump: Pump::new(),
         start_handle: None,
+        named_banks: None,
+        start_family,
         observe_start: cell.observe_start.take(),
         start_receipt: None,
         starts: 0,
@@ -464,17 +495,17 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
                         }
                     }
                 }
-                let result = s
-                    .start_handle
-                    .as_ref()
-                    .ok_or_else(|| "Start before ScriptStartHandle install".to_owned())
-                    .and_then(|handle| {
-                        handle.start_compiled(
-                            &frame_account,
-                            script::CompiledId("Quester"),
-                            frame_settings.clone(),
-                        )
-                    });
+                let result = match (&s.start_handle, &s.named_banks, &mut s.start_family) {
+                    (Some(handle), Some(banks), Some(start)) => {
+                        start(handle, &frame_account, banks)
+                    }
+                    (Some(handle), _, None) => handle.start_compiled(
+                        &frame_account,
+                        script::CompiledId("Quester"),
+                        frame_settings.clone(),
+                    ),
+                    _ => Err("Start before native fixture handles install".to_owned()),
+                };
                 match result {
                     Ok(()) => {
                         s.starts += 1;
@@ -557,6 +588,7 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
         let mut s = shared.lock().map_err(|_| "live state poisoned")?;
         s.runner.set_obj_names(play.obj_names());
         s.start_handle = Some(play.script_start_handle());
+        s.named_banks = Some(play.named_banks());
     }
     play.try_spawn_slot(mint_profile(&account, &password)?, None, None, None)?;
     play.focus(&account);
@@ -576,6 +608,7 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
     let mut awaiting_idle = false;
     let mut end_captured = false;
     let mut captured_starts = 0u32;
+    let mut family_receipt = None;
     let mut death_status: Option<Value> = None;
     let result: Result<(), String> = loop {
         let status = play.script_native_status(&account);
@@ -638,10 +671,24 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
                 }
             }
         }
+        if starts > 0 {
+            if let Some(observe) = observe_family.as_mut() {
+                let s = shared.lock().map_err(|_| "live state poisoned")?;
+                match observe(&s.snapshot, status.as_deref()) {
+                    Ok(Some(receipt)) => {
+                        family_receipt = Some(receipt);
+                        break Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(error) => break Err(format!("family proof: {error}")),
+                }
+            }
+        }
         let current = stages_seen.last().cloned();
         match &cell.mode {
             Mode::Stage { expect } => {
-                if starts > 0
+                if observe_family.is_none()
+                    && starts > 0
                     && current.as_ref().is_some_and(|stage| expect.contains(stage))
                     && stages_seen.len() > 1
                 {
@@ -690,7 +737,8 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
             }
             _ => {}
         }
-        let terminal = matches!(runner_status, RunnerStatus::Passed)
+        let terminal = observe_family.is_none()
+            && matches!(runner_status, RunnerStatus::Passed)
             && done
             && run_state == script::RunState::Idle
             && play
@@ -761,6 +809,7 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
         "nav_pack": profile.nav_pack(),
         "settings": cell.start_settings,
         "fixture_receipt": s.start_receipt,
+        "family_receipt": family_receipt,
         "starts": s.starts,
         "stages_seen": stages_seen,
         "deaths": deaths_max,

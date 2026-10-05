@@ -717,6 +717,18 @@ impl Quester {
                 value: StatusValue::Text(Arc::from(text)),
             });
         }
+        static EMPTY_CHILD: std::sync::LazyLock<Arc<str>> =
+            std::sync::LazyLock::new(|| Arc::from(""));
+        fields.push(StatusField {
+            key: "child_step_id",
+            label: "Acquisition child",
+            value: StatusValue::Text(
+                self.step
+                    .as_ref()
+                    .and_then(|run| run.child_step_id())
+                    .map_or_else(|| Arc::clone(&EMPTY_CHILD), |id| Arc::clone(&id.0)),
+            ),
+        });
         for (key, label, value) in [
             ("sequence", "Sequence", self.seq_index as i64),
             (

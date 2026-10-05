@@ -48,6 +48,7 @@ fn bury() -> InteractReq {
         name: "Bones".into(),
         action: "Bury".into(),
         slot: None,
+        target_item_id: None,
     }
 }
 

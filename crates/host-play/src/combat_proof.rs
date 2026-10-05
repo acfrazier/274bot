@@ -472,7 +472,9 @@ fn interaction_value(request: &InteractReq) -> Value {
             action,
             index,
         } => json!({"op": "npc", "name": name, "action": action, "index": index}),
-        InteractReq::Held { name, action, slot } => {
+        InteractReq::Held {
+            name, action, slot, ..
+        } => {
             json!({"op": "held", "name": name, "action": action, "slot": slot})
         }
         InteractReq::OpenStand {

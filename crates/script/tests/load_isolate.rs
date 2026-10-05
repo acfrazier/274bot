@@ -4103,6 +4103,7 @@ export default class T extends LoopingBot {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
         "first().interact('Bury') queues the held op"
     );
@@ -9349,6 +9350,7 @@ export default class T extends LoopingBot {
             name: "Logs".into(),
             action: "Use".into(),
             slot: None,
+            target_item_id: None,
         }],
         "heldOp must not treat slot as a packed-array index"
     );

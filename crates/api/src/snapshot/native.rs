@@ -258,7 +258,7 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    pub fn widgets(&self) -> Option<Observed<&[super::WidgetView]>> {
+    pub fn widgets(&self) -> Option<Observed<&'a [super::WidgetView]>> {
         let snapshot = self.snapshot?;
         snapshot.ingame().then(|| Observed {
             value: snapshot.widgets(),

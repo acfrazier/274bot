@@ -250,6 +250,10 @@ pub trait StepPlan: Send + Sync {
     fn compile_warning(&self) -> Option<&'static str> {
         None
     }
+    /// The compiled approach anchor, if this family declares one.
+    fn anchor(&self) -> Option<api::WorldTile> {
+        None
+    }
 }
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
@@ -271,6 +275,10 @@ pub trait StepRun: Send {
     /// Latest completed sub-operation, borrowed for change-only status reporting.
     /// This does not replace the final outcome returned by `poll`.
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        None
+    }
+    /// Current acquisition child identity, without replacing the root step id.
+    fn child_step_id(&self) -> Option<&FactKey> {
         None
     }
 }
@@ -632,7 +640,8 @@ fn compile_uncached(
         loadouts: &loadouts,
         keep_ids: &keep_ids,
     };
-    let mut recipes = HashMap::with_capacity(header.acquire.len());
+    let mut recipes: HashMap<String, Arc<[CompiledAcquireStep]>> =
+        HashMap::with_capacity(header.acquire.len());
     let mut bindings = HashMap::with_capacity(header.acquire.len());
     let mut active = Vec::with_capacity(header.acquire.len().min(MAX_RECIPE_NESTING_DEPTH));
     for name in header.acquire.keys() {
@@ -1026,15 +1035,18 @@ fn compile_recipe<'a>(
         }
     }
     let context = CompileContext { recipes, ..*base };
-    let compiled = compile_steps(steps, &context, document)?
-        .into_iter()
-        .map(|step| CompiledAcquireStep {
-            advances: step.advances,
-            skip_if: step.skip_if,
-            settle: step.settle,
-            plan: step.plan,
-        })
-        .collect();
+    let compiled: Arc<[CompiledAcquireStep]> = Arc::from(
+        compile_steps(steps, &context, document)?
+            .into_iter()
+            .map(|step| CompiledAcquireStep {
+                id: step.id,
+                advances: step.advances,
+                skip_if: step.skip_if,
+                settle: step.settle,
+                plan: step.plan,
+            })
+            .collect::<Vec<_>>(),
+    );
     recipes.insert(name.to_owned(), compiled);
     bindings.insert(name, RecipeBinding::Bound { depth });
     active.pop();
@@ -1334,6 +1346,13 @@ mod tests {
             .unwrap_or_else(|error| panic!("nested recipe: {} {:?}", error.code, error.detail));
         assert_eq!(compiled.provisioning.recipes["acquire:a-root"].len(), 2);
         assert_eq!(compiled.provisioning.recipes["acquire:z-leaf"].len(), 1);
+        assert_eq!(
+            compiled.provisioning.recipes["acquire:a-root"][0]
+                .id
+                .0
+                .as_ref(),
+            "nested-first"
+        );
     }
 
     #[test]
