@@ -45,17 +45,17 @@
           "args": {
             "op": "withdraw",
             "at": "nearest",
-            "items": [{ "obj": "coins", "qty": 100 }],
+            "items": [{ "obj": "coins", "qty": 10 }],
             "partial_ok": true
           },
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
               { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
-              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 100 } } }
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 10 } } }
             ]
           },
-          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 100 } } }
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 10 } } }
         },
         {
           "id": "apron-buy-thessalia",
@@ -71,7 +71,7 @@
             },
             "obj": "white_apron",
             "qty": 1,
-            "est_gp": 100,
+            "est_gp": 2,
             "option": "Buy 1"
           },
           "skip_if": {
@@ -272,17 +272,17 @@
           "args": {
             "op": "withdraw",
             "at": "nearest",
-            "items": [{ "obj": "coins", "qty": 160 }],
+            "items": [{ "obj": "coins", "qty": 120 }],
             "partial_ok": true
           },
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } },
-              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 160 } } }
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 120 } } }
             ]
           },
-          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 160 } } }
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 120 } } }
         },
         {
           "id": "rum-deposit-before-banana-route",
@@ -413,7 +413,7 @@
             },
             "obj": "karamja_rum",
             "qty": 1,
-            "est_gp": 100,
+            "est_gp": 30,
             "option": "Buy 1"
           },
           "skip_if": {
@@ -1023,7 +1023,7 @@
       ]
     },
     "bank": "nearest",
-    "coin_float": 260,
+    "coin_float": 130,
     "loadouts": {},
     "areas": {
       "karamja": {
@@ -1118,6 +1118,25 @@
               "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } }
             },
             {
+              "id": "hunt-withdraw-banked-rum",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [{ "obj": "karamja_rum", "qty": 1 }],
+                "partial_ok": false
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                  { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "karamja_rum" } } } },
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+            },
+            {
               "id": "hunt-smuggle-rum",
               "kind": "acquire",
               "version": 1,
@@ -1133,6 +1152,29 @@
                 ]
               },
               "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } }
+            },
+            {
+              "id": "hunt-hand-banked-rum-to-frank",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "redbeard_frank",
+                "anchor": {
+                  "tile": [3053, 3250, 0],
+                  "source": "content/maps/m47_50.jm2:10018; content/scripts/quests/quest_hunt/scripts/redbeard_frank.rs2:25-56"
+                },
+                "leash": 6,
+                "prefer": ["Ok thanks, I'll go and get it."],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } },
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:2"] } } }
             },
             {
               "id": "hunt-customs-to-mainland",
@@ -1201,12 +1243,7 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:apron" },
-              "skip_if": {
-                "Any": [
-                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
-                  { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
-                ]
-              },
+              "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
               "settle": {
                 "Any": [
                   { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
