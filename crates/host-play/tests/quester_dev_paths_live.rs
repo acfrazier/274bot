@@ -119,13 +119,12 @@ fn live_quester_folder_override_start() {
                 std::fs::write(folder.join("cook.json"), edited)
                     .map_err(|error| error.to_string())?;
                 let reload_data = Arc::clone(&selected);
-                let reloaded = FamilyPreparation::run(move |worker| {
-                    registry::reload(&reload_data, worker)
-                })
-                    .map_err(|error| format!("{error:?}"))?
-                    .join()
-                    .map_err(|error| format!("{error:?}"))?
-                    .map_err(|error| format!("{error:?}"))?;
+                let reloaded =
+                    FamilyPreparation::run(move |worker| registry::reload(&reload_data, worker))
+                        .map_err(|error| format!("{error:?}"))?
+                        .join()
+                        .map_err(|error| format!("{error:?}"))?
+                        .map_err(|error| format!("{error:?}"))?;
                 let bytes = reloaded.bytes("cook").ok_or("Reload lost Cook's Path")?;
                 let loaded: serde_json::Value =
                     serde_json::from_slice(bytes.as_ref()).map_err(|error| error.to_string())?;

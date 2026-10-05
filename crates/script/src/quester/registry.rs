@@ -861,166 +861,185 @@ mod tests {
     #[test]
     fn folder_override_replaces_bundled_document_on_start_load() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("cook", "edited folder comment");
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        let path = registry.compile("cook", &selected, &quests, worker).unwrap();
-        assert_eq!(
-            path.sequences[0].steps[0].comment.as_deref(),
-            Some("edited folder comment")
-        );
+            let folder = Folder::new();
+            folder.cook("cook", "edited folder comment");
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            let path = registry
+                .compile("cook", &selected, &quests, worker)
+                .unwrap();
+            assert_eq!(
+                path.sequences[0].steps[0].comment.as_deref(),
+                Some("edited folder comment")
+            );
         });
     }
 
     #[test]
     fn folder_draft_is_a_queue_candidate_and_compiles() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("cook-draft", "draft comment");
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        assert!(registry.ids().iter().any(|id| id == "cook-draft"));
-        assert_eq!(
-            registry
-                .compile("cook-draft", &selected, &quests, worker)
-                .unwrap()
-                .id
-                .0
-                .as_ref(),
-            "cook-draft"
-        );
-        let queue = super::super::queue::Queue::from_registry(
-            registry,
-            super::super::queue::QueueSettings {
-                quests: vec!["cook-draft".into()],
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let position = queue.next_candidate().unwrap();
-        assert_eq!(queue.id(position), Some("cook-draft"));
-        assert_eq!(queue.path_source(position), PathSource::Draft);
+            let folder = Folder::new();
+            folder.cook("cook-draft", "draft comment");
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            assert!(registry.ids().iter().any(|id| id == "cook-draft"));
+            assert_eq!(
+                registry
+                    .compile("cook-draft", &selected, &quests, worker)
+                    .unwrap()
+                    .id
+                    .0
+                    .as_ref(),
+                "cook-draft"
+            );
+            let queue = super::super::queue::Queue::from_registry(
+                registry,
+                super::super::queue::QueueSettings {
+                    quests: vec!["cook-draft".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let position = queue.next_candidate().unwrap();
+            assert_eq!(queue.id(position), Some("cook-draft"));
+            assert_eq!(queue.path_source(position), PathSource::Draft);
         });
     }
 
     #[test]
     fn invalid_override_reports_compile_error_and_keeps_other_rows() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("cook", "invalid override");
-        let path = folder.0.join("cook.json");
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        value["roles"][0]["sequences"][0]["steps"][0]["args"]["not_an_argument"] =
-            serde_json::json!(true);
-        std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
-        folder.cook("cook-draft", "valid draft");
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        let report = registry.report().expect("per-file validation report");
-        for expected in ["cook.json", "start", "invalid-args", "not_an_argument"] {
-            assert!(report.contains(expected), "missing {expected}: {report}");
-        }
-        let fallback = registry.compile("cook", &selected, &quests, worker).unwrap();
-        assert_eq!(
-            fallback.digest,
-            compile::digest_bytes(compile::cook_bytes())
-        );
-        assert!(registry.compile("cook-draft", &selected, &quests, worker).is_ok());
+            let folder = Folder::new();
+            folder.cook("cook", "invalid override");
+            let path = folder.0.join("cook.json");
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            value["roles"][0]["sequences"][0]["steps"][0]["args"]["not_an_argument"] =
+                serde_json::json!(true);
+            std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+            folder.cook("cook-draft", "valid draft");
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            let report = registry.report().expect("per-file validation report");
+            for expected in ["cook.json", "start", "invalid-args", "not_an_argument"] {
+                assert!(report.contains(expected), "missing {expected}: {report}");
+            }
+            let fallback = registry
+                .compile("cook", &selected, &quests, worker)
+                .unwrap();
+            assert_eq!(
+                fallback.digest,
+                compile::digest_bytes(compile::cook_bytes())
+            );
+            assert!(registry
+                .compile("cook-draft", &selected, &quests, worker)
+                .is_ok());
         });
     }
 
     #[test]
     fn reload_observes_edited_document_without_restart() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("cook", "first edit");
-        let first = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
-            .unwrap().compile("cook", &selected, &quests, worker)
-            .unwrap();
-        folder.cook("cook", "second edit");
-        let second = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
-            .unwrap().compile("cook", &selected, &quests, worker)
-            .unwrap();
-        assert_ne!(first.digest, second.digest);
-        assert_eq!(
-            second.sequences[0].steps[0].comment.as_deref(),
-            Some("second edit")
-        );
+            let folder = Folder::new();
+            folder.cook("cook", "first edit");
+            let first = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
+                .unwrap()
+                .compile("cook", &selected, &quests, worker)
+                .unwrap();
+            folder.cook("cook", "second edit");
+            let second = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
+                .unwrap()
+                .compile("cook", &selected, &quests, worker)
+                .unwrap();
+            assert_ne!(first.digest, second.digest);
+            assert_eq!(
+                second.sequences[0].steps[0].comment.as_deref(),
+                Some("second edit")
+            );
         });
     }
 
     #[test]
     fn folder_off_ignores_files_and_keeps_bundled_bytes() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("cook", "ignored comment");
-        folder.cook("cook-draft", "ignored draft");
-        let registry = PathRegistry::load(&folder.source(false), &selected, &quests, worker).unwrap();
-        assert!(matches!(registry, PathRegistry::Bundled));
-        assert_eq!(
-            std::mem::size_of::<PathRegistry>(),
-            std::mem::size_of::<&ReleaseIndex>()
-        );
-        assert!(registry.report().is_none());
-        assert!(!registry.ids().iter().any(|id| id == "cook-draft"));
-        assert_eq!(
-            registry.compile("cook", &selected, &quests, worker).unwrap().digest,
-            compile::digest_bytes(compile::cook_bytes())
-        );
-        let Some(PathBytes::Bundled(bytes)) = registry.bytes("cook") else {
-            panic!("disabled folder must keep static bundled storage");
-        };
-        assert!(std::ptr::eq(bytes.as_ptr(), compile::cook_bytes().as_ptr()));
+            let folder = Folder::new();
+            folder.cook("cook", "ignored comment");
+            folder.cook("cook-draft", "ignored draft");
+            let registry =
+                PathRegistry::load(&folder.source(false), &selected, &quests, worker).unwrap();
+            assert!(matches!(registry, PathRegistry::Bundled));
+            assert_eq!(
+                std::mem::size_of::<PathRegistry>(),
+                std::mem::size_of::<&ReleaseIndex>()
+            );
+            assert!(registry.report().is_none());
+            assert!(!registry.ids().iter().any(|id| id == "cook-draft"));
+            assert_eq!(
+                registry
+                    .compile("cook", &selected, &quests, worker)
+                    .unwrap()
+                    .digest,
+                compile::digest_bytes(compile::cook_bytes())
+            );
+            let Some(PathBytes::Bundled(bytes)) = registry.bytes("cook") else {
+                panic!("disabled folder must keep static bundled storage");
+            };
+            assert!(std::ptr::eq(bytes.as_ptr(), compile::cook_bytes().as_ptr()));
         });
     }
 
     #[test]
     fn optional_index_orders_drafts_and_preserves_server_unavailable_rows() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        folder.cook("draft-a", "A");
-        folder.cook("cook", "folder override");
-        folder.cook("draft-z", "Z");
-        std::fs::write(folder.0.join("index.json"),
+            let folder = Folder::new();
+            folder.cook("draft-a", "A");
+            folder.cook("cook", "folder override");
+            folder.cook("draft-z", "Z");
+            std::fs::write(folder.0.join("index.json"),
             r#"{"schema":1,"paths":[{"id":"draft-z","file":"draft-z.json"},{"id":"draft-a","file":"draft-a.json"},{"id":"hauntedmine","name":"Haunted Mine","unavailable":"no content"}]}"#
         ).unwrap();
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        let ids = registry.ids();
-        assert!(
-            ids.iter().position(|id| id == "draft-z")
-                < ids.iter().position(|id| id == "draft-a")
-        );
-        assert_eq!(
-            &ids[..BUNDLED_INDEX.paths.len()],
-            &PathRegistry::Bundled.ids()
-        );
-        assert!(registry.diagnostics().is_empty());
-        for id in ["cook", "draft-a", "draft-z", "hauntedmine"] {
-            let row = registry.rows().iter().find(|row| row.id == id).unwrap();
-            assert_eq!(row.source, registry.path_source(id));
-        }
-        assert!(registry.bytes("hauntedmine").is_none());
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            let ids = registry.ids();
+            assert!(
+                ids.iter().position(|id| id == "draft-z")
+                    < ids.iter().position(|id| id == "draft-a")
+            );
+            assert_eq!(
+                &ids[..BUNDLED_INDEX.paths.len()],
+                &PathRegistry::Bundled.ids()
+            );
+            assert!(registry.diagnostics().is_empty());
+            for id in ["cook", "draft-a", "draft-z", "hauntedmine"] {
+                let row = registry.rows().iter().find(|row| row.id == id).unwrap();
+                assert_eq!(row.source, registry.path_source(id));
+            }
+            assert!(registry.bytes("hauntedmine").is_none());
         });
     }
 
     #[test]
     fn invalid_draft_stays_unavailable_and_oversized_file_is_bounded() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        std::fs::write(folder.0.join("broken.json"), b"not JSON").unwrap();
-        std::fs::File::create(folder.0.join("huge.json"))
-            .unwrap()
-            .set_len(MAX_PATH_BYTES + 1)
-            .unwrap();
-        folder.cook("valid", "still valid");
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        for (id, code) in [("broken", "invalid-json"), ("huge", "file-too-large")] {
-            let row = registry.rows().iter().find(|row| row.id == id).unwrap();
-            assert_eq!(row.source, PathSource::Draft);
-            assert_eq!(registry.path_source(id), row.source);
-            assert!(row.unavailable.as_deref().unwrap().contains(code));
-            assert!(registry.bytes(id).is_none());
-        }
-        assert!(registry.compile("valid", &selected, &quests, worker).is_ok());
+            let folder = Folder::new();
+            std::fs::write(folder.0.join("broken.json"), b"not JSON").unwrap();
+            std::fs::File::create(folder.0.join("huge.json"))
+                .unwrap()
+                .set_len(MAX_PATH_BYTES + 1)
+                .unwrap();
+            folder.cook("valid", "still valid");
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            for (id, code) in [("broken", "invalid-json"), ("huge", "file-too-large")] {
+                let row = registry.rows().iter().find(|row| row.id == id).unwrap();
+                assert_eq!(row.source, PathSource::Draft);
+                assert_eq!(registry.path_source(id), row.source);
+                assert!(row.unavailable.as_deref().unwrap().contains(code));
+                assert!(registry.bytes(id).is_none());
+            }
+            assert!(registry
+                .compile("valid", &selected, &quests, worker)
+                .is_ok());
         });
     }
 
@@ -1047,37 +1066,38 @@ mod tests {
     #[test]
     fn folder_diagnostics_are_capped_with_an_omission_summary() {
         with_data(|selected, quests, worker| {
-        let folder = Folder::new();
-        for number in 0..300 {
-            std::fs::write(
-                folder.0.join(format!("draft-{number:03}.json")),
-                b"not JSON",
+            let folder = Folder::new();
+            for number in 0..300 {
+                std::fs::write(
+                    folder.0.join(format!("draft-{number:03}.json")),
+                    b"not JSON",
+                )
+                .unwrap();
+            }
+
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+            let report = registry.report().unwrap();
+            assert_eq!(registry.diagnostics().len(), MAX_DIAGNOSTIC_LINES);
+            assert!(
+                registry
+                    .diagnostics()
+                    .last()
+                    .unwrap()
+                    .to_string()
+                    .contains(" more "),
+                "the final emitted diagnostic is the omission summary"
+            );
+            assert!(report.contains(" more "), "{report}");
+            let queue = super::super::queue::Queue::from_registry(
+                registry,
+                super::super::queue::QueueSettings::default(),
             )
             .unwrap();
-        }
-        
-        let registry = PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
-        let report = registry.report().unwrap();
-        assert_eq!(registry.diagnostics().len(), MAX_DIAGNOSTIC_LINES);
-        assert!(
-            registry
-                .diagnostics()
-                .last()
-                .unwrap()
-                .to_string()
-                .contains(" more "),
-            "the final emitted diagnostic is the omission summary"
-        );
-        assert!(report.contains(" more "), "{report}");
-        let queue = super::super::queue::Queue::from_registry(
-            registry,
-            super::super::queue::QueueSettings::default(),
-        )
-        .unwrap();
-        assert!(
-            queue.path_report().unwrap().contains(" more "),
-            "the status field's report keeps the omission summary"
-        );
+            assert!(
+                queue.path_report().unwrap().contains(" more "),
+                "the status field's report keeps the omission summary"
+            );
         });
     }
 
