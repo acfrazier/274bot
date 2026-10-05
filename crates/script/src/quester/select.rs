@@ -10,7 +10,7 @@ pub struct Selection<'a> {
 
 pub enum SelectionDecision<'a> {
     Selected(Selection<'a>),
-    Unknown,
+    Unknown(Selection<'a>),
     Exhausted,
 }
 
@@ -19,6 +19,15 @@ pub fn select<'a>(
     path: &'a CompiledPath,
     sequence: usize,
     cx: &PredicateContext<'_, '_>,
+) -> SelectionDecision<'a> {
+    select_with_skips(path, sequence, cx, |_| {})
+}
+
+pub fn select_with_skips<'a>(
+    path: &'a CompiledPath,
+    sequence: usize,
+    cx: &PredicateContext<'_, '_>,
+    mut on_skip: impl FnMut(&'a CompiledStep),
 ) -> SelectionDecision<'a> {
     for (prelude, steps) in [
         (true, path.prelude.as_slice()),
@@ -31,8 +40,14 @@ pub fn select<'a>(
     ] {
         for (index, step) in steps.iter().enumerate() {
             match step.skip_if.evaluate(cx) {
-                Truth::True => {}
-                Truth::Unknown => return SelectionDecision::Unknown,
+                Truth::True => on_skip(step),
+                Truth::Unknown => {
+                    return SelectionDecision::Unknown(Selection {
+                        step,
+                        index,
+                        prelude,
+                    })
+                }
                 Truth::False => {
                     return SelectionDecision::Selected(Selection {
                         step,
@@ -189,7 +204,7 @@ mod tests {
                 SelectionDecision::Selected(selected) => {
                     Choice::Step(selected.step.id.0.to_string())
                 }
-                SelectionDecision::Unknown => Choice::Unknown,
+                SelectionDecision::Unknown(_) => Choice::Unknown,
                 SelectionDecision::Exhausted => Choice::Exhausted,
             }
         })
@@ -253,7 +268,7 @@ mod tests {
         };
         let compiled = compile_uncached_for_test(&unknown, &data, &quests).unwrap();
         assert!(
-            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown),
+            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown(_)),
             "unknown inventory must wait, never select an action on login"
         );
     }

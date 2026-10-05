@@ -1,8 +1,8 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
 use super::path::{
-    PathDocument, QuestItemDocument, QuestRequirementDocument, QuestRequirementKindDocument,
-    StepDocument,
+    PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
+    QuestRequirementKindDocument, StepDocument,
 };
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
@@ -207,6 +207,7 @@ pub struct CompiledStep {
     pub tactic: Option<Arc<str>>,
     pub advances: bool,
     pub skip_if: Arc<dyn PredicatePlan>,
+    pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
 }
@@ -251,6 +252,27 @@ pub trait StepPlan: Send + Sync {
         None
     }
 }
+#[derive(Debug, Clone)]
+pub enum StepTraceEvent {
+    Acquisition {
+        recipe: Arc<str>,
+        child_step: Arc<str>,
+        outcome: AcquisitionTraceOutcome,
+    },
+    CombatSubOperationEnd {
+        target: crate::combat::Target,
+        end: crate::combat::CombatEnd,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum AcquisitionTraceOutcome {
+    Begin,
+    Skipped(Arc<str>),
+    Settled,
+    Failed(Arc<str>),
+}
+
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
@@ -279,6 +301,9 @@ pub trait StepRun: Send {
     }
     /// Current acquisition recipe, available without formatting during polls.
     fn child_recipe_id(&self) -> Option<&Arc<str>> {
+        None
+    }
+    fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
         None
     }
 }
@@ -940,6 +965,7 @@ fn compile_steps(
                 .flatten(),
             advances: step.advances.unwrap_or(false),
             skip_if,
+            skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
             plan,
         });
@@ -956,6 +982,31 @@ fn direct_progress_fact(predicate: &super::path::PredicateDocument) -> Option<&s
             .find(|handler| handler.kind == kind && handler.version == *version)
             .filter(|handler| handler.progress != ProgressRead::None)
             .map(|_| kind.as_str()),
+    }
+}
+
+fn predicate_summary(predicate: &PredicateDocument) -> String {
+    match predicate {
+        PredicateDocument::All(items) | PredicateDocument::Any(items) => {
+            let name = if matches!(predicate, PredicateDocument::All(_)) {
+                "all"
+            } else {
+                "any"
+            };
+            format!(
+                "{name}({})",
+                items
+                    .iter()
+                    .map(predicate_summary)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        PredicateDocument::Not(inner) => format!("not {}", predicate_summary(inner)),
+        PredicateDocument::Fact { kind, args, .. } => format!(
+            "{kind}({})",
+            serde_json::to_string(args).unwrap_or_else(|_| "{}".to_owned())
+        ),
     }
 }
 
@@ -1042,6 +1093,7 @@ fn compile_recipe<'a>(
                 id: step.id,
                 advances: step.advances,
                 skip_if: step.skip_if,
+                skip_if_summary: step.skip_if_summary,
                 settle: step.settle,
                 plan: step.plan,
             })

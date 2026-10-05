@@ -1,13 +1,14 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::bank_memo::BankMemo;
 use super::compile::{
-    CompiledPath, CompiledStep, PredicateContext, StepContext, StepOutcome, StepRun,
+    AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
+    StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::queue::QueueStatus;
-use super::select::{select, sequence_for_stage, SelectionDecision};
+use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
@@ -27,6 +28,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::task::Poll;
 
+use std::fmt::{self, Write as _};
 use std::time::Duration;
 
 // A read has at most three transactions (each can emit at most one row
@@ -77,6 +79,156 @@ struct ParkedStep {
     id: Arc<str>,
 }
 
+const RUN_TRACE_EVENT_LIMIT: usize = 32;
+const RUN_TRACE_LINE_LIMIT: usize = 192;
+
+struct TraceEntry {
+    line: String,
+    repeats: u32,
+}
+
+#[derive(Default)]
+struct RunTrace {
+    entries: Vec<TraceEntry>,
+    started: bool,
+    truncated: bool,
+    terminal_logged: bool,
+}
+
+struct TraceLineWriter<'a> {
+    line: &'a mut String,
+    remaining: usize,
+    truncated: bool,
+}
+
+impl fmt::Write for TraceLineWriter<'_> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let mut end = 0;
+        for (index, character) in text.char_indices() {
+            let next = index + character.len_utf8();
+            if next > self.remaining {
+                break;
+            }
+            end = next;
+        }
+        self.line.push_str(&text[..end]);
+        self.remaining -= end;
+        if end == text.len() {
+            Ok(())
+        } else {
+            self.truncated = true;
+            Err(fmt::Error)
+        }
+    }
+}
+
+fn trace_line(args: fmt::Arguments<'_>, limit: usize) -> (String, bool) {
+    let mut line = String::new();
+    let mut writer = TraceLineWriter {
+        line: &mut line,
+        remaining: limit.saturating_sub(3),
+        truncated: false,
+    };
+    let _ = writer.write_fmt(args);
+    let truncated = writer.truncated;
+    if truncated {
+        line.push_str("...");
+    }
+    (line, truncated)
+}
+
+impl RunTrace {
+    fn record(
+        &mut self,
+        output: &mut dyn NativeOutput,
+        level: api::hostlog::Level,
+        args: fmt::Arguments<'_>,
+    ) {
+        let (line, truncated) = trace_line(args, RUN_TRACE_LINE_LIMIT);
+        self.truncated |= truncated;
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.line == line) {
+            entry.repeats = entry.repeats.saturating_add(1);
+            return;
+        }
+        if self.entries.len() >= RUN_TRACE_EVENT_LIMIT {
+            self.truncated = true;
+            return;
+        }
+        output.log(level, &line);
+        self.entries.push(TraceEntry { line, repeats: 0 });
+    }
+
+    fn flush_repeats(&mut self, output: &mut dyn NativeOutput) {
+        for entry in &mut self.entries {
+            if entry.repeats == 0 {
+                continue;
+            }
+            let (line, _) = trace_line(
+                format_args!(
+                    "{} (repeated {} additional times)",
+                    entry.line, entry.repeats
+                ),
+                RUN_TRACE_LINE_LIMIT + 64,
+            );
+            output.log(api::hostlog::Level::Warn, &line);
+            entry.repeats = 0;
+        }
+        if self.truncated {
+            output.log(
+                api::hostlog::Level::Warn,
+                "quester trace truncated after the event limit",
+            );
+            self.truncated = false;
+        }
+    }
+
+    fn terminal(
+        &mut self,
+        output: &mut dyn NativeOutput,
+        level: api::hostlog::Level,
+        args: fmt::Arguments<'_>,
+    ) {
+        let (line, truncated) = trace_line(args, RUN_TRACE_LINE_LIMIT);
+        output.log(level, &line);
+        if truncated {
+            output.log(
+                api::hostlog::Level::Warn,
+                "quester terminal trace event was truncated",
+            );
+        }
+    }
+}
+fn trace_root_event(
+    trace: &mut RunTrace,
+    output: &mut dyn NativeOutput,
+    level: api::hostlog::Level,
+    quest: &str,
+    stage: &str,
+    step: &CompiledStep,
+    event: fmt::Arguments<'_>,
+) {
+    trace.record(
+        output,
+        level,
+        format_args!(
+            "quester {quest}: stage {stage} step {} ({}) {event}",
+            step.id.0.as_ref(),
+            step.kind.as_ref()
+        ),
+    );
+}
+
+fn trace_error_reason(error: &ActionError) -> &str {
+    match error {
+        ActionError::Unavailable(reason)
+        | ActionError::Failed(reason)
+        | ActionError::Blocked(reason) => reason.as_ref(),
+        ActionError::NeedsEvidence(_) => "needs evidence",
+        ActionError::UserInput => super::families::MANUAL_MOVEMENT_MESSAGE,
+        _ => "step error",
+    }
+}
+
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
@@ -96,6 +248,7 @@ pub struct Quester {
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
+    trace: RunTrace,
     parked_step: Option<ParkedStep>,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
@@ -428,6 +581,7 @@ impl Quester {
             park_reason: "no progress",
             last_error: None,
             failed_acquisition_child: None,
+            trace: RunTrace::default(),
             parked_step: None,
             last_error_kind: QuesterFailureKind::Other,
             waiting: None,
@@ -449,6 +603,109 @@ impl Quester {
             required_vs_live: Arc::from([]),
             tested_stats_warning: Arc::from(""),
         }
+    }
+    fn trace_start(&mut self, output: &mut dyn NativeOutput) {
+        if self.trace.started {
+            return;
+        }
+        self.trace.started = true;
+        let stage = self
+            .stage
+            .as_ref()
+            .map_or("unknown", |stage| stage.0.as_ref());
+        self.trace.record(
+            output,
+            api::hostlog::Level::Info,
+            format_args!("quester {}: run start stage={stage}", self.path.id.0),
+        );
+    }
+
+    fn trace_step_event(&mut self, output: &mut dyn NativeOutput, event: StepTraceEvent) {
+        let quest = &self.path.id.0;
+        let stage = self
+            .stage
+            .as_ref()
+            .map_or("unknown", |stage| stage.0.as_ref());
+        match event {
+            StepTraceEvent::Acquisition {
+                recipe,
+                child_step,
+                outcome,
+            } => match outcome {
+                AcquisitionTraceOutcome::Begin => self.trace.record(
+                    output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} child {child_step} begin"
+                    ),
+                ),
+                AcquisitionTraceOutcome::Skipped(predicate) => self.trace.record(
+                    output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} child {child_step} skipped: {predicate} evaluated true"
+                    ),
+                ),
+                AcquisitionTraceOutcome::Settled => self.trace.record(
+                    output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} child {child_step} settled"
+                    ),
+                ),
+                AcquisitionTraceOutcome::Failed(reason) => self.trace.record(
+                    output,
+                    api::hostlog::Level::Warn,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} child {child_step} failed: {reason}"
+                    ),
+                ),
+            },
+            StepTraceEvent::CombatSubOperationEnd { target, end } => self.trace.record(
+                output,
+                api::hostlog::Level::Info,
+                format_args!(
+                    "quester {quest}: stage {stage} combat sub-operation target={target:?} end={end:?}"
+                ),
+            ),
+        }
+    }
+
+    fn trace_parked(&mut self, output: &mut dyn NativeOutput) {
+        if self.trace.terminal_logged {
+            return;
+        }
+        let root_step = self
+            .parked_step
+            .as_ref()
+            .map(|step| Arc::clone(&step.id))
+            .or_else(|| self.current_step().map(|step| Arc::clone(&step.id.0)));
+        let active_child = self.step.as_ref().and_then(|run| {
+            Some((
+                Arc::clone(run.child_recipe_id()?),
+                Arc::clone(&run.child_step_id()?.0),
+            ))
+        });
+        let child = active_child.or_else(|| self.failed_acquisition_child.clone());
+        let root_step = root_step.as_deref().unwrap_or("unknown");
+        let (recipe, child_step) = child.as_ref().map_or(("", ""), |(recipe, child)| {
+            (recipe.as_ref(), child.as_ref())
+        });
+        let reason = self.last_error.as_deref().unwrap_or(self.park_reason);
+        self.trace.flush_repeats(output);
+        self.trace.terminal(
+            output,
+            api::hostlog::Level::Warn,
+            format_args!(
+                "quester {}: park context step={root_step} child_recipe={recipe} child={child_step}",
+                self.path.id.0
+            ),
+        );
+        self.trace.terminal(
+            output,
+            api::hostlog::Level::Warn,
+            format_args!("quester {}: park: {reason}", self.path.id.0),
+        );
     }
 
     fn poll_provision(&mut self, tick: &mut NativeTick<'_>, mode: ProvisionMode) -> bool {
@@ -537,6 +794,12 @@ impl Quester {
         }
         self.retreat_completed = self.provisioner.retreat_performed();
         self.published_bank_receipt = None;
+        self.trace.flush_repeats(tick.output);
+        self.trace.record(
+            tick.output,
+            api::hostlog::Level::Info,
+            format_args!("quester {}: finish", self.path.id.0),
+        );
         self.emit_status(tick.output, NativePhase::Complete);
         ScriptFlow::Complete
     }
@@ -649,6 +912,9 @@ impl Quester {
     }
 
     fn publish(&mut self, output: &mut dyn NativeOutput) {
+        if self.parked {
+            self.trace_parked(output);
+        }
         let outcome = self
             .step
             .as_ref()
@@ -1283,6 +1549,15 @@ impl Quester {
         self.unreadable_reads = 0;
         self.selection_since = None;
         if self.stage.as_ref() != Some(&stage) {
+            let previous = self
+                .stage
+                .as_ref()
+                .map_or("unknown", |previous| previous.0.as_ref());
+            self.trace.record(
+                tick.output,
+                api::hostlog::Level::Info,
+                format_args!("quester {}: stage {previous} → {}", self.path.id.0, stage.0),
+            );
             self.stage = Some(stage);
             self.empty_reads = 0;
         }
@@ -1360,12 +1635,14 @@ impl Script for Quester {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
+            self.trace = RunTrace::default();
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
             self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
         }
+        self.trace_start(tick.output);
         if !tick.cx.eligible {
             self.watchdog = Watchdog::default();
             self.publish(tick.output);
@@ -1552,6 +1829,29 @@ impl Script for Quester {
                     .unwrap_or(Truth::False)
             };
             if truth == Truth::True {
+                let step = if self.in_prelude {
+                    self.path.prelude.get(self.step_index)
+                } else {
+                    self.path
+                        .sequences
+                        .get(self.seq_index)
+                        .and_then(|sequence| sequence.steps.get(self.step_index))
+                };
+                if let Some(step) = step {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    trace_root_event(
+                        &mut self.trace,
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        self.path.id.0.as_ref(),
+                        stage,
+                        step,
+                        format_args!("settled"),
+                    );
+                }
                 self.settling = false;
                 self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
@@ -1565,16 +1865,40 @@ impl Script for Quester {
                 if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
                     self.fail_streak = self.fail_streak.saturating_add(1);
-                    self.record_failure(ActionError::Failed(Arc::from("step settle timeout")));
-                    if self.fail_streak >= 5 {
-                        self.parked = true;
-                    }
-                    let failed_step = self.current_step().map(|step| ParkedStep {
+                    let error = ActionError::Failed(Arc::from("step settle timeout"));
+                    let step = if self.in_prelude {
+                        self.path.prelude.get(self.step_index)
+                    } else {
+                        self.path
+                            .sequences
+                            .get(self.seq_index)
+                            .and_then(|sequence| sequence.steps.get(self.step_index))
+                    };
+                    let failed_step = step.map(|step| ParkedStep {
                         sequence_index: self.seq_index,
                         step_index: self.step_index,
                         in_prelude: self.in_prelude,
                         id: Arc::clone(&step.id.0),
                     });
+                    if let Some(step) = step {
+                        let stage = self
+                            .stage
+                            .as_ref()
+                            .map_or("unknown", |stage| stage.0.as_ref());
+                        trace_root_event(
+                            &mut self.trace,
+                            tick.output,
+                            api::hostlog::Level::Warn,
+                            self.path.id.0.as_ref(),
+                            stage,
+                            step,
+                            format_args!("failed: step settle timeout"),
+                        );
+                    }
+                    self.record_failure(error);
+                    if self.fail_streak >= 5 {
+                        self.parked = true;
+                    }
                     self.on_step_boundary(tick);
                     if self.parked {
                         self.parked_step = failed_step;
@@ -1595,31 +1919,79 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Continue);
             }
             let selected = {
+                let path = &self.path;
+                let seq_index = self.seq_index;
+                let quests = &self.quests;
+                let progress = self
+                    .progress
+                    .as_deref()
+                    .map(std::slice::from_ref)
+                    .unwrap_or(&[]);
+                let outcome = self.last_combat.as_ref().or(self.last_outcome.as_ref());
+                let bank = &self.bank;
+                let stage = self
+                    .stage
+                    .as_ref()
+                    .map_or("unknown", |stage| stage.0.as_ref());
+                let trace = &mut self.trace;
+                let output = &mut *tick.output;
                 let pred = PredicateContext {
                     cx: &tick.cx,
-                    quests: &self.quests,
-                    progress: self.progress_slice(),
+                    quests,
+                    progress,
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
-                    bank: &self.bank,
+                    outcome,
+                    bank,
                 };
-                match select(&self.path, self.seq_index, &pred) {
+                match select_with_skips(path, seq_index, &pred, |step| {
+                    trace.record(
+                        output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: stage {stage} step {} skipped: {} evaluated true",
+                            path.id.0, step.id.0, step.skip_if_summary
+                        ),
+                    );
+                }) {
                     SelectionDecision::Selected(sel) => {
                         Ok(Some((sel.index, sel.step.advances, sel.prelude)))
                     }
                     SelectionDecision::Exhausted => Ok(None),
-                    SelectionDecision::Unknown => Err(()),
+                    SelectionDecision::Unknown(sel) => Err((
+                        sel.index,
+                        sel.prelude,
+                        Arc::clone(&sel.step.id.0),
+                        Arc::clone(&sel.step.skip_if_summary),
+                    )),
                 }
             };
             let selected = match selected {
                 Ok(selected) => selected,
-                Err(()) => {
+                Err((index, prelude, id, predicate)) => {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: stage {stage} step {id} skip predicate waiting: {predicate}",
+                            self.path.id.0
+                        ),
+                    );
                     let since = self.selection_since.get_or_insert(tick.cx.active_now());
                     if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
                         self.parked = true;
                         self.park_reason = "skip predicate evidence unavailable";
                         self.clear_last_error();
+                        self.parked_step = Some(ParkedStep {
+                            sequence_index: self.seq_index,
+                            step_index: index,
+                            in_prelude: prelude,
+                            id,
+                        });
                         self.dirty = true;
                     }
                     self.publish(tick.output);
@@ -1654,6 +2026,8 @@ impl Script for Quester {
             self.advances = advances;
             self.empty_reads = 0;
             self.in_prelude = prelude;
+            self.failed_acquisition_child = None;
+            self.parked_step = None;
             let step = if prelude {
                 &self.path.prelude[index]
             } else {
@@ -1664,16 +2038,32 @@ impl Script for Quester {
             if step.kind.as_ref() == "combat" {
                 self.last_combat = None;
             }
-            let mut step_cx = StepContext {
-                tick,
-                quests: &self.quests,
-                progress: self.progress_slice(),
-                required_after,
-                bank: &self.bank,
-                banks: &self.banks,
-                choices: &self.choices,
+            let stage = self
+                .stage
+                .as_ref()
+                .map_or("unknown", |stage| stage.0.as_ref());
+            trace_root_event(
+                &mut self.trace,
+                tick.output,
+                api::hostlog::Level::Info,
+                self.path.id.0.as_ref(),
+                stage,
+                step,
+                format_args!("begin"),
+            );
+            let result = {
+                let mut step_cx = StepContext {
+                    tick,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after,
+                    bank: &self.bank,
+                    banks: &self.banks,
+                    choices: &self.choices,
+                };
+                step.plan.begin(&mut step_cx)
             };
-            match step.plan.begin(&mut step_cx) {
+            match result {
                 Ok(run) => {
                     self.step = Some(run);
                     self.last_outcome = None;
@@ -1681,6 +2071,15 @@ impl Script for Quester {
                     self.clear_last_error();
                 }
                 Err(error) => {
+                    let reason = trace_error_reason(&error);
+                    self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Warn,
+                        format_args!(
+                            "quester {}: stage {stage} step {} ({}) begin failed: {reason}",
+                            self.path.id.0, step.id.0, step.kind
+                        ),
+                    );
                     self.attempts = self.attempts.saturating_add(1);
                     self.record_failure(error);
                     if self.attempts >= 5 {
@@ -1711,6 +2110,13 @@ impl Script for Quester {
                 .map(|step| step.poll(&mut step_cx))
                 .unwrap_or(Poll::Pending)
         };
+        loop {
+            let event = self.step.as_mut().and_then(|step| step.take_trace_event());
+            let Some(event) = event else {
+                break;
+            };
+            self.trace_step_event(tick.output, event);
+        }
         match poll {
             Poll::Pending => {
                 if let Some(outcome) = self.step.as_ref().and_then(|step| step.in_flight_outcome())
@@ -1793,6 +2199,29 @@ impl Script for Quester {
                         receipt: outcome.receipt.clone(),
                     });
                 }
+                let root_step = if self.in_prelude {
+                    self.path.prelude.get(self.step_index)
+                } else {
+                    self.path
+                        .sequences
+                        .get(self.seq_index)
+                        .and_then(|sequence| sequence.steps.get(self.step_index))
+                };
+                if let Some(step) = root_step {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    trace_root_event(
+                        &mut self.trace,
+                        tick.output,
+                        api::hostlog::Level::Warn,
+                        self.path.id.0.as_ref(),
+                        stage,
+                        step,
+                        format_args!("failed: {}", trace_error_reason(&error)),
+                    );
+                }
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
                 self.record_failure(error);
@@ -1805,6 +2234,29 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
             }
             Poll::Ready(Err(error)) => {
+                let root_step = if self.in_prelude {
+                    self.path.prelude.get(self.step_index)
+                } else {
+                    self.path
+                        .sequences
+                        .get(self.seq_index)
+                        .and_then(|sequence| sequence.steps.get(self.step_index))
+                };
+                if let Some(step) = root_step {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    trace_root_event(
+                        &mut self.trace,
+                        tick.output,
+                        api::hostlog::Level::Warn,
+                        self.path.id.0.as_ref(),
+                        stage,
+                        step,
+                        format_args!("failed: {}", trace_error_reason(&error)),
+                    );
+                }
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
                 self.step = None;
@@ -1900,6 +2352,15 @@ impl Script for Quester {
         self.published_bank_receipt = None;
         self.last_outcome = None;
         self.last_combat = None;
+    }
+    fn on_stop_with_output(&mut self, reason: StopReason, output: &mut dyn NativeOutput) {
+        self.trace.flush_repeats(output);
+        self.trace.terminal(
+            output,
+            api::hostlog::Level::Info,
+            format_args!("quester {}: stop {reason:?}", self.path.id.0),
+        );
+        self.on_stop(reason);
     }
 
     fn recovery_anchor(&self) -> Option<api::WorldTile> {
@@ -2396,6 +2857,11 @@ impl Script for QueuedQuester {
     fn on_stop(&mut self, reason: StopReason) {
         if let Some(active) = self.active.as_mut() {
             active.on_stop(reason);
+        }
+    }
+    fn on_stop_with_output(&mut self, reason: StopReason, output: &mut dyn NativeOutput) {
+        if let Some(active) = self.active.as_mut() {
+            active.on_stop_with_output(reason, output);
         }
     }
 
@@ -3011,6 +3477,466 @@ mod tests {
         fn log(&mut self, _: api::hostlog::Level, _: &str) {}
         fn settings_applied(&mut self, _: u64) {}
     }
+    #[derive(Default)]
+    struct TraceCapture {
+        statuses: Vec<ScriptStatus>,
+        logs: Vec<(api::hostlog::Level, String)>,
+    }
+
+    impl NativeOutput for TraceCapture {
+        fn status(&mut self, status: ScriptStatus) {
+            self.statuses.push(status);
+        }
+        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn log(&mut self, level: api::hostlog::Level, message: &str) {
+            self.logs.push((level, message.to_owned()));
+        }
+        fn settings_applied(&mut self, _: u64) {}
+    }
+
+    #[test]
+    fn run_trace_caps_distinct_events() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        for event in 0..=RUN_TRACE_EVENT_LIMIT {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("event {event}"),
+            );
+        }
+        assert_eq!(output.logs.len(), RUN_TRACE_EVENT_LIMIT);
+        trace.flush_repeats(&mut output);
+        assert!(output
+            .logs
+            .last()
+            .unwrap()
+            .1
+            .contains("truncated after the event limit"));
+    }
+
+    fn test_step(
+        id: &str,
+        kind: &str,
+        args: serde_json::Value,
+        skip_if: super::super::path::PredicateDocument,
+        settle: super::super::path::PredicateDocument,
+    ) -> super::super::path::StepDocument {
+        super::super::path::StepDocument {
+            id: FactKey::new(id),
+            kind: kind.to_owned(),
+            version: 1,
+            args,
+            comment: None,
+            advances: Some(false),
+            skip_if,
+            settle,
+        }
+    }
+
+    fn cook_acquire_document(
+        child: super::super::path::StepDocument,
+    ) -> super::super::path::PathDocument {
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document
+            .quest
+            .as_mut()
+            .unwrap()
+            .acquire
+            .insert("test:trace-child".to_owned(), vec![child]);
+        document.roles[0].sequences[0].steps = vec![test_step(
+            "root-acquire-step",
+            "acquire",
+            serde_json::json!({"recipe":"test:trace-child"}),
+            PredicateDocument::Any(vec![]),
+            PredicateDocument::All(vec![]),
+        )];
+        document
+    }
+
+    fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> &'a str {
+        status
+            .fields
+            .iter()
+            .find(|field| field.key == key)
+            .and_then(|field| match &field.value {
+                StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("status field {key} is missing or not text"))
+    }
+
+    fn park_status(document: super::super::path::PathDocument, max_tick: u64) -> ScriptStatus {
+        use super::super::families::tests::with_tick_output;
+
+        let (mut script, snapshot) = status_fixture(document);
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        for tick in 1..=max_tick {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+        assert!(script.parked, "the failing run must park");
+        output
+            .0
+            .last()
+            .cloned()
+            .expect("parked status was published")
+    }
+
+    fn assert_acquisition_child_failure(
+        status: &ScriptStatus,
+        recipe: &str,
+        child: &str,
+        reason: &str,
+    ) {
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(status_text(status, "step_id"), "root-acquire-step");
+        assert_eq!(status_text(status, "child_recipe_id"), recipe);
+        assert_eq!(status_text(status, "child_step_id"), child);
+        assert_eq!(status_text(status, "last_failure"), reason);
+        assert_eq!(status.failure.as_ref().unwrap().message.as_ref(), reason);
+    }
+
+    #[test]
+    fn acquisition_settle_timeout_keeps_child_in_parked_status() {
+        use super::super::path::PredicateDocument;
+
+        let child = test_step(
+            "child-settle-timeout",
+            "wait",
+            serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+            PredicateDocument::Any(vec![]),
+            PredicateDocument::Any(vec![]),
+        );
+        let status = park_status(cook_acquire_document(child), 120);
+        assert_acquisition_child_failure(
+            &status,
+            "test:trace-child",
+            "child-settle-timeout",
+            "acquire settle timeout",
+        );
+    }
+
+    #[test]
+    fn acquisition_skip_evidence_timeout_keeps_child_in_parked_status() {
+        use super::super::path::PredicateDocument;
+
+        let child = test_step(
+            "child-skip-timeout",
+            "wait",
+            serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+            PredicateDocument::Fact {
+                kind: "has_item".to_owned(),
+                version: 1,
+                args: serde_json::json!({"obj":"egg"}),
+            },
+            PredicateDocument::All(vec![]),
+        );
+        let status = park_status(cook_acquire_document(child), 240);
+        assert_acquisition_child_failure(
+            &status,
+            "test:trace-child",
+            "child-skip-timeout",
+            "acquire skip predicate evidence unavailable",
+        );
+    }
+
+    #[test]
+    fn root_skip_evidence_timeout_names_the_unknown_step() {
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.roles[0].sequences[0].steps = vec![
+            test_step(
+                "skipped-before-unknown",
+                "wait",
+                serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                PredicateDocument::Fact {
+                    kind: "quest_colour".to_owned(),
+                    version: 1,
+                    args: serde_json::json!({"quest":"cook","is":"not_started"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+            test_step(
+                "root-skip-timeout",
+                "wait",
+                serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                PredicateDocument::Fact {
+                    kind: "has_item".to_owned(),
+                    version: 1,
+                    args: serde_json::json!({"obj":"egg"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+        ];
+        let status = park_status(document, 240);
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(status_text(&status, "step_id"), "root-skip-timeout");
+        assert_eq!(status_text(&status, "child_recipe_id"), "");
+        assert_eq!(status_text(&status, "child_step_id"), "");
+    }
+
+    #[test]
+    fn acquisition_child_begin_failure_keeps_child_in_parked_status() {
+        use super::super::path::{PathDocument, PredicateDocument};
+
+        let mut document: PathDocument =
+            serde_json::from_str(super::super::compile::SHEEP_JSON).unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:trace-child".to_owned(),
+            vec![test_step(
+                "child-begin-failure",
+                "make",
+                serde_json::json!({
+                    "loc":{"name":"spinningwheel","op":"Spin"},
+                    "anchor":{"tile":[2982,3315,0],"source":"test"},
+                    "product":"ball_of_wool",
+                    "qty":{"progress":{"quest":"sheep","flag":"sheep:balls_to_go"}}
+                }),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            )],
+        );
+        document.roles[0].sequences[0].steps = vec![test_step(
+            "root-acquire-step",
+            "acquire",
+            serde_json::json!({"recipe":"test:trace-child"}),
+            PredicateDocument::Any(vec![]),
+            PredicateDocument::All(vec![]),
+        )];
+
+        let status = park_status(document, 40);
+        assert_acquisition_child_failure(
+            &status,
+            "test:trace-child",
+            "child-begin-failure",
+            "production quantity evidence unavailable",
+        );
+    }
+
+    #[test]
+    fn later_begin_failure_does_not_publish_stale_acquisition_child() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::{PathDocument, PredicateDocument};
+
+        let mut document: PathDocument =
+            serde_json::from_str(super::super::compile::SHEEP_JSON).unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:trace-child".to_owned(),
+            vec![test_step(
+                "child-first-failure",
+                "wait",
+                serde_json::json!({"until":{"Any":[]},"max_ticks":1}),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            )],
+        );
+        document.roles[0].sequences[0].steps = vec![
+            test_step(
+                "root-acquire-step",
+                "acquire",
+                serde_json::json!({"recipe":"test:trace-child"}),
+                PredicateDocument::Fact {
+                    kind: "has_item".to_owned(),
+                    version: 1,
+                    args: serde_json::json!({"obj":"egg"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+            test_step(
+                "later-begin-failure",
+                "make",
+                serde_json::json!({
+                    "loc":{"name":"spinningwheel","op":"Spin"},
+                    "anchor":{"tile":[2982,3315,0],"source":"test"},
+                    "product":"ball_of_wool",
+                    "qty":{"progress":{"quest":"sheep","flag":"sheep:balls_to_go"}}
+                }),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            ),
+        ];
+
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        for tick in 1..=80 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.fail_streak > 0 {
+                let egg = script.selected.item_by_alias("egg").unwrap();
+                snapshot.seed_inventory(
+                    vec![api::snapshot::ItemView {
+                        def: api::obj_names::ItemDefView {
+                            id: egg.id,
+                            name: Some("Egg".into()),
+                            stackable: false,
+                            members: false,
+                            base_value: 0,
+                            noted: false,
+                            certificate_link: -1,
+                            certificate_template: -1,
+                        },
+                        container: api::snapshot::ItemContainer::Inventory,
+                        action_family: api::snapshot::ItemActionFamily::Held,
+                        slot: 0,
+                        count: 1,
+                        actions: Vec::new(),
+                        component_id: 0,
+                    }],
+                    28,
+                );
+                break;
+            }
+        }
+        assert_eq!(script.fail_streak, 1, "the acquire child failure occurred");
+
+        for tick in 81..=120 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+        assert!(script.parked, "the later begin failures must park");
+        let status = output.0.last().expect("parked status was published");
+        assert_eq!(status_text(status, "step_id"), "later-begin-failure");
+        assert_eq!(status_text(status, "child_recipe_id"), "");
+        assert_eq!(status_text(status, "child_step_id"), "");
+    }
+
+    #[test]
+    fn runner_trace_records_skip_settle_failure_park_and_collapsed_retries() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.roles[0].sequences[0].steps = vec![
+            test_step(
+                "skip-not-started",
+                "wait",
+                serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                PredicateDocument::Fact {
+                    kind: "quest_colour".to_owned(),
+                    version: 1,
+                    args: serde_json::json!({"quest":"cook","is":"not_started"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+            test_step(
+                "settled-step",
+                "wait",
+                serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":10}),
+                PredicateDocument::Fact {
+                    kind: "has_item".to_owned(),
+                    version: 1,
+                    args: serde_json::json!({"obj":"egg"}),
+                },
+                PredicateDocument::All(vec![]),
+            ),
+            test_step(
+                "retry-step",
+                "wait",
+                serde_json::json!({"until":{"Any":[]},"max_ticks":1}),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::Any(vec![]),
+            ),
+        ];
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 27);
+        script.stage = None;
+        script.needs_read = true;
+        let egg_id = script.selected.item_by_alias("egg").unwrap().id;
+        let mut seeded_egg = false;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=40 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if !seeded_egg && script.step.is_some() {
+                snapshot.seed_inventory(
+                    vec![api::snapshot::ItemView {
+                        def: api::obj_names::ItemDefView {
+                            id: egg_id,
+                            name: Some("Egg".into()),
+                            stackable: false,
+                            members: false,
+                            base_value: 0,
+                            noted: false,
+                            certificate_link: -1,
+                            certificate_template: -1,
+                        },
+                        container: api::snapshot::ItemContainer::Inventory,
+                        action_family: api::snapshot::ItemActionFamily::Held,
+                        slot: 0,
+                        count: 1,
+                        actions: Vec::new(),
+                        component_id: 0,
+                    }],
+                    28,
+                );
+                seeded_egg = true;
+            }
+            if script.parked {
+                break;
+            }
+        }
+        assert!(script.parked, "the repeated wait failures must park");
+
+        let messages: Vec<&str> = output
+            .logs
+            .iter()
+            .map(|(_, message)| message.as_str())
+            .collect();
+        assert_eq!(messages[0], "quester cook: run start stage=unknown");
+        assert_eq!(messages[1], "quester cook: stage unknown → cook:0");
+        assert!(messages.iter().any(|line| {
+            line.contains("step skip-not-started skipped:")
+                && line.contains("quest_colour")
+                && line.contains("evaluated true")
+        }));
+        assert!(
+            messages
+                .iter()
+                .any(|line| line == &"quester cook: stage cook:0 step settled-step (wait) settled"),
+            "trace logs: {messages:#?}"
+        );
+        assert!(messages.iter().any(|line| {
+            line == &"quester cook: stage cook:0 step retry-step (wait) failed: wait exhausted"
+        }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|line| line.contains("step retry-step (wait) begin"))
+                .count(),
+            2,
+            "one original and one retry-count summary should represent all begins"
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|line| line.contains("step retry-step (wait) failed: wait exhausted"))
+                .count(),
+            2,
+            "one original and one retry-count summary should represent all failures"
+        );
+        assert!(messages.last().unwrap().contains("park: wait exhausted"));
+        assert!(output.logs.iter().any(|(level, message)| {
+            *level == api::hostlog::Level::Warn && message.contains("repeated 4 additional times")
+        }));
+    }
 
     #[test]
     fn acquisition_child_failure_is_visible_in_parked_status() {
@@ -3043,7 +3969,7 @@ mod tests {
         }];
         let (mut script, snapshot) = status_fixture(document);
         let mut ledger = None;
-        let mut output = StatusCapture::default();
+        let mut output = TraceCapture::default();
         for tick in 1..=40 {
             with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
                 script.tick(native).unwrap();
@@ -3057,7 +3983,7 @@ mod tests {
             script.parked,
             "the repeated child failures must park the run"
         );
-        let status = output.0.last().expect("parked status was published");
+        let status = output.statuses.last().expect("parked status was published");
         assert_eq!(status.phase, NativePhase::Blocked);
         assert!(status.fields.iter().any(|field| {
             field.key == "step_id"
@@ -3079,6 +4005,19 @@ mod tests {
             status.failure.as_ref().unwrap().message.as_ref(),
             "wait exhausted"
         );
+        assert!(output.logs.iter().any(|(_, line)| {
+            line.contains("recipe test:child-failure child child-failing-step begin")
+        }));
+        assert!(output.logs.iter().any(|(_, line)| {
+            line.contains(
+                "recipe test:child-failure child child-failing-step failed: wait exhausted",
+            )
+        }));
+        assert!(output.logs.iter().any(|(_, line)| {
+            line.contains(
+                "park context step=root-acquire-step child_recipe=test:child-failure child=child-failing-step",
+            )
+        }));
     }
 
     #[test]
