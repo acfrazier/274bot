@@ -165,10 +165,17 @@ effective gangs. A separate panel or TUI process is not the same Play. The owned
 Arrav journal determines existing membership; an unjoined account must explicitly
 choose its irreversible gang. Conflicting or ambiguous membership blocks before
 either account joins. A completed quest does not enlist a partner.
+Starts need not be simultaneous. An account waits up to ten minutes of active
+admission time for its saved partner to Start and become ready; expiry parks the
+Path with `partner admission timed out; Stop and Start both accounts`. A peer
+already bound to another Path or protocol is refused before either account is
+reserved.
 
-Gang proofs belong to the current ready run, selected content and world. Losing
-readiness or changing world clears the cached proof; the same run rereads its own
-Arrav journal before continuing without inventing another peer admission.
+Gang proofs belong to the current run, selected content and world. Outside a
+reserved phase, losing readiness clears the cached proof; the same run rereads
+its own Arrav journal before continuing. A transient reserved-phase hold retains
+the role's owned proof without opening a competing journal transaction. Changing
+world or losing the session clears the proof and revokes the phase.
 Saved profile names remain exact vault identities. In-game counterpart matching
 uses the client's account ID, which treats case, spaces and underscores consistently.
 Two saved names for the same in-game account cannot form a pair.
@@ -178,6 +185,10 @@ own role action. Trades check the configured counterpart and exact unnoted offer
 on both offer and confirmation screens; acceptance clicks do not prove success.
 Both inventories must prove the transfer. Stop, Pause, removal, session loss or a
 failed role revokes both phase-owned action authorities before queued work drains.
+Transient guardian, readiness, welcome and same-session boundary holds retain a
+reserved phase. Either account's hold fences both accounts' phase actions and
+pauses both phase deadlines until both accounts are ready again. Death, an actual
+session loss, or the explicit revokers above still cancel the phase.
 The peer blocks rather than being stopped or automatically restarted; explicitly
 Start both accounts again after inspecting server-side items and quest progress.
 Transfer recovery checks bounded native backpack receipts from the matching active
@@ -186,10 +197,16 @@ counterpart already holds that half or the resulting certificates. Missing,
 stale or mismatched peer evidence remains unknown; it is never treated as an
 empty backpack or replaced with a saved session counter.
 
-A paired waiter suspends only its own gameplay-wedge clock. The actor's gameplay
-watchdog and both scheduler watchdogs remain live. New observed gameplay can
-extend a phase's ten-minute inactivity bound, never its sixty-minute total bound.
-Polls and duplicate receipts cannot extend either deadline.
+A paired waiter, including admission before a lease exists, suspends only its
+own gameplay-wedge clock. The actor's gameplay watchdog and both scheduler
+watchdogs remain live. New observed gameplay from a
+joined role, or a peer bound to the same compiled pair, can extend a phase's
+ten-minute inactivity bound, never its sixty-minute active total bound.
+Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
+Retryable trade-start conditions keep the planned transfer and wait for the next
+eligible frame. A failed, still-owned trade enters bounded decline/close cleanup
+and retains the original failure until screen closure is observed and debounced
+or the cleanup deadline expires. Revoked owners cannot send cleanup input.
 
 Miniquest Paths use an owned typed progress reader instead of inventing a quest-tab
 row. The reader runs initially and after advancing steps, and only matching fresh

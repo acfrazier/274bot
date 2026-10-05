@@ -35,6 +35,8 @@ use std::time::Duration;
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
 const QUEUE_QUEST_STATUS_WAIT: Duration = Duration::from_secs(30);
+// Pair admission uses the broker's ten-minute inactivity budget in active time.
+const PAIR_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
@@ -84,6 +86,7 @@ pub struct Quester {
     custom_reader: Option<Box<dyn StepRun>>,
     custom_read_after: Option<api::quest_progress::EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
+    pair_admission_since: Option<Duration>,
     pair_admitted: bool,
     gang_reader: super::gang::GangRead,
     bank: BankMemo,
@@ -400,6 +403,7 @@ impl Quester {
             custom_reader: None,
             custom_read_after: None,
             pair_admission: None,
+            pair_admission_since: None,
             pair_admitted: false,
             gang_reader: super::gang::GangRead::default(),
             bank: BankMemo::default(),
@@ -1146,7 +1150,9 @@ impl Quester {
                 }
                 Poll::Ready(Ok(read)) => {
                     self.journal = None;
-                    if self.path.id.0.as_ref() == "blackarmgang" {
+                    if super::pair::PairQuest::from_path(self.path.id.0.as_ref())
+                        == Some(super::pair::PairQuest::Arrav)
+                    {
                         if let Some(port) = tick.pairs {
                             if let Err(error) = port.observe_gang(&read) {
                                 self.record_failure(error.action());
@@ -1401,10 +1407,54 @@ impl Quester {
         }
     }
 
+    fn pair_step_active(&self) -> bool {
+        self.step.is_some()
+            && self
+                .current_step()
+                .is_some_and(|step| step.kind.as_ref() == "partner")
+    }
+
+    fn pair_work_pending(&self) -> bool {
+        self.pair_admission_since.is_some()
+            || self.pair_admission.is_some()
+            || self.pair_step_active()
+    }
+
+    fn wait_for_pair_admission(&mut self, now: Duration) -> bool {
+        let _ = self.pair_admission_since.get_or_insert(now);
+        self.waiting = Some(("Partner admission", Arc::clone(&self.path.id.0)));
+        self.dirty = true;
+        false
+    }
+
+    fn fail_pair_admission(&mut self, error: ActionError) -> bool {
+        self.pair_admission = None;
+        self.pair_admission_since = None;
+        self.waiting = None;
+        self.record_failure(error);
+        self.parked = true;
+        false
+    }
+
     fn admit_pair(&mut self, tick: &mut NativeTick<'_>) -> bool {
         if self.path.partner.is_none() {
             return true;
         }
+        if self.pair_admitted {
+            self.pair_admission_since = None;
+            return true;
+        }
+
+        let now = tick.cx.active_now();
+        if self
+            .pair_admission_since
+            .is_some_and(|since| now.saturating_sub(since) >= PAIR_ADMISSION_TIMEOUT)
+        {
+            return self.fail_pair_admission(ActionError::Blocked(Arc::from(
+                "partner admission timed out; Stop and Start both accounts",
+            )));
+        }
+
         let result = tick
             .pairs
             .ok_or_else(|| {
@@ -1416,11 +1466,14 @@ impl Quester {
                 port.settings(tick.cx.run())
                     .map_err(super::pair::PairError::action)
             });
-        if let Err(error) = result {
-            self.record_failure(error);
-            self.parked = true;
-            return false;
+        match result {
+            Ok(_) => {}
+            Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                return self.wait_for_pair_admission(now);
+            }
+            Err(error) => return self.fail_pair_admission(error),
         }
+
         if tick
             .pairs
             .is_some_and(|port| port.gang(tick.cx.run()).is_err())
@@ -1428,17 +1481,11 @@ impl Quester {
             match self.gang_reader.poll(tick, &self.quests) {
                 Poll::Pending => return false,
                 Poll::Ready(Ok(_)) => {}
-                Poll::Ready(Err(error)) => {
-                    self.record_failure(error);
-                    self.parked = true;
-                    return false;
-                }
+                Poll::Ready(Err(error)) => return self.fail_pair_admission(error),
             }
         }
-        if self.pair_admitted {
-            return true;
-        }
         if self.pair_admission.is_none() {
+            let _ = self.pair_admission_since.get_or_insert(now);
             let result = super::families::partner::admission(&self.path).and_then(|plan| {
                 let after = tick.cx.evidence();
                 let mut cx = StepContext {
@@ -1455,15 +1502,12 @@ impl Quester {
             match result {
                 Ok(run) => self.pair_admission = Some(run),
                 Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
-                    return false
+                    return self.wait_for_pair_admission(now);
                 }
-                Err(error) => {
-                    self.record_failure(error);
-                    self.parked = true;
-                    return false;
-                }
+                Err(error) => return self.fail_pair_admission(error),
             }
         }
+
         let mut run = self.pair_admission.take().unwrap();
         let result = {
             let after = tick.cx.evidence();
@@ -1481,21 +1525,16 @@ impl Quester {
         match result {
             Poll::Pending => {
                 self.pair_admission = Some(run);
-                self.waiting = Some(("Partner admission", Arc::clone(&self.path.id.0)));
-                self.dirty = true;
-                false
+                self.wait_for_pair_admission(now)
             }
             Poll::Ready(Ok(_)) => {
                 self.pair_admitted = true;
+                self.pair_admission_since = None;
                 self.waiting = None;
                 self.dirty = true;
                 true
             }
-            Poll::Ready(Err(error)) => {
-                self.record_failure(error);
-                self.parked = true;
-                false
-            }
+            Poll::Ready(Err(error)) => self.fail_pair_admission(error),
         }
     }
 
@@ -1566,6 +1605,9 @@ impl Script for Quester {
             self.run = tick.cx.run();
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+            self.waiting = None;
             self.pair_admitted = false;
             self.last_combat = None;
             self.needs_read = true;
@@ -2031,9 +2073,20 @@ impl Script for Quester {
     fn interrupt(&mut self, event: Interrupt) {
         self.custom_reader = None;
         self.custom_read_after = None;
-        self.pair_admission = None;
-        if matches!(event, Interrupt::Pause | Interrupt::SessionEnded) {
+        let cancel_pair_work = matches!(event, Interrupt::Pause | Interrupt::SessionEnded);
+        let pair_work_pending = self.pair_work_pending();
+        if !matches!(event, Interrupt::Hold(_)) {
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+        }
+        if cancel_pair_work {
             self.pair_admitted = false;
+            if self.pair_step_active() {
+                self.step = None;
+            }
+            if pair_work_pending {
+                self.waiting = None;
+            }
         }
         self.gang_reader.cancel();
         self.watchdog = Watchdog::default();
@@ -2080,32 +2133,36 @@ impl Script for Quester {
         }
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        let preserve_pair_work = self.pair_work_pending();
         self.watchdog = Watchdog::default();
         self.custom_reader = None;
         self.custom_read_after = None;
-        self.pair_admission = None;
         self.gang_reader.cancel();
-        // Dropping these guards revokes their native owners before the host can dispatch them.
-        self.capture_prayer_cleanup();
-        self.step = None;
-        self.provisioner.cancel();
-        self.clear_prayers = None;
-        self.journal = None;
-        self.needs_read = true;
-        self.published_bank_receipt = None;
-        self.last_outcome = None;
-        self.last_combat = None;
-        self.advances = false;
-        self.attempts = 0;
-        self.progress = None;
-        self.settling = false;
-        self.settle_deadline = Duration::ZERO;
-        self.unreadable_since = None;
-        self.journal_attempts = 0;
-        self.journal_retry_pending = false;
-        self.journal_quiet_since = None;
-        self.selection_since = None;
-        self.waiting = None;
+        if !preserve_pair_work {
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+            // Dropping these guards revokes their native owners before the host can dispatch them.
+            self.capture_prayer_cleanup();
+            self.step = None;
+            self.provisioner.cancel();
+            self.clear_prayers = None;
+            self.journal = None;
+            self.needs_read = true;
+            self.published_bank_receipt = None;
+            self.last_outcome = None;
+            self.last_combat = None;
+            self.advances = false;
+            self.attempts = 0;
+            self.progress = None;
+            self.settling = false;
+            self.settle_deadline = Duration::ZERO;
+            self.unreadable_since = None;
+            self.journal_attempts = 0;
+            self.journal_retry_pending = false;
+            self.journal_quiet_since = None;
+            self.selection_since = None;
+            self.waiting = None;
+        }
         self.dirty = true;
         RandomClaim::Host
     }
@@ -2114,6 +2171,7 @@ impl Script for Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
+        self.pair_admission_since = None;
         self.pair_admitted = false;
         self.gang_reader.cancel();
         self.step = None;
@@ -2663,7 +2721,7 @@ impl Script for QueuedQuester {
             return Ok(ScriptFlow::Continue);
         }
         if let Some(index) = self.queue.next_candidate() {
-            let paired = super::card::is_pair_path(self.queue.id(index).unwrap());
+            let paired = super::pair::PairQuest::from_path(self.queue.id(index).unwrap()).is_some();
             let gang = if paired {
                 match self.prepare_pair_role(index, tick) {
                     Poll::Pending => {
@@ -3761,6 +3819,170 @@ mod tests {
             }
         }
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+    #[test]
+    fn missing_partner_admission_expires_with_clear_stop_start_reason() {
+        use crate::quester::pair::{
+            AccountKey, Gang, PairError, PairFrame, PairRegistration, PairRequest, PairSettings,
+            PairStep, PairToken, PartnerDeclaration, PartnerRole, QuestPairPort, RoleReceipt,
+        };
+        use std::task::Poll;
+        use std::time::Instant;
+
+        struct MissingPeer;
+        static PORT: MissingPeer = MissingPeer;
+        impl QuestPairPort for MissingPeer {
+            fn shared(&self) -> Arc<dyn QuestPairPort> {
+                Arc::new(Self)
+            }
+            fn observe(&self, _: PairRegistration, _: PairFrame<'_>) {}
+            fn invalidate(&self, _: RunKey) {}
+            fn busy(&self) -> bool {
+                false
+            }
+            fn world_changed(&self, _: &str, _: u16) {}
+            fn settings(&self, _: RunKey) -> Result<PairSettings, PairError> {
+                Ok(PairSettings {
+                    partner: Some(AccountKey(Arc::from("bob"))),
+                    gang: Some(Gang::Phoenix),
+                })
+            }
+            fn observe_gang(
+                &self,
+                _: &api::quest_progress::JournalRead,
+            ) -> Result<Knowledge<Option<Gang>>, PairError> {
+                Ok(Knowledge::Known(None))
+            }
+            fn gang(
+                &self,
+                caller: RunKey,
+            ) -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError> {
+                Ok((
+                    Knowledge::Known(None),
+                    EvidenceStamp {
+                        run: caller,
+                        tick: 1,
+                        sequence: 1,
+                    },
+                ))
+            }
+            fn partner_item_count(
+                &self,
+                _: EvidenceStamp,
+                _: &crate::quester::pair::PairItemRequest,
+            ) -> Result<i32, PairError> {
+                Ok(0)
+            }
+            fn waiting(&self, _: RunKey) -> bool {
+                false
+            }
+            fn token(&self, _: RunKey, _: &FactKey) -> Result<PairToken, PairError> {
+                Err(PairError::NotReady)
+            }
+            fn register_action(
+                &self,
+                _: &PairToken,
+                _: RunKey,
+                _: crate::native::ActionRevoker,
+            ) -> Result<(), PairError> {
+                Ok(())
+            }
+            fn begin(&self, _: PairRequest) -> Result<PairToken, PairError> {
+                Err(PairError::PartnerNotInPlay)
+            }
+            fn poll(&self, _: &PairToken, _: RunKey) -> Poll<Result<PairStep, PairError>> {
+                Poll::Ready(Err(PairError::PartnerNotInPlay))
+            }
+            fn report(&self, _: &PairToken, _: RoleReceipt) -> Result<(), PairError> {
+                Ok(())
+            }
+            fn trade_ready(
+                &self,
+                _: &PairToken,
+                _: RunKey,
+                _: bool,
+                _: EvidenceStamp,
+            ) -> Result<bool, PairError> {
+                Ok(false)
+            }
+            fn gameplay_progress(&self, _: RunKey, _: EvidenceStamp, _: Instant) {}
+            fn cancel(&self, _: &PairToken) {}
+        }
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.partner = Some(PartnerDeclaration {
+            protocol: FactKey::new("arrav"),
+            roles: [
+                PartnerRole {
+                    id: FactKey::new("phoenix"),
+                    gang: Gang::Phoenix,
+                },
+                PartnerRole {
+                    id: FactKey::new("blackarm"),
+                    gang: Gang::BlackArm,
+                },
+            ],
+        });
+        let mut phoenix = document.roles[0].clone();
+        phoenix.role = Some(FactKey::new("phoenix"));
+        let mut blackarm = document.roles[0].clone();
+        blackarm.role = Some(FactKey::new("blackarm"));
+        document.roles = vec![phoenix, blackarm];
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let path = super::super::compile::compile_path_for_gang(
+            &bytes,
+            &selected,
+            &quests,
+            Some(Gang::Phoenix),
+        )
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&selected),
+            Arc::clone(&quests),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let facts = quests.quest("cook").unwrap();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                name: facts.display.to_string(),
+                component_id: 1,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+
+        assert_eq!(
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.pairs = Some(&PORT);
+                script.tick(tick).unwrap()
+            }),
+            ScriptFlow::Continue
+        );
+
+        let _ = super::super::families::tests::with_tick(&snapshot, &mut ledger, 1002, |tick| {
+            tick.pairs = Some(&PORT);
+            script.tick(tick).unwrap()
+        });
+        assert!(
+            script.parked,
+            "the 10-minute active-time bound must park the Quester"
+        );
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "partner admission timed out; Stop and Start both accounts"
+        );
     }
 }
 

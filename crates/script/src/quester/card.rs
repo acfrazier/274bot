@@ -58,15 +58,10 @@ fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
     .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
 }
 
-/// These are the two explicitly paired release Paths, never implicit helpers.
-pub(crate) fn is_pair_path(id: &str) -> bool {
-    matches!(id, "blackarmgang" | "hero")
-}
-
 pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
     let settings = decode_settings(bag)?;
     Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
-        is_pair_path(&entry.id)
+        super::pair::PairQuest::from_path(&entry.id).is_some()
             && !settings.skip.contains(&entry.id)
             && (settings.quests.is_empty() || settings.quests.contains(&entry.id))
     }))

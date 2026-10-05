@@ -330,12 +330,16 @@ impl CompiledRun {
         pairs: Option<&dyn crate::quester::pair::QuestPairPort>,
     ) -> Result<ScriptFlow, ScriptFailure> {
         if let Some(port) = pairs {
+            let dead = crate::native::death::hitpoints_zero(
+                ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
+            );
+            if dead {
+                port.invalidate(self.run);
+            }
             let ready = ctx
                 .snapshot
                 .is_some_and(api::snapshot::GameSnapshot::ingame)
-                && !crate::native::death::hitpoints_zero(
-                    ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
-                )
+                && !dead
                 && !ctx.compiled.hold;
             let evidence = EvidenceStamp {
                 run: self.run,
@@ -867,10 +871,7 @@ impl SlotScript {
         let Some(run) = self.compiled.as_mut() else {
             return;
         };
-        if matches!(
-            event,
-            Interrupt::Pause | Interrupt::SessionEnded | Interrupt::Hold(true)
-        ) {
+        if matches!(event, Interrupt::Pause | Interrupt::SessionEnded) {
             if let Some(pairs) = &self.quest_pairs {
                 pairs.invalidate(run.run);
             }

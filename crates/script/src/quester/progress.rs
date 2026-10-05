@@ -453,7 +453,9 @@ pub fn resolve_journal(
         quest: path.id.clone(),
         stage,
         complete,
-        signals: if path.id.0.as_ref() == "blackarmgang" {
+        signals: if super::pair::PairQuest::from_path(path.id.0.as_ref())
+            == Some(super::pair::PairQuest::Arrav)
+        {
             super::gang::resolve_normalized(&path.id, &journal.text).signals
         } else {
             Arc::from([])
