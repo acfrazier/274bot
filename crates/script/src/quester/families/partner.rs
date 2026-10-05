@@ -701,7 +701,7 @@ impl NativeMachine for TradeMachine {
                         .iter()
                         .find(|row| row.def.id == item.id && !row.def.noted && row.count > 0)
                         .ok_or_else(|| failure("partner trade side quest item is missing"))?;
-                    if row.component_id != crate::trade::OFFER_INV || row.slot < 0 {
+                    if row.component_id != crate::trade_screen::OFFER_INV || row.slot < 0 {
                         return Poll::Ready(Err(ActionError::Stale));
                     }
                     self.emit(
