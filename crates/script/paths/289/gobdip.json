@@ -368,7 +368,10 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:mail" },
-              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
             },
             {
@@ -463,7 +466,10 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:mail" },
-              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 2 } } },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 2 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } }
+              ] },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 2 } } }
             },
             {
