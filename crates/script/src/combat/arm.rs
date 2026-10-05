@@ -198,6 +198,7 @@ mod tests {
     fn controls() -> AutocastControls {
         AutocastControls {
             staff_tab_root: 328,
+            spell_text_component: 352,
             spell_panel_root: 1829,
             choose_com: 353,
             toggle_com: 349,

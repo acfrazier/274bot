@@ -1,4 +1,5 @@
 use super::*;
+use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
 
 fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
     let mut scene = Scene::new("khazard_warlord");
@@ -130,6 +131,245 @@ fn arm(harness: &mut Harness, scene: &mut Scene, start: u64, name: &str) {
     press(harness.pending(scene, start + 2), toggle);
     refresh_magic(scene, 3, false);
     attack(harness.pending(scene, start + 3));
+}
+
+fn seed_autocast_widget_text(
+    scene: &mut Scene,
+    text: Option<&str>,
+    component_id: i32,
+    root_component_id: i32,
+    active: bool,
+    visible: bool,
+    hidden: bool,
+) {
+    let widgets = text
+        .map(|text| {
+            vec![WidgetView {
+                kind: WidgetKind::Widget,
+                component_id,
+                layer_id: 0,
+                parent_id: root_component_id,
+                root_component_id,
+                root: WidgetRoot::Side,
+                type_: 4,
+                button_type: 0,
+                client_code: 0,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                scroll_height: 0,
+                scroll_position: 0,
+                hidden,
+                text: Some(text.into()),
+                alternate_text: None,
+                button_text: None,
+                target_verb: None,
+                target_base: None,
+                target_mask: 0,
+                model_type: 0,
+                model_id: 0,
+                alternate_model_type: 0,
+                alternate_model_id: 0,
+                scripts: None,
+                script_comparators: None,
+                script_operands: None,
+                varp_bindings: Vec::new(),
+                colour: 0,
+                actions: Vec::new(),
+                items: Vec::new(),
+            }]
+        })
+        .unwrap_or_default();
+    scene.snapshot.seed_side_tabs(
+        vec![SideTabView {
+            index: 0,
+            root_component_id,
+            available: true,
+            active,
+            visible,
+            widgets,
+        }],
+        if active { 0 } else { 1 },
+    );
+}
+
+fn is_arm_control(effect: Option<HostEffect>, choose: i32, toggle: i32, spell: i32) -> bool {
+    match effect {
+        Some(HostEffect::Interaction(InteractReq::SideTab { tab: 0 })) => true,
+        Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+            [choose, toggle, spell].contains(&component_id)
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn fresh_autocast_combat_adopts_visible_matching_armed_spell() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 35);
+    let controls = *scene.data.autocast_controls().unwrap();
+    let spell_component = scene.data.spell_button_com("Fire Bolt");
+    seed_autocast_widget_text(
+        &mut scene,
+        Some("Fire Bolt"),
+        controls.spell_text_component,
+        controls.staff_tab_root,
+        true,
+        true,
+        false,
+    );
+    let mut harness = Harness::new(&scene, request(&scene, None, false));
+
+    let effect = harness.pending(&scene, 1);
+    assert!(
+        !is_arm_control(
+            effect,
+            controls.choose_com,
+            controls.toggle_com,
+            spell_component
+        ),
+        "matching armed autocast state was rearmed"
+    );
+    let selected = harness.machine.magic().selected.unwrap();
+    assert_eq!(scene.data.spells()[usize::from(selected)].name, "Fire Bolt");
+    assert!(harness.machine.magic().armed);
+    assert!(harness.machine.magic().arm.is_none());
+    assert!(harness.machine.magic().initial_arm_checked);
+}
+
+#[test]
+fn wrong_missing_hidden_stale_or_unarmed_autocast_state_starts_serial_arm() {
+    let cases = [
+        ("wrong spell", Some("Wind Strike"), 3, true, true, false),
+        ("missing spell text", None, 3, true, true, false),
+        ("hidden spell text", Some("Fire Bolt"), 3, true, true, true),
+        (
+            "invisible stale text",
+            Some("Fire Bolt"),
+            3,
+            true,
+            false,
+            false,
+        ),
+        ("unarmed varp", Some("Fire Bolt"), 2, true, true, false),
+    ];
+    for (case, text, varp, active, visible, hidden) in cases {
+        let mut scene = magic_scene(Some("staff_of_fire"), 35);
+        refresh_magic(&mut scene, varp, false);
+        let controls = *scene.data.autocast_controls().unwrap();
+        seed_autocast_widget_text(
+            &mut scene,
+            text,
+            controls.spell_text_component,
+            controls.staff_tab_root,
+            active,
+            visible,
+            hidden,
+        );
+        let mut harness = Harness::new(&scene, request(&scene, None, false));
+
+        press(harness.pending(&scene, 1), controls.choose_com);
+        let selected = harness.machine.magic().selected.unwrap();
+        assert_eq!(
+            scene.data.spells()[usize::from(selected)].name,
+            "Fire Bolt",
+            "{case}"
+        );
+        assert!(!harness.machine.magic().armed, "{case}");
+        assert!(harness.machine.magic().arm.is_some(), "{case}");
+        assert!(harness.machine.magic().initial_arm_checked, "{case}");
+    }
+}
+
+#[test]
+fn inactive_or_wrong_staff_tree_cannot_adopt_autocast_state() {
+    let mut inactive = magic_scene(Some("staff_of_fire"), 35);
+    let controls = *inactive.data.autocast_controls().unwrap();
+    seed_autocast_widget_text(
+        &mut inactive,
+        Some("Fire Bolt"),
+        controls.spell_text_component,
+        controls.staff_tab_root,
+        false,
+        false,
+        false,
+    );
+    let mut harness = Harness::new(&inactive, request(&inactive, None, false));
+    assert!(matches!(
+        harness.pending(&inactive, 1),
+        Some(HostEffect::Interaction(InteractReq::SideTab { tab: 0 }))
+    ));
+    assert!(!harness.machine.magic().armed);
+    assert!(harness.machine.magic().arm.is_some());
+
+    let mut wrong_root = magic_scene(Some("staff_of_fire"), 35);
+    let controls = *wrong_root.data.autocast_controls().unwrap();
+    seed_autocast_widget_text(
+        &mut wrong_root,
+        Some("Fire Bolt"),
+        controls.spell_text_component,
+        controls.staff_tab_root + 1,
+        true,
+        true,
+        false,
+    );
+    let mut harness = Harness::new(&wrong_root, request(&wrong_root, None, false));
+    let _ = harness.ready(&wrong_root, 1);
+    assert_eq!(
+        harness.machine.end,
+        Some(CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Staff)))
+    );
+    assert!(!harness.machine.magic().armed);
+}
+
+#[test]
+fn sibling_widget_with_matching_text_cannot_adopt_armed_autocast() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 35);
+    let controls = *scene.data.autocast_controls().unwrap();
+    seed_autocast_widget_text(
+        &mut scene,
+        Some("Fire Bolt"),
+        controls.choose_com,
+        controls.staff_tab_root,
+        true,
+        true,
+        false,
+    );
+    let mut harness = Harness::new(&scene, request(&scene, None, false));
+
+    press(harness.pending(&scene, 1), controls.choose_com);
+    assert!(!harness.machine.magic().armed);
+    assert!(harness.machine.magic().arm.is_some());
+}
+
+#[test]
+fn autocast_state_is_not_adopted_after_initial_arm_decision() {
+    let mut scene = magic_scene(Some("staff_of_fire"), 35);
+    let controls = *scene.data.autocast_controls().unwrap();
+    seed_autocast_widget_text(
+        &mut scene,
+        Some("Wind Strike"),
+        controls.spell_text_component,
+        controls.staff_tab_root,
+        true,
+        true,
+        false,
+    );
+    let mut harness = Harness::new(&scene, request(&scene, None, false));
+    press(harness.pending(&scene, 1), controls.choose_com);
+
+    seed_autocast_widget_text(
+        &mut scene,
+        Some("Fire Bolt"),
+        controls.spell_text_component,
+        controls.staff_tab_root,
+        true,
+        true,
+        false,
+    );
+    let _ = harness.pending(&scene, 2);
+    assert!(!harness.machine.magic().armed);
+    assert!(harness.machine.magic().arm.is_some());
 }
 
 #[test]
@@ -633,6 +873,8 @@ fn steady_manual_order_selection_allocates_nothing_between_casts() {
     let mut last_alias = order[0];
     let mut next_spell = 1;
     let mut allocations = 0;
+    // Run 100 ticks; measure the 80 non-emitting ticks, including rune
+    // settlement and order selection. The 20 emitting ticks are unmeasured.
     for tick in 2..102 {
         if tick == last_cast_tick + 1 {
             spend(&mut scene, last_alias);
