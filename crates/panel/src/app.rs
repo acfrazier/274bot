@@ -3521,7 +3521,6 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             }
             "string[]" if !resolved.is_empty() => {
                 ui.text(&label);
-                let opts = &resolved.values;
                 let mut selected: Vec<String> = bag
                     .get(&def.id)
                     .and_then(|value| value.as_array())
@@ -3533,23 +3532,17 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     })
                     .unwrap_or_default();
                 let mut changed = false;
-                for opt in opts {
+                for (index, opt) in resolved.values.iter().enumerate() {
                     let mut on = selected
                         .iter()
                         .any(|value| resolved.matches_option(value, opt));
+                    // Preserved rows (an unavailable quest with its reason)
+                    // can only be cleared, never checked.
+                    let _off =
+                        (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
                     if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
-                        changed = true;
-                        if on {
-                            if !selected
-                                .iter()
-                                .any(|value| resolved.matches_option(value, opt))
-                            {
-                                selected.push(opt.clone());
-                            }
-                        } else {
-                            selected.retain(|value| !resolved.matches_option(value, opt));
-                        }
+                        changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
                 if changed {

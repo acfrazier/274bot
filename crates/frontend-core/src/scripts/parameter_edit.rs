@@ -59,6 +59,55 @@ impl ParameterOptions {
         &self.values[..self.values.len().saturating_sub(self.preserved)]
     }
 
+    /// Whether `values[index]` is a picker choice rather than a preserved
+    /// display-only row.
+    pub fn is_selectable_index(&self, index: usize) -> bool {
+        index < self.selectable().len()
+    }
+
+    /// Toggle `values[index]` in a `string[]` selection for both front ends.
+    /// A preserved row can be removed but never added. Returns whether the
+    /// selection changed.
+    pub fn toggle_array_choice(&self, selected: &mut Vec<String>, index: usize) -> bool {
+        let Some(option) = self.values.get(index) else {
+            return false;
+        };
+        if selected
+            .iter()
+            .any(|value| self.matches_option(value, option))
+        {
+            selected.retain(|value| !self.matches_option(value, option));
+            true
+        } else if self.is_selectable_index(index) {
+            selected.push(option.clone());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Labels of the stored values that are preserved rows (no longer
+    /// choices, e.g. an unavailable quest with its reason), joined for a
+    /// wrapped detail line. `None` when every stored value is a choice.
+    pub fn preserved_stored_labels(&self, stored: &Value) -> Option<String> {
+        let preserved = &self.values[self.selectable().len()..];
+        let stored: Vec<&str> = match stored {
+            Value::String(value) => vec![value.as_str()],
+            Value::Array(values) => values.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        let labels = stored
+            .into_iter()
+            .filter(|value| {
+                preserved
+                    .iter()
+                    .any(|option| self.matches_option(value, option))
+            })
+            .map(|value| self.label_for(value))
+            .collect::<Vec<_>>();
+        (!labels.is_empty()).then(|| labels.join("; "))
+    }
+
     /// Match one option's label or value with an ASCII case-insensitive
     /// substring query. This is allocation-free for use while drawing lists.
     pub fn matches_query(&self, index: usize, query: &str) -> bool {
@@ -196,7 +245,7 @@ pub fn resolve_parameter_options(
             .and_then(Value::as_array)
             .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
             .unwrap_or_default();
-        let ids = if quests.is_empty() {
+        let mut ids: Vec<String> = if quests.is_empty() {
             candidate_values.clone()
         } else {
             quests
@@ -210,6 +259,16 @@ pub fn resolve_parameter_options(
                 .collect()
         };
         let priority = setting_values(def, bag);
+        // A stored unavailable priority keeps its roster label (and reason)
+        // even outside the selected subset; it is never a choice.
+        for id in &priority {
+            if !ids.contains(id)
+                && candidate_values.contains(id)
+                && script::quester::card::unavailable_quest(id).is_some()
+            {
+                ids.push(id.clone());
+            }
+        }
         options.values.clear();
         options.labels.clear();
         options.preserved = 0;
@@ -1125,6 +1184,58 @@ mod tests {
             parse_parameter_text(&radius, "20", &[]),
             Ok(serde_json::json!(20))
         );
+    }
+
+    fn quester_setting(id: &str) -> &'static script::SettingDef {
+        (script::quester::card::CARD.schema)()
+            .iter()
+            .find(|setting| setting.id == id)
+            .expect("Quester picker setting")
+    }
+
+    #[test]
+    fn stored_unavailable_priority_outside_the_selection_keeps_its_reason() {
+        let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("quest-priority-{}.json", std::process::id())),
+        );
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let order =
+            resolve_parameter_options(quester_setting("order_override"), &bag, &loadouts, None);
+        assert_eq!(order.selectable(), ["cook"]);
+        assert_eq!(
+            order.label_for("hauntedmine"),
+            format!("1. Haunted Mine — {reason}")
+        );
+    }
+
+    #[test]
+    fn array_toggle_adds_choices_and_only_removes_preserved_rows() {
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("quest-toggle-{}.json", std::process::id())),
+        );
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        let options = resolve_parameter_options(quester_setting("quests"), &bag, &loadouts, None);
+        let index_of = |id: &str| options.values.iter().position(|value| value == id).unwrap();
+        let haunted = index_of("hauntedmine");
+        assert!(!options.is_selectable_index(haunted));
+        let mut selected = vec!["cook".to_owned()];
+        assert!(!options.toggle_array_choice(&mut selected, haunted));
+        assert_eq!(selected, ["cook"]);
+        assert!(options.toggle_array_choice(&mut selected, index_of("sheep")));
+        assert!(options.toggle_array_choice(&mut selected, index_of("cook")));
+        assert_eq!(selected, ["sheep"]);
+
+        let mut stored = vec!["hauntedmine".to_owned()];
+        assert!(options.toggle_array_choice(&mut stored, haunted));
+        assert!(
+            stored.is_empty(),
+            "a stored unavailable pick can be cleared"
+        );
+        assert!(!options.toggle_array_choice(&mut stored, options.values.len()));
     }
 
     #[test]
