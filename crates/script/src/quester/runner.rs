@@ -38,6 +38,34 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
+
+fn publish_in_flight_bank_receipt(
+    outcome: &StepOutcome,
+    bank: &mut BankMemo,
+    last_outcome: &mut Option<StepOutcome>,
+    dirty: &mut bool,
+) {
+    if last_outcome
+        .as_ref()
+        .is_some_and(|seen| seen.evidence == outcome.evidence)
+    {
+        return;
+    }
+    if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
+        receipt
+            .as_any()
+            .downcast_ref::<crate::native_bank::BankReceipt>()
+    }) {
+        bank.update(receipt);
+        *last_outcome = Some(StepOutcome {
+            progress: outcome.progress.clone(),
+            evidence: outcome.evidence,
+            receipt: outcome.receipt.clone(),
+        });
+        *dirty = true;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuesterFailureKind {
     Other,
@@ -441,6 +469,14 @@ impl Quester {
         self.dirty |= self.provisioner.status_revision() != revision;
         match result {
             Poll::Pending => {
+                if let Some(outcome) = self.provisioner.in_flight_outcome() {
+                    publish_in_flight_bank_receipt(
+                        outcome,
+                        &mut self.bank,
+                        &mut self.last_outcome,
+                        &mut self.dirty,
+                    );
+                }
                 if self.provisioner.needs_progress_read() {
                     self.needs_read = true;
                     self.dirty = true;
@@ -1601,29 +1637,14 @@ impl Script for Quester {
         };
         match poll {
             Poll::Pending => {
-                if let Some(outcome) = self
-                    .step
-                    .as_ref()
-                    .and_then(|step| step.in_flight_outcome())
-                    .filter(|outcome| {
-                        self.last_outcome
-                            .as_ref()
-                            .is_none_or(|seen| seen.evidence != outcome.evidence)
-                    })
+                if let Some(outcome) = self.step.as_ref().and_then(|step| step.in_flight_outcome())
                 {
-                    if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
-                        receipt
-                            .as_any()
-                            .downcast_ref::<crate::native_bank::BankReceipt>()
-                    }) {
-                        self.bank.update(receipt);
-                        self.last_outcome = Some(StepOutcome {
-                            progress: outcome.progress.clone(),
-                            evidence: outcome.evidence,
-                            receipt: outcome.receipt.clone(),
-                        });
-                        self.dirty = true;
-                    }
+                    publish_in_flight_bank_receipt(
+                        outcome,
+                        &mut self.bank,
+                        &mut self.last_outcome,
+                        &mut self.dirty,
+                    );
                 }
                 if self
                     .step

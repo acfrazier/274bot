@@ -202,6 +202,12 @@ impl Provisioner {
         }
     }
 
+    pub(super) fn in_flight_outcome(&self) -> Option<&super::compile::StepOutcome> {
+        self.acquire_run
+            .as_ref()
+            .and_then(|run| run.in_flight_outcome())
+    }
+
     pub fn status_revision(&self) -> u64 {
         self.revision
     }
