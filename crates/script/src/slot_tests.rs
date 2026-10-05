@@ -1771,6 +1771,11 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
 
     let (mut slot, selected) = ignored_randoms_load();
     wait_ignored_randoms(&mut slot, &selected);
+    slot.load
+        .as_ref()
+        .expect("load isolate")
+        .probe("true")
+        .unwrap();
     for (kind, name) in [(RandomKind::Maze, "Maze"), (RandomKind::Mime, "Mime")] {
         assert_eq!(
             slot.on_random(&DetectedRandom {
