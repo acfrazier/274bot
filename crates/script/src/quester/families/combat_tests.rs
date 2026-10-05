@@ -73,7 +73,7 @@ fn open_tactic_defaults_auto_retaliate_on() {
 }
 
 #[test]
-fn combat_owned_walk_crossing_and_protection_compile_independently() {
+fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -91,15 +91,32 @@ fn combat_owned_walk_crossing_and_protection_compile_independently() {
     let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
     let recipes = HashMap::new();
     let path = FactKey::new("combat_walk_policy");
-    let cx = fixture_compile_context(
-        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
-    );
+    let cx = CompileContext {
+        path: &path,
+        progress: &progress,
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        bank: None,
+        bank_required: false,
+        bank_items: &[],
+        keep_ids: &[],
+        areas: &areas,
+        loadouts: &loadouts,
+        recipes: &recipes,
+    };
+    let stand = api::WorldTile {
+        x: 3125,
+        z: 3246,
+        level: 0,
+    };
     let args = serde_json::json!({
         "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
         "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
         "stand": {"tile": [3125, 3246, 0], "source": "native Prince live return-walk regression"},
         "lost_radius": 16,
         "kill_budget_ticks": 400,
+        "until": {"Any": []},
         "cross": ["draynor-jail-guards"],
         "guard": "protect"
     });
@@ -110,6 +127,9 @@ fn combat_owned_walk_crossing_and_protection_compile_independently() {
             Some(serde_json::json!("")),
             Some(serde_json::json!("protect")),
         ] {
+            let protect = guard
+                .as_ref()
+                .is_some_and(|value| value.as_str() == Some("protect"));
             let mut input = args.clone();
             if !cross {
                 input.as_object_mut().unwrap().remove("cross");
@@ -119,7 +139,133 @@ fn combat_owned_walk_crossing_and_protection_compile_independently() {
             } else {
                 input.as_object_mut().unwrap().remove("guard");
             }
-            compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
+            let plan = compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
+            for aborted in [false, true] {
+                // Drive the real compiled plan and native combat machine, not
+                // a CombatRun with its permission fields assigned by the test.
+                let mut snapshot = GameSnapshot::new();
+                snapshot.seed_ingame(2);
+                snapshot.seed_world(api::snapshot::WorldStateView::default());
+                snapshot.seed_local_player(super::super::tests::local_player(stand));
+                snapshot.seed_inventory(vec![], 28);
+                snapshot.seed_equipment(vec![]);
+                snapshot.seed_players(vec![]);
+                snapshot.seed_projectiles(vec![]);
+                snapshot.seed_chat_lines(vec![]);
+                snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+                    marks: [api::snapshot::HitmarkView {
+                        value: 0,
+                        kind: 0,
+                        cycle: 0,
+                    }; 4],
+                    loop_cycle: 0,
+                });
+                snapshot.seed_varps(
+                    (0..api::prayer::PRAYER_COUNT)
+                        .map(|index| api::snapshot::VarpView {
+                            index: api::prayer::PRAYER_VARP0 + index as i32,
+                            value: 0,
+                        })
+                        .chain([api::snapshot::VarpView {
+                            index: crate::combat::OPTION_NODEF,
+                            value: 0,
+                        }])
+                        .collect(),
+                );
+                snapshot.seed_stats(
+                    (0..25)
+                        .map(|index| api::snapshot::StatView {
+                            index,
+                            name: String::new(),
+                            effective: if aborted && index == 3 { 1 } else { 40 },
+                            base: 40,
+                            xp: 0,
+                            used: api::snapshot::stat_used(index as usize),
+                        })
+                        .collect(),
+                );
+                let row = data.npc_by_config("jailguard").unwrap();
+                let at = api::WorldTile {
+                    x: stand.x + 1,
+                    ..stand
+                };
+                snapshot.seed_npcs(vec![api::snapshot::NpcView {
+                    index: 7,
+                    r#type: Some(row.id as usize),
+                    name: row.display.clone(),
+                    actions: vec![Some("Attack".into())],
+                    tile: at,
+                    distance: 1,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: -1,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: aborted.then_some(api::snapshot::ActorTargetView {
+                        kind: api::snapshot::ActorKind::Player,
+                        index: 0,
+                    }),
+                    moving: false,
+                    running: false,
+                    in_combat: aborted,
+                    level: 1,
+                    size: 1,
+                    network: at,
+                    x: 0,
+                    z: 0,
+                    yaw: 0,
+                }]);
+                let mut ledger = None;
+                let mut run =
+                    with_step_context(&snapshot, &mut ledger, 1, |cx| plan.begin(cx).unwrap());
+                if !aborted {
+                    snapshot.seed_npcs(vec![]);
+                }
+                let expected = if aborted {
+                    CombatEnd::Aborted(AbortReason::Unprotected(crate::combat::Unprotected::NoFood))
+                } else {
+                    CombatEnd::TargetGone
+                };
+                // TargetGone has a three-tick disappearance grace. The
+                // low-HP, empty-inventory attacker fixture aborts immediately.
+                for tick in 2..=if aborted { 2 } else { 5 } {
+                    assert!(
+                        with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx))
+                            .is_pending()
+                    );
+                }
+                let receipt = run
+                    .in_flight_outcome()
+                    .and_then(|outcome| outcome.receipt.as_ref())
+                    .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+                    .expect("native combat must publish its report before the owned walk");
+                assert_eq!(receipt.report.end, expected);
+                let outbox = &ledger.as_ref().unwrap().outbox;
+                assert_eq!(
+                    outbox.len(),
+                    1,
+                    "{expected:?}: cross={cross}, protect={protect}"
+                );
+                let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+                    panic!("the compiled combat transition must submit a native walk");
+                };
+                assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
+                if cross {
+                    assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+                } else {
+                    assert!(request.cross.is_empty(), "{expected:?}: protect={protect}");
+                }
+                if !aborted {
+                    assert_eq!(request.target, stand);
+                }
+                assert_eq!(request.radius, 1);
+            }
         }
     }
     let mut invalid = args;

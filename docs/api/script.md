@@ -324,6 +324,9 @@ Protection does not grant crossing permissions.
 Omitted, null, or empty `guard` means no protection. Other guard modes are rejected.
 Omission keeps the existing empty crossing scope and unprotected walk.
 An earlier `walk` step does not grant permissions to the combat step.
+The regression matrix decodes authored combat arguments, compiles and begins
+the plan, then drives native `TargetGone` and `Aborted` reports to assert the
+emitted walks' crossing scope and protection independently.
 
 ### Quester journal reads
 
