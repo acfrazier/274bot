@@ -32,7 +32,7 @@ const ZONE: &str = "death-plateau-throwers";
 fn path_json(dest: WorldTile) -> String {
     format!(
         r#"{{
-  "schema": 2,
+  "schema": {schema},
   "id": "imp",
   "display_name": "Walk Guard Throwers",
   "required": [],
@@ -90,8 +90,34 @@ fn path_json(dest: WorldTile) -> String {
     }}
   ]
 }}"#,
-        dest.x, dest.z, dest.level, dest.x, dest.z, dest.level, dest.x, dest.z, dest.level
+        dest.x,
+        dest.z,
+        dest.level,
+        dest.x,
+        dest.z,
+        dest.level,
+        dest.x,
+        dest.z,
+        dest.level,
+        schema = script::quester::path::PATH_SCHEMA
     )
+}
+
+#[test]
+fn throwers_crossing_path_compiles_with_current_schema() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    compile_path(
+        path_json(WorldTile {
+            x: 2880,
+            z: 3590,
+            level: 0,
+        })
+        .as_bytes(),
+        &selected,
+        &quests,
+    )
+    .expect("the live crossing fixture must compile before launching a client");
 }
 
 fn throwers_route_context(
@@ -1289,6 +1315,8 @@ struct LiveState {
     hit_onset: HitOnset,
     second_attacker_staged: bool,
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
+    real_content: bool,
+    health: Vec<(u32, i32, i32)>,
 }
 
 impl LiveState {
@@ -1343,6 +1371,20 @@ impl LiveState {
         if let Some((x, z, level)) = self.last_tile {
             self.remember_tile(tick, WorldTile { x, z, level });
         }
+        if self.real_content && self.started {
+            if let Some(hp) = self.snapshot.stats().iter().find(|row| row.index == 3) {
+                if self.health.last().is_none_or(|row| row.0 != tick) {
+                    let lobsters = self
+                        .snapshot
+                        .inventory()
+                        .iter()
+                        .filter(|item| item.def.name.as_deref() == Some("Lobster"))
+                        .map(|item| item.count)
+                        .sum();
+                    self.health.push((tick, hp.effective, lobsters));
+                }
+            }
+        }
         if self.runner.on_start_script() && !self.started {
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
             let Some((handle, banks)) = self.start_context.as_ref() else {
@@ -1385,7 +1427,7 @@ impl LiveState {
                 }
             }
         }
-        if self.started && !self.attacker_staged {
+        if !self.real_content && self.started && !self.attacker_staged {
             let stage_command = teleport_command(self.attacker_stage);
             let start_command = teleport_command(self.start);
             if send_cheat(client, &stage_command)
@@ -1401,7 +1443,8 @@ impl LiveState {
                 return;
             }
         }
-        if self.attacker_staged
+        if !self.real_content
+            && self.attacker_staged
             && !self.second_attacker_staged
             && self
                 .launches
@@ -1489,7 +1532,11 @@ impl LiveState {
     }
 }
 
-fn scenario_for(capture: Arc<Mutex<CombatCapture>>, start: WorldTile) -> Scenario {
+fn scenario_for(
+    capture: Arc<Mutex<CombatCapture>>,
+    start: WorldTile,
+    food: Option<bool>,
+) -> Scenario {
     let mut scenario =
         scenario::quester_stage("walk_guard_throwers", "Imp Catcher", "imp", 0, &[], start);
     let stand_index = scenario
@@ -1504,11 +1551,39 @@ fn scenario_for(capture: Arc<Mutex<CombatCapture>>, start: WorldTile) -> Scenari
         .expect("relog step");
     let relog = scenario.steps.remove(relog_index);
     scenario.steps.insert(stand_index, relog);
-    let extra = [cheat_step(
-        "seed Prayer 43",
-        "setstat prayer 43".to_owned(),
-        Proof::Stat { id: 5, min: 43 },
-    )];
+    let extra = if let Some(food) = food {
+        let mut steps = vec![
+            cheat_step(
+                "seed Prayer 37",
+                "setstat prayer 37".to_owned(),
+                Proof::Stat { id: 5, min: 37 },
+            ),
+            cheat_step(
+                "seed Hitpoints 40",
+                "setstat hitpoints 40".to_owned(),
+                Proof::Stat { id: 3, min: 40 },
+            ),
+            cheat_step(
+                "seed HP near eat line",
+                "~stat_drain hitpoints 20 0".to_owned(),
+                Proof::Stat { id: 3, min: 20 },
+            ),
+        ];
+        if food {
+            steps.push(cheat_step(
+                "seed four lobsters",
+                "give lobster 4".to_owned(),
+                Proof::Stat { id: 3, min: 20 },
+            ));
+        }
+        steps
+    } else {
+        vec![cheat_step(
+            "seed Prayer 43",
+            "setstat prayer 43".to_owned(),
+            Proof::Stat { id: 5, min: 43 },
+        )]
+    };
     scenario
         .steps
         .splice(stand_index + 1..stand_index + 1, extra);
@@ -1542,26 +1617,150 @@ fn scenario_for(capture: Arc<Mutex<CombatCapture>>, start: WorldTile) -> Scenari
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_protected_crossing() {
-    run_live_w1(W1Mode::Crossing);
+    run_live_w1(W1Mode::Crossing, None);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_stop_mid_crossing() {
-    run_live_w1(W1Mode::StopMidCrossing);
+    run_live_w1(W1Mode::StopMidCrossing, None);
 }
 
-fn run_live_w1(mode: W1Mode) {
+#[test]
+#[ignore = "requires LIVE=1 and the local R289 engine"]
+fn live_walk_guard_eat_crossing() {
+    run_live_w1(W1Mode::Crossing, Some(true));
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the local R289 engine"]
+fn live_walk_guard_eat_no_food_control() {
+    run_live_w1(W1Mode::Crossing, Some(false));
+}
+
+fn eat_heal(row: &serde_json::Value, health: &[(u32, i32, i32)]) -> Option<(u32, i32, i32)> {
+    let tick = row["tick"].as_u64()?;
+    let hp = row["snapshot"]["stats"]
+        .as_array()?
+        .iter()
+        .find(|stat| stat["index"] == 3)?["effective"]
+        .as_i64()?;
+    let count: i64 = row["snapshot"]["inventory"]
+        .as_array()?
+        .iter()
+        .filter(|item| item["id"] == 379)
+        .filter_map(|item| item["count"].as_i64())
+        .sum();
+    health.iter().copied().find(|(at, after_hp, after_count)| {
+        u64::from(*at) > tick
+            && u64::from(*at) <= tick + 4
+            && i64::from(*after_hp) > hp
+            && i64::from(*after_count) < count
+    })
+}
+
+#[test]
+fn eat_heal_records_click_to_consumption_and_hp_rise_lag() {
+    let click = json!({
+        "tick": 10,
+        "snapshot": {
+            "stats": [{"index": 3, "effective": 20}],
+            "inventory": [{"id": 379, "count": 4}],
+        },
+    });
+    assert_eq!(
+        eat_heal(&click, &[(10, 20, 4), (11, 20, 4), (12, 32, 3)]),
+        Some((12, 32, 3))
+    );
+    assert_eq!(eat_heal(&click, &[(11, 21, 4)]), None);
+    assert_eq!(eat_heal(&click, &[(11, 20, 3)]), None);
+    assert_eq!(eat_heal(&click, &[(15, 32, 3)]), None);
+}
+
+fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool) -> W1GateDecision {
+    if let Some(baseline) = capture.start_baseline.as_ref() {
+        let stat = |index, field: &str| {
+            baseline["stats"]
+                .as_array()
+                .and_then(|stats| stats.iter().find(|stat| stat["index"] == index))
+                .and_then(|stat| stat[field].as_i64())
+        };
+        let lobsters: i64 = baseline["inventory"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|item| item["id"] == 379)
+            .filter_map(|item| item["count"].as_i64())
+            .sum();
+        if stat(5, "base") != Some(37)
+            || stat(3, "base") != Some(40)
+            || stat(3, "effective") != Some(20)
+            || lobsters != if food { 4 } else { 0 }
+        {
+            return gate_fail(
+                "GUARD-EAT-1 seed differs from Prayer37, HP20/40 and requested lobsters",
+            );
+        }
+    } else {
+        return W1GateDecision::Pending;
+    }
+    if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
+        return gate_fail("death during throwers crossing");
+    }
+    if !state.arrived {
+        return W1GateDecision::Pending;
+    }
+    if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
+        return gate_fail("arrival lacks a ready in-game scene");
+    }
+    if !food {
+        return W1GateDecision::Pass;
+    }
+    let healed = capture
+        .actions
+        .iter()
+        .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
+        .any(|row| eat_heal(row, &state.health).is_some());
+    if healed {
+        W1GateDecision::Pass
+    } else {
+        gate_fail("arrival without a recorded Eat followed by HP rise and lobster consumption")
+    }
+}
+
+fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
         Ok("1"),
         "W1 requires LIVE=1"
     );
-    std::env::set_var("BOT_LIVE_NAME_PREFIX", "wg");
+    std::env::set_var(
+        "BOT_LIVE_NAME_PREFIX",
+        if food.is_some() { "ge" } else { "wg" },
+    );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
-    let home = ThrowawayHome::enter().expect("create isolated HOME");
-    let options = profile_options(&home.path).expect("W1 live prerequisites");
+    let home = food
+        .is_none()
+        .then(ThrowawayHome::enter)
+        .transpose()
+        .expect("create isolated HOME");
+    let home_path = home.as_ref().map_or_else(
+        || {
+            let id = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("cell clock")
+                .as_nanos();
+            PathBuf::from(std::env::var_os("HOME").expect("GUARD-EAT-1 requires an isolated HOME"))
+                .join(format!("cell-{id}"))
+        },
+        |home| home.path.clone(),
+    );
+    let mut options = profile_options(&home_path).expect("W1 live prerequisites");
+    if food.is_some() {
+        options.port = Some(44_594);
+        options.http_port = Some(1_080);
+    }
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -1584,7 +1783,7 @@ fn run_live_w1(mode: W1Mode) {
         .expect("mint local W1 password");
     let capture = Arc::new(Mutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario_for(Arc::clone(&capture), start);
+    let scenario = scenario_for(Arc::clone(&capture), start, food);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -1622,6 +1821,8 @@ fn run_live_w1(mode: W1Mode) {
         hit_onset: HitOnset::new(),
         second_attacker_staged: false,
         tiles_by_tick: std::collections::VecDeque::new(),
+        real_content: food.is_some(),
+        health: Vec::new(),
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -1737,7 +1938,11 @@ fn run_live_w1(mode: W1Mode) {
             stop_off_tick: current.stop_off_tick,
             stop_error: current.stop_error.as_deref(),
         };
-        let decision = evaluate_w1_gate(mode, &gate_input);
+        let decision = if let Some(food) = food {
+            evaluate_eat_crossing(&current, &capture_snapshot, food)
+        } else {
+            evaluate_w1_gate(mode, &gate_input)
+        };
         let runner_failed = matches!(current.runner.status(), RunnerStatus::Failed(_))
             && !(mode == W1Mode::StopMidCrossing && current.stop_requested);
         drop(capture_snapshot);
@@ -1791,15 +1996,41 @@ fn run_live_w1(mode: W1Mode) {
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
-    let mode_name = match mode {
-        W1Mode::Crossing => "crossing",
-        W1Mode::StopMidCrossing => "stop_mid_crossing",
+    let mode_name = match (food, mode) {
+        (Some(true), _) => "eat_crossing",
+        (Some(false), _) => "no_food_control",
+        (None, W1Mode::Crossing) => "crossing",
+        (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
+    };
+    let proof_name = if food.is_some() {
+        "GUARD-EAT-1"
+    } else {
+        "WALK-GUARD-LIFECYCLE-1_R2"
     };
     let receipt = json!({
-        "proof": "WALK-GUARD",
+        "proof": proof_name,
         "case": "W1",
         "mode": mode_name,
         "outcome": outcome,
+        "food": food,
+        "health": snapshot.health,
+        "eat_heals": capture_snapshot.actions.iter()
+            .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
+            .map(|row| {
+                let heal = eat_heal(row, &snapshot.health);
+                json!({
+                    "click_tick": row["tick"],
+                    "heal_tick": heal.map(|(tick, _, _)| tick),
+                    "lag_ticks": heal.and_then(|(tick, _, _)| {
+                        row["tick"].as_u64().map(|click| u64::from(tick) - click)
+                    }),
+                    "hp_after": heal.map(|(_, hp, _)| hp),
+                    "lobsters_after": heal.map(|(_, _, count)| count),
+                })
+            }).collect::<Vec<_>>(),
+        "hp_drop_observed": snapshot.health.windows(2).any(|rows| rows[1].1 < rows[0].1),
+        "real_content": snapshot.real_content,
+        "start_baseline": capture_snapshot.start_baseline,
         "error": error,
         "account": account,
         "zone": ZONE,
@@ -1864,15 +2095,15 @@ fn run_live_w1(mode: W1Mode) {
         ]);
     }
     let capture_dir = evidence.join(format!(
-        "WALK-GUARD-LIFECYCLE-1_R2_W1_{mode_name}_{account}_{}",
+        "{proof_name}_W1_{mode_name}_{account}_{}",
         scenario::shot::stamp_utc(SystemTime::now())
     ));
     let capture_path = scenario::shot::write_shot(
         &capture_dir,
         if outcome == "PASS" {
-            "01-final-protect-off"
+            "01-final"
         } else {
-            "FAIL-final-protect-off"
+            "FAIL-final"
         },
         &rgba,
         765,
