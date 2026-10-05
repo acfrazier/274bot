@@ -196,6 +196,11 @@ row. The reader runs initially and after advancing steps, and only matching fres
 run, selected-pin, binding and role evidence is accepted. Nearest-first sequences
 choose the closest uncompleted authored anchor; unknown guards still block selection.
 
+Progress returned by a completed step must be newer than that step's begin
+stamp and must have the same stamp as its final outcome. These are separate
+checks: matching outcome and progress stamps are required, not stale evidence.
+Future or foreign-run evidence is never accepted.
+
 
 Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
 recreation and reconnect preserve its death count, consumed chat watermark,
