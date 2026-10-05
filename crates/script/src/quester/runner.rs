@@ -19,7 +19,7 @@ use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::CompiledId;
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::{JournalRead, QuestProgress};
+use api::quest_progress::{EvidenceStamp, JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use api::{DetectedRandom, RandomClaim};
@@ -39,31 +39,27 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
 
+// Reports a newly published bank receipt. Unchanged stamps avoid receipt inspection.
 fn publish_in_flight_bank_receipt(
     outcome: &StepOutcome,
     bank: &mut BankMemo,
-    last_outcome: &mut Option<StepOutcome>,
+    published_bank_receipt: &mut Option<EvidenceStamp>,
     dirty: &mut bool,
-) {
-    if last_outcome
-        .as_ref()
-        .is_some_and(|seen| seen.evidence == outcome.evidence)
-    {
-        return;
+) -> bool {
+    if *published_bank_receipt == Some(outcome.evidence) {
+        return false;
     }
-    if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
+    let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
         receipt
             .as_any()
             .downcast_ref::<crate::native_bank::BankReceipt>()
-    }) {
-        bank.update(receipt);
-        *last_outcome = Some(StepOutcome {
-            progress: outcome.progress.clone(),
-            evidence: outcome.evidence,
-            receipt: outcome.receipt.clone(),
-        });
-        *dirty = true;
-    }
+    }) else {
+        return false;
+    };
+    bank.update(receipt);
+    *published_bank_receipt = Some(outcome.evidence);
+    *dirty = true;
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +92,7 @@ pub struct Quester {
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
     last_outcome: Option<StepOutcome>,
+    published_bank_receipt: Option<EvidenceStamp>,
     /// Latest Combat family receipt, kept after later non-combat steps begin
     /// so Path `combat_end` skip_if can still select the caller walk-out
     /// (design-combat.md:664).
@@ -404,6 +401,7 @@ impl Quester {
             prayer_cleanup_pending: false,
             prayer_cleanup_owned: RaisedPrayers::empty(),
             last_outcome: None,
+            published_bank_receipt: None,
             last_combat: None,
             published_receipt: None,
             advances: false,
@@ -473,7 +471,7 @@ impl Quester {
                     publish_in_flight_bank_receipt(
                         outcome,
                         &mut self.bank,
-                        &mut self.last_outcome,
+                        &mut self.published_bank_receipt,
                         &mut self.dirty,
                     );
                 }
@@ -490,6 +488,7 @@ impl Quester {
                 false
             }
             Poll::Ready(Ok(ProvisionEvent::BankMemoUnknown)) => {
+                self.published_bank_receipt = None;
                 self.bank.clear();
                 self.dirty = true;
                 false
@@ -513,6 +512,7 @@ impl Quester {
                 // policy too; it must not turn one transient family refusal into
                 // an immediate parked quest.
                 self.provisioner.cancel();
+                self.published_bank_receipt = None;
                 self.record_step_failure(error, tick);
                 false
             }
@@ -525,6 +525,7 @@ impl Quester {
             return ScriptFlow::Continue;
         }
         self.retreat_completed = self.provisioner.retreat_performed();
+        self.published_bank_receipt = None;
         self.emit_status(tick.output, NativePhase::Complete);
         ScriptFlow::Complete
     }
@@ -584,11 +585,18 @@ impl Quester {
 
     fn record_failure(&mut self, error: ActionError) {
         let (kind, message) = match error {
-            ActionError::NeedsEvidence(_) => {
-                self.set_last_error(
-                    QuesterFailureKind::NeedsEvidence,
-                    Arc::from("walk needs authoritative quest-gate evidence"),
-                );
+            ActionError::NeedsEvidence(gates) => {
+                let message = if gates.is_empty() {
+                    match self.step.as_ref().and_then(|step| step.waiting_for()) {
+                        Some((reason, name)) => {
+                            Arc::<str>::from(format!("needs evidence: {reason}: {name}"))
+                        }
+                        None => Arc::from("needs evidence: no current wait detail"),
+                    }
+                } else {
+                    Arc::from("walk needs authoritative quest-gate evidence")
+                };
+                self.set_last_error(QuesterFailureKind::NeedsEvidence, message);
                 return;
             }
             ActionError::UserInput => (
@@ -998,6 +1006,7 @@ impl Quester {
         self.provisioner.cancel();
         self.clear_prayers = None;
         self.last_outcome = None;
+        self.published_bank_receipt = None;
         self.journal = None;
         self.advances = false;
         self.attempts = 0;
@@ -1639,12 +1648,19 @@ impl Script for Quester {
             Poll::Pending => {
                 if let Some(outcome) = self.step.as_ref().and_then(|step| step.in_flight_outcome())
                 {
-                    publish_in_flight_bank_receipt(
+                    let carries_bank_receipt = publish_in_flight_bank_receipt(
                         outcome,
                         &mut self.bank,
-                        &mut self.last_outcome,
+                        &mut self.published_bank_receipt,
                         &mut self.dirty,
                     );
+                    if carries_bank_receipt {
+                        self.last_outcome = Some(StepOutcome {
+                            progress: outcome.progress.clone(),
+                            evidence: outcome.evidence,
+                            receipt: outcome.receipt.clone(),
+                        });
+                    }
                 }
                 if self
                     .step
@@ -1711,11 +1727,11 @@ impl Script for Quester {
                     });
                 }
                 self.capture_prayer_cleanup();
+                self.record_failure(error);
                 self.step = None;
                 self.last_outcome = None;
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.parked = true;
-                self.record_failure(error);
                 self.update_wait();
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
@@ -1742,6 +1758,7 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.settling = false;
@@ -1760,6 +1777,7 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
@@ -1783,6 +1801,7 @@ impl Script for Quester {
         self.clear_prayers = None;
         self.journal = None;
         self.needs_read = true;
+        self.published_bank_receipt = None;
         self.last_outcome = None;
         self.last_combat = None;
         self.advances = false;
@@ -1809,6 +1828,7 @@ impl Script for Quester {
         self.waiting = None;
         self.clear_prayers = None;
         self.prayer_cleanup_pending = false;
+        self.published_bank_receipt = None;
         self.last_outcome = None;
         self.last_combat = None;
     }

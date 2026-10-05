@@ -431,6 +431,7 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         wait_if_missing: false,
         settle_ms: Some(60_000),
         ambiguous: false,
+        default_dialogue: true,
         dialogue_options: None,
         until: Some((1, s2::QuantityPlan::Fixed(2))),
         target_tile: None,
@@ -480,8 +481,14 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         "progress followed by idle must rearm promptly"
     );
     snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
     assert!(matches!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| with_step(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| with_step(
             tick,
             |cx| run.poll(cx)
         )),
@@ -974,8 +981,12 @@ fn use_on_omitted_dialogue_does_not_require_a_page() {
             if until {
                 set_operation_count(&mut snapshot, goal, 2);
             }
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
             assert!(matches!(
-                with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_tick(&snapshot, &mut ledger, 4, |tick| {
                     with_step(tick, |cx| run.poll(cx))
                 }),
                 Poll::Ready(Ok(_))
@@ -1053,6 +1064,7 @@ fn interact_until_reports_rejected_reach_without_waiting_for_settlement() {
         wait_if_missing: false,
         settle_ms: Some(60_000),
         ambiguous: false,
+        default_dialogue: true,
         dialogue_options: None,
         until: Some((1, s2::QuantityPlan::Fixed(2))),
         target_tile: None,
@@ -1129,6 +1141,347 @@ fn operation_until_goal_observed_on_the_deadline_poll_wins_over_timeout() {
                 ),
                 "{kind}: an observed goal at the 60-second deadline is not a timeout"
             );
+        }
+    });
+}
+
+#[test]
+fn use_on_until_drains_post_use_page_after_pre_dispatch_drain() {
+    compile_context_test(|compile| {
+        for initial_page in [false, true] {
+            let (mut snapshot, plan, goal) = operation_fixture(compile, "use_on", None, true);
+            if initial_page {
+                snapshot.seed_chat_modal(-1, vec!["An existing page.".into()]);
+                snapshot.seed_chat_options(vec![], 105);
+            }
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            let mut dispatched = None;
+            let mut continued = false;
+            for tick in 2..=20 {
+                assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                if matches!(emitted_if_any(&ledger), Some(InteractReq::UseOn { .. })) {
+                    dispatched = Some(tick);
+                    break;
+                }
+                if matches!(
+                    emitted_if_any(&ledger),
+                    Some(InteractReq::ContinueDialog { .. })
+                ) && !continued
+                {
+                    continued = true;
+                    accept_last(&mut ledger, tick + 1, true);
+                    snapshot.seed_chat_modal(-1, vec![]);
+                    snapshot.seed_chat_options(vec![], -1);
+                }
+            }
+            assert_eq!(continued, initial_page);
+            let tick = dispatched.expect("UseOn dispatched");
+            accept_last(&mut ledger, tick + 1, true);
+            snapshot.seed_chat_modal(-1, vec!["You season the sardine.".into()]);
+            snapshot.seed_chat_options(vec![], 105);
+            set_operation_count(&mut snapshot, goal, 2);
+            assert!(
+                with_tick(&snapshot, &mut ledger, tick + 1, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending(),
+                "initial_page={initial_page}: post-use page must prevent settlement"
+            );
+            assert!(with_tick(&snapshot, &mut ledger, tick + 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(matches!(
+                emitted(&ledger),
+                InteractReq::ContinueDialog { .. }
+            ));
+            accept_last(&mut ledger, tick + 3, true);
+            snapshot.seed_chat_modal(-1, vec![]);
+            snapshot.seed_chat_options(vec![], -1);
+            let mut result = Poll::Pending;
+            for tick in tick + 3..=tick + 16 {
+                result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                });
+                if result.is_ready() {
+                    break;
+                }
+            }
+            assert!(matches!(result, Poll::Ready(Ok(_))));
+        }
+    });
+}
+
+fn emitted_if_any(ledger: &Option<Box<ledger::Ledger>>) -> Option<&InteractReq> {
+    ledger
+        .as_ref()?
+        .outbox
+        .last()
+        .and_then(|request| match &request.effect {
+            HostEffect::Interaction(request) => Some(request),
+            _ => None,
+        })
+}
+
+fn seed_operation_menu(snapshot: &mut GameSnapshot) {
+    snapshot.seed_chat_modal(100, vec!["Choose what happens next.".into()]);
+    snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 101,
+                text: "First choice".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 102,
+                text: "Last choice".into(),
+            },
+        ],
+        -1,
+    );
+}
+
+#[test]
+fn operation_omission_drains_a_continue_page_after_acceptance_without_settling_open() {
+    compile_context_test(|compile| {
+        for kind in ["interact", "use_on"] {
+            for until in [false, true] {
+                for root in [-1, 100] {
+                    let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, until);
+                    let mut ledger = None;
+                    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                        with_step(tick, |cx| plan.begin(cx).unwrap())
+                    });
+                    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                        with_step(tick, |cx| run.poll(cx))
+                    })
+                    .is_pending());
+                    accept_last(&mut ledger, 3, true);
+                    assert!(
+                        with_tick(&snapshot, &mut ledger, 3, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        })
+                        .is_pending(),
+                        "{kind}: acceptance alone cannot prove a closed post-action page"
+                    );
+                    snapshot.seed_chat_modal(root, vec!["The action opened this page.".into()]);
+                    snapshot.seed_chat_options(vec![], 105);
+                    if until {
+                        set_operation_count(&mut snapshot, goal, 2);
+                    }
+                    for tick in 4..=5 {
+                        assert!(
+                            with_tick(&snapshot, &mut ledger, tick, |tick| {
+                                with_step(tick, |cx| run.poll(cx))
+                            })
+                            .is_pending(),
+                            "{kind}: an open page must prevent settlement"
+                        );
+                    }
+                    assert!(matches!(
+                        emitted(&ledger),
+                        InteractReq::ContinueDialog { .. }
+                    ));
+                    accept_last(&mut ledger, 6, true);
+                    snapshot.seed_chat_modal(-1, vec![]);
+                    snapshot.seed_chat_options(vec![], -1);
+                    let mut result = Poll::Pending;
+                    for tick in 6..=20 {
+                        result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        });
+                        if result.is_ready() {
+                            break;
+                        }
+                    }
+                    assert!(
+                        matches!(result, Poll::Ready(Ok(_))),
+                        "{kind}, until={until}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn operation_omission_refuses_a_menu_after_acceptance_without_answering() {
+    compile_context_test(|compile| {
+        for kind in ["interact", "use_on"] {
+            for until in [false, true] {
+                let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, until);
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                accept_last(&mut ledger, 3, true);
+                assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                seed_operation_menu(&mut snapshot);
+                if until {
+                    set_operation_count(&mut snapshot, goal, 2);
+                }
+                assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 5, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Err(ActionError::Failed(reason)))
+                            if reason.as_ref() == "dialogue menu requires an explicit answer rule"
+                    ),
+                    "{kind}, until={until}"
+                );
+                assert!(ledger.as_ref().unwrap().outbox.iter().all(|request| {
+                    !matches!(
+                        request.effect,
+                        HostEffect::Interaction(InteractReq::Answer { .. })
+                    )
+                }));
+            }
+        }
+    });
+}
+
+#[test]
+fn operation_omission_no_page_settles_on_fresh_evidence_not_a_timer() {
+    compile_context_test(|compile| {
+        for kind in ["interact", "use_on"] {
+            let (snapshot, plan, _) = operation_fixture(compile, kind, None, false);
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            accept_last(&mut ledger, 3, true);
+            for _ in 0..3 {
+                assert!(
+                    with_tick(&snapshot, &mut ledger, 3, |tick| {
+                        with_step(tick, |cx| run.poll(cx))
+                    })
+                    .is_pending(),
+                    "{kind}: duplicate acceptance polls are not fresh page evidence"
+                );
+            }
+            assert!(
+                matches!(
+                    with_tick(&snapshot, &mut ledger, 4, |tick| {
+                        tick.cx.active_now = Duration::from_millis(1_801);
+                        with_step(tick, |cx| run.poll(cx))
+                    }),
+                    Poll::Ready(Ok(_))
+                ),
+                "{kind}: a fresh closed observation settles without a fixed delay"
+            );
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+    });
+}
+
+#[test]
+fn adopted_talk_menu_uses_only_authored_answers_without_talk_to() {
+    compile_context_test(|compile| {
+        for continuation_only in [false, true] {
+            for options in [
+                serde_json::json!({}),
+                serde_json::json!({"prefer":["Missing answer"]}),
+                serde_json::json!({"prefer":["First choice"]}),
+                serde_json::json!({"choose":1}),
+                serde_json::json!({"line_rules":[{"when_line":"what happens next","choose":"First choice"}]}),
+            ] {
+                let configured = options.get("choose").is_some()
+                    || options.get("line_rules").is_some()
+                    || options["prefer"] == serde_json::json!(["First choice"]);
+                let mut args = options;
+                if continuation_only {
+                    args["continue_only"] = serde_json::json!(true);
+                } else {
+                    args["npc"] = serde_json::json!("fred_the_farmer");
+                }
+                let plan = compile_talk(test_args::<TalkArgs>(args), compile).unwrap();
+                let mut snapshot = ready();
+                seed_operation_menu(&mut snapshot);
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                });
+                if configured {
+                    assert!(result.is_pending());
+                    assert!(matches!(
+                        emitted(&ledger),
+                        InteractReq::Answer { option: 1 }
+                    ));
+                } else {
+                    assert!(matches!(result, Poll::Ready(Err(ActionError::Failed(_)))));
+                    assert!(
+                        ledger
+                            .as_ref()
+                            .is_none_or(|ledger| ledger.outbox.is_empty()),
+                        "an adopted page must not guess or send Talk-to"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn operation_explicit_none_never_adopts_chat_after_acceptance() {
+    compile_context_test(|compile| {
+        for kind in ["interact", "use_on"] {
+            for menu in [false, true] {
+                let (mut snapshot, plan, _) =
+                    operation_fixture(compile, kind, Some(serde_json::json!("none")), false);
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                accept_last(&mut ledger, 3, true);
+                if menu {
+                    seed_operation_menu(&mut snapshot);
+                } else {
+                    snapshot.seed_chat_modal(-1, vec!["Leave this page alone.".into()]);
+                    snapshot.seed_chat_options(vec![], 105);
+                }
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 3, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Ok(_))
+                    ),
+                    "{kind}: explicit none settles at acceptance without touching a page"
+                );
+                assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            }
         }
     });
 }

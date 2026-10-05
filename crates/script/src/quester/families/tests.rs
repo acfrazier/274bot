@@ -1317,10 +1317,13 @@ fn interact_false_is_failure_not_success() {
         settle_duration: Duration::from_secs(20),
         walk: None,
         reach: Some(handle),
+        default_dialogue: true,
         dialogue_options: None,
         dialogue: None,
         started: true,
         dialogue_started: None,
+        dialogue_completed: false,
+        accepted_tick: None,
         until: None,
         target_tile: None,
         reachable_only: false,
@@ -1345,6 +1348,7 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        default_dialogue: true,
         dialogue_options: None,
         until: None,
         target_tile: None,
@@ -1374,6 +1378,7 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        default_dialogue: true,
         dialogue_options: None,
         until: None,
         target_tile: None,
@@ -1403,8 +1408,9 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         }],
         28,
     );
+    assert!(with_tick(&s, &mut ledger, 102, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(matches!(
-        with_tick(&s, &mut ledger, 102, |t| with_step(t, |cx| run.poll(cx))),
+        with_tick(&s, &mut ledger, 103, |t| with_step(t, |cx| run.poll(cx))),
         Poll::Ready(Ok(_))
     ));
 }
@@ -4193,7 +4199,7 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
                         },
                         options: dialogue::DialogueOptions {
                             prefer: Arc::from([]),
-                            choose: None,
+                            choose: (continue_component == Some(-1)).then_some(1),
                             ..Default::default()
                         },
                     },
@@ -4821,6 +4827,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         dialogue: None,
         dialogue_started: None,
         dialogue_completed: false,
+        accepted_tick: None,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))

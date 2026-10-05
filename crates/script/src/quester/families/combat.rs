@@ -1120,9 +1120,9 @@ impl CombatRun {
     ) -> Poll<Result<StepOutcome, ActionError>> {
         let ready_and_quiet = {
             let snapshot = cx.tick.cx.snapshot();
-            let chat_ready = snapshot
-                .chat_modal()
-                .is_some_and(|chat| chat.value.root != -1 || chat.value.continue_component_id >= 0);
+            let chat_ready = snapshot.chat_modal().is_some_and(|chat| {
+                super::dialogue::chat_page_open(chat.value.root, chat.value.continue_component_id)
+            });
             let combat_ended = snapshot
                 .in_combat()
                 .is_some_and(|combat| !combat.value.in_combat);
@@ -1319,6 +1319,15 @@ impl StepRun for CombatRun {
                 // the combat step. Other errors remain visible to the caller.
                 self.action = None;
                 self.next_loot_or_reengage(cx)
+            }
+            ActionPoll::Failed(ActionError::Failed(reason))
+                if matches!(&self.phase, Phase::FinishDialogue) =>
+            {
+                self.action = None;
+                Poll::Ready(Err(ActionError::Blocked(Arc::from(format!(
+                    "{}: {reason}",
+                    COMBAT_FINISH_FAILED.as_ref()
+                )))))
             }
             ActionPoll::Failed(error) => {
                 self.action = None;

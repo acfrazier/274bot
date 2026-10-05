@@ -20,6 +20,14 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+const LOADOUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn loadout_observation_wait_detail() -> &'static Arc<str> {
+    static DETAIL: std::sync::LazyLock<Arc<str>> =
+        std::sync::LazyLock::new(|| Arc::from("Waiting for inventory/equipment observation"));
+    &DETAIL
+}
+
 impl FamilyReceipt for BankReceipt {
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -1144,6 +1152,7 @@ impl StepPlan for LoadoutPlan {
             return Ok(Box::new(LoadoutObservationWait {
                 plan: self.clone(),
                 run: None,
+                deadline: cx.tick.cx.active_now() + LOADOUT_OBSERVATION_TIMEOUT,
             }));
         }
         Ok(Box::new(self.begin_observed(cx)?))
@@ -1284,6 +1293,7 @@ impl LoadoutPlan {
 struct LoadoutObservationWait {
     plan: LoadoutPlan,
     run: Option<LoadoutRun>,
+    deadline: Duration,
 }
 
 impl StepRun for LoadoutObservationWait {
@@ -1291,6 +1301,9 @@ impl StepRun for LoadoutObservationWait {
         if self.run.is_none() {
             let snapshot = cx.tick.cx.snapshot();
             if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
+                if cx.tick.cx.active_now() >= self.deadline {
+                    return Poll::Ready(Err(ActionError::NeedsEvidence(Arc::from([]))));
+                }
                 return Poll::Pending;
             }
             match self.plan.begin_observed(cx) {
@@ -1326,7 +1339,10 @@ impl StepRun for LoadoutObservationWait {
     }
 
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
-        self.run.as_ref().and_then(|run| run.waiting_for())
+        match &self.run {
+            Some(run) => run.waiting_for(),
+            None => Some(("Loadout observation", loadout_observation_wait_detail())),
+        }
     }
 
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
