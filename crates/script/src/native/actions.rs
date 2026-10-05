@@ -715,8 +715,14 @@ mod tests {
             let revoker = handle.revoker();
             assert_eq!(revoker.run(), cx.run());
             std::thread::spawn(move || revoker.revoke()).join().unwrap();
-            assert!(!queued.live(), "the pair cancellation fences the drain without a slot lock");
-            assert!(matches!(actions.poll(&handle, cx), Poll::Ready(Err(ActionError::Cancelled))));
+            assert!(
+                !queued.live(),
+                "the pair cancellation fences the drain without a slot lock"
+            );
+            assert!(matches!(
+                actions.poll(&handle, cx),
+                Poll::Ready(Err(ActionError::Cancelled))
+            ));
         });
     }
 

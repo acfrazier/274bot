@@ -11,7 +11,9 @@ use std::{sync::Arc, task::Poll, time::Instant};
 #[serde(transparent)]
 pub struct AccountKey(pub Arc<str>);
 impl std::borrow::Borrow<str> for AccountKey {
-    fn borrow(&self) -> &str { self.0.as_ref() }
+    fn borrow(&self) -> &str {
+        self.0.as_ref()
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -125,7 +127,9 @@ impl PairError {
         let remedy = match &self {
             Self::MissingPartner => "select a configured partner account",
             Self::UnknownAccount => "fix the saved partner selection",
-            Self::PartnerNotInPlay => "load and explicitly Start the configured partner in this Play",
+            Self::PartnerNotInPlay => {
+                "load and explicitly Start the configured partner in this Play"
+            }
             Self::SelfPartner => "select a different configured account",
             Self::Busy => "Stop this pair first",
             Self::NotReady => "both partners must be active and ready",
@@ -172,23 +176,36 @@ pub trait QuestPairPort: Send + Sync {
     fn world_changed(&self, host: &str, port: u16);
     fn settings(&self, caller: RunKey) -> Result<PairSettings, PairError>;
     /// Accept only an owned Arrav read from this ready incarnation and pin.
-    fn observe_gang(&self, read: &api::quest_progress::JournalRead)
-        -> Result<Knowledge<Option<Gang>>, PairError>;
-    fn gang(&self, caller: RunKey)
-        -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError>;
+    fn observe_gang(
+        &self,
+        read: &api::quest_progress::JournalRead,
+    ) -> Result<Knowledge<Option<Gang>>, PairError>;
+    fn gang(&self, caller: RunKey) -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError>;
     /// Read only the matching active reciprocal role's current native item receipt.
-    fn partner_item_count(&self, caller: EvidenceStamp, request: &PairItemRequest)
-        -> Result<i32, PairError>;
+    fn partner_item_count(
+        &self,
+        caller: EvidenceStamp,
+        request: &PairItemRequest,
+    ) -> Result<i32, PairError>;
     fn waiting(&self, caller: RunKey) -> bool;
     fn token(&self, caller: RunKey, phase: &FactKey) -> Result<PairToken, PairError>;
-    fn register_action(&self, token: &PairToken, actor: RunKey, action: crate::native::ActionRevoker)
-        -> Result<(), PairError>;
+    fn register_action(
+        &self,
+        token: &PairToken,
+        actor: RunKey,
+        action: crate::native::ActionRevoker,
+    ) -> Result<(), PairError>;
     fn begin(&self, request: PairRequest) -> Result<PairToken, PairError>;
     fn poll(&self, token: &PairToken, caller: RunKey) -> Poll<Result<PairStep, PairError>>;
     fn report(&self, token: &PairToken, receipt: RoleReceipt) -> Result<(), PairError>;
     /// Only called after a fresh local screen proves exact counterpart and offers.
-    fn trade_ready(&self, token: &PairToken, actor: RunKey, confirm: bool, evidence: EvidenceStamp)
-        -> Result<bool, PairError>;
+    fn trade_ready(
+        &self,
+        token: &PairToken,
+        actor: RunKey,
+        confirm: bool,
+        evidence: EvidenceStamp,
+    ) -> Result<bool, PairError>;
     fn gameplay_progress(&self, actor: RunKey, evidence: EvidenceStamp, now: Instant);
     fn cancel(&self, token: &PairToken);
 }

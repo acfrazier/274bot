@@ -592,7 +592,11 @@ mod tests {
     #[test]
     fn trade_view_is_borrowed_and_unready_outside_a_session() {
         let stamp = EvidenceStamp {
-            run: RunKey { slot: 2, run: 3, session: 4 },
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
             tick: 7,
             sequence: 8,
         };

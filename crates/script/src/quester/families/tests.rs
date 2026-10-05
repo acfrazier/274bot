@@ -3331,12 +3331,16 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
             );
             with_tick(&snapshot, &mut None, 1, |tick| {
                 let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
-                let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: cx.quests,
-                progress: &progress,
-                required_after: tick.cx.evidence(),
-                chat_since: 0,
-                outcome: None,
-                bank: &bank, };
+                let context = PredicateContext {
+                    cx: &tick.cx,
+                    pairs: tick.pairs,
+                    quests: cx.quests,
+                    progress: &progress,
+                    required_after: tick.cx.evidence(),
+                    chat_since: 0,
+                    outcome: None,
+                    bank: &bank,
+                };
                 let crate::quester::select::SelectionDecision::Selected(selection) =
                     crate::quester::select::select(&path, 1, &context)
                 else {
@@ -3449,12 +3453,16 @@ fn public_chat_cannot_settle_or_set_message_state() {
             username: Some("mallory".into()),
         }]);
         with_tick(&s, &mut None, 1, |t| {
-            let pred = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &[],
-            required_after: t.cx.evidence(),
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let pred = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             assert_eq!(message.evaluate(&pred), Truth::False);
             assert_eq!(state.evaluate(&pred), Truth::False);
         });
@@ -3558,12 +3566,16 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
         let document = crate::quester::compile::decode_cook().unwrap();
         let recipe = &document.quest.as_ref().unwrap().acquire["acquire:flour"];
         with_tick(&s, &mut None, 1, |t| {
-            let pred = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &[],
-            required_after: t.cx.evidence(),
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let pred = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             for index in [1, 2] {
                 assert_eq!(
                     compile_predicate(&recipe[index].skip_if, cx)
@@ -3617,12 +3629,16 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
             },
         ]);
         with_tick(&s, &mut None, 1, |t| {
-            let pred = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &[],
-            required_after: t.cx.evidence(),
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let pred = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             assert_eq!(loaded.evaluate(&pred), Truth::False);
         });
     });
@@ -3652,12 +3668,16 @@ fn progress_predicates_require_known_same_run_evidence() {
         let snapshot = ready();
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |t| {
-            let unknown = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &[],
-            required_after: t.cx.evidence(),
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let unknown = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
             assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
 
@@ -3679,15 +3699,19 @@ fn progress_predicates_require_known_same_run_evidence() {
                 rule: Knowledge::Known(FactKey::new("cook:1")),
                 pin,
             }];
-            let known = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &progress,
-            required_after: EvidenceStamp {
-                tick: evidence.tick + 10,
-                ..evidence
-            },
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let known = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &progress,
+                required_after: EvidenceStamp {
+                    tick: evidence.tick + 10,
+                    ..evidence
+                },
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             assert_eq!(stage.evaluate(&known), Truth::True);
             assert_eq!(flag.evaluate(&known), Truth::True);
         });
@@ -3848,12 +3872,16 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
                 rule: Knowledge::Known(FactKey::new("cook:1")),
                 pin: Arc::clone(&pin),
             }];
-            let known = PredicateContext { cx: &t.cx, pairs: t.pairs, quests: cx.quests,
-            progress: &progress,
-            required_after: evidence,
-            chat_since: 0,
-            outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(), };
+            let known = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &progress,
+                required_after: evidence,
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
             assert_eq!(not_set.evaluate(&known), Truth::False);
             assert_eq!(exact.evaluate(&known), Truth::True);
             assert_eq!(minimum.evaluate(&known), Truth::True);
@@ -4472,12 +4500,16 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             panic!("observed production progress must return to Path settlement");
         };
         let settle = |cx: &mut StepContext<'_, '_>| {
-            step.settle.evaluate(&PredicateContext { cx: &cx.tick.cx, pairs: cx.tick.pairs, quests: cx.quests,
-            progress: cx.progress,
-            required_after: cx.required_after,
-            chat_since: 0,
-            outcome: Some(&outcome),
-            bank: cx.bank, })
+            step.settle.evaluate(&PredicateContext {
+                cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
+                quests: cx.quests,
+                progress: cx.progress,
+                required_after: cx.required_after,
+                chat_since: 0,
+                outcome: Some(&outcome),
+                bank: cx.bank,
+            })
         };
         assert_eq!(
             with_tick(&snapshot, &mut ledger, 8, |tick| {
@@ -5068,6 +5100,7 @@ fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) ->
             chat_since: 0,
             outcome: None,
             bank: &crate::quester::bank_memo::BankMemo::default(),
+            pairs: None,
         })
     })
 }

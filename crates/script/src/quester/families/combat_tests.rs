@@ -494,12 +494,16 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         })),
     };
     super::super::tests::with_tick(&snapshot, &mut ledger, 12, |tick| {
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: Some(&outcome), };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&outcome),
+        };
         assert_eq!(predicate.evaluate(&context), Truth::True);
 
         let killed = report(CombatEnd::Killed);
@@ -511,19 +515,27 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
                 target_gone_restarts: 0,
             })),
         };
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: Some(&other), };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&other),
+        };
         assert_eq!(predicate.evaluate(&context), Truth::False);
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: None, };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: None,
+        };
         assert_eq!(predicate.evaluate(&context), Truth::False);
     });
 }
@@ -552,12 +564,16 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
         };
         snapshot.seed_local_player(local.clone());
         super::super::tests::with_tick(&snapshot, &mut ledger, x as u64, |tick| {
-            let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-            progress: &[],
-            required_after: tick.cx.evidence(),
-            chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
-            outcome: None, };
+            let context = PredicateContext {
+                cx: &tick.cx,
+                pairs: tick.pairs,
+                quests: &quests,
+                progress: &[],
+                required_after: tick.cx.evidence(),
+                chat_since: 0,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+                outcome: None,
+            };
             let crate::quester::select::SelectionDecision::Selected(selected) =
                 crate::quester::select::select(&path, 0, &context)
             else {
@@ -600,12 +616,16 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
     };
     let mut ledger = None;
     super::super::tests::with_tick(&snapshot, &mut ledger, 40, |tick| {
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: Some(&outcome), };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&outcome),
+        };
         let crate::quester::select::SelectionDecision::Selected(selected) =
             crate::quester::select::select(&path, 0, &context)
         else {
@@ -655,12 +675,16 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
     let outcome = unattackable_outcome();
     let mut ledger = None;
     super::super::tests::with_tick(&snapshot, &mut ledger, 50, |tick| {
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: Some(&outcome), };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&outcome),
+        };
         let crate::quester::select::SelectionDecision::Selected(selected) =
             crate::quester::select::select(&path, 0, &context)
         else {
@@ -698,12 +722,16 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     let outcome = unattackable_outcome();
     let mut ledger = None;
     super::super::tests::with_tick(&snapshot, &mut ledger, 60, |tick| {
-        let context = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &quests,
-        progress: &[],
-        required_after: tick.cx.evidence(),
-        chat_since: 0,
-        bank: &crate::quester::bank_memo::BankMemo::default(),
-        outcome: Some(&outcome), };
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&outcome),
+        };
         assert!(
             matches!(
                 crate::quester::select::select(&path, 0, &context),

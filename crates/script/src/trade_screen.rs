@@ -51,8 +51,7 @@ impl CloseDriver {
             return false;
         }
         let since = *self.inactive_since.get_or_insert(now);
-        now.saturating_duration_since(since)
-            >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
+        now.saturating_duration_since(since) >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
     }
 }
 
@@ -110,13 +109,19 @@ mod tests {
     fn delayed_confirmation_resets_close_debounce() {
         let now = Instant::now();
         let mut driver = ScreenDriver::after_offer();
-        assert_eq!(driver.poll(ScreenKind::Closed, now, false), WaitEnd::Waiting);
+        assert_eq!(
+            driver.poll(ScreenKind::Closed, now, false),
+            WaitEnd::Waiting
+        );
         assert_eq!(
             driver.poll(ScreenKind::Confirm, now + Duration::from_millis(300), false),
             WaitEnd::Confirm
         );
         let mut driver = ScreenDriver::after_confirm();
-        assert_eq!(driver.poll(ScreenKind::Closed, now, false), WaitEnd::Waiting);
+        assert_eq!(
+            driver.poll(ScreenKind::Closed, now, false),
+            WaitEnd::Waiting
+        );
         assert_eq!(
             driver.poll(ScreenKind::Confirm, now + Duration::from_millis(400), false),
             WaitEnd::Waiting

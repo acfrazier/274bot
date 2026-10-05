@@ -1228,7 +1228,12 @@ impl Quester {
         self.adopt_progress(tick, Arc::new(progress), retarget)
     }
 
-    fn adopt_progress(&mut self, tick: &mut NativeTick<'_>, progress: Arc<QuestProgress>, retarget: bool) -> bool {
+    fn adopt_progress(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        progress: Arc<QuestProgress>,
+        retarget: bool,
+    ) -> bool {
         let stage = match &progress.stage {
             Knowledge::Known(stage) => Some(stage.clone()),
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
@@ -1276,17 +1281,36 @@ impl Quester {
         true
     }
 
-    fn valid_progress(&self, tick: &NativeTick<'_>, progress: &QuestProgress, after: api::quest_progress::EvidenceStamp) -> bool {
-        progress.quest == self.path.id && progress.binding == self.path.progress.binding
-            && progress.role == self.path.role && progress.pin.as_ref() == tick.cx.pin()
-            && progress.evidence.meets(after) && progress.evidence != after
+    fn valid_progress(
+        &self,
+        tick: &NativeTick<'_>,
+        progress: &QuestProgress,
+        after: api::quest_progress::EvidenceStamp,
+    ) -> bool {
+        progress.quest == self.path.id
+            && progress.binding == self.path.progress.binding
+            && progress.role == self.path.role
+            && progress.pin.as_ref() == tick.cx.pin()
+            && progress.evidence.meets(after)
+            && progress.evidence != after
             && tick.cx.evidence().meets(progress.evidence)
             && match &progress.stage {
-                Knowledge::Known(stage) => self.path.progress.stage_keys.contains(stage)
-                    && (progress.complete != Truth::True || stage == &self.path.progress.colour_complete),
-                Knowledge::Unknown(_) | Knowledge::Partial { .. } => progress.complete != Truth::True,
+                Knowledge::Known(stage) => {
+                    self.path.progress.stage_keys.contains(stage)
+                        && (progress.complete != Truth::True
+                            || stage == &self.path.progress.colour_complete)
+                }
+                Knowledge::Unknown(_) | Knowledge::Partial { .. } => {
+                    progress.complete != Truth::True
+                }
             }
-            && progress.flags.iter().all(|flag| self.path.progress.flags.iter().any(|rule| rule.flag == flag.flag))
+            && progress.flags.iter().all(|flag| {
+                self.path
+                    .progress
+                    .flags
+                    .iter()
+                    .any(|rule| rule.flag == flag.flag)
+            })
     }
 
     fn read_custom_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
@@ -1294,42 +1318,72 @@ impl Quester {
             let result = {
                 let after = tick.cx.evidence();
                 let mut cx = StepContext {
-                    tick, quests: &self.quests, progress: self.progress_slice(),
-                    required_after: after, bank: &self.bank, banks: &self.banks,
+                    tick,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: after,
+                    bank: &self.bank,
+                    banks: &self.banks,
                     choices: &self.choices,
                 };
-                self.path.progress_reader.as_ref().unwrap().plan.begin(&mut cx)
+                self.path
+                    .progress_reader
+                    .as_ref()
+                    .unwrap()
+                    .plan
+                    .begin(&mut cx)
             };
             match result {
                 Ok(reader) => {
                     self.custom_reader = Some(reader);
                     self.custom_read_after = Some(tick.cx.evidence());
                 }
-                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => return false,
-                Err(error) => { self.record_failure(error); self.parked = true; return false; }
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                    return false
+                }
+                Err(error) => {
+                    self.record_failure(error);
+                    self.parked = true;
+                    return false;
+                }
             }
         }
         let mut reader = self.custom_reader.take().unwrap();
         let result = {
             let after = self.custom_read_after.unwrap();
             let mut cx = StepContext {
-                tick, quests: &self.quests, progress: self.progress_slice(),
-                required_after: after, bank: &self.bank, banks: &self.banks,
+                tick,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: after,
+                bank: &self.bank,
+                banks: &self.banks,
                 choices: &self.choices,
             };
             reader.poll(&mut cx)
         };
         match result {
-            Poll::Pending => { self.custom_reader = Some(reader); false }
-            Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; false }
+            Poll::Pending => {
+                self.custom_reader = Some(reader);
+                false
+            }
+            Poll::Ready(Err(error)) => {
+                self.record_failure(error);
+                self.parked = true;
+                false
+            }
             Poll::Ready(Ok(outcome)) => {
                 let after = self.custom_read_after.take().unwrap();
                 let Some(progress) = outcome.progress else {
-                    self.record_failure(ActionError::Blocked(Arc::from("progress reader returned no owned progress")));
+                    self.record_failure(ActionError::Blocked(Arc::from(
+                        "progress reader returned no owned progress",
+                    )));
                     self.parked = true;
                     return false;
                 };
-                if outcome.evidence != progress.evidence || !self.valid_progress(tick, &progress, after) {
+                if outcome.evidence != progress.evidence
+                    || !self.valid_progress(tick, &progress, after)
+                {
                     self.record_failure(ActionError::Stale);
                     self.parked = true;
                     return false;
@@ -1340,44 +1394,78 @@ impl Quester {
     }
 
     fn admit_pair(&mut self, tick: &mut NativeTick<'_>) -> bool {
-        if self.path.partner.is_none() { return true; }
-        let result = tick.pairs.ok_or_else(|| ActionError::Unavailable(Arc::from("partner capability is not installed in this Play")))
-            .and_then(|port| port.settings(tick.cx.run()).map_err(super::pair::PairError::action));
+        if self.path.partner.is_none() {
+            return true;
+        }
+        let result = tick
+            .pairs
+            .ok_or_else(|| {
+                ActionError::Unavailable(Arc::from(
+                    "partner capability is not installed in this Play",
+                ))
+            })
+            .and_then(|port| {
+                port.settings(tick.cx.run())
+                    .map_err(super::pair::PairError::action)
+            });
         if let Err(error) = result {
             self.record_failure(error);
             self.parked = true;
             return false;
         }
-        if tick.pairs.is_some_and(|port| port.gang(tick.cx.run()).is_err()) {
+        if tick
+            .pairs
+            .is_some_and(|port| port.gang(tick.cx.run()).is_err())
+        {
             match self.gang_reader.poll(tick, &self.quests) {
                 Poll::Pending => return false,
                 Poll::Ready(Ok(_)) => {}
-                Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; return false; }
+                Poll::Ready(Err(error)) => {
+                    self.record_failure(error);
+                    self.parked = true;
+                    return false;
+                }
             }
         }
-        if self.pair_admitted { return true; }
+        if self.pair_admitted {
+            return true;
+        }
         if self.pair_admission.is_none() {
             let result = super::families::partner::admission(&self.path).and_then(|plan| {
                 let after = tick.cx.evidence();
                 let mut cx = StepContext {
-                    tick, quests: &self.quests, progress: self.progress_slice(),
-                    required_after: after, bank: &self.bank, banks: &self.banks,
+                    tick,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: after,
+                    bank: &self.bank,
+                    banks: &self.banks,
                     choices: &self.choices,
                 };
                 plan.begin(&mut cx)
             });
             match result {
                 Ok(run) => self.pair_admission = Some(run),
-                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => return false,
-                Err(error) => { self.record_failure(error); self.parked = true; return false; }
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                    return false
+                }
+                Err(error) => {
+                    self.record_failure(error);
+                    self.parked = true;
+                    return false;
+                }
             }
         }
         let mut run = self.pair_admission.take().unwrap();
         let result = {
             let after = tick.cx.evidence();
             let mut cx = StepContext {
-                tick, quests: &self.quests, progress: self.progress_slice(),
-                required_after: after, bank: &self.bank, banks: &self.banks,
+                tick,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: after,
+                bank: &self.bank,
+                banks: &self.banks,
                 choices: &self.choices,
             };
             run.poll(&mut cx)
@@ -1395,7 +1483,11 @@ impl Quester {
                 self.dirty = true;
                 true
             }
-            Poll::Ready(Err(error)) => { self.record_failure(error); self.parked = true; false }
+            Poll::Ready(Err(error)) => {
+                self.record_failure(error);
+                self.parked = true;
+                false
+            }
         }
     }
 
@@ -1455,8 +1547,10 @@ impl Script for Quester {
     fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
         let declaration = self.path.partner.as_ref()?;
         Some(super::pair::PairBinding {
-            path: &self.path.id, protocol: &declaration.protocol,
-            digest: &self.path.digest, role: self.path.role.as_ref()?,
+            path: &self.path.id,
+            protocol: &declaration.protocol,
+            digest: &self.path.digest,
+            role: self.path.role.as_ref()?,
         })
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
@@ -1645,12 +1739,16 @@ impl Script for Quester {
         }
         if self.settling {
             let truth = {
-                let pred = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &self.quests,
-                progress: self.progress_slice(),
-                required_after: tick.cx.evidence(),
-                chat_since: self.chat_since,
-                outcome: self.last_outcome.as_ref(),
-                bank: &self.bank, };
+                let pred = PredicateContext {
+                    cx: &tick.cx,
+                    pairs: tick.pairs,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: tick.cx.evidence(),
+                    chat_since: self.chat_since,
+                    outcome: self.last_outcome.as_ref(),
+                    bank: &self.bank,
+                };
                 self.current_step()
                     .map(|step| step.settle.evaluate(&pred))
                     .unwrap_or(Truth::False)
@@ -1690,12 +1788,16 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Continue);
             }
             let selected = {
-                let pred = PredicateContext { cx: &tick.cx, pairs: tick.pairs, quests: &self.quests,
-                progress: self.progress_slice(),
-                required_after: tick.cx.evidence(),
-                chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
-                bank: &self.bank, };
+                let pred = PredicateContext {
+                    cx: &tick.cx,
+                    pairs: tick.pairs,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: tick.cx.evidence(),
+                    chat_since: super::families::reach::last_chat_seq(&tick.cx),
+                    outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
+                    bank: &self.bank,
+                };
                 match select(&self.path, self.seq_index, &pred) {
                     SelectionDecision::Selected(sel) => {
                         Ok(Some((sel.index, sel.step.advances, sel.prelude)))
@@ -2347,9 +2449,15 @@ impl QueuedQuester {
         }
         self.refresh_fields();
     }
-    fn prepare_pair_role(&mut self, index: usize, tick: &mut NativeTick<'_>) -> Poll<Result<super::pair::Gang, ActionError>> {
+    fn prepare_pair_role(
+        &mut self,
+        index: usize,
+        tick: &mut NativeTick<'_>,
+    ) -> Poll<Result<super::pair::Gang, ActionError>> {
         if let Some((selected, gang)) = self.pair_selection {
-            if selected == index { return Poll::Ready(Ok(gang)); }
+            if selected == index {
+                return Poll::Ready(Ok(gang));
+            }
         }
         match self.gang_reader.poll(tick, &self.quests) {
             Poll::Pending => Poll::Pending,
@@ -2364,7 +2472,9 @@ impl QueuedQuester {
                     }
                     Knowledge::Known(None) => {
                         let Some(gang) = self.queue.gang else {
-                            return Poll::Ready(Err(ActionError::Blocked(Arc::from("choose an irreversible gang explicitly for this unjoined account"))));
+                            return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                                "choose an irreversible gang explicitly for this unjoined account",
+                            ))));
                         };
                         gang
                     }
@@ -2385,7 +2495,9 @@ impl Script for QueuedQuester {
         })
     }
     fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
-        self.active.as_ref().and_then(|active| active.pair_binding())
+        self.active
+            .as_ref()
+            .and_then(|active| active.pair_binding())
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.run != tick.cx.run() {
@@ -2513,12 +2625,17 @@ impl Script for QueuedQuester {
                     }
                     Poll::Ready(Ok(gang)) => Some(gang),
                     Poll::Ready(Err(error)) => {
-                        self.queue.mark_blocked(index, Arc::from(format!("partner admission: {error:?}")));
+                        self.queue.mark_blocked(
+                            index,
+                            Arc::from(format!("partner admission: {error:?}")),
+                        );
                         self.refresh_fields();
                         return Ok(ScriptFlow::Continue);
                     }
                 }
-            } else { None };
+            } else {
+                None
+            };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
@@ -2526,13 +2643,15 @@ impl Script for QueuedQuester {
             let worker = api::selected::FamilyPreparation::run(move |_| {
                 let bytes = super::card::released_path(&id)
                     .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
-                super::compile::compile_path_for_gang(bytes, &selected, &quests, gang).map_err(|error| {
-                    let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
-                    Arc::from(match &error.step {
-                        Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
-                        None => format!("{}: {detail}", error.code),
-                    })
-                })
+                super::compile::compile_path_for_gang(bytes, &selected, &quests, gang).map_err(
+                    |error| {
+                        let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
+                        Arc::from(match &error.step {
+                            Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
+                            None => format!("{}: {detail}", error.code),
+                        })
+                    },
+                )
             });
             match worker {
                 Ok(worker) => self.preparing = Some(worker),

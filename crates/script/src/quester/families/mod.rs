@@ -2975,12 +2975,16 @@ impl StepRun for WaitRun {
         if cx.tick.cx.evidence().tick >= self.deadline_tick {
             return Poll::Ready(Err(ActionError::Failed(Arc::from("wait exhausted"))));
         }
-        let pred = PredicateContext { cx: &cx.tick.cx, pairs: cx.tick.pairs, quests: cx.quests,
-        progress: cx.progress,
-        required_after: cx.required_after,
-        chat_since: self.chat_since,
-        outcome: None,
-        bank: cx.bank, };
+        let pred = PredicateContext {
+            cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: self.chat_since,
+            outcome: None,
+            bank: cx.bank,
+        };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;
         }
