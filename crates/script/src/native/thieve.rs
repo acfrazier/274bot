@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+const REACH_MODAL_WAIT_TICKS: u8 = 1;
+
 #[derive(Clone)]
 pub(crate) struct Target {
     pub id: i32,
@@ -43,6 +45,7 @@ pub(crate) struct Thieve {
     reach_request_id: Option<u64>,
     reach_target: Option<(i32, &'static str)>,
     modal: Option<OneOp>,
+    modal_reach_ticks: u8,
     pending_action: Option<&'static str>,
     pending_target_id: Option<i32>,
 }
@@ -94,6 +97,7 @@ impl NativeMachine for Thieve {
             reach_request_id: None,
             reach_target: None,
             modal: None,
+            modal_reach_ticks: 0,
             pending_action: None,
             pending_target_id: None,
         })
@@ -109,6 +113,17 @@ impl NativeMachine for Thieve {
         }
 
         let snapshot = cx.snapshot();
+        let mut core_polled_for_modal = false;
+        if self.modal.is_some() {
+            if let Err(error) = self.poll_core_during_modal(now) {
+                self.cancel_walk(cx);
+                self.discard_reach();
+                self.modal = None;
+                return Poll::Ready(Err(error));
+            }
+            core_polled_for_modal = true;
+        }
+
         if let Some(result) = self.modal.as_mut().map(|modal| modal.poll(cx)) {
             match result {
                 Poll::Pending => return Poll::Pending,
@@ -125,38 +140,27 @@ impl NativeMachine for Thieve {
         }
         if let Some(args) = OneOpArgs::stray_modal(snapshot) {
             self.cancel_walk(cx);
-            if self.core.waiting_for_receipt() {
-                let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
-                let observation = Observation {
-                    effective_thieving: None,
-                    required_level: None,
-                    experience: None,
-                    inventory_used: None,
-                    target_count: None,
-                    inventory_ready: false,
-                    chat: ChatEvidence::default(),
-                    chat_dialog_open,
-                    chat_dialog_fingerprint,
-                };
-                return match self.core.poll(now, observation) {
-                    Decision::Failed(reason) => Poll::Ready(Err(action_failure(reason))),
-                    _ => Poll::Pending,
-                };
+            if !core_polled_for_modal {
+                if let Err(error) = self.poll_core_during_modal(now) {
+                    self.discard_reach();
+                    return Poll::Ready(Err(error));
+                }
             }
             if self.reach.is_some() {
-                if let Some(request_id) = self.reach_request_id {
-                    // Reach still fences its own dispatch receipt. Let it finish
-                    // before OneOp::begin emits and clears that single-slot receipt.
-                    if cx.interaction_receipt(request_id).is_none() {
-                        return Poll::Pending;
-                    }
-                    if let Err(error) = self.poll_reach(cx, now, None) {
-                        return Poll::Ready(Err(error));
-                    }
-                    if self.reach.is_some() {
-                        return Poll::Pending;
-                    }
+                self.modal_reach_ticks = self.modal_reach_ticks.saturating_add(1);
+                let receipt_absent = self
+                    .reach_request_id
+                    .is_none_or(|request_id| cx.interaction_receipt(request_id).is_none());
+                if receipt_absent || self.modal_reach_ticks >= REACH_MODAL_WAIT_TICKS {
+                    // Reach::WaitWalk can click again on arrival. Never poll Reach
+                    // while a modal is pending; abandon it within one modal tick.
+                    self.discard_reach();
+                    self.modal_reach_ticks = 0;
+                } else {
+                    return Poll::Pending;
                 }
+            } else {
+                self.modal_reach_ticks = 0;
             }
             self.modal = match OneOp::begin(args, cx) {
                 Ok(modal) => Some(modal),
@@ -164,6 +168,7 @@ impl NativeMachine for Thieve {
             };
             return Poll::Pending;
         }
+        self.modal_reach_ticks = 0;
 
         let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
         if chat_dialog_open {
@@ -342,6 +347,49 @@ impl NativeMachine for Thieve {
 }
 
 impl Thieve {
+    fn poll_core_during_modal(&mut self, now: Duration) -> Result<(), ActionError> {
+        // Keep action and receipt deadlines live without advancing the attempt
+        // observation while OneOp owns the modal.
+        let decision = self.core.poll(
+            now,
+            Observation {
+                effective_thieving: None,
+                required_level: None,
+                experience: None,
+                inventory_used: None,
+                target_count: None,
+                inventory_ready: false,
+                chat: ChatEvidence::default(),
+                chat_dialog_open: false,
+                chat_dialog_fingerprint: None,
+            },
+        );
+        match decision {
+            Decision::Failed(reason) => Err(action_failure(reason)),
+            Decision::AttemptFailed if self.pending_target_id.is_some_and(is_troll_guard) => Err(
+                failed("troll prison guard attacked after failed pickpocket"),
+            ),
+            Decision::AttemptResolved
+            | Decision::AttemptFailed
+            | Decision::AttemptTimedOut
+            | Decision::Dialogue
+            | Decision::Stunned => {
+                self.pending_action = None;
+                self.pending_target_id = None;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn discard_reach(&mut self) {
+        if let Some(mut reach) = self.reach.take() {
+            reach.cancel();
+        }
+        self.reach_request_id = None;
+        self.reach_target = None;
+    }
+
     fn begin_walk(
         &mut self,
         target: WorldTile,
@@ -690,6 +738,75 @@ mod tests {
         );
     }
 
+    fn seed_unreachable_door(snapshot: &mut GameSnapshot, open: bool) {
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            sequence: 1,
+            type_: 0,
+            username: None,
+            text: "I can't reach that!".into(),
+        }]);
+        snapshot.seed_locs(vec![LocView {
+            id: 1516,
+            name: Some("Door".into()),
+            actions: vec![Some(if open { "Close" } else { "Open" }.into())],
+            tile: WorldTile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
+            distance: 1,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer: LocLayer::Wall,
+            shape: 0,
+            angle: 2,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+    }
+
+    fn npc_click_count(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
+                )
+            })
+            .count()
+    }
+
+    fn continue_dialog_count(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::ContinueDialog { .. }
+                    )
+                )
+            })
+            .count()
+    }
+
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {
         let stats = [StatView {
@@ -859,6 +976,200 @@ mod tests {
                 ..
             }) if action == "Pickpocket"
         ));
+    }
+
+    #[test]
+    fn missing_reach_receipt_does_not_wedge_level_up_modal_or_thieving() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let mut snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let mut action_args = args(anchor, 12);
+        action_args.goal_qty = 2;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(action_args, &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+
+        seed_unreachable_door(&mut snapshot, false);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(ledger.as_ref().unwrap().walk.is_none());
+        assert!(ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|action| { matches!(&action.effect, crate::native::HostEffect::Walk(_)) }));
+
+        // Reach has moved on to door recovery after ThieveCore recorded the
+        // accepted NPC receipt, as happens when a later Reach emit replaces it.
+        ledger.as_mut().unwrap().interaction = None;
+        snapshot.seed_chat_modal(100, vec!["Congratulations, you advanced Thieving.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(continue_dialog_count(&ledger), 1);
+
+        accept_last_interaction(&mut ledger, 5);
+        snapshot.seed_stats(vec![StatView {
+            index: 17,
+            name: "thieving".into(),
+            effective: 30,
+            base: 30,
+            xp: 1_008,
+            used: true,
+        }]);
+        snapshot.seed_inventory(vec![held(995, 1, 0)], 28);
+        snapshot.seed_chat_lines(vec![
+            ChatLineView {
+                sequence: 1,
+                type_: 0,
+                username: None,
+                text: "I can't reach that!".into(),
+            },
+            ChatLineView {
+                sequence: 2,
+                type_: 0,
+                username: None,
+                text: "You attempt to pick the man's pocket.".into(),
+            },
+            ChatLineView {
+                sequence: 3,
+                type_: 0,
+                username: None,
+                text: "You pick the man's pocket.".into(),
+            },
+        ]);
+        snapshot.seed_chat_modal(-1, Vec::new());
+        snapshot.seed_chat_options(Vec::new(), -1);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_click_count(&ledger), 2);
+    }
+
+    #[test]
+    fn pending_reach_is_bounded_and_thieve_deadline_runs_during_modal() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let mut snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let mut action_args = args(anchor, 12);
+        action_args.deadline = Duration::from_secs(4);
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(action_args, &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+
+        seed_unreachable_door(&mut snapshot, false);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_chat_modal(100, vec!["Congratulations, you advanced Thieving.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        for tick in 4..=6 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native_tick| {
+                native_tick.actions.poll(&run, &mut native_tick.cx)
+            })
+            .is_pending());
+            assert_eq!(continue_dialog_count(&ledger), 1);
+        }
+        assert_eq!(continue_dialog_count(&ledger), 1);
+
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 8, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "thieving overall deadline elapsed"
+        ));
+    }
+
+    #[test]
+    fn pending_modal_reach_never_emits_a_second_npc_click() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let mut snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        accept_last_interaction(&mut ledger, 3);
+
+        seed_unreachable_door(&mut snapshot, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        // The open-door recovery walk targets the NPC's current tile. Polling
+        // WaitWalk on this modal tick would emit another NPC click.
+        assert!(ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|action| { matches!(&action.effect, crate::native::HostEffect::Walk(_)) }));
+        snapshot.seed_chat_modal(100, vec!["Congratulations, you advanced Thieving.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+
+        for tick in 4..=6 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native_tick| {
+                native_tick.actions.poll(&run, &mut native_tick.cx)
+            })
+            .is_pending());
+            assert_eq!(npc_click_count(&ledger), 1);
+            assert_eq!(continue_dialog_count(&ledger), 1);
+        }
+        assert_eq!(continue_dialog_count(&ledger), 1);
+        for tick in 7..=8 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native_tick| {
+                native_tick.actions.poll(&run, &mut native_tick.cx)
+            })
+            .is_pending());
+            assert_eq!(npc_click_count(&ledger), 1);
+        }
     }
 
     #[test]
