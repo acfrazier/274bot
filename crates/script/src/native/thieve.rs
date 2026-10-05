@@ -143,6 +143,21 @@ impl NativeMachine for Thieve {
                     _ => Poll::Pending,
                 };
             }
+            if self.reach.is_some() {
+                if let Some(request_id) = self.reach_request_id {
+                    // Reach still fences its own dispatch receipt. Let it finish
+                    // before OneOp::begin emits and clears that single-slot receipt.
+                    if cx.interaction_receipt(request_id).is_none() {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = self.poll_reach(cx, now, None) {
+                        return Poll::Ready(Err(error));
+                    }
+                    if self.reach.is_some() {
+                        return Poll::Pending;
+                    }
+                }
+            }
             self.modal = match OneOp::begin(args, cx) {
                 Ok(modal) => Some(modal),
                 Err(error) => return Poll::Ready(Err(error)),
@@ -227,7 +242,7 @@ impl NativeMachine for Thieve {
         match decision {
             Decision::Wait => {
                 if !chat_dialog_open && !self.core.stun_active(now) {
-                    if let Err(error) = self.poll_reach(cx, now, &observation) {
+                    if let Err(error) = self.poll_reach(cx, now, Some(&observation)) {
                         return Poll::Ready(Err(error));
                     }
                 }
@@ -250,7 +265,7 @@ impl NativeMachine for Thieve {
                 self.pending_action = None;
                 self.pending_target_id = None;
                 if !chat_dialog_open && !self.core.stun_active(now) {
-                    if let Err(error) = self.poll_reach(cx, now, &observation) {
+                    if let Err(error) = self.poll_reach(cx, now, Some(&observation)) {
                         return Poll::Ready(Err(error));
                     }
                 }
@@ -393,19 +408,21 @@ impl Thieve {
         &mut self,
         cx: &mut ActionContext<'_>,
         now: Duration,
-        observation: &Observation,
+        observation: Option<&Observation>,
     ) -> Result<(), ActionError> {
         let Some(mut reach) = self.reach.take() else {
             return Ok(());
         };
-        if let Some(request_id) = reach.interaction_request_id() {
+        if let (Some(request_id), Some(observation)) = (reach.interaction_request_id(), observation)
+        {
             if let Err(error) = self.track_reach_request(request_id, now, observation) {
                 self.reach = Some(reach);
                 return Err(error);
             }
         }
         let result = reach.poll(cx);
-        if let Some(request_id) = reach.interaction_request_id() {
+        if let (Some(request_id), Some(observation)) = (reach.interaction_request_id(), observation)
+        {
             if let Err(error) = self.track_reach_request(request_id, now, observation) {
                 self.reach = Some(reach);
                 return Err(error);
