@@ -163,7 +163,7 @@ impl SlotScript {
             return;
         }
         seat.progress.reset(&mut seat.progress_retiring);
-        let Some(bytes) = crate::quester::card::released_path(quest) else {
+        let Some(bytes) = crate::quester::registry::bundled_path(quest) else {
             seat.progress_page = Some(ProgressPage::Refused {
                 token,
                 reason: "unknown-path".into(),

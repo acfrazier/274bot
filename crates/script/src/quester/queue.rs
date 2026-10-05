@@ -1,5 +1,6 @@
 //! Index-ordered per-account quest queue and its compact status projection.
 use super::pair::{AccountKey, Gang};
+use super::registry::{PathBytes, PathRegistry, PathSource};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -72,8 +73,8 @@ pub struct QueueRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct Queue<'a> {
-    index: &'a ReleaseIndex,
+pub struct Queue {
+    index: PathRegistry,
     rows: Vec<QueueRow>,
     /// Positions in `rows`, with the operator override ahead of index-order tail.
     order: Vec<u8>,
@@ -105,11 +106,20 @@ impl std::fmt::Display for QueueConfigError {
 
 impl std::error::Error for QueueConfigError {}
 
-impl<'a> Queue<'a> {
+impl Queue {
+    #[cfg(test)]
     pub fn from_index(
-        index: &'a ReleaseIndex,
+        index: &ReleaseIndex,
         settings: QueueSettings,
     ) -> Result<Self, QueueConfigError> {
+        Self::from_registry(PathRegistry::from_index(index.clone()), settings)
+    }
+
+    pub fn from_registry(
+        source: PathRegistry,
+        settings: QueueSettings,
+    ) -> Result<Self, QueueConfigError> {
+        let index = source.index();
         validate_index(index)?;
         let positions = index
             .paths
@@ -195,7 +205,7 @@ impl<'a> Queue<'a> {
         }
 
         Ok(Self {
-            index,
+            index: source,
             rows,
             order,
             reasons,
@@ -237,6 +247,19 @@ impl<'a> Queue<'a> {
             .paths
             .get(usize::from(row.index))
             .and_then(|path| path.file.as_deref())
+    }
+
+    pub fn path_bytes(&self, position: usize) -> Option<PathBytes> {
+        self.index.bytes(self.id(position)?)
+    }
+
+    pub fn path_source(&self, position: usize) -> PathSource {
+        self.id(position)
+            .map_or(PathSource::Bundled, |id| self.index.path_source(id))
+    }
+
+    pub fn path_report(&self) -> Option<&Arc<str>> {
+        self.index.report()
     }
 
     pub fn status(&self, position: usize) -> Option<QueueStatus> {
@@ -321,7 +344,7 @@ impl<'a> Queue<'a> {
     }
 }
 
-fn validate_index(index: &ReleaseIndex) -> Result<(), QueueConfigError> {
+pub(super) fn validate_index(index: &ReleaseIndex) -> Result<(), QueueConfigError> {
     if index.schema != 1 {
         return Err(QueueConfigError::new(
             "",

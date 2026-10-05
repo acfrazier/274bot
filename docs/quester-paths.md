@@ -12,6 +12,47 @@ For Paths authored against schema 2, make this clean cutover before adding new w
 
 A direct progress fact (`stage_in`, `flag`, or `quest_colour`) anywhere inside a step's `settle` requires `advances: true`. A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it. The schema does not accept version 2; do not mix schemas in a release. Validate the shape with the pinned AJV command in §4.6 and compile every indexed Path with `cargo test -p script bundled_paths_decode_and_compile` before asking for a live run.
 
+
+## Loading draft Paths without rebuilding
+
+Open **Nav config** in panel, or **settings** (`o` on Overview) in TUI. Enable
+**Load quest Paths from folder** and choose a folder. The setting is off by
+default and is available in release builds. Changing it refreshes the picker.
+The default is `<profile data directory>/quester/paths/289`; a checkout's
+`crates/script/paths/289` also works. These documents are for revision **289**.
+
+Put each Path in `<folder>/<id>.json`, with the same `id` inside the document.
+An optional `index.json` uses the shipped index's schema:
+
+```json
+{"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"my-draft","file":"my-draft.json"}]}
+```
+
+Bundled rows retain their shipped order. A valid folder document replaces the
+bundled document with the same id; new ids are appended as **draft** rows, in
+folder-index order when an index is present, then filename order for unindexed
+files. Picker labels and running status distinguish **folder** overrides and
+**draft** Paths from bundled ones. The active Path's source, SHA-256 digest,
+and initial step comment are written to the log when it starts. Folder status
+also shows the current step comment in the existing script chrome.
+
+Use **Reload Paths** to reread and validate the folder without starting a quest.
+Every Quester Start also rereads it. Stop/Start to run edits; Reload does not
+replace a Path that is already running. Delete an override and Reload (or Start)
+to restore the bundled document. Turning the setting off ignores the folder
+entirely.
+
+Files are limited to 1 MiB each and use the existing queue's 256-row limit.
+Validation reports the filename, step, error code, and detail. An invalid
+override falls back to its bundled Path; an invalid draft remains visible but
+unavailable, with the validation error as its reason. Other documents still
+load. Shipped server-unavailable quests retain their server-content restriction.
+
+Before asking for a live run, use the pinned AJV commands in §4.6 for document
+shape and `cargo test -p script bundled_paths_decode_and_compile` for bundled
+selected-data compilation. Reload adds selected-289 compilation for files
+outside the bundled index. JSON Schema validation alone cannot resolve content
+aliases or validate runtime handler semantics.
 ---
 ## 4. Authoring guide
 

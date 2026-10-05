@@ -2146,15 +2146,15 @@ impl Script for Quester {
     }
 }
 
-/// Queue ownership stays outside the active executor: only one Path is compiled
-/// and retained at a time, and activation never decodes selected facts on-pump.
+/// Queue ownership stays outside the active executor: folder snapshots share
+/// validated bytes, and only the active compiled Path is retained per run.
 pub struct QueuedQuester {
     run: RunKey,
     selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
     choices: super::choices::QuestChoices,
-    queue: super::queue::Queue<'static>,
+    queue: super::queue::Queue,
     active: Option<Box<Quester>>,
     active_index: Option<usize>,
     preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
@@ -2178,7 +2178,7 @@ impl QueuedQuester {
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
         banks: Arc<api::named_banks::NamedBankFacts>,
-        queue: super::queue::Queue<'static>,
+        queue: super::queue::Queue,
     ) -> Self {
         Self::new_with_max_deaths(run, selected, quests, banks, queue, default_max_deaths())
     }
@@ -2188,7 +2188,7 @@ impl QueuedQuester {
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
         banks: Arc<api::named_banks::NamedBankFacts>,
-        queue: super::queue::Queue<'static>,
+        queue: super::queue::Queue,
         max_deaths: u8,
     ) -> Self {
         let mut this = Self {
@@ -2266,6 +2266,29 @@ impl QueuedQuester {
                 value: StatusValue::Integer(i64::from(self.deaths)),
             },
         ];
+        if let Some(report) = self.queue.path_report() {
+            fields.push(StatusField {
+                key: "path_validation",
+                label: "Path validation",
+                value: StatusValue::Text(Arc::clone(report)),
+            });
+            if let Some(index) = self.active_index {
+                static SOURCES: std::sync::LazyLock<[Arc<str>; 3]> =
+                    std::sync::LazyLock::new(|| {
+                        [
+                            Arc::from("bundled"),
+                            Arc::from("folder"),
+                            Arc::from("draft"),
+                        ]
+                    });
+                let source = self.queue.path_source(index);
+                fields.push(StatusField {
+                    key: "path_source",
+                    label: "Path source",
+                    value: StatusValue::Text(Arc::clone(&SOURCES[source as usize])),
+                });
+            }
+        }
         if let Some(quest) = &self.last_retreat {
             fields.push(StatusField {
                 key: "last_retreat",
@@ -2418,6 +2441,19 @@ impl QueuedQuester {
                     Arc::clone(&self.selected),
                     Arc::clone(&self.quests),
                     Arc::clone(&self.banks),
+                );
+                tick.output.log(
+                    api::hostlog::Level::Info,
+                    &format!(
+                        "Quester Start: Path {} source={} digest={} step_comment={:?}",
+                        active.path.id.0,
+                        self.queue.path_source(index).label(),
+                        super::registry::digest_text(&active.path.digest),
+                        active
+                            .current_step()
+                            .and_then(|step| step.comment.as_deref())
+                            .unwrap_or(""),
+                    ),
                 );
                 active.choices = self.choices;
                 active.prior_deaths = self.deaths;
@@ -2647,21 +2683,21 @@ impl Script for QueuedQuester {
                 None
             };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
+            let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
             self.active_index = Some(index);
             let worker = api::selected::FamilyPreparation::run(move |_| {
-                let bytes = super::card::released_path(&id)
-                    .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
-                super::compile::compile_path_for_gang(bytes, &selected, &quests, gang).map_err(
-                    |error| {
+                let bytes =
+                    bytes.ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
+                super::compile::compile_path_for_gang(bytes.as_ref(), &selected, &quests, gang)
+                    .map_err(|error| {
                         let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
                         Arc::from(match &error.step {
                             Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
                             None => format!("{}: {detail}", error.code),
                         })
-                    },
-                )
+                    })
             });
             match worker {
                 Ok(worker) => self.preparing = Some(worker),
