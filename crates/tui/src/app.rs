@@ -19,6 +19,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use frontend_core::quester_paths::QuesterPathsView;
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
 use host_play::walk_map::{
@@ -153,6 +154,8 @@ pub enum AppAction {
     /// Local debug teleport is intentionally a separate named action. The
     /// binary/host must authorize it; the TUI never treats a pin as proof.
     MapTeleport(Tile),
+    /// Reload the shared Quester Path registry without starting a Path.
+    ReloadPaths,
     /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
     Chat(ChatAction),
     /// MultiBox: load every vault profile and log every member in (after
@@ -416,6 +419,16 @@ pub struct TuiApp {
     pub settings_memory: Option<frontend_core::MemoryNotice>,
     /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
     pub map_bake: MapBakeChoice,
+    /// Shared host/folder source settings for Quester Paths.
+    pub quester_paths: QuesterPathsView,
+    /// Last successfully persisted Quester Paths source settings.
+    pub(crate) quester_paths_persisted: QuesterPathsView,
+    /// The folder gate or path changed; the session persists it on pump.
+    pub(crate) quester_paths_dirty: bool,
+    /// Most recent async Path registry reload status/report.
+    pub(crate) quester_paths_notice: Option<Arc<str>>,
+    pub(crate) quester_paths_reloading: bool,
+    pub(crate) quester_paths_notice_error: bool,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
     pub map_bake_dirty: bool,
     /// Global nav preference: pause a script after its owned walk is
@@ -537,6 +550,12 @@ impl TuiApp {
             memory: None,
             settings_memory: None,
             map_bake: MapBakeChoice::Ask,
+            quester_paths: QuesterPathsView::default(),
+            quester_paths_persisted: QuesterPathsView::default(),
+            quester_paths_dirty: false,
+            quester_paths_notice: None,
+            quester_paths_notice_error: false,
+            quester_paths_reloading: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
             shared_preferences_path: None,
@@ -581,6 +600,12 @@ impl TuiApp {
     /// are refreshed again for every relevant render and admission.
     pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
         let path = path.into();
+        self.quester_paths = QuesterPathsView::read_at(&path);
+        self.quester_paths_persisted.enabled = self.quester_paths.enabled;
+        self.quester_paths_persisted
+            .folder
+            .clone_from(&self.quester_paths.folder);
+        self.quester_paths.apply();
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
             &path,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,

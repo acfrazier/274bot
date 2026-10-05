@@ -474,6 +474,8 @@ pub struct TuiSession {
     /// per-profile parameters, Start/Stop all, reload, Apply to all): the
     /// same owner the panel uses.
     scripts: frontend_core::Scripts,
+    /// Async compilation and publication of the shared Quester Path registry.
+    quester_paths_reload: frontend_core::quester_paths::ReloadPaths,
     /// First-run rs2b0t clone-root folder browser.
     rs2b0t_catalog_open: bool,
     rs2b0t_catalog_dir: PathBuf,
@@ -571,6 +573,7 @@ impl TuiSession {
                 js,
                 script::ScriptSettingsStore::with_default_path(),
             ),
+            quester_paths_reload: frontend_core::quester_paths::ReloadPaths::default(),
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             script_category_order: Vec::new(),
@@ -2179,11 +2182,132 @@ impl TuiSession {
             app.error = Some(format!("settings: map bake: {e}"));
         }
     }
+    /// Apply and persist the shared Quester Path source settings changed in
+    /// the popup. The shared helper owns the preference-file format.
+    fn project_quester_paths(&mut self, app: &mut TuiApp) {
+        if !std::mem::take(&mut app.quester_paths_dirty) {
+            return;
+        }
+        if !self.persist_ui {
+            app.quester_paths.apply();
+            self.start_quester_paths_reload(app);
+            return;
+        }
+        let path = app
+            .shared_preferences_path()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(host_play::panel_ui_path);
+        match frontend_core::quester_paths::QuesterPathsView::persist_changed_at(
+            &path,
+            &app.quester_paths_persisted,
+            &app.quester_paths,
+        ) {
+            Ok(()) => {
+                app.quester_paths.apply();
+                app.quester_paths_persisted.enabled = app.quester_paths.enabled;
+                app.quester_paths_persisted
+                    .folder
+                    .clone_from(&app.quester_paths.folder);
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("settings: quest Paths:"))
+                {
+                    app.error = None;
+                }
+                if app.quester_paths_notice_error
+                    && app
+                        .quester_paths_notice
+                        .as_deref()
+                        .is_some_and(|notice| notice.starts_with("settings: quest Paths:"))
+                {
+                    app.quester_paths_notice = None;
+                    app.quester_paths_notice_error = false;
+                }
+            }
+            Err(error) => {
+                let message = format!("settings: quest Paths: {error}");
+                app.error = Some(message.clone());
+                app.quester_paths_notice = Some(message.into());
+                app.quester_paths_notice_error = true;
+                app.quester_paths.clone_from(&app.quester_paths_persisted);
+                return;
+            }
+        }
+        self.start_quester_paths_reload(app);
+    }
+
+    fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
+        if self.quester_paths_reload.is_running() {
+            app.quester_paths_notice = Some("Reload Paths is already running".into());
+            app.quester_paths_notice_error = false;
+            return;
+        }
+        let Some(selected) = self
+            .template
+            .as_ref()
+            .and_then(|template| template.game_data())
+        else {
+            app.quester_paths_notice =
+                Some("Reload Paths unavailable: selected game data is not loaded".into());
+            app.quester_paths_notice_error = true;
+            return;
+        };
+        match self.quester_paths_reload.start(selected) {
+            Ok(()) => {
+                app.quester_paths_reloading = true;
+                app.quester_paths_notice = Some("Reloading Paths…".into());
+                app.quester_paths_notice_error = false;
+            }
+            Err(error) => {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "Quester Paths reload could not start: {}",
+                    error
+                );
+                app.quester_paths_notice = Some(format!("Reload Paths failed: {error}").into());
+                app.quester_paths_notice_error = true;
+            }
+        }
+    }
+
+    fn poll_quester_paths_reload(&mut self, app: &mut TuiApp) {
+        let result = self.quester_paths_reload.poll();
+        app.quester_paths_reloading = self.quester_paths_reload.is_running();
+        let Some(result) = result else {
+            return;
+        };
+        app.quester_paths_reloading = false;
+        match result {
+            Ok(report) => {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Info,
+                    "Quester Paths reload completed: {}",
+                    report.as_ref()
+                );
+                app.quester_paths_notice = Some(report);
+                app.quester_paths_notice_error = false;
+            }
+            Err(error) => {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "Quester Paths reload failed: {}",
+                    error
+                );
+                app.quester_paths_notice = Some(format!("Reload Paths failed: {error}").into());
+                app.quester_paths_notice_error = true;
+            }
+        }
+    }
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_quester_paths(app);
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
@@ -3060,6 +3184,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         // No controlling terminal: pump the runner without drawing.
         loop {
             session.pump(&mut app);
+            session.poll_quester_paths_reload(&mut app);
             let (code, lines) = session.live_status();
             write_proof_lines(&lines);
             if let Some(code) = code {
@@ -3086,6 +3211,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     let mut deferred = Vec::new();
     let result = (|| loop {
         session.pump(&mut app);
+        session.poll_quester_paths_reload(&mut app);
         let (code, lines) = session.live_status();
         deferred.extend(lines);
         if let Some(code) = code {
@@ -3148,6 +3274,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MapWalkGroup => session.map_walk_group(app),
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
+        AppAction::ReloadPaths => session.start_quester_paths_reload(app),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),

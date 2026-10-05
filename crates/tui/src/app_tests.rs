@@ -581,6 +581,68 @@ fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
 }
 
 #[test]
+fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes() {
+    for (width, height) in [(80, 24), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.show_screen(Screen::Overview);
+        assert_eq!(app.on_key(ch('o')), AppAction::None);
+        assert!(
+            app.settings_state.open,
+            "Settings opens at {width}x{height}"
+        );
+
+        for _ in 0..10 {
+            app.on_key(key(KeyCode::Down));
+        }
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains(frontend_core::quester_paths::LOAD_PATHS_LABEL),
+            "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
+        );
+        assert!(!app.quester_paths.enabled, "folder Paths start disabled");
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        assert!(app.quester_paths.enabled, "the gate toggles on");
+
+        app.on_key(key(KeyCode::Down));
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("Paths folder:"),
+            "the folder field stays visible at {width}x{height}: {rows:?}"
+        );
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        let previous = app.quester_paths.folder.to_string_lossy().chars().count();
+        for _ in 0..previous {
+            app.on_key(key(KeyCode::Backspace));
+        }
+        let selected_folder = "/tmp/quester-checkout/paths";
+        for character in selected_folder.chars() {
+            app.on_key(ch(character));
+        }
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::None,
+            "Enter commits the editable folder field"
+        );
+        assert_eq!(
+            app.quester_paths.folder,
+            std::path::PathBuf::from(selected_folder)
+        );
+
+        app.on_key(key(KeyCode::Down));
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains(frontend_core::quester_paths::RELOAD_PATHS_LABEL),
+            "Reload Paths stays visible at {width}x{height}: {rows:?}"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::ReloadPaths,
+            "the settings command routes reload without starting a Path"
+        );
+    }
+}
+
+#[test]
 fn settings_enter_flips_random_events_and_marks_dirty() {
     let mut app = TuiApp::new("274bot headless");
     app.settings = ProfileSettings::default();
@@ -608,8 +670,8 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 9,
-        "memory remains reachable at the last row"
+        app.settings_state.row, 12,
+        "Reload Paths remains reachable at the final settings row"
     );
 }
 
