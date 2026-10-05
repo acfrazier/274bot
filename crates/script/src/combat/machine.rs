@@ -88,6 +88,8 @@ struct MagicState {
     mode: Option<CastMode>,
     armed: bool,
     rune_seen: bool,
+    /// Initial arm adoption is allowed once per fresh combat machine only.
+    initial_arm_checked: bool,
 }
 
 impl Default for MagicState {
@@ -107,6 +109,7 @@ impl Default for MagicState {
             mode: None,
             armed: false,
             rune_seen: false,
+            initial_arm_checked: false,
         }
     }
 }
@@ -123,6 +126,7 @@ impl MagicState {
         self.cursor = 0;
         self.armed = false;
         self.rune_seen = false;
+        // Keep the initial observation one-shot across target changes in this machine.
     }
 }
 /// One shared planner and one host owner. Observation commits are independent
@@ -817,6 +821,26 @@ impl Combat {
         let StyleState::Magic(state) = &mut self.style_state else {
             unreachable!("magic preparation requires magic state")
         };
+        if !state.initial_arm_checked {
+            state.initial_arm_checked = true;
+            let spell = &self.tables.selected().spells()
+                [usize::from(state.selected.expect("selected spell"))];
+            if value.value == controls.armed_value
+                && magic::observed_autocast_spell_matches(
+                    cx.snapshot(),
+                    controls,
+                    side.value,
+                    root,
+                    spell,
+                )
+            {
+                state.arm = None;
+                state.arm_since = 0;
+                state.arm_wait = 0;
+                state.armed = true;
+                return false;
+            }
+        }
         if state.armed && value.value == controls.armed_value {
             return false;
         }

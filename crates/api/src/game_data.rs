@@ -211,6 +211,7 @@ pub const STAFF_SPELLS_COM0: i32 = 1830;
 #[derive(Debug, Deserialize, Clone, Copy)]
 pub struct AutocastControls {
     pub staff_tab_root: i32,
+    pub spell_text_component: i32,
     pub spell_panel_root: i32,
     pub choose_com: i32,
     pub toggle_com: i32,
@@ -223,6 +224,7 @@ pub struct AutocastControls {
 impl AutocastControls {
     pub fn available(&self) -> bool {
         self.staff_tab_root >= 0
+            && self.spell_text_component >= 0
             && self.spell_panel_root >= 0
             && self.choose_com >= 0
             && self.toggle_com >= 0

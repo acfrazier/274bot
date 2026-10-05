@@ -3,7 +3,8 @@ use crate::combat::arbiter;
 use crate::combat::frame::Frame;
 use crate::combat::request::{ActorKind, ActorRef, CombatRequest};
 use crate::combat::tables::{CombatTab, CombatTables};
-use api::game_data::SpellFact;
+use api::game_data::{AutocastControls, SpellFact};
+use api::snapshot::SnapshotView;
 
 pub const CAST_TICKS: u16 = 5;
 
@@ -77,6 +78,36 @@ pub(crate) fn spell_index(tables: &CombatTables, alias: &str) -> Option<u8> {
                 || spell.name.eq_ignore_ascii_case(alias)
         })
         .and_then(|index| u8::try_from(index).ok())
+}
+
+/// Whether the active, visible staff tab reports this spell as selected.
+/// The widget text is set by the content's `set_autocast_spell` script.
+pub(crate) fn observed_autocast_spell_matches(
+    snapshot: SnapshotView<'_>,
+    controls: &AutocastControls,
+    active_side_tab: i32,
+    combat_tab_root: i32,
+    spell: &SpellFact,
+) -> bool {
+    if active_side_tab != 0 || combat_tab_root != controls.staff_tab_root {
+        return false;
+    }
+
+    snapshot.side_tabs().is_some_and(|tabs| {
+        tabs.value.iter().any(|tab| {
+            tab.index == 0
+                && tab.available
+                && tab.active
+                && tab.visible
+                && tab.root_component_id == controls.staff_tab_root
+                && tab.widgets.iter().any(|widget| {
+                    widget.component_id == controls.spell_text_component
+                        && widget.root_component_id == controls.staff_tab_root
+                        && !widget.hidden
+                        && widget.text.as_deref() == Some(spell.name.as_str())
+                })
+        })
+    })
 }
 
 pub(crate) fn staff_provides(tables: &CombatTables, rhand: i32, rune: i32, members: bool) -> bool {

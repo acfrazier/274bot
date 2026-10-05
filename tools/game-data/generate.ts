@@ -763,6 +763,7 @@ export function extractAutocastControls(content: string) {
     };
     return {
         staff_tab_root: required(interfaces, 'combat_staff_2'),
+        spell_text_component: required(interfaces, 'combat_staff_2:auto_spell'),
         spell_panel_root: required(interfaces, 'staff_spells'),
         choose_com: required(interfaces, 'combat_staff_2:auto_choose'),
         toggle_com: required(interfaces, 'combat_staff_2:auto_toggle'),

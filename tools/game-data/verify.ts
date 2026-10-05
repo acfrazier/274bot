@@ -191,7 +191,7 @@ async function verifyRevision(revision: number) {
     if (!lava || JSON.stringify(lava.runes.map((rune: any) => rune.name).sort()) !== JSON.stringify(['Earth rune', 'Fire rune'])) throw new Error(`${revision}: lava staff runes`);
     if (staves.some((staff: any) => staff.name === 'Staff of air' && staff.runes.some((rune: any) => rune.name === 'Fire rune'))) throw new Error(`${revision}: Staff of air is not a fire provider`);
     const autocast = payload.autocast;
-    if (!autocast || autocast.staff_tab_root !== 328 || autocast.choose_com !== 353 || autocast.spell_panel_root !== 1829 || autocast.spell_grid_base !== 1830 || autocast.toggle_com !== 349 || autocast.magic_varp !== 108 || autocast.selected_value !== 2 || autocast.armed_value !== 3) throw new Error(`${revision}: autocast controls ${JSON.stringify(autocast)}`);
+    if (!autocast || autocast.staff_tab_root !== 328 || autocast.spell_text_component !== 352 || autocast.choose_com !== 353 || autocast.spell_panel_root !== 1829 || autocast.spell_grid_base !== 1830 || autocast.toggle_com !== 349 || autocast.magic_varp !== 108 || autocast.selected_value !== 2 || autocast.armed_value !== 3) throw new Error(`${revision}: autocast controls ${JSON.stringify(autocast)}`);
     const duel = payload.duel;
     if (!duel || duel.select_modal !== 6575 || duel.confirm_modal !== 6412 || duel.win_modal !== 6733 || duel.select_accept !== 6674 || duel.confirm_accept !== 6520 || duel.select_partner !== 6671 || duel.select_status !== 6684 || duel.confirm_status !== 6571) throw new Error(`${revision}: duel controls ${JSON.stringify(duel)}`);
     const special = payload.special;

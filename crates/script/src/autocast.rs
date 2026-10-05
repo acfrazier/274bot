@@ -190,6 +190,7 @@ pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
         None => json_controls(
             &AutocastControls {
                 staff_tab_root: -1,
+                spell_text_component: -1,
                 spell_panel_root: -1,
                 choose_com: -1,
                 toggle_com: -1,
@@ -207,6 +208,7 @@ fn json_controls(controls: &AutocastControls, available: bool) -> Value {
     json!({
         "available": available && controls.available(),
         "staff_tab_root": controls.staff_tab_root,
+        "spell_text_component": controls.spell_text_component,
         "spell_panel_root": controls.spell_panel_root,
         "choose_com": controls.choose_com,
         "toggle_com": controls.toggle_com,
@@ -365,6 +367,7 @@ mod tests {
                 .autocast_controls()
                 .expect("generated autocast controls");
             assert_eq!(controls.staff_tab_root, 328);
+            assert_eq!(controls.spell_text_component, 352);
             assert_eq!(controls.choose_com, 353);
             assert_eq!(controls.spell_panel_root, 1829);
             assert_eq!(controls.spell_grid_base, 1830);

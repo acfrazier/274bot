@@ -1979,7 +1979,8 @@ fn magic_ready(case: Case, capture: &CombatCapture) -> bool {
         && (case != Case::MageAuto || !splashes.is_empty())
         && no_budget
         && killed
-        && protection_timing_ok(capture)
+        && magic_protection_timing_ok(capture)
+        && no_melee_offensive_prayers(capture)
         && (case != Case::MageAuto || magic_queue_contract(capture, casts))
         && magic_input_after_report(capture, report)
         && magic_batch_contract(case, capture)
@@ -2097,7 +2098,6 @@ fn magic_receipt(capture: &CombatCapture, case: Case) -> Value {
         .filter(|distance| *distance >= 2)
         .collect::<std::collections::BTreeSet<_>>();
     let expected_end = magic_expected_end(case);
-    let onset_tick = first_warlord_attack_onset(capture);
     let batch_events = batch_plans(capture)
         .iter()
         .filter_map(plan_event_count)
@@ -2179,8 +2179,10 @@ fn magic_receipt(capture: &CombatCapture, case: Case) -> Value {
         "measured_projectile_queues": magic_projectile_queues(capture, &evidence.casts),
         "raw_npc_mask_and_landing_events": &capture.magic_npc_events,
         "splash_casts_with_unchanged_health": splashes,
-        "protect_onset_tick": onset_tick,
-        "protect_within_two_ticks_of_onset": protection_timing_ok(capture),
+        "protect_onset_tick": first_engaged_warlord_attack_onset(capture),
+        "protect_timing": protection_timing_receipt(capture),
+        "protect_restoring_terminal": protect_plan_ends_with_terminal(capture),
+        "no_melee_offensive_prayers": no_melee_offensive_prayers(capture),
         "manual_casts": manual_casts,
         "manual_casts_use_only_widget_on_npc": manual_casts_valid,
         "no_attack_actions_in_manual_mode": !case.is_manual_magic()
@@ -2341,6 +2343,17 @@ fn case_invalid_reason(case: Case, capture: &CombatCapture) -> Option<String> {
             {
                 return Some(format!(
                     "{} INVALID: required fresh spot-animation-{FAILED_SPELL_SPLASH} splash with unchanged Warlord health was not observed; no reroll",
+                    case.key()
+                ));
+            }
+            // A missing segment or actor cannot establish a no-onset case.
+            // Unlike observed unsafe behavior, incomplete evidence is INVALID,
+            // never an implicit not-applicable timing result.
+            if first_engaged_warlord_attack_onset(capture).is_none()
+                && no_onset_evidence(capture) == NoOnsetEvidence::MissingData
+            {
+                return Some(format!(
+                    "{} INVALID: incomplete engaged-NPC no-onset protection evidence",
                     case.key()
                 ));
             }
@@ -3535,6 +3548,250 @@ fn protect_plan_ends_with_terminal(capture: &CombatCapture) -> bool {
             }),
             _ => false,
         })
+}
+
+// These checks are shared by the current magic cases. Keep the oracle
+// style-neutral so a future ranged cell cannot omit the same N1 safety gate.
+const MELEE_OFFENSIVE_PRAYER_COMPONENTS: [i64; 2] = [5619, 5620];
+const MELEE_OFFENSIVE_PRAYER_VARPS: [i64; 2] = [93, 94];
+
+// The report defines `[begin, report]` as `combat_evidence_tick - combat_ticks`
+// through the evidence tick, inclusive; every tick in that interval is required.
+
+#[derive(Clone, Copy)]
+struct MagicEngagementWindow {
+    begin_tick: i64,
+    report_tick: i64,
+    engaged_index: i64,
+    engaged_type: i64,
+}
+
+fn magic_engagement_window(capture: &CombatCapture) -> Option<MagicEngagementWindow> {
+    let report = capture.statuses.iter().rev().find(|status| {
+        status["fields"]["combat_end"]
+            .as_str()
+            .is_some_and(|end| matches!(end, "Killed" | "Aborted(Unprotected(NoRunes))"))
+            && status["fields"]["combat_engaged_kind"] == json!("Npc")
+            && integer(status, "combat_engaged_npc_type") == Some(477)
+            && integer(status, "combat_engaged_index").is_some()
+    })?;
+    let report_tick = integer(report, "combat_evidence_tick")?;
+    let combat_ticks = integer(report, "combat_ticks").filter(|ticks| *ticks >= 0)?;
+    Some(MagicEngagementWindow {
+        begin_tick: report_tick.checked_sub(combat_ticks)?,
+        report_tick,
+        engaged_index: integer(report, "combat_engaged_index")?,
+        engaged_type: integer(report, "combat_engaged_npc_type")?,
+    })
+}
+
+fn engagement_frames_contiguous(capture: &CombatCapture, window: MagicEngagementWindow) -> bool {
+    let Some(after_report) = window.report_tick.checked_add(1) else {
+        return false;
+    };
+    let mut next_tick = window.begin_tick;
+    let mut found = false;
+    for frame in &capture.frames {
+        let Some(tick) = frame["tick"].as_i64() else {
+            return false;
+        };
+        if !(window.begin_tick..=window.report_tick).contains(&tick) {
+            continue;
+        }
+        // The harness can capture multiple outputs during one host tick.
+        // Keep every row for the evidence checks, but require no skipped tick.
+        if found && tick == next_tick - 1 {
+            continue;
+        }
+        if tick != next_tick {
+            return false;
+        }
+        found = true;
+        let Some(next) = next_tick.checked_add(1) else {
+            return false;
+        };
+        next_tick = next;
+    }
+    found && next_tick == after_report
+}
+
+fn first_engaged_warlord_attack_onset(capture: &CombatCapture) -> Option<i64> {
+    let window = magic_engagement_window(capture)?;
+    let mut previous_animation = None;
+    for frame in &capture.frames {
+        let tick = frame["tick"].as_i64()?;
+        if !(window.begin_tick..=window.report_tick).contains(&tick) {
+            continue;
+        }
+        let self_slot = frame["self_slot"].as_i64()?;
+        let npc = frame["nearby_npcs"].as_array()?.iter().find(|npc| {
+            npc["index"].as_i64() == Some(window.engaged_index)
+                && npc["type"].as_i64() == Some(window.engaged_type)
+        })?;
+        let animation = npc["animation"].as_i64();
+        let previous = previous_animation;
+        previous_animation = animation;
+        if animation == Some(401)
+            && animation != previous
+            && npc["in_combat"] == json!(true)
+            && npc["target"]["kind"] == json!("Player")
+            && npc["target"]["index"].as_i64() == Some(self_slot)
+        {
+            return Some(tick);
+        }
+    }
+    None
+}
+
+// Only complete, safe evidence can prove no onset. Missing rows or facts map to
+// INVALID; adjacency, HP loss, or an attack animation targeting us refuses N/A.
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NoOnsetEvidence {
+    Proven,
+    MissingData,
+    Unsafe,
+}
+
+fn no_onset_evidence(capture: &CombatCapture) -> NoOnsetEvidence {
+    let Some(window) = magic_engagement_window(capture) else {
+        return NoOnsetEvidence::MissingData;
+    };
+    if !engagement_frames_contiguous(capture, window) {
+        return NoOnsetEvidence::MissingData;
+    }
+
+    let mut previous_hp = None;
+    let mut found = false;
+    for frame in &capture.frames {
+        let Some(tick) = frame["tick"].as_i64() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        if !(window.begin_tick..=window.report_tick).contains(&tick) {
+            continue;
+        }
+        let Some(npcs) = frame["nearby_npcs"].as_array() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let Some(npc) = npcs.iter().find(|npc| {
+            npc["index"].as_i64() == Some(window.engaged_index)
+                && npc["type"].as_i64() == Some(window.engaged_type)
+        }) else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let Some(distance) = npc["distance"].as_i64() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        if distance <= 1 {
+            return NoOnsetEvidence::Unsafe;
+        }
+        let Some(hitpoints) = stat_effective(frame, "hitpoints") else {
+            return NoOnsetEvidence::MissingData;
+        };
+        if previous_hp.is_some_and(|previous| hitpoints < previous) {
+            return NoOnsetEvidence::Unsafe;
+        }
+        previous_hp = Some(hitpoints);
+
+        let Some(self_slot) = frame["self_slot"].as_i64() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let Some(in_combat) = npc["in_combat"].as_bool() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let Some(animation) = npc["animation"].as_i64() else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let Some(target) = npc.get("target") else {
+            return NoOnsetEvidence::MissingData;
+        };
+        let targets_us = if target.is_null() {
+            false
+        } else {
+            let Some(kind) = target["kind"].as_str() else {
+                return NoOnsetEvidence::MissingData;
+            };
+            let Some(index) = target["index"].as_i64() else {
+                return NoOnsetEvidence::MissingData;
+            };
+            kind == "Player" && index == self_slot
+        };
+        if animation == 401 && in_combat && targets_us {
+            return NoOnsetEvidence::Unsafe;
+        }
+        found = true;
+    }
+    if found {
+        NoOnsetEvidence::Proven
+    } else {
+        NoOnsetEvidence::MissingData
+    }
+}
+
+fn protection_timing_receipt(capture: &CombatCapture) -> Value {
+    if first_engaged_warlord_attack_onset(capture).is_some() {
+        json!(protection_timing_ok(capture))
+    } else if no_onset_evidence(capture) == NoOnsetEvidence::Proven {
+        json!("not_applicable_no_onset")
+    } else {
+        json!(false)
+    }
+}
+
+// P4 remains strict when an onset exists; positive no-onset is not proof.
+// Every Protect-on plan still needs its restoring terminal, even on N/A.
+
+fn magic_protection_timing_ok(capture: &CombatCapture) -> bool {
+    let timing = protection_timing_receipt(capture);
+    (timing == json!(true) || timing == json!("not_applicable_no_onset"))
+        && protect_plan_ends_with_terminal(capture)
+}
+
+// N1: only Protect from Melee clicks are allowed; 5619/5620 and other known
+// prayer components are forbidden, and varps 93/94 stay zero while engaged.
+
+fn no_melee_offensive_prayers(capture: &CombatCapture) -> bool {
+    let Some(window) = magic_engagement_window(capture) else {
+        return false;
+    };
+    let Some(protect_component) = prayer_component(capture, "Protect from Melee") else {
+        return false;
+    };
+    if !engagement_frames_contiguous(capture, window)
+        || capture.actions.iter().any(|action| {
+            if !accepted(action) || action["request"]["op"] != json!("if-button") {
+                return false;
+            }
+            let Some(component) = action["request"]["component_id"].as_i64() else {
+                return true;
+            };
+            MELEE_OFFENSIVE_PRAYER_COMPONENTS.contains(&component)
+                || (component != protect_component
+                    && capture
+                        .prayer_facts
+                        .iter()
+                        .any(|fact| fact["button_com"].as_i64() == Some(component)))
+        })
+    {
+        return false;
+    }
+    let mut found = false;
+    for frame in &capture.frames {
+        let Some(tick) = frame["tick"].as_i64() else {
+            return false;
+        };
+        if !(window.begin_tick..=window.report_tick).contains(&tick) {
+            continue;
+        }
+        if MELEE_OFFENSIVE_PRAYER_VARPS
+            .iter()
+            .any(|varp| prayer_varp(frame, *varp) != Some(0))
+        {
+            return false;
+        }
+        found = true;
+    }
+    found
 }
 
 // S3 §5.1 G1 P4: Protect from Melee is on by the first onset + 2.
@@ -4953,6 +5210,219 @@ fn manual_protect_terminal_rejects_non_npc_widget_and_protect_alone() {
     );
 }
 
+fn magic_protection_capture(begin_tick: i64, report_tick: i64, protect_tick: i64) -> CombatCapture {
+    let mut capture = CombatCapture::default();
+    capture.statuses.push(json!({"fields": {
+        "combat_end": "Killed",
+        "combat_engaged": "True",
+        "combat_engaged_kind": "Npc",
+        "combat_engaged_index": 7,
+        "combat_engaged_npc_type": 477,
+        "combat_evidence_tick": report_tick,
+        "combat_ticks": report_tick - begin_tick,
+    }}));
+    capture.prayer_facts = vec![
+        json!({"name": "Protect from Melee", "button_com": 5623, "varp": 97}),
+        json!({"name": "Attack", "button_com": 5619, "varp": 93}),
+        json!({"name": "Strength", "button_com": 5620, "varp": 94}),
+    ];
+    capture.actions = vec![
+        json!({
+            "kind": "interaction", "tick": protect_tick, "batch": 1, "accepted": true,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+        }),
+        json!({
+            "kind": "interaction", "tick": protect_tick, "batch": 1, "accepted": true,
+            "request": {"op": "npc", "name": "Khazard Warlord", "action": "Attack"}
+        }),
+    ];
+    capture.frames = (begin_tick..=report_tick)
+        .map(|tick| {
+            json!({
+                "tick": tick,
+                "self_slot": 1,
+                "stats": [{"name": "hitpoints", "base": 40, "effective": 40}],
+                "prayer_varps": [
+                    {"index": 93, "value": 0},
+                    {"index": 94, "value": 0},
+                    {"index": 97, "value": if tick > protect_tick { 1 } else { 0 }},
+                ],
+                "nearby_npcs": [{
+                    "name": "Khazard Warlord",
+                    "index": 7,
+                    "type": 477,
+                    "distance": 7,
+                    "health": if tick == report_tick { 0 } else { 170 },
+                    "total_health": 170,
+                    "animation": -1,
+                    "in_combat": true,
+                    "target": {"kind": "Player", "index": 1},
+                }]
+            })
+        })
+        .collect();
+    capture
+}
+
+fn set_magic_warlord_field(capture: &mut CombatCapture, tick: i64, field: &str, value: Value) {
+    let frame = capture
+        .frames
+        .iter_mut()
+        .find(|frame| frame["tick"] == json!(tick))
+        .expect("magic proof test frame");
+    frame["nearby_npcs"][0][field] = value;
+}
+
+#[test]
+fn magic_protection_readiness_accepts_proven_no_onset_after_killed_report() {
+    let capture = magic_protection_capture(50, 110, 62);
+    assert_eq!(
+        protection_timing_receipt(&capture),
+        json!("not_applicable_no_onset")
+    );
+    assert!(
+        magic_protection_timing_ok(&capture),
+        "safe no-onset timing is acceptable only with the protect plan's restoring terminal"
+    );
+    assert!(no_melee_offensive_prayers(&capture));
+    assert_eq!(
+        report_with_end(&capture, "Killed").unwrap()["fields"]["combat_ticks"],
+        json!(60)
+    );
+    assert_eq!(case_invalid_reason(Case::MageAuto, &capture), None);
+}
+
+#[test]
+fn repeated_tick_frames_preserve_all_no_onset_and_prayer_evidence() {
+    let mut capture = magic_protection_capture(50, 110, 62);
+    capture.frames.insert(21, capture.frames[20].clone());
+    assert_eq!(
+        protection_timing_receipt(&capture),
+        json!("not_applicable_no_onset")
+    );
+    assert!(no_melee_offensive_prayers(&capture));
+    capture.frames[21]["nearby_npcs"][0]["distance"] = json!(1);
+    assert_eq!(protection_timing_receipt(&capture), json!(false));
+    capture.frames[21]["nearby_npcs"][0]["distance"] = json!(7);
+    capture.frames[21]["prayer_varps"][0]["value"] = json!(1);
+    assert!(!no_melee_offensive_prayers(&capture));
+    capture.frames.swap(21, 22);
+    assert_eq!(protection_timing_receipt(&capture), json!(false));
+}
+
+#[test]
+fn magic_protection_timing_unit_controls_a_b_g_and_i() {
+    // (a) onset + 3 remains late.
+    let mut late = magic_protection_capture(50, 110, 61);
+    set_magic_warlord_field(&mut late, 58, "animation", json!(401));
+    assert_eq!(protection_timing_receipt(&late), json!(false));
+
+    // (b) a real onset with Protect never observed on remains a failure.
+    let mut never_on = magic_protection_capture(50, 110, 62);
+    set_magic_warlord_field(&mut never_on, 58, "animation", json!(401));
+    for frame in &mut never_on.frames {
+        frame["prayer_varps"][2]["value"] = json!(0);
+    }
+    assert_eq!(protection_timing_receipt(&never_on), json!(false));
+
+    // (g) the same plan fails for an onset at 58, but passes if the first
+    // onset moves to 100 after Protect is already observed on.
+    let mut early_onset = magic_protection_capture(50, 110, 62);
+    set_magic_warlord_field(&mut early_onset, 58, "animation", json!(401));
+    assert_eq!(protection_timing_receipt(&early_onset), json!(false));
+    let mut late_onset = magic_protection_capture(50, 110, 62);
+    set_magic_warlord_field(&mut late_onset, 100, "animation", json!(401));
+    assert_eq!(protection_timing_receipt(&late_onset), json!(true));
+    assert!(magic_protection_timing_ok(&late_onset));
+
+    // (i) removing the restoring Attack terminal must fail even when timing
+    // itself is safely not applicable.
+    let mut no_terminal = magic_protection_capture(50, 110, 62);
+    no_terminal.actions.pop();
+    assert_eq!(
+        protection_timing_receipt(&no_terminal),
+        json!("not_applicable_no_onset")
+    );
+    assert!(!magic_protection_timing_ok(&no_terminal));
+}
+
+#[test]
+fn magic_no_onset_controls_c_through_f_require_positive_complete_evidence() {
+    // (c) rewriting every 401 to -1 cannot open N/A when the engaged NPC is
+    // at distance 1 on any frame.
+    let mut missed_onset = magic_protection_capture(50, 110, 62);
+    set_magic_warlord_field(&mut missed_onset, 70, "distance", json!(1));
+    assert_eq!(protection_timing_receipt(&missed_onset), json!(false));
+
+    // (d) both a missing interval frame and a missing exact actor are INVALID,
+    // never not-applicable.
+    let mut missing_frame = magic_protection_capture(50, 110, 62);
+    missing_frame
+        .frames
+        .retain(|frame| frame["tick"] != json!(80));
+    assert_eq!(protection_timing_receipt(&missing_frame), json!(false));
+    assert!(case_invalid_reason(Case::MageAuto, &missing_frame)
+        .is_some_and(|reason| reason.contains("INVALID")));
+    let mut missing_actor = magic_protection_capture(50, 110, 62);
+    missing_actor.frames[20]["nearby_npcs"] = json!([]);
+    assert_eq!(protection_timing_receipt(&missing_actor), json!(false));
+    assert!(case_invalid_reason(Case::MageAuto, &missing_actor)
+        .is_some_and(|reason| reason.contains("INVALID")));
+
+    // (e) any adjacent frame refuses N/A.
+    let mut adjacent = magic_protection_capture(50, 110, 62);
+    set_magic_warlord_field(&mut adjacent, 90, "distance", json!(1));
+    assert_eq!(protection_timing_receipt(&adjacent), json!(false));
+
+    // (f) an observed HP drop fails the no-onset branch rather than becoming
+    // an INVALID missing-data classification.
+    let mut hp_drop = magic_protection_capture(50, 110, 62);
+    hp_drop.frames[40]["stats"][0]["effective"] = json!(39);
+    assert_eq!(protection_timing_receipt(&hp_drop), json!(false));
+    assert!(case_invalid_reason(Case::MageAuto, &hp_drop).is_none());
+}
+
+#[test]
+fn magic_no_melee_offensive_prayer_control_h_gates_every_magic_case() {
+    let mut safe = magic_protection_capture(50, 110, 62);
+    for case in [
+        Case::MageAuto,
+        Case::MageManualFallback,
+        Case::MageManualNoFallback,
+    ] {
+        assert_eq!(
+            magic_receipt(&safe, case)["no_melee_offensive_prayers"],
+            json!(true)
+        );
+    }
+
+    // (h) either offensive button or either Attack/Strength varp activates
+    // the N1 gate for every current magic case.
+    safe.actions.push(json!({
+        "kind": "interaction", "tick": 63, "batch": 2, "accepted": true,
+        "request": {"op": "if-button", "component_id": 5619}
+    }));
+    assert!(!no_melee_offensive_prayers(&safe));
+    for case in [
+        Case::MageAuto,
+        Case::MageManualFallback,
+        Case::MageManualNoFallback,
+    ] {
+        assert_eq!(
+            magic_receipt(&safe, case)["no_melee_offensive_prayers"],
+            json!(false)
+        );
+    }
+
+    let mut varp_93 = magic_protection_capture(50, 110, 62);
+    varp_93.frames[20]["prayer_varps"][0]["value"] = json!(1);
+    assert!(!no_melee_offensive_prayers(&varp_93));
+    let mut varp_94 = magic_protection_capture(50, 110, 62);
+    varp_94.frames[20]["prayer_varps"][1]["value"] = json!(1);
+    assert!(!no_melee_offensive_prayers(&varp_94));
+}
+
 #[test]
 #[ignore = "offline baked-collision probe requires the selected engine, cache and nav pack"]
 fn magic_no_fallback_corridor_uses_validated_baked_collision() {
@@ -5799,10 +6269,12 @@ fn manual_magic_has_no_incidental_splash_or_distance_gate() {
         } else {
             "Killed"
         };
-        let mut capture = CombatCapture::default();
-        capture.statuses.push(json!({"fields": {
-            "combat_end": end, "combat_evidence_tick": 10,
-        }}));
+        let mut capture = magic_protection_capture(1, 10, 2);
+        capture.statuses[0]["fields"]["combat_end"] = json!(end);
+        // The onset makes protection timing applicable; manual cells do not
+        // need a splash or multiple launch distances, even at melee range.
+        set_magic_warlord_field(&mut capture, 5, "animation", json!(401));
+        set_magic_warlord_field(&mut capture, 5, "distance", json!(1));
         capture.frames.push(json!({"tick": 50}));
         assert!(case_invalid_reason(case, &capture).is_none());
         assert_eq!(

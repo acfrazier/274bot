@@ -303,6 +303,22 @@ Manual casts are acknowledged by observed rune consumption; a silent settle
 timeout is retried rather than treated as an autocast-arm failure. Open PvM
 sends the targeted interaction and lets the server approach the target; it
 does not perform a client-side magic range or line-of-sight check.
+A fresh combat step can reuse an already-armed autocast spell only when the
+current visible staff tab's selected-spell label exactly matches the chosen
+spell and the armed-mode varp agrees. Missing, hidden, stale, or different spell
+evidence retains the serial arming sequence.
+
+The retained-receipt oracle gates every available magic cell on the absence of
+melee offensive prayers; native ranged cells are not yet available in this slice.
+Magic protection timing is conditional on an observed enemy
+melee onset: a continuously observed engagement with the same NPC always outside
+melee distance and no player HP drop may record `not_applicable_no_onset`.
+Missing frames or NPC observations cannot establish that exemption. Restoration
+after each protection plan and the Killed/corpse/WindDown checks remain required;
+the exemption is not evidence of timely protection against a melee attack.
+Offline magic replay stops at the same first full readiness predicate as the live
+harness and also reports the verdict over the entire retained capture. Later
+timeout-tail activity is not erased or relabelled as a fresh live pass.
 
 ### Exact loc use-on targets
 
