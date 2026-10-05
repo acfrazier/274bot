@@ -397,6 +397,11 @@ impl Dialogue {
         let main = observe_main(cx, self.main_ui);
         if let Some(obs) = chat.as_ref() {
             if obs.ready {
+                // No Talk-to means this page belongs to an earlier action.
+                // Adopt it only with authored answers, never the last-option fallback.
+                if self.npc_id().is_some() {
+                    self.args.options.strict = true;
+                }
                 if main.as_ref().is_some_and(MainObs::open) {
                     self.phase = Phase::Failed;
                 } else {
@@ -815,6 +820,18 @@ fn selected_dialogue_ui(cx: &ActionContext<'_>) -> Option<api::game_data::Dialog
     data.dialogue_ui().copied()
 }
 
+pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
+    root != -1 || continue_component_id >= 0
+}
+
+/// The same visible-page gate for operation adoption and the shared driver.
+pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
+    cx.snapshot()
+        .chat_modal()
+        .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
+        || observe_main(cx, selected_dialogue_ui(cx)).is_some_and(|main| main.open())
+}
+
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     let chat = cx.snapshot.chat_modal()?;
     let modal = chat.value.root;
@@ -823,7 +840,7 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     let open = modal != -1;
     Some(ChatObs {
         open,
-        ready: open || r#continue,
+        ready: chat_page_open(modal, continue_component_id),
         r#continue,
         continue_component_id,
         modal,

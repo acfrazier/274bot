@@ -294,6 +294,102 @@ fn bank_facts() -> (
     let facts = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
     (bank, facts)
 }
+fn unobserved_snapshot() -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot
+}
+
+fn begin_unobserved_loadout(
+    plan: &Arc<dyn StepPlan>,
+    snapshot: &GameSnapshot,
+    ledger_state: &mut Option<Box<ledger::Ledger>>,
+    banks: &Arc<api::named_banks::NamedBankFacts>,
+) -> Box<dyn StepRun> {
+    with_step(snapshot, ledger_state, 1, banks, |cx| {
+        plan.begin(cx).expect("loadout wait should begin")
+    })
+}
+
+#[test]
+fn loadout_observation_wait_exposes_borrowed_stable_detail() {
+    with_path_loadout(vec![], path_loadout(), false, |plan, _, _| {
+        let snapshot = unobserved_snapshot();
+        let mut ledger_state = None;
+        let (_, banks) = bank_facts();
+        let run = begin_unobserved_loadout(plan, &snapshot, &mut ledger_state, &banks);
+        let first = run.waiting_for().expect("observation wait detail");
+        let second = run.waiting_for().expect("stable observation wait detail");
+        assert_eq!(first.0, "Loadout observation");
+        assert_eq!(
+            first.1.as_ref(),
+            "Waiting for inventory/equipment observation"
+        );
+        let other = begin_unobserved_loadout(plan, &snapshot, &mut ledger_state, &banks);
+        assert!(std::ptr::eq(first.1, other.waiting_for().unwrap().1));
+        assert!(std::ptr::eq(first.1.as_ptr(), second.1.as_ptr()));
+    });
+}
+
+#[test]
+fn loadout_observation_wait_times_out_without_both_observations() {
+    with_path_loadout(vec![], path_loadout(), false, |plan, _, _| {
+        let (_, banks) = bank_facts();
+        let partial_inventory = {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(vec![], 28);
+            snapshot
+        };
+        let partial_equipment = {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_equipment(vec![]);
+            snapshot
+        };
+        for snapshot in [unobserved_snapshot(), partial_inventory, partial_equipment] {
+            let mut ledger_state = None;
+            let mut run = begin_unobserved_loadout(plan, &snapshot, &mut ledger_state, &banks);
+            assert!(matches!(
+                with_step(&snapshot, &mut ledger_state, 50, &banks, |cx| run.poll(cx)),
+                Poll::Pending
+            ));
+            assert!(matches!(
+                with_step(&snapshot, &mut ledger_state, 51, &banks, |cx| run.poll(cx)),
+                Poll::Ready(Err(ActionError::NeedsEvidence(gates))) if gates.is_empty()
+            ));
+        }
+    });
+}
+
+#[test]
+fn loadout_observation_at_deadline_wins_and_cancellation_dispatches_nothing() {
+    with_path_loadout(
+        vec![],
+        serde_json::json!({"worn":{}, "carry":[]}),
+        false,
+        |plan, _, _| {
+            let (_, banks) = bank_facts();
+            let missing = unobserved_snapshot();
+            let mut ledger_state = None;
+            let mut run = begin_unobserved_loadout(plan, &missing, &mut ledger_state, &banks);
+            let mut actions = crate::native::NativeActions { _private: () };
+            run.cancel(&mut actions);
+            assert!(ledger_state
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+            let mut readiness_ledger = None;
+            let mut ready_run =
+                begin_unobserved_loadout(plan, &missing, &mut readiness_ledger, &banks);
+            let observed = snapshot(vec![], vec![], None, vec![]);
+            let result = with_step(&observed, &mut readiness_ledger, 51, &banks, |cx| {
+                ready_run.poll(cx)
+            });
+            assert!(matches!(result, Poll::Ready(Ok(_))));
+        },
+    );
+}
 
 #[test]
 fn path_alias_worn_and_carry_queue_the_exact_unnoted_ids() {

@@ -1294,6 +1294,7 @@ pub(crate) struct TalkArgs {
     #[serde(default)]
     line_rules: Vec<LineRuleDocument>,
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
+    /// Adopted pages always require authored answers, even when this is false.
     #[serde(default)]
     strict: bool,
     /// Exact NPC config which may take over this dialogue through reciprocal combat.
@@ -1352,7 +1353,7 @@ pub(crate) fn compile_talk(
         prefer: arg.prefer,
         choose: arg.choose,
         line_rules: arg.line_rules,
-        strict: arg.strict,
+        strict: arg.strict || arg.continue_only,
     })?;
     let expect_combat = arg
         .expect_combat
@@ -1552,7 +1553,9 @@ pub(crate) struct InteractArgs {
     #[serde(default)]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     pub(crate) settle_ms: Option<u64>,
-    /// Continue the dialogue opened by this operation with the shared talk driver.
+    /// Omission drains optional Continue pages without answering menus.
+    /// Explicit forms require a page after each accepted round.
+    /// The none mode never touches dialogue.
     #[serde(default)]
     pub(crate) dialogue: Option<DialogueDocument>,
     /// Repeat this operation until the observed inventory reaches the required count.
@@ -1666,6 +1669,7 @@ pub(crate) fn compile_interact(
         wait_if_missing: arg.wait_if_missing,
         settle_ms: arg.settle_ms,
         ambiguous,
+        default_dialogue: arg.dialogue.is_none(),
         dialogue_options: compile_dialogue(arg.dialogue)?,
         until: compile_until(arg.until, cx)?,
         target_tile,
@@ -1681,6 +1685,7 @@ struct InteractPlan {
     wait_if_missing: bool,
     settle_ms: Option<u64>,
     ambiguous: bool,
+    default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
     until: Option<(i32, s2::QuantityPlan)>,
     target_tile: Option<WorldTile>,
@@ -1700,9 +1705,12 @@ impl StepPlan for InteractPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             reach: None,
+            default_dialogue: self.default_dialogue,
             dialogue_options: self.dialogue_options.clone(),
             dialogue: None,
             dialogue_started: None,
+            dialogue_completed: false,
+            accepted_tick: None,
             until: begin_until(self.until.as_ref(), cx)?,
             target_tile: self.target_tile,
             reachable_only: self.reachable_only,
@@ -1732,9 +1740,12 @@ struct InteractRun {
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     reach: Option<ActionHandle<reach::Reach>>,
+    default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     dialogue_started: Option<Duration>,
+    dialogue_completed: bool,
+    accepted_tick: Option<u64>,
     until: Option<(i32, i32)>,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
@@ -1751,6 +1762,9 @@ impl InteractRun {
         self.round_before = None;
         self.round_deadline = None;
         self.round_accepted = false;
+        self.dialogue_started = None;
+        self.dialogue_completed = false;
+        self.accepted_tick = None;
     }
 }
 impl StepRun for InteractRun {
@@ -1761,6 +1775,7 @@ impl StepRun for InteractRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(outcome)) => {
                     self.dialogue = None;
+                    self.dialogue_completed = true;
                     if self.until.is_none() {
                         return Poll::Ready(Ok(outcome));
                     }
@@ -1778,6 +1793,34 @@ impl StepRun for InteractRun {
                 }
             }
         }
+        if self.round_accepted && !self.dialogue_completed && self.default_dialogue {
+            if dialogue::page_open(&cx.tick.cx) {
+                self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Continuation,
+                        options: dialogue::DialogueOptions::continue_only(),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                self.dialogue_started = Some(cx.tick.cx.active_now());
+                return Poll::Pending;
+            }
+            // Acceptance is not a post-action page observation. A newer
+            // evidence tick is enough when no page opens; no timer is added.
+            if self
+                .accepted_tick
+                .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
+            {
+                return Poll::Pending;
+            }
+        }
+        if self.round_accepted && self.until.is_none() {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
         let available = reach::target_available(
             &cx.tick.cx,
             &self.kind,
@@ -1787,7 +1830,7 @@ impl StepRun for InteractRun {
             self.reachable_only || self.until.is_some(),
         ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
             || cx.tick.cx.snapshot().inventory().is_some());
-        if until_reached(self.until, &cx.tick.cx) {
+        if self.reach.is_none() && until_reached(self.until, &cx.tick.cx) {
             return Poll::Ready(Ok(StepOutcome {
                 progress: None,
                 evidence: cx.tick.cx.evidence(),
@@ -1918,8 +1961,9 @@ impl StepRun for InteractRun {
                 )))),
                 Poll::Ready(Ok(true)) => {
                     self.reach = None;
+                    self.round_accepted = true;
+                    self.accepted_tick = Some(cx.tick.cx.evidence().tick);
                     if self.until.is_some() {
-                        self.round_accepted = true;
                         self.round_deadline =
                             Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
                     }
@@ -1933,7 +1977,7 @@ impl StepRun for InteractRun {
                         )?);
                         self.dialogue_started = Some(cx.tick.cx.active_now());
                         Poll::Pending
-                    } else if self.until.is_some() {
+                    } else if self.until.is_some() || self.default_dialogue {
                         Poll::Pending
                     } else {
                         Poll::Ready(Ok(StepOutcome {
@@ -2081,7 +2125,9 @@ pub(super) struct UseOnArgs {
     /// Optional predicate that can end the repeated use-on attempt.
     #[serde(default)]
     no_product: Option<PredicateDocument>,
-    /// Continue the dialogue opened by this operation with the shared talk driver.
+    /// Omission drains optional Continue pages without answering menus.
+    /// Explicit forms require a page after each accepted round.
+    /// The none mode never touches dialogue.
     #[serde(default)]
     dialogue: Option<DialogueDocument>,
 }
@@ -2230,6 +2276,7 @@ impl StepPlan for UseOnPlan {
             dialogue: None,
             dialogue_started: None,
             dialogue_completed: false,
+            accepted_tick: None,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -2262,6 +2309,7 @@ struct UseOnRun {
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     dialogue_started: Option<Duration>,
     dialogue_completed: bool,
+    accepted_tick: Option<u64>,
 }
 impl UseOnRun {
     fn clear_round(&mut self) {
@@ -2272,6 +2320,7 @@ impl UseOnRun {
         self.dialogue = None;
         self.dialogue_started = None;
         self.dialogue_completed = false;
+        self.accepted_tick = None;
     }
 }
 
@@ -2348,11 +2397,7 @@ impl StepRun for UseOnRun {
                     // follow the observed target without re-entering that area.
                     self.tile = None;
                 }
-                if self.until.is_some()
-                    && self.default_dialogue
-                    && cx.tick.cx.snapshot().chat_modal().is_some_and(|chat| {
-                        chat.value.root >= 0 || chat.value.continue_component_id >= 0
-                    })
+                if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
                 {
                     self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
                         dialogue::DialogueArgs {
@@ -2493,6 +2538,11 @@ impl StepRun for UseOnRun {
                         .actions
                         .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
                 );
+                // A pre-dispatch adoption completes only that old page, not
+                // the new action's post-accept continuation.
+                self.dialogue_completed = false;
+                self.dialogue_started = None;
+                self.accepted_tick = None;
                 return Poll::Pending;
             }
             if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
@@ -2501,6 +2551,7 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(chat_since)) => {
                         self.accepted = true;
+                        self.accepted_tick = Some(cx.tick.cx.evidence().tick);
                         self.chat_since = chat_since;
                         if self.until.is_some() && self.round_before.is_some() {
                             self.round_deadline = Some(
@@ -2515,14 +2566,7 @@ impl StepRun for UseOnRun {
                     if !self.default_dialogue {
                         return None;
                     }
-                    cx.tick
-                        .cx
-                        .snapshot()
-                        .chat_modal()
-                        .is_some_and(|chat| {
-                            chat.value.root >= 0 || chat.value.continue_component_id >= 0
-                        })
-                        .then(dialogue::DialogueOptions::continue_only)
+                    dialogue::page_open(&cx.tick.cx).then(dialogue::DialogueOptions::continue_only)
                 });
                 if let Some(options) = options {
                     self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2557,6 +2601,14 @@ impl StepRun for UseOnRun {
                     continue;
                 }
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
+            }
+            if self.default_dialogue
+                && !self.dialogue_completed
+                && self
+                    .accepted_tick
+                    .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
+            {
+                return Poll::Pending;
             }
             let held = |id| inventory_count(&cx.tick.cx, id);
             if let Some(before) = self.round_before {

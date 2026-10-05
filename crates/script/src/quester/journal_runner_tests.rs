@@ -1411,6 +1411,169 @@ impl NativeOutput for StatusCapture {
     fn settings_applied(&mut self, _: u64) {}
 }
 
+struct NeedsEvidenceStep {
+    gates: Arc<[api::selected::QuestGate]>,
+    name: Arc<str>,
+}
+
+impl StepRun for NeedsEvidenceStep {
+    fn poll(&mut self, _cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        Poll::Ready(Err(ActionError::NeedsEvidence(Arc::clone(&self.gates))))
+    }
+
+    fn cancel(&mut self, _actions: &mut crate::native::NativeActions) {}
+
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        Some(("Loadout observation", &self.name))
+    }
+}
+
+fn run_needs_evidence_step(gates: Arc<[api::selected::QuestGate]>) -> (Quester, ScriptFlow) {
+    let (mut script, snapshot) = fixture(false);
+    script.step = Some(Box::new(NeedsEvidenceStep {
+        gates,
+        name: Arc::from("Waiting for inventory/equipment observation"),
+    }));
+    let mut ledger = None;
+    let mut output = StatusCapture::default();
+    let flow = with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+        script.tick(tick).unwrap()
+    });
+    (script, flow)
+}
+
+#[test]
+fn empty_gate_needs_evidence_uses_active_step_wait_detail_before_drop() {
+    let empty_gates: Arc<[api::selected::QuestGate]> = Arc::from([]);
+    let (script, flow) = run_needs_evidence_step(empty_gates);
+
+    assert!(matches!(
+        &flow,
+        ScriptFlow::Blocked(failure) if failure.code.as_ref() == "needs-evidence"
+    ));
+    assert!(
+        script.step.is_none(),
+        "the refused owner must still be dropped"
+    );
+    assert_eq!(script.last_error_kind, QuesterFailureKind::NeedsEvidence);
+    assert_eq!(
+        script.last_error.as_deref(),
+        Some("needs evidence: Loadout observation: Waiting for inventory/equipment observation")
+    );
+}
+
+#[test]
+fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        api::selected::FactKey::new("cook:mid"),
+    )]);
+    let (script, flow) = run_needs_evidence_step(gates);
+
+    assert!(matches!(
+        &flow,
+        ScriptFlow::Blocked(failure) if failure.code.as_ref() == "needs-evidence"
+    ));
+    assert_eq!(
+        script.last_error.as_deref(),
+        Some("walk needs authoritative quest-gate evidence")
+    );
+}
+
+#[test]
+fn provisioner_pending_preserves_semantic_outcome_and_status() {
+    use crate::combat::{CombatEnd, CombatReport};
+    use api::quest_progress::EvidenceStamp;
+
+    let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-semantic-outcome");
+    let mut fixture = nested_bank_fixture(false);
+    let mut cleared_before_acquire = false;
+    let mut semantic_evidence = None;
+    for tick in 1..=64 {
+        let mut output = StatusCapture::default();
+        fixture.drive_with_output(tick, &mut output);
+        if !cleared_before_acquire
+            && fixture.script.provisioner.status().phase
+                == super::super::provision::ProvisionPhase::Acquiring
+        {
+            assert!(
+                fixture.script.bank.known(),
+                "the real provisioning scan must establish an empty-bank memo first"
+            );
+            fixture.script.bank.clear();
+            cleared_before_acquire = true;
+            let evidence = EvidenceStamp {
+                run: fixture.script.run,
+                tick: 0,
+                sequence: 0,
+            };
+            let report = CombatReport {
+                end: CombatEnd::TargetGone,
+                evidence,
+                engaged: None,
+                engaged_npc_type: 477,
+                ticks: 1,
+                swings: 0,
+                casts: 0,
+                damage_taken: 0,
+                food: 0,
+                prayer_doses: 0,
+                boost_doses: 0,
+                antifire_doses: 0,
+                hits_while_protected: 0,
+                protect_switches: 0,
+                intruders: 0,
+                ammo_pickups: 0,
+                restorations: 0,
+                locked_ticks: 0,
+                multi_op_plans: 0,
+                melee_mode_fallback: None,
+                flick_resets: 0,
+                flick_misses: 0,
+                flick_fallback: false,
+            };
+            fixture.script.last_outcome = Some(StepOutcome {
+                progress: None,
+                evidence,
+                receipt: Some(Arc::new(crate::quester::families::combat::CombatReceipt {
+                    report,
+                    target_gone_restarts: 1,
+                })),
+            });
+            semantic_evidence = Some(evidence);
+        }
+
+        if let Some(receipt_tick) = fixture.provisioner_bank_receipt_tick() {
+            let semantic_evidence =
+                semantic_evidence.expect("the semantic outcome must precede the receipt");
+            assert_eq!(
+                fixture
+                    .script
+                    .last_outcome
+                    .as_ref()
+                    .map(|outcome| outcome.evidence),
+                Some(semantic_evidence),
+                "a Provisioner Pending receipt must not replace the semantic outcome"
+            );
+            assert!(fixture.script.bank.known());
+            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+            let status = output
+                .0
+                .last()
+                .expect("the receipt change publishes status");
+            assert!(
+                status.fields.iter().any(|field| {
+                    field.key == "combat_end"
+                        && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+                }),
+                "Provisioner receipt publication must retain the prior semantic status"
+            );
+            assert_ne!(semantic_evidence.tick, receipt_tick);
+            return;
+        }
+    }
+    panic!("the native Provisioner scan must expose a cached BankReceipt");
+}
+
 #[test]
 fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
     let (mut script, snapshot) = sheep_complete_snapshot();
@@ -1481,7 +1644,14 @@ struct NestedBankFixture {
 
 impl NestedBankFixture {
     fn drive(&mut self, tick: u64) -> ScriptFlow {
-        let flow = drive(&mut self.script, &self.snapshot, &mut self.ledger, tick);
+        let mut output = StatusCapture::default();
+        self.drive_with_output(tick, &mut output)
+    }
+
+    fn drive_with_output(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
+        let flow = with_tick_output(&self.snapshot, &mut self.ledger, tick, output, |t| {
+            self.script.tick(t).unwrap()
+        });
         let bank_pick_pending = self.ledger.as_ref().is_some_and(|ledger| {
             ledger
                 .outbox
@@ -1891,6 +2061,11 @@ fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
     let mut fixture = nested_bank_fixture(false);
     let mut cleared_before_acquire = false;
     for tick in 1..=64 {
+        let semantic_outcome_before = fixture
+            .script
+            .last_outcome
+            .as_ref()
+            .map(|outcome| outcome.evidence);
         fixture.drive(tick);
         if !cleared_before_acquire
             && fixture.script.provisioner.status().phase
@@ -1915,8 +2090,9 @@ fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
                 .script
                 .last_outcome
                 .as_ref()
-                .map(|outcome| outcome.evidence.tick),
-            Some(receipt_tick)
+                .map(|outcome| outcome.evidence),
+            semantic_outcome_before,
+            "a Provisioner receipt must not replace the semantic outcome"
         );
 
         fixture.script.bank.clear();

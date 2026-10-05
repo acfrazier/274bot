@@ -1712,7 +1712,7 @@
         },
         "strict": {
           "type": "boolean",
-          "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
+          "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.\nAdopted pages always require authored answers, even when this is false.",
           "default": false
         },
         "expect_combat": {
@@ -1879,7 +1879,7 @@
               "type": "null"
             }
           ],
-          "description": "Continue the dialogue opened by this operation with the shared talk driver."
+          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -2173,7 +2173,7 @@
               "type": "null"
             }
           ],
-          "description": "Continue the dialogue opened by this operation with the shared talk driver."
+          "description": "Omission drains optional Continue pages without answering menus.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         }
       },
       "required": [

@@ -2081,3 +2081,41 @@ fn combat_finish_budget_ignores_duplicate_polls_and_counts_tick_jumps() {
         "the jump from game tick 1 to 4 must spend three ticks"
     );
 }
+
+#[test]
+fn combat_finish_strict_menu_refusals_block_consistently() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    for prefer in [Arc::from([]), Arc::from([Arc::from("Unmatched answer")])] {
+        let mut run = finish_test_run(&data, 100);
+        run.finish.as_mut().unwrap().options = DialogueOptions {
+            prefer,
+            strict: true,
+            ..Default::default()
+        };
+        start_finish_wait(&mut run, 0);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_chat_modal(4882, vec!["Choose an answer.".into()]);
+        snapshot.seed_chat_options(
+            vec![api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Not the authored answer".into(),
+            }],
+            -1,
+        );
+        super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+        let mut ledger = None;
+        assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+        assert!(
+            matches!(
+                with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)),
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.contains("combat finish dialogue failed")
+            ),
+            "strict refusal must park rather than replay combat"
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+}

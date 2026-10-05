@@ -233,6 +233,9 @@ the shared display name must not erase a certificate's distinct item identity.
 An authored `loadout` step waits for posted inventory and equipment before
 planning bank or equipment actions. A newly observed held carry can satisfy the
 step without an unnecessary withdrawal.
+The wait shows `Waiting for inventory/equipment observation`. It has a
+30-second active-time limit. Missing observations at that limit park the step
+with a `needs-evidence` reason, rather than waiting indefinitely.
 
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
@@ -307,20 +310,23 @@ visible page; an observed closed page during combat still interrupts immediately
 and `strict: true`. A matching current-page rule selects first, followed by a
 one-based `choose`, then the ordered `prefer` list. Strict mode refuses an
 unmatched or ambiguous option without sending an answer; non-strict mode
-retains the final-option fallback. `continue_only: true` omits `npc` and drains
-an already-open conversation without talking or walking.
+retains the final-option fallback for pages the step itself opened. A `talk`
+step that adopts an already-open page (no Talk-to sent) answers only through
+its own `prefer`/`choose`/`line_rules`, never the default last option.
+`continue_only: true` omits `npc` and drains an already-open conversation
+without talking or walking, under the same adopted-page rule.
 
-`interact` and `use_on` may declare `dialogue` with the same options object.
-`"continue"` drives strict Continue-only continuation and refuses an unconfigured
-menu. The options-object form uses its authored answer rules and `strict` value.
-Both forms expect a page after every accepted round, including every `until`
-round. No page after the bounded opening wait fails with
-`expected dialogue did not open`. For `interact`, omission or
-`"none"` leaves continuation to the next owner. For `use_on`, omission drains
-observed pages in strict Continue-only mode without requiring a page: it never
-answers an option menu, and an encountered menu fails with a clear reason.
-Authors who need menu choices use the object form. Explicit `"none"` leaves
-those pages to the next owner, including during count repetition.
+`interact` and `use_on` share one dialogue policy. `"continue"` drives strict
+Continue-only continuation and refuses an unconfigured menu. The options-object
+form uses its authored answer rules and `strict` value. Both forms expect a page
+after every accepted round, including every `until` round. No page after the
+bounded opening wait fails with `expected dialogue did not open`. Omission is
+strict Continue-only: Continue pages opened by the step's own accepted action
+are drained; an option menu fails with a clear reason and is never answered;
+the step never requires a page, has no fixed wall-clock no-page delay, and does
+not settle while its own page is open. Authors who need menu choices use the
+object form. Explicit `"none"` never touches dialogue and leaves those pages to
+the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
 Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
