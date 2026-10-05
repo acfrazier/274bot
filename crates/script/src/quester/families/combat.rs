@@ -6,6 +6,7 @@ use super::super::compile::{
 use super::super::path::PredicateDocument;
 use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::reach::{self, Reach, ReachArgs, ReachKind};
+use super::{compile_dialogue_options, DialogueOptionsDocument, LineRuleDocument};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
     CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
@@ -149,6 +150,12 @@ struct FinishArgs {
     /// Optional one-based dialogue option index.
     #[serde(default)]
     choose: Option<i32>,
+    /// Current-page text rules checked before the general preferences.
+    #[serde(default)]
+    line_rules: Vec<LineRuleDocument>,
+    /// Refuse missing or ambiguous answer text instead of choosing a fallback.
+    #[serde(default)]
+    strict: bool,
     /// Positive game-tick budget for the complete transformation and dialogue.
     max_ticks: u32,
 }
@@ -158,8 +165,7 @@ struct FinishConfig {
     npc_type: i32,
     npc_name: Arc<str>,
     original_npc_types: Arc<[i32]>,
-    prefer: Arc<[Arc<str>]>,
-    choose: Option<i32>,
+    options: DialogueOptions,
     max_ticks: u32,
 }
 
@@ -473,17 +479,17 @@ fn compile_finish(
         .npc_by_config(&args.npc)
         .and_then(|row| row.display.as_deref())
         .ok_or_else(|| CompileError::code("unresolved-npc"))?;
-    let prefer = args
-        .prefer
-        .into_iter()
-        .map(Arc::<str>::from)
-        .collect::<Vec<_>>();
+    let options = compile_dialogue_options(DialogueOptionsDocument {
+        prefer: args.prefer,
+        choose: args.choose,
+        line_rules: args.line_rules,
+        strict: args.strict,
+    })?;
     Ok(FinishConfig {
         npc_type,
         npc_name: Arc::from(npc_name),
         original_npc_types: Arc::clone(types),
-        prefer: Arc::from(prefer),
-        choose: args.choose,
+        options,
         max_ticks: args.max_ticks,
     })
 }
@@ -664,6 +670,7 @@ impl StepPlan for CombatPlan {
             walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
             finish_target_index: None,
             finish_ticks_elapsed: 0,
+            finish_last_tick: None,
         };
         run.begin_combat(cx)?;
         Ok(Box::new(run))
@@ -728,6 +735,7 @@ struct CombatRun {
     finish: Option<FinishConfig>,
     finish_target_index: Option<usize>,
     finish_ticks_elapsed: u64,
+    finish_last_tick: Option<u64>,
 }
 
 /// Whether walk outcome `seq` was cancelled by user input. The cancel reason
@@ -819,6 +827,8 @@ impl CombatRun {
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
         self.finish_target_index = None;
+        self.finish_ticks_elapsed = 0;
+        self.finish_last_tick = None;
         let handle = cx.tick.actions.begin::<Combat>(
             (Arc::clone(&self.request), Arc::clone(&self.tables)),
             &mut cx.tick.cx,
@@ -1087,6 +1097,23 @@ impl CombatRun {
         Ok(LootStart::Complete)
     }
 
+    fn spend_finish_tick_budget(&mut self, tick: u64) -> bool {
+        let elapsed = match self.finish_last_tick {
+            Some(last_tick) => {
+                self.finish_last_tick = Some(last_tick.max(tick));
+                tick.saturating_sub(last_tick)
+            }
+            None => {
+                self.finish_last_tick = Some(tick);
+                0
+            }
+        };
+        self.finish_ticks_elapsed = self.finish_ticks_elapsed.saturating_add(elapsed);
+        self.finish
+            .as_ref()
+            .is_some_and(|finish| self.finish_ticks_elapsed <= u64::from(finish.max_ticks))
+    }
+
     fn wait_for_finish_dialogue(
         &mut self,
         cx: &mut StepContext<'_, '_>,
@@ -1110,11 +1137,7 @@ impl CombatRun {
         let handle = cx.tick.actions.begin::<Dialogue>(
             DialogueArgs {
                 target: DialogueTarget::Continuation,
-                options: DialogueOptions {
-                    prefer: Arc::clone(&finish.prefer),
-                    choose: finish.choose,
-                    ..DialogueOptions::default()
-                },
+                options: finish.options.clone(),
             },
             &mut cx.tick.cx,
         );
@@ -1213,18 +1236,13 @@ impl StepRun for CombatRun {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
         }
-        if matches!(self.phase, Phase::FinishWait | Phase::FinishDialogue) {
-            self.finish_ticks_elapsed = self.finish_ticks_elapsed.saturating_add(1);
-            let max_ticks = self
-                .finish
-                .as_ref()
-                .map_or(0, |finish| u64::from(finish.max_ticks));
-            if self.finish_ticks_elapsed > max_ticks {
-                self.action = None;
-                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
-                    &COMBAT_FINISH_TIMEOUT,
-                ))));
-            }
+        if matches!(self.phase, Phase::FinishWait | Phase::FinishDialogue)
+            && !self.spend_finish_tick_budget(cx.tick.cx.evidence().tick)
+        {
+            self.action = None;
+            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                &COMBAT_FINISH_TIMEOUT,
+            ))));
         }
         if matches!(self.phase, Phase::FinishWait) {
             return self.wait_for_finish_dialogue(cx);
@@ -1237,6 +1255,7 @@ impl StepRun for CombatRun {
             self.action = None;
             self.phase = Phase::FinishWait;
             self.finish_ticks_elapsed = 0;
+            self.finish_last_tick = Some(cx.tick.cx.evidence().tick);
             self.last_report = None;
             self.last_outcome = None;
             return Poll::Pending;
