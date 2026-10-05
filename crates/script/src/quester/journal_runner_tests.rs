@@ -895,6 +895,7 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
     step.plan = Arc::new(super::super::families::AcquirePlan {
         recipe: Arc::from("synthetic-journal"),
         steps: Arc::from(vec![super::super::families::CompiledAcquireStep {
+            id: step.id.clone(),
             advances: true,
             skip_if: Arc::clone(&step.skip_if),
             settle: Arc::clone(&step.settle),
@@ -1352,12 +1353,12 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         snapshot.seed_inventory(held(output), 28);
-        for tick in 8..=13 {
+        for tick in 8..=17 {
             drive(&mut script, &snapshot, &mut ledger, tick);
         }
-        drive(&mut script, &snapshot, &mut ledger, 14);
-        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 15, after);
-        drive(&mut script, &snapshot, &mut ledger, 19);
+        drive(&mut script, &snapshot, &mut ledger, 18);
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 19, after);
+        drive(&mut script, &snapshot, &mut ledger, 23);
         assert_eq!(
             script.current_step().unwrap().id.0.as_ref(),
             next,

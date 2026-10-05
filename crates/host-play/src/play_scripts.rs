@@ -261,8 +261,10 @@ impl ScriptStartHandle {
     /// Install a native card fixture through the same SlotScript lifecycle as
     /// a compiled Start. This seam is test-only: it does not add a registry
     /// card or another production start path.
-    #[cfg(test)]
-    pub(crate) fn start_test_script(
+    // Test seam for fixture-only native starts; no production registry path.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script(
         &self,
         name: &str,
         script: Box<dyn script::native::Script>,

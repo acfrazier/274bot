@@ -677,16 +677,28 @@ where
             // slot-owned continuation only after the X action was sent.
             // Direct callers cannot safely create host pending state.
             InteractReq::WithdrawX { .. } | InteractReq::WithdrawLoad { .. } => {}
-            InteractReq::Held { name, action, slot } => {
-                // An explicit slot never falls back to another matching item.
-                // Legacy wire requests retain the first matching row rule.
-                let wanted = name.to_lowercase();
-                if let Some(item) = snapshot.inventory().iter().find(|it| {
-                    slot.is_none_or(|slot| it.slot == slot)
-                        && obj_names
-                            .and_then(|n| n.name(it.def.id))
-                            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                }) {
+            InteractReq::Held {
+                name,
+                action,
+                slot,
+                target_item_id,
+            } => {
+                // An explicit id requires the exact id/slot pair. Requests
+                // without one retain the legacy name rule, constrained by an
+                // optional native-only slot.
+                let item = if target_item_id.is_some() {
+                    resolve_inventory_item(snapshot, obj_names, Some(&name), target_item_id, slot)
+                } else {
+                    let wanted = name.to_lowercase();
+                    snapshot.inventory().iter().find(|it| {
+                        it.count > 0
+                            && slot.is_none_or(|slot| it.slot == slot)
+                            && obj_names
+                                .and_then(|n| n.name(it.def.id))
+                                .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                    })
+                };
+                if let Some(item) = item.filter(|item| item.count > 0) {
                     let res = ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
                     if api::hostlog::enabled(Category::InteractTrace) {
                         let outcome = match &res {
@@ -1351,6 +1363,7 @@ fn resolve_op_target<'a>(
                 it.tile.x == x
                     && it.tile.z == z
                     && it.tile.level == level
+                    && target_item_id.is_none_or(|id| it.def.id == id)
                     && target_name.is_none_or(|wanted| {
                         obj_names
                             .and_then(|n| n.name(it.def.id))
@@ -1406,5 +1419,67 @@ fn resolve_inventory_item<'a>(
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod ground_use_target_tests {
+    use super::*;
+    use api::interact::OpTarget;
+
+    #[test]
+    fn ground_use_target_keeps_exact_id_when_items_share_a_tile_and_name() {
+        let tile = api::WorldTile {
+            x: 2613,
+            z: 9639,
+            level: 0,
+        };
+        let ground = |id| api::snapshot::GroundItemView {
+            def: api::obj_names::ItemDefView {
+                id,
+                name: Some("Cog".into()),
+                stackable: false,
+                members: true,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            count: 1,
+            actions: vec![Some("Take".into())],
+            tile,
+            distance: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ground_items(vec![ground(10), ground(11)]);
+        let target = resolve_op_target(
+            &snapshot,
+            None,
+            "obj",
+            None,
+            Some(11),
+            None,
+            tile.x,
+            tile.z,
+            tile.level,
+            None,
+        );
+        assert!(matches!(target, Some(OpTarget::GroundItem(item)) if item.def.id == 11));
+        assert!(
+            resolve_op_target(
+                &snapshot,
+                None,
+                "obj",
+                None,
+                Some(12),
+                None,
+                tile.x,
+                tile.z,
+                tile.level,
+                None,
+            )
+            .is_none(),
+            "a missing exact id must not select the same-name decoy"
+        );
     }
 }

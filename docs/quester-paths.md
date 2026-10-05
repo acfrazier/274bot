@@ -335,13 +335,12 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
 The schema checks document shape, exact per-kind `args`, and which `kind@version` values are registered. It requires `advances` on Explicit handler kinds. It cannot resolve content names, verify offered actions, enforce exactly-one target choices, or establish what the server actually changes. The compiler enforces semantic relations such as direct-progress settles requiring `advances: true` and validates content references. Only a live run can confirm that an `advances` value matches the server's behavior.
 
 Compilation failures keep the Path and step identifiers. Unresolved `obj`, `npc`, and `loc` references include the authored alias in `detail`; the queue message preserves that alias and the failing step id.
-
 ### 4.6 Checking a Path before asking for a live run
 
 1. Editor: no red squiggles under the `$schema` line's document.
 2. Shape, quick form (prints `<file> valid` or the failing data path):
-   `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --validate-formats=false --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
-   `schemars` emits Rust integer format annotations such as `uint8`, which Ajv does not register as formats; `--validate-formats=false` ignores those annotations while preserving strict schema checks and the numeric `minimum`/`maximum` bounds. For a failing large Path, rerun with `--errors=json --verbose`: JSON gives `instancePath`, `schemaPath`, and data, plus the applicable schema fragment (`parentSchema`) that identifies the Args shape; the text form only names the data path.
+   `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
+   Numeric constraints use the standard JSON Schema `type`, `minimum`, and `maximum`; no custom format plugin or disabled format checks are needed. For a failing large Path, rerun with `--errors=json --verbose`: JSON gives `instancePath`, `schemaPath`, and data, plus the applicable schema fragment (`parentSchema`) that identifies the Args shape; the text form only names the data path.
 3. **Facts and embedding:** add every bundled Path to `paths/289/index.json`; `bundled_paths_decode_and_compile` reads each indexed row's `file` from disk, not through `path_bytes`. Add the file to the `path_bytes` match in `compile.rs` for runtime embedding, then run `cargo test -p script bundled_paths_decode_and_compile` to compile every indexed Path. Errors include the Path, step, code, and detail.
 4. **Live fixture:** compare the Path with captured journal text and world evidence, especially after a settle timeout. Compilation cannot prove that `advances` reflects the server's actual behavior; a false declaration for an advancing action can leave the cached stage stale and repeat the action until timeout, while a true declaration for a non-advancing action causes an unnecessary progress read.
 

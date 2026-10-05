@@ -198,6 +198,7 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
 pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
     Box::new(AcquireRun {
         steps: Arc::from(vec![CompiledAcquireStep {
+            id: FactKey::new("policy-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
             settle: Arc::new(AllPlan { items: vec![] }),
@@ -336,6 +337,8 @@ fn reach_args(kind: reach::ReachKind, wait: bool) -> reach::ReachArgs {
         anchor: Some(tile(3227, 3300)),
         radius: 2,
         wait_if_missing: wait,
+        target_tile: None,
+        reachable_only: false,
     }
 }
 fn egg(wait: bool) -> reach::ReachArgs {
@@ -370,6 +373,47 @@ fn reach_takes_the_observed_stack_not_the_anchor() {
             z: 3302,
             ..
         }
+    ));
+}
+
+#[test]
+fn reach_held_transports_exact_item_identity() {
+    let mut snapshot = ready();
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(758, "IOU"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 7,
+            count: 1,
+            actions: vec![Some("Read".into())],
+            component_id: 0,
+        }],
+        28,
+    );
+    let mut args = reach_args(
+        reach::ReachKind::Held {
+            id: 758,
+            obj: Arc::from("IOU"),
+        },
+        false,
+    );
+    args.op = Arc::from("Read");
+    let mut ledger = None;
+    let _handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<reach::Reach>(args, &mut tick.cx)
+            .unwrap()
+    });
+
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Held {
+            name,
+            action,
+            slot: Some(7),
+            target_item_id: Some(758),
+        } if name == "IOU" && action == "Read"
     ));
 }
 #[test]
@@ -808,6 +852,124 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
         ));
     }
 }
+
+#[test]
+fn vanished_clicked_loc_with_accepted_dispatch_does_not_retarget_replacements() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1551),
+            name: Some(Arc::from("Door")),
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Door"),
+        },
+    ] {
+        for replacement_offset in [None, Some(0), Some(1)] {
+            let mut snapshot = ready();
+            let original = loc(1551, "Door", "Open");
+            snapshot.seed_locs(vec![original.clone()]);
+            let mut args = reach_args(kind.clone(), false);
+            args.op = Arc::from("Open");
+            args.radius = 4;
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<reach::Reach>(args, &mut tick.cx)
+                    .unwrap()
+            });
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_locs(
+                replacement_offset
+                    .map(|offset| {
+                        let mut opened = loc(1552, "Door", "Close");
+                        opened.tile = original.tile;
+                        opened.tile.x += offset;
+                        vec![opened]
+                    })
+                    .unwrap_or_default(),
+            );
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                }),
+                Poll::Ready(Ok(true))
+            ));
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn vanished_clicked_loc_with_rejected_dispatch_fails_without_retargeting() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1551),
+            name: Some(Arc::from("Door")),
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Door"),
+        },
+    ] {
+        for replacement_offset in [None, Some(0), Some(1)] {
+            let mut snapshot = ready();
+            let original = loc(1551, "Door", "Open");
+            snapshot.seed_locs(vec![original.clone()]);
+            let mut args = reach_args(kind.clone(), false);
+            args.op = Arc::from("Open");
+            args.radius = 4;
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<reach::Reach>(args, &mut tick.cx)
+                    .unwrap()
+            });
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    accepted: false,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_locs(
+                replacement_offset
+                    .map(|offset| {
+                        let mut opened = loc(1552, "Door", "Close");
+                        opened.tile = original.tile;
+                        opened.tile.x += offset;
+                        vec![opened]
+                    })
+                    .unwrap_or_default(),
+            );
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                }),
+                Poll::Ready(Ok(false))
+            ));
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+    }
+}
 fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>) -> R) -> R {
     with_step_banks(t, &Arc::new(api::named_banks::NamedBankFacts::empty()), f)
 }
@@ -1155,7 +1317,16 @@ fn interact_false_is_failure_not_success() {
         settle_duration: Duration::from_secs(20),
         walk: None,
         reach: Some(handle),
+        dialogue_options: None,
+        dialogue: None,
         started: true,
+        dialogue_started: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
+        round_before: None,
+        round_deadline: None,
+        round_accepted: false,
     };
     assert!(matches!(
         with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))),
@@ -1174,6 +1345,10 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        dialogue_options: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1199,6 +1374,10 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        dialogue_options: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1328,8 +1507,418 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     s.seed_locs(vec![loc(loc_id, "Hopper", "Use")]);
     assert!(with_tick(&s, &mut ledger, 3, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(
-        matches!(emitted(&ledger), InteractReq::UseOn { name, x: 3167, z: 3308, source_item_id: Some(source), source_item_slot: Some(7), .. } if name == "Grain" && *source == id)
+        matches!(emitted(&ledger), InteractReq::UseOn { name, x: 3167, z: 3308, source_item_id: Some(source), source_item_slot: Some(7), target_item_id: Some(target), .. } if name == "Grain" && *source == id && *target == loc_id)
     );
+}
+
+#[test]
+fn use_on_product_continues_post_use_modal_before_settling() {
+    compile_context_test(|cx| {
+        for (product_goal, chat_root) in [(true, 2100), (false, 2100), (true, -1), (false, -1)] {
+            let source_id = resolve_obj(cx, "doogleleaves").unwrap();
+            let target_id = resolve_obj(cx, "raw_sardine").unwrap();
+            let product_id = resolve_obj(cx, "seasoned_sardine").unwrap();
+            let source = ItemView {
+                def: def(source_id, "Doogle leaves"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            };
+            let target = ItemView {
+                def: def(target_id, "Raw sardine"),
+                slot: 1,
+                ..source.clone()
+            };
+            let product = ItemView {
+                def: def(product_id, "Seasoned sardine"),
+                slot: 2,
+                ..source.clone()
+            };
+            let mut snapshot = ready();
+            snapshot.seed_inventory(vec![source, target], 28);
+            let plan = compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "doogleleaves",
+                    "target": {"item": "raw_sardine"},
+                    "product": product_goal.then_some("seasoned_sardine"),
+                    "settle_ms": 20_000
+                })),
+                cx,
+            )
+            .unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(matches!(
+                emitted(&ledger),
+                InteractReq::UseOn {
+                    kind, source_item_id: Some(source), target_item_id: Some(target), ..
+                } if kind == "inv" && *source == source_id && *target == target_id
+            ));
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 3,
+                        sequence: 3,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_chat_modal(
+                chat_root,
+                vec!["You rub the doogle leaves over the sardine.".into()],
+            );
+            snapshot.seed_chat_options(vec![], 2105);
+            for tick in 3..=4 {
+                assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            assert!(
+                matches!(
+                    emitted(&ledger),
+                    InteractReq::ContinueDialog { component_id: None }
+                ),
+                "accepted use-on must drain root {chat_root} before product or no-product settlement"
+            );
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 5,
+                        sequence: 5,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_chat_modal(-1, vec![]);
+            snapshot.seed_chat_options(vec![], -1);
+            snapshot.seed_inventory(vec![product], 28);
+            let mut settled = Poll::Pending;
+            for tick in 5..=15 {
+                settled = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                });
+                if settled.is_ready() {
+                    break;
+                }
+            }
+            assert!(
+                matches!(settled, Poll::Ready(Ok(_))),
+                "product goal {product_goal} must settle only after root {chat_root} is drained"
+            );
+        }
+    });
+}
+
+#[test]
+fn use_on_explicit_none_leaves_visible_pages_to_the_next_owner() {
+    compile_context_test(|cx| {
+        for goal in ["until", "product", "none"] {
+            for root in [2100, -1] {
+                let source_id = resolve_obj(cx, "doogleleaves").unwrap();
+                let target_id = resolve_obj(cx, "raw_sardine").unwrap();
+                let product_id = resolve_obj(cx, "seasoned_sardine").unwrap();
+                let source = ItemView {
+                    def: def(source_id, "Doogle leaves"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                };
+                let target = ItemView {
+                    def: def(target_id, "Raw sardine"),
+                    slot: 1,
+                    ..source.clone()
+                };
+                let product = ItemView {
+                    def: def(product_id, "Seasoned sardine"),
+                    slot: 2,
+                    ..source.clone()
+                };
+                let mut args = serde_json::json!({
+                    "item": "doogleleaves",
+                    "target": {"item": "raw_sardine"},
+                    "dialogue": "none"
+                });
+                match goal {
+                    "until" => {
+                        args["until"] = serde_json::json!({"obj":"seasoned_sardine","qty":1})
+                    }
+                    "product" => args["product"] = serde_json::json!("seasoned_sardine"),
+                    _ => {}
+                }
+                let plan = compile_use_on(test_args::<UseOnArgs>(args), cx).unwrap();
+                let mut snapshot = ready();
+                snapshot.seed_inventory(vec![source, target], 28);
+                if goal == "until" {
+                    snapshot.seed_chat_modal(root, vec!["An existing page.".into()]);
+                    snapshot.seed_chat_options(vec![], 2105);
+                }
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                assert!(
+                    matches!(emitted(&ledger), InteractReq::UseOn { kind, .. } if kind == "inv"),
+                    "explicit none must not auto-continue before an until attempt"
+                );
+                let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+                ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: EvidenceStamp {
+                            run: authority.run(),
+                            tick: 3,
+                            sequence: 3,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                snapshot.seed_chat_modal(root, vec!["A post-use page.".into()]);
+                snapshot.seed_chat_options(vec![], 2105);
+                snapshot.seed_inventory(vec![product], 28);
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 3, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Ok(_))
+                    ),
+                    "explicit none leaves root {root} to the next owner for {goal}"
+                );
+                assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+                assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+                    tick.cx
+                        .snapshot()
+                        .chat_modal()
+                        .is_some_and(|chat| chat.value.continue_component_id == 2105)
+                }));
+            }
+        }
+    });
+}
+
+fn use_on_footprint_fixture(
+    cx: &CompileContext<'_>,
+    from: WorldTile,
+) -> (GameSnapshot, LocView, api::snapshot::SceneView) {
+    let mut target = loc(
+        resolve_loc(cx, "hopper_lumbridge").unwrap(),
+        "Hopper",
+        "Use",
+    );
+    target.shape = 10;
+    target.angle = 1;
+    target.width = 2;
+    target.length = 3;
+    target.footprint_width = 3;
+    target.footprint_length = 2;
+    target.force_approach = 14; // Rotates to 13: only the east side is open.
+    target.distance = (from.x - target.tile.x)
+        .abs()
+        .max((from.z - target.tile.z).abs());
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: target.tile.x - 4,
+        base_z: target.tile.z - 3,
+        level: target.tile.level,
+        width: 10,
+        height: 8,
+        collision_flags: vec![0; 80],
+    };
+    for x in target.tile.x..target.tile.x + target.footprint_width {
+        for z in target.tile.z..target.tile.z + target.footprint_length {
+            let index = ((x - scene.base_x) * scene.height + z - scene.base_z) as usize;
+            scene.collision_flags[index] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(from));
+    snapshot.seed_scene(scene.clone());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(resolve_obj(cx, "grain").unwrap(), "Grain"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 7,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    snapshot.seed_locs(vec![target.clone()]);
+    (snapshot, target, scene)
+}
+
+#[test]
+fn use_on_loc_walks_to_rotated_footprint_before_dispatch() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        for offset in [-1, -3, 3] {
+            let from = tile(origin.x + offset, origin.z);
+            let (mut snapshot, mut target, mut scene) = use_on_footprint_fixture(cx, from);
+            if offset == 3 {
+                let index =
+                    ((from.x - scene.base_x) * scene.height + from.z - scene.base_z) as usize;
+                scene.collision_flags[index] |= client::dash3d::CollisionFlag::W_W;
+                snapshot.seed_scene(scene.clone());
+            }
+            assert_eq!(
+                api::query::loc_approach::can_operate_from(&target, &scene, from),
+                Some(false)
+            );
+            let plan = compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+                })),
+                cx,
+            )
+            .unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(&ledger.as_ref().unwrap().outbox[0].effect,
+                    HostEffect::Walk(request) if request.target == origin
+                        && request.loc_id == Some(target.id) && request.radius == 1),
+                "offset {offset} must approach the selected footprint before use-on"
+            );
+            let walk_request = ledger.as_ref().unwrap().outbox[0].request_id;
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+
+            let stand = tile(origin.x + target.footprint_width, origin.z);
+            let index = ((stand.x - scene.base_x) * scene.height + stand.z - scene.base_z) as usize;
+            scene.collision_flags[index] = 0;
+            snapshot.seed_scene(scene.clone());
+            snapshot.seed_local_player(local_player(stand));
+            target.distance = target.footprint_width;
+            let mut nearer_same_id = target.clone();
+            nearer_same_id.tile.x = stand.x + 1;
+            nearer_same_id.distance = 1;
+            let mut co_located_decoy = target.clone();
+            co_located_decoy.id += 1;
+            co_located_decoy.distance = 0;
+            snapshot.seed_locs(vec![co_located_decoy, nearer_same_id, target.clone()]);
+            assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, walk_request);
+            assert!(matches!(
+                emitted(&ledger),
+                InteractReq::UseOn {
+                    kind, x, z, target_name: Some(name),
+                    source_item_id: Some(source), source_item_slot: Some(7),
+                    target_item_id: Some(id), ..
+                } if kind == "loc" && name == "Hopper"
+                    && (*x, *z) == (origin.x, origin.z)
+                    && *source == resolve_obj(cx, "grain").unwrap() && *id == target.id
+            ));
+        }
+    });
+}
+
+#[test]
+fn use_on_loc_ready_dispatch_keeps_exact_id_among_same_name_decoys() {
+    compile_context_test(|cx| {
+        let stand = tile(3170, 3308);
+        let (mut snapshot, target, scene) = use_on_footprint_fixture(cx, stand);
+        assert_eq!(
+            api::query::loc_approach::can_operate_from(&target, &scene, stand),
+            Some(true)
+        );
+        let mut decoy = target.clone();
+        decoy.id += 1;
+        decoy.distance = 0;
+        snapshot.seed_locs(vec![decoy, target.clone()]);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn { target_item_id: Some(id), .. } if *id == target.id
+        ));
+    });
+}
+
+#[test]
+fn use_on_loc_unknown_scene_cannot_prove_readiness() {
+    compile_context_test(|cx| {
+        let (mut snapshot, target, mut scene) = use_on_footprint_fixture(cx, tile(3170, 3308));
+        scene.available = false;
+        snapshot.seed_scene(scene);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        for tick in 2..=4 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            assert!(matches!(&ledger.as_ref().unwrap().outbox[0].effect,
+                HostEffect::Walk(request) if request.loc_id == Some(target.id)));
+        }
+    });
 }
 
 #[test]
@@ -1346,6 +1935,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
     let plan = AcquirePlan {
         recipe: Arc::from("flour"),
         steps: Arc::from(vec![CompiledAcquireStep {
+            id: FactKey::new("flour-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
             settle: Arc::new(Message {
@@ -3285,7 +3875,7 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
 
 #[test]
 fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
     seed_dialogue_combat(&mut snapshot, false);
@@ -3293,11 +3883,16 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
         t.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Aubury"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Aubury"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3319,12 +3914,12 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(-1, vec![]);
-    for tick in 5..9 {
+    for tick in 5..13 {
         with_tick(&snapshot, &mut ledger, tick, |t| {
             assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
         });
     }
-    with_tick(&snapshot, &mut ledger, 9, |t| {
+    with_tick(&snapshot, &mut ledger, 13, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
             Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3334,7 +3929,7 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
 
 #[test]
 fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4893, vec!["Give 'em here then.".into()]);
     snapshot.seed_chat_options(vec![], 4899);
@@ -3352,11 +3947,16 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut tick.cx,
             )
@@ -3392,14 +3992,14 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 24..29 {
+    for tick in 24..33 {
         assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 29, |tick| {
+        with_tick(&snapshot, &mut ledger, 33, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3408,7 +4008,7 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
 
 #[test]
 fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     let item = ItemView {
         def: def(1759, "Ball of wool"),
@@ -3425,11 +4025,16 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut tick.cx,
             )
@@ -3442,7 +4047,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     .is_pending());
     // One starting unit plus four slack updates may re-arm; later unrelated
     // updates keep happening but must not postpone the fifth quiet deadline.
-    for game_tick in 3..11 {
+    for game_tick in 3..15 {
         snapshot.seed_inventory(
             vec![ItemView {
                 slot: (game_tick % 2) as i32,
@@ -3457,7 +4062,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     }
     snapshot.seed_inventory(vec![ItemView { slot: 1, ..item }], 28);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 11, |tick| {
+        with_tick(&snapshot, &mut ledger, 15, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3501,7 +4106,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
 
 #[test]
 fn dialogue_hostile_close_never_reports_success() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
     seed_dialogue_combat(&mut snapshot, false);
@@ -3509,11 +4114,16 @@ fn dialogue_hostile_close_never_reports_success() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
         t.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Aubury"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Aubury"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3543,7 +4153,7 @@ fn dialogue_hostile_close_never_reports_success() {
 
 #[test]
 fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     use crate::dialogue_outcome::DialogueOutcome;
     for continue_component in [None, Some(4883), Some(-1)] {
         let mut snapshot = ready();
@@ -3566,11 +4176,16 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
             t.actions
                 .begin::<Dialogue>(
-                    DialogueArgs {
-                        id: 0,
-                        npc: Arc::from("Aubury"),
-                        prefer: Arc::from([]),
-                        choose: None,
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Npc {
+                            id: 0,
+                            name: Arc::from("Aubury"),
+                        },
+                        options: dialogue::DialogueOptions {
+                            prefer: Arc::from([]),
+                            choose: None,
+                            ..Default::default()
+                        },
                     },
                     &mut t.cx,
                 )
@@ -3628,10 +4243,15 @@ fn assert_reused_dialogue_page_is_acknowledged(
         t.actions
             .begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
-                    id: 0,
-                    npc: Arc::from(npc),
-                    prefer: Arc::from([]),
-                    choose: None,
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from(npc),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3704,10 +4324,15 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         t.actions
             .begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
-                    id: 758,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 758,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -4070,12 +4695,17 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
     let snapshot = ready();
     let mut ledger = None;
     let mut run = TalkRun {
-        id: 42,
-        npc: Arc::from("test npc"),
+        target: dialogue::DialogueTarget::Npc {
+            id: 42,
+            name: Arc::from("test npc"),
+        },
         tile: Some(tile(3200, 3200)),
         leash: 1,
-        prefer: Arc::from([]),
-        choose: None,
+        options: dialogue::DialogueOptions {
+            prefer: Arc::from([]),
+            choose: None,
+            ..Default::default()
+        },
         expect_combat: None,
         walk: None,
         dialogue: None,
@@ -4108,16 +4738,21 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
         }));
         let mut ledger = None;
         let mut run = TalkRun {
-            id: 42,
-            npc: Arc::from("test npc"),
+            target: dialogue::DialogueTarget::Npc {
+                id: 42,
+                name: Arc::from("test npc"),
+            },
             tile: Some(WorldTile {
                 x: 3103,
                 z: 3163,
                 level: 2,
             }),
             leash: 6,
-            prefer: Arc::from([]),
-            choose: None,
+            options: dialogue::DialogueOptions {
+                prefer: Arc::from([]),
+                choose: None,
+                ..Default::default()
+            },
             expect_combat: None,
             walk: None,
             dialogue: None,
@@ -4170,6 +4805,12 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         round_before: None,
         round_deadline: None,
         chat_since: 0,
+        target_tile: None,
+        default_dialogue: true,
+        dialogue_options: None,
+        dialogue: None,
+        dialogue_started: None,
+        dialogue_completed: false,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))
@@ -4382,6 +5023,8 @@ fn talk_expected_combat_rejects_unknown_npc_config() {
     });
 }
 
+#[path = "extension_tests.rs"]
+mod extension_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     compile_context_test(|base| {
         let row = crate::loadouts_store::Loadout::new("cook/disguise")

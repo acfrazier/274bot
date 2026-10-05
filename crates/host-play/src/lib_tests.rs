@@ -10837,6 +10837,7 @@ fn dispatch_script_interact_sends_held_item_bury() {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             }],
         ),
         "held Bury must dispatch"
@@ -10859,11 +10860,13 @@ fn dispatch_script_interact_sends_held_item_bury() {
                 name: "Bones".into(),
                 action: "Wear".into(),
                 slot: None,
+                target_item_id: None,
             },
             script::shim::InteractReq::Held {
                 name: "Lobster".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             },
         ],
     ));
@@ -10871,6 +10874,104 @@ fn dispatch_script_interact_sends_held_item_bury() {
         c.out.pos, before,
         "a label no held op resolves and an unknown name send nothing"
     );
+}
+
+#[test]
+fn dispatch_held_revalidates_exact_id_and_slot_without_name_fallback() {
+    let mut c = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
+        cache.objs[2].name = "Bones".into();
+        cache.objs[2].iop = [Some("Bury".into()), None, None, None, None];
+    }
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let (navs, world) = empty_nav();
+    let request = |target_item_id, slot| script::shim::InteractReq::Held {
+        name: "Bones".into(),
+        action: "Bury".into(),
+        slot,
+        target_item_id,
+    };
+    let dispatch = |driver: &mut GuardRec, snapshot: &GameSnapshot, target_item_id, slot| {
+        dispatch_script_interact(
+            driver,
+            snapshot,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![request(target_item_id, slot)],
+        )
+    };
+
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            // Actual ids 1 and 2 share the display name but occupy distinct slots.
+            link_obj_type: Some(vec![2, 3]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut exact_snapshot = GameSnapshot::new();
+    exact_snapshot.rebuild(&c);
+    let mut exact = GuardRec::default();
+    assert!(dispatch(&mut exact, &exact_snapshot, Some(1), Some(0)));
+    assert!(exact
+        .menus
+        .iter()
+        .any(|(_, _, id, slot, _)| (*id, *slot) == (1, 0)));
+
+    // The selected id 1 vanished from slot 0; a same-name id 2 now occupies
+    // that exact slot while id 1 remains elsewhere.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 2]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut substituted_snapshot = GameSnapshot::new();
+    substituted_snapshot.rebuild(&c);
+    let mut substituted = GuardRec::default();
+    assert!(!dispatch(
+        &mut substituted,
+        &substituted_snapshot,
+        Some(1),
+        Some(0)
+    ));
+    assert!(substituted.menus.is_empty());
+
+    // Slot 0 is now empty, but the same-name id 2 still exists in slot 1.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 3]),
+            link_obj_number: Some(vec![0, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut disappeared_snapshot = GameSnapshot::new();
+    disappeared_snapshot.rebuild(&c);
+    let mut disappeared = GuardRec::default();
+    assert!(!dispatch(
+        &mut disappeared,
+        &disappeared_snapshot,
+        Some(1),
+        Some(0)
+    ));
+    assert!(disappeared.menus.is_empty());
+
+    let mut incomplete = GuardRec::default();
+    assert!(!dispatch(&mut incomplete, &exact_snapshot, Some(1), None));
+    assert!(incomplete.menus.is_empty());
 }
 
 #[test]
@@ -10906,6 +11007,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
+                target_item_id: None,
             })
             .collect(),
     ));
@@ -10939,6 +11041,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
+                target_item_id: None,
             }],
         ));
     }
@@ -10953,6 +11056,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
             name: "Bones".into(),
             action: "Drop".into(),
             slot: Some(slot),
+            target_item_id: None,
         }))
         .collect();
     assert!(dispatch_script_interact(
@@ -12615,6 +12719,7 @@ fn dispatch_script_interact_held_first_match_only() {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
     ));
     let one_op = one.out.pos - before_one;
@@ -12660,6 +12765,7 @@ fn dispatch_script_interact_held_first_match_only() {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
     ));
     assert_eq!(
@@ -25813,6 +25919,7 @@ mod host_batch_tests {
                     name: "missing food".into(),
                     action: "Eat".into(),
                     slot: Some(0),
+                    target_item_id: None,
                 },
                 script::shim::InteractReq::Npc {
                     name: "Goblin".into(),

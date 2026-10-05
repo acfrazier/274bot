@@ -2162,6 +2162,7 @@ fn held(items: &[ItemView], id: i32, action: &str) -> Result<InteractReq, Action
         name: item_name(items, id)?.to_owned(),
         action: action.to_owned(),
         slot: Some(row.slot),
+        target_item_id: None,
     })
 }
 fn distance(a: api::WorldTile, b: api::WorldTile) -> i32 {

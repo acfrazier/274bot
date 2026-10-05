@@ -330,6 +330,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: None,
+            target_item_id: None,
         },
         InteractReq::SetCameraYaw { yaw: 777 },
     ]);

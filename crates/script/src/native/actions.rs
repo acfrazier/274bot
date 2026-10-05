@@ -779,6 +779,7 @@ mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(slot),
+            target_item_id: None,
         }
     }
     fn install_owner(cx: &mut ActionContext<'_>) -> Arc<Owner> {
@@ -802,6 +803,7 @@ mod tests {
             name: name.into(),
             action: "Eat".into(),
             slot: None,
+            target_item_id: None,
         }
     }
 
@@ -810,6 +812,7 @@ mod tests {
             name: "Prayer potion".into(),
             action: "Drink".into(),
             slot: None,
+            target_item_id: None,
         }
     }
 
@@ -936,6 +939,7 @@ mod tests {
                         name: "Bones".into(),
                         action: "Bury".into(),
                         slot: None,
+                        target_item_id: None,
                     }),
                     None,
                     None,
@@ -1378,6 +1382,7 @@ mod tests {
                     name: food_name,
                     action: food_action,
                     slot: None,
+                    target_item_id: None,
                 }),
                 Some(InteractReq::Npc {
                     name: npc_name,

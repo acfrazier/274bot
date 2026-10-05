@@ -219,6 +219,7 @@ fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileEr
     let item = cx
         .selected
         .resolve_item_name(name)
+        .filter(|item| !item.is_certificate())
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     let display = item
         .name
@@ -895,6 +896,8 @@ impl StepRun for MakeRun {
                     anchor: Some(self.tile),
                     radius: 8,
                     wait_if_missing: true,
+                    target_tile: None,
+                    reachable_only: false,
                 },
                 &mut cx.tick.cx,
             )?);
@@ -1052,22 +1055,20 @@ pub(super) fn compile_loadout(
         .resolve(&qualified)
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
-    let mut resolved_row = row.clone();
-    let mut carry_ids = Vec::with_capacity(resolved_row.carry.len());
-    for carry in &mut resolved_row.carry {
+    let mut resolved = Vec::new();
+    let mut carry_ids = Vec::with_capacity(row.carry.len());
+    for carry in &row.carry {
         let item = named_item(cx, &carry.item)?;
-        if carry.item.as_str() != item.name.as_ref() {
-            carry.item = item.name.to_string();
-        }
         carry_ids.push(item.id);
+        if !resolved.iter().any(|known: &BankItem| known.id == item.id) {
+            resolved.push(item);
+        }
     }
     let mut worn_items = Vec::with_capacity(row.worn.len());
     for (slot, wanted) in &row.worn {
         let item = named_item(cx, wanted)?;
-        if wanted != item.name.as_ref() {
-            resolved_row
-                .worn
-                .insert(slot.clone(), item.name.to_string());
+        if !resolved.iter().any(|known| known.id == item.id) {
+            resolved.push(item.clone());
         }
         worn_items.push((slot.clone(), item));
     }
@@ -1077,8 +1078,10 @@ pub(super) fn compile_loadout(
             .map(|facts| facts.melee_weapons.clone())
             .unwrap_or_default(),
     );
-    let mut resolved = Vec::new();
     for candidate in cx.selected.items() {
+        if candidate.is_certificate() {
+            continue;
+        }
         let Some(name) = candidate.name.as_deref() else {
             continue;
         };
@@ -1098,7 +1101,7 @@ pub(super) fn compile_loadout(
                         || (slot.eq_ignore_ascii_case("righthand")
                             && crate::melee_weapons::same_or_lower_melee_weapon(name, &wanted.name))
                 }));
-        if relevant {
+        if relevant && !resolved.iter().any(|known| known.id == candidate.id) {
             resolved.push(BankItem {
                 id: candidate.id,
                 name: Arc::from(name),
@@ -1109,7 +1112,7 @@ pub(super) fn compile_loadout(
         bank: cx.bank,
         bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
-        row: resolved_row,
+        row: row.clone(),
         resolved: Arc::from(resolved),
         melee_family,
         keep_ids: Arc::from(cx.keep_ids),
@@ -1510,6 +1513,9 @@ pub(super) fn compile_loadout_ready(
             let mut ids = vec![wanted_item.id];
             if args.allow_lower_tier {
                 ids.extend(cx.selected.items().iter().filter_map(|candidate| {
+                    if candidate.is_certificate() {
+                        return None;
+                    }
                     let name = candidate.name.as_deref()?;
                     let canonical = cx
                         .selected
@@ -1651,3 +1657,6 @@ fn done(cx: &StepContext<'_, '_>) -> StepOutcome {
         receipt: None,
     }
 }
+#[cfg(test)]
+#[path = "loadout_tests.rs"]
+mod loadout_tests;

@@ -399,6 +399,11 @@ impl GameSnapshot {
         self.world = world;
     }
 
+    /// Offline fixture seed for an observed collision scene.
+    pub fn seed_scene(&mut self, scene: SceneView) {
+        self.scene = scene;
+    }
+
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;

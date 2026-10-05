@@ -81,15 +81,13 @@
       "properties": {
         "skill": {
           "type": "integer",
-          "format": "uint8",
-          "minimum": 0,
-          "maximum": 255
+          "maximum": 255,
+          "minimum": 0
         },
         "level": {
           "type": "integer",
-          "format": "uint16",
-          "minimum": 0,
-          "maximum": 65535
+          "maximum": 65535,
+          "minimum": 0
         }
       },
       "required": [
@@ -150,9 +148,8 @@
         },
         "quest_points": {
           "type": "integer",
-          "format": "uint16",
-          "minimum": 0,
-          "maximum": 65535
+          "maximum": 65535,
+          "minimum": 0
         },
         "requirements": {
           "type": "array",
@@ -180,7 +177,6 @@
         },
         "coin_float": {
           "type": "integer",
-          "format": "uint32",
           "minimum": 0
         },
         "loadouts": {
@@ -256,9 +252,8 @@
           "properties": {
             "QuestPoints": {
               "type": "integer",
-              "format": "uint16",
-              "minimum": 0,
-              "maximum": 65535
+              "maximum": 65535,
+              "minimum": 0
             }
           },
           "required": [
@@ -277,9 +272,8 @@
                 },
                 "level": {
                   "type": "integer",
-                  "format": "uint16",
-                  "minimum": 0,
-                  "maximum": 65535
+                  "maximum": 65535,
+                  "minimum": 0
                 }
               },
               "additionalProperties": false,
@@ -317,7 +311,6 @@
                 },
                 "qty": {
                   "type": "integer",
-                  "format": "uint32",
                   "minimum": 0
                 }
               },
@@ -344,7 +337,6 @@
         },
         "qty": {
           "type": "integer",
-          "format": "uint32",
           "minimum": 0
         },
         "kind": {
@@ -410,6 +402,9 @@
           "$ref": "#/$defs/step.loadout.v1"
         },
         {
+          "$ref": "#/$defs/step.setting.v1"
+        },
+        {
           "$ref": "#/$defs/step.combat.v1"
         }
       ]
@@ -421,8 +416,7 @@
         "tile": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "minItems": 3,
           "maxItems": 3,
@@ -435,11 +429,10 @@
         },
         "radius": {
           "type": "integer",
-          "format": "uint16",
+          "default": 0,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Navigation radius in tiles; 0 means 1.",
-          "default": 0
+          "description": "Navigation radius in tiles; 0 means 1."
         },
         "cross": {
           "type": "array",
@@ -608,6 +601,9 @@
                   "$ref": "#/$defs/fact.loadout_ready.v1"
                 },
                 {
+                  "$ref": "#/$defs/fact.retaliate.v1"
+                },
+                {
                   "$ref": "#/$defs/fact.equipment_only.v1"
                 }
               ]
@@ -660,8 +656,7 @@
         "tile": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "minItems": 3,
           "maxItems": 3,
@@ -669,7 +664,6 @@
         },
         "radius": {
           "type": "integer",
-          "format": "int32",
           "description": "Maximum distance in tiles."
         }
       },
@@ -928,8 +922,20 @@
             "integer",
             "null"
           ],
-          "format": "int32",
-          "description": "Maximum distance in tiles; omitted uses 12.",
+          "default": null,
+          "description": "Maximum distance in tiles; omitted uses 12."
+        },
+        "at": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Require the selected ground item at this exact world tile.",
           "default": null
         }
       },
@@ -1005,9 +1011,8 @@
       "anyOf": [
         {
           "type": "integer",
-          "format": "int32",
-          "minimum": 1,
-          "description": "Fixed item quantity; values below 1 are rejected by the compiler."
+          "description": "Fixed item quantity; values below 1 are rejected by the compiler.",
+          "minimum": 1
         },
         {
           "$ref": "#/$defs/ProgressQuantityDocument",
@@ -1100,7 +1105,6 @@
       "properties": {
         "level": {
           "type": "integer",
-          "format": "int32",
           "description": "Skill or floor level to test."
         }
       },
@@ -1191,7 +1195,6 @@
         },
         "level": {
           "type": "integer",
-          "format": "int32",
           "description": "Minimum base level required."
         }
       },
@@ -1226,7 +1229,6 @@
       "properties": {
         "below": {
           "type": "number",
-          "format": "float",
           "description": "Threshold fraction of current hitpoints divided by base hitpoints."
         }
       },
@@ -1385,20 +1387,18 @@
             "integer",
             "null"
           ],
-          "format": "uint32",
+          "default": null,
           "minimum": 0,
-          "description": "Optional exact count expected on a counted flag.",
-          "default": null
+          "description": "Optional exact count expected on a counted flag."
         },
         "at_least": {
           "type": [
             "integer",
             "null"
           ],
-          "format": "uint32",
+          "default": null,
           "minimum": 0,
-          "description": "Optional minimum count expected on a counted flag.",
-          "default": null
+          "description": "Optional minimum count expected on a counted flag."
         }
       },
       "required": [
@@ -1456,9 +1456,8 @@
         },
         "qty": {
           "type": "integer",
-          "format": "int32",
-          "description": "Minimum count; omitted or below 1 uses 1.",
-          "default": 1
+          "default": 1,
+          "description": "Minimum count; omitted or below 1 uses 1."
         }
       },
       "required": [
@@ -1532,6 +1531,40 @@
         },
         "args": {
           "$ref": "#/$defs/LoadoutArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "SettingArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retaliate": {
+          "type": "boolean",
+          "description": "The required auto-retaliate state. True enables auto-retaliate."
+        }
+      },
+      "required": [
+        "retaliate"
+      ],
+      "description": "Required non-combat auto-retaliate state."
+    },
+    "fact.retaliate.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "retaliate"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/SettingArgs"
         }
       },
       "required": [
@@ -1624,8 +1657,17 @@
       "additionalProperties": false,
       "properties": {
         "npc": {
-          "type": "string",
-          "description": "Symbolic NPC config name to speak with."
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Selected NPC config to talk to. Omit this field for continuation-only steps.",
+          "default": null
+        },
+        "continue_only": {
+          "type": "boolean",
+          "description": "Continue an existing dialogue without a Talk-to action or approach.",
+          "default": false
         },
         "anchor": {
           "anyOf": [
@@ -1640,11 +1682,10 @@
         },
         "leash": {
           "type": "integer",
-          "format": "uint16",
+          "default": 0,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Maximum NPC interaction distance; 0 or omitted means 1 tile.",
-          "default": 0
+          "description": "Maximum NPC interaction distance; 0 or omitted means 1 tile."
         },
         "prefer": {
           "type": "array",
@@ -1659,9 +1700,20 @@
             "integer",
             "null"
           ],
-          "format": "int32",
-          "description": "Optional 1-based dialogue option index.",
-          "default": null
+          "default": null,
+          "description": "Optional 1-based dialogue option index."
+        },
+        "line_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineRuleDocument"
+          },
+          "description": "Page text rules, checked before the general answer preferences."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
+          "default": false
         },
         "expect_combat": {
           "anyOf": [
@@ -1672,12 +1724,10 @@
               "type": "null"
             }
           ],
-          "description": "Expected NPC opponent when dialogue deliberately hands control to combat."
+          "description": "Exact NPC config which may take over this dialogue through reciprocal combat."
         }
       },
-      "required": [
-        "npc"
-      ]
+      "description": "Selected NPC dialogue or continuation-only step using shared answer rules."
     },
     "AnchorArg": {
       "type": "object",
@@ -1686,8 +1736,7 @@
         "tile": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "minItems": 3,
           "maxItems": 3,
@@ -1703,18 +1752,38 @@
         "tile"
       ]
     },
+    "LineRuleDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "when_line": {
+          "type": "string",
+          "description": "Text fragment that identifies the current dialogue page."
+        },
+        "choose": {
+          "type": "string",
+          "description": "Text fragment that identifies the required answer."
+        }
+      },
+      "required": [
+        "when_line",
+        "choose"
+      ],
+      "description": "Select an answer when the current dialogue page contains a text fragment."
+    },
     "ExpectedCombatArgs": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "npc": {
           "type": "string",
-          "description": "Symbolic NPC config name that must be the observed combat opponent."
+          "description": "Selected NPC config, resolved to one exact NPC type during compilation."
         }
       },
       "required": [
         "npc"
-      ]
+      ],
+      "description": "Selected NPC identity required for an observed dialogue-to-combat handoff."
     },
     "step.talk.v1": {
       "type": "object",
@@ -1765,7 +1834,7 @@
       "properties": {
         "target": {
           "$ref": "#/$defs/InteractTarget",
-          "description": "Target selector; exactly one target field is required."
+          "description": "Target selector; exactly one selector field is required."
         },
         "op": {
           "type": "string",
@@ -1784,9 +1853,8 @@
         },
         "radius": {
           "type": "integer",
-          "format": "int32",
-          "description": "Maximum interaction distance; 0 or omitted means 1 tile.",
-          "default": 0
+          "default": 0,
+          "description": "Maximum interaction distance; 0 or omitted means 1 tile."
         },
         "wait_if_missing": {
           "type": "boolean",
@@ -1798,10 +1866,36 @@
             "integer",
             "null"
           ],
-          "format": "uint64",
+          "default": null,
           "minimum": 1,
-          "description": "Optional settle-window override in milliseconds; must be at least 1.",
-          "default": null
+          "description": "Optional settle-window override in milliseconds; must be at least 1."
+        },
+        "dialogue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DialogueDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Continue the dialogue opened by this operation with the shared talk driver."
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UseOnUntil"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Repeat this operation until the observed inventory reaches the required count."
+        },
+        "reachable_only": {
+          "type": "boolean",
+          "description": "Filter loc candidates through the current known reach view.",
+          "default": false
         }
       },
       "required": [
@@ -1844,8 +1938,120 @@
           ],
           "description": "Display-name location selector; exactly one target selector is required.",
           "default": null
+        },
+        "held": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Selected inventory item config for an operation on its observed slot.",
+          "default": null
+        },
+        "tile": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Exact loc tile. The source field is required with this tile.",
+          "default": null
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Provenance for an explicit loc tile.",
+          "default": null
         }
-      }
+      },
+      "description": "Exactly one selected entity plus optional source-pinned loc coordinates."
+    },
+    "DialogueDocument": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DialogueMode",
+          "description": "Continue-only or no-driver policy."
+        },
+        {
+          "$ref": "#/$defs/DialogueOptionsDocument",
+          "description": "Ordered preferences, fixed choice or current-page text rules."
+        }
+      ],
+      "description": "Shared continuation policy or configured answer selection for an operation."
+    },
+    "DialogueMode": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "continue",
+          "description": "Drain Continue pages; option menus require explicit answer rules."
+        },
+        {
+          "type": "string",
+          "const": "none",
+          "description": "Do not start a dialogue driver for this operation."
+        }
+      ],
+      "description": "Unconfigured continuation policy for an operation-started dialogue."
+    },
+    "DialogueOptionsDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prefer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Answer text fragments, checked in this order.",
+          "default": []
+        },
+        "choose": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "description": "A fixed, one-based answer index."
+        },
+        "line_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineRuleDocument"
+          },
+          "description": "Page text rules, checked before the general answer preferences."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
+          "default": false
+        }
+      },
+      "description": "Answer selection rules shared by talk and operation-started dialogues."
+    },
+    "UseOnUntil": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name whose count ends repetition."
+        },
+        "qty": {
+          "$ref": "#/$defs/QuantityDocument",
+          "description": "Fixed or journal-count-backed quantity to reach."
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ],
+      "description": "Inventory count goal used by interact and use-on repetition."
     },
     "step.interact.v1": {
       "type": "object",
@@ -1915,9 +2121,8 @@
         },
         "radius": {
           "type": "integer",
-          "format": "int32",
-          "description": "Maximum interaction distance; 0 or omitted means 1 tile.",
-          "default": 0
+          "default": 0,
+          "description": "Maximum interaction distance; 0 or omitted means 1 tile."
         },
         "product": {
           "type": [
@@ -1932,10 +2137,9 @@
             "integer",
             "null"
           ],
-          "format": "uint64",
+          "default": null,
           "minimum": 1,
-          "description": "Optional settle-window override in milliseconds; must be at least 1.",
-          "default": null
+          "description": "Optional settle-window override in milliseconds; must be at least 1."
         },
         "until": {
           "anyOf": [
@@ -1959,12 +2163,24 @@
           ],
           "description": "Optional predicate that can end the repeated use-on attempt.",
           "default": null
+        },
+        "dialogue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DialogueDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Continue the dialogue opened by this operation with the shared talk driver."
         }
       },
       "required": [
         "item",
         "target"
-      ]
+      ],
+      "description": "Use a selected held item on one target, with optional observed settlement."
     },
     "UseOnTarget": {
       "type": "object",
@@ -1993,26 +2209,38 @@
           ],
           "description": "Symbolic item config name; exactly one target selector is required.",
           "default": null
-        }
-      }
-    },
-    "UseOnUntil": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "obj": {
-          "type": "string",
-          "description": "Symbolic item config name whose count ends repetition."
         },
-        "qty": {
-          "$ref": "#/$defs/QuantityDocument",
-          "description": "Fixed or journal-count-backed quantity to reach."
+        "ground": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Selected ground-item config. This target is distinct from a held item.",
+          "default": null
+        },
+        "tile": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Exact ground-item tile. The source field is required with this tile.",
+          "default": null
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Provenance for an explicit ground-item tile.",
+          "default": null
         }
       },
-      "required": [
-        "obj",
-        "qty"
-      ]
+      "description": "Exactly one selected target for a held-item operation."
     },
     "step.use_on.v1": {
       "type": "object",
@@ -2122,9 +2350,8 @@
         },
         "max_ticks": {
           "type": "integer",
-          "format": "uint64",
-          "minimum": 1,
-          "description": "Maximum ticks to wait; must be at least 1."
+          "description": "Maximum ticks to wait; must be at least 1.",
+          "minimum": 1
         }
       },
       "required": [
@@ -2208,8 +2435,7 @@
         "keep_ids": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "description": "Raw item ids to retain on `deposit_all`.",
           "default": []
@@ -2243,10 +2469,9 @@
         },
         "qty": {
           "type": "integer",
-          "format": "int32",
+          "default": 1,
           "description": "Requested quantity; omitted uses 1 and values below 1 are rejected.",
-          "minimum": 1,
-          "default": 1
+          "minimum": 1
         }
       },
       "required": [
@@ -2309,16 +2534,14 @@
         },
         "qty": {
           "type": "integer",
-          "format": "int32",
-          "description": "Number of items to buy; must be at least 1.",
-          "minimum": 1
+          "minimum": 1,
+          "description": "Number of items to buy; must be at least 1."
         },
         "est_gp": {
           "type": "integer",
-          "format": "uint32",
+          "default": 0,
           "minimum": 0,
-          "description": "Estimated coin budget; currently informational.",
-          "default": 0
+          "description": "Estimated coin budget; currently informational."
         },
         "option": {
           "type": [
@@ -2663,6 +2886,48 @@
       ],
       "additionalProperties": false
     },
+    "step.setting.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "setting"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/SettingArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
     "CombatArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -2746,25 +3011,33 @@
         },
         "lost_radius": {
           "type": "integer",
-          "format": "uint8",
+          "description": "Maximum distance in tiles before the target is considered lost.",
           "minimum": 0,
-          "maximum": 255,
-          "description": "Maximum distance in tiles before the target is considered lost."
+          "maximum": 255
         },
         "kill_budget_ticks": {
           "type": "integer",
-          "format": "uint16",
+          "description": "Maximum game ticks to spend on a combat attempt.",
           "minimum": 0,
-          "maximum": 65535,
-          "description": "Maximum game ticks to spend on a combat attempt."
+          "maximum": 65535
         },
         "loot": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/LootArg"
           },
-          "description": "Item config names to loot after a kill.",
-          "default": []
+          "description": "Optional loot configs with per-kill inventory thresholds, not total requirements."
+        },
+        "finish": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional dialogue with the exact NPC produced by the defeated target."
         },
         "until": {
           "anyOf": [
@@ -2915,10 +3188,9 @@
         },
         "engage_radius": {
           "type": "integer",
-          "format": "uint8",
+          "description": "Maximum distance at which to engage a target.",
           "minimum": 0,
-          "maximum": 255,
-          "description": "Maximum distance at which to engage a target."
+          "maximum": 255
         },
         "auto_retaliate": {
           "type": "boolean",
@@ -2971,8 +3243,7 @@
             "null"
           ],
           "items": {
-            "type": "integer",
-            "format": "int32"
+            "type": "integer"
           },
           "minItems": 5,
           "maxItems": 5,
@@ -2987,8 +3258,7 @@
           "items": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "type": "integer"
             },
             "minItems": 5,
             "maxItems": 5
@@ -3004,6 +3274,75 @@
       "required": [
         "source"
       ]
+    },
+    "LootArg": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "Optionally take a selected item when its inventory count is below one."
+        },
+        {
+          "$ref": "#/$defs/LootQuantityArg",
+          "description": "Optionally take a selected item below its authored inventory threshold."
+        }
+      ],
+      "description": "One optional loot item, either a single-item or explicit per-kill threshold."
+    },
+    "LootQuantityArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Selected item config, resolved to an exact item identity."
+        },
+        "qty": {
+          "type": "integer",
+          "description": "Positive inventory threshold for optional looting; caller until/settle proves the total.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ],
+      "description": "Optional per-kill looting threshold for one selected item."
+    },
+    "FinishArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Selected config of the transformed NPC."
+        },
+        "prefer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ordered text fragments used by the shared dialogue answer selector.",
+          "default": []
+        },
+        "choose": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional one-based dialogue option index."
+        },
+        "max_ticks": {
+          "type": "integer",
+          "description": "Positive game-tick budget for the complete transformation and dialogue.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "npc",
+        "max_ticks"
+      ],
+      "description": "Dialogue which completes the post-combat transformation phase."
     },
     "step.combat.v1": {
       "type": "object",
@@ -3060,8 +3399,7 @@
             "tile": {
               "type": "array",
               "items": {
-                "type": "integer",
-                "format": "int32"
+                "type": "integer"
               },
               "minItems": 3,
               "maxItems": 3
@@ -3116,7 +3454,6 @@
         },
         "qty": {
           "type": "integer",
-          "format": "uint32",
           "minimum": 0
         }
       },
@@ -3134,8 +3471,7 @@
           "items": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "format": "int32"
+              "type": "integer"
             },
             "minItems": 5,
             "maxItems": 5
@@ -3280,7 +3616,6 @@
             "integer",
             "null"
           ],
-          "format": "int32",
           "default": null
         }
       },

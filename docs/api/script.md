@@ -210,6 +210,12 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+
+Acquisition recipes can call other recipes with `acquire` steps. The compiler
+binds dependencies first and compiles each recipe once, independent of its
+declaration order. A chain can contain at most 32 recipes. A cycle returns
+`recipe-cycle` with the cycle's recipe names. A missing dependency remains
+`unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
 Completed bank scans inside nested acquisition recipes update the runner's
 bank knowledge before the parent recipe evaluates its next child or settlement
 predicate. An observed empty bank is known zero stock; missing bank evidence
@@ -222,11 +228,7 @@ display-name Loadouts rows.
 Certificate aliases in either header section are rejected before that conversion;
 the shared display name must not erase a certificate's distinct item identity.
 
-Acquisition recipes can call other recipes with `acquire` steps. The compiler
-binds dependencies first and compiles each recipe once, independent of its
-declaration order. A chain can contain at most 32 recipes. A cycle returns
-`recipe-cycle` with the cycle's recipe names. A missing dependency remains
-`unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
+
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
 not change that ranking. A bank must have usable packed or declared access.
@@ -266,6 +268,9 @@ status fields do not complete the step or replace the final outcome used by
 Path predicates.
 
 Loot is optional: an unreachable drop is skipped and the combat step continues.
+`loot: [{"obj": "selected_config", "qty": N}]` uses `N` as an inventory threshold
+for optional per-kill looting, not a promised total. A loot phase may finish
+below that threshold; authored `until` or `settle` must prove any required total.
 Manual movement, cancellation and missing-evidence outcomes still end the
 operation. Non-loot Reach door-recovery failures still park Quester.
 
@@ -279,6 +284,32 @@ fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
 
+Closed chat completes after eight quiet game ticks. Observed inventory changes,
+server-driven player movement and active scripted animation can extend that
+gap using the same finite per-dialogue budget. An unchanged player position is
+not activity and does not delay completion.
+
+Native continuation treats a visible Continue-only page as active dialogue,
+even when no chat root is posted. A health-bar window does not interrupt that
+visible page; an observed closed page during combat still interrupts immediately.
+
+### Quester dialogue and item operations
+
+`talk` accepts `line_rules: [{"when_line": "page text", "choose": "option text"}]`
+and `strict: true`. A matching current-page rule selects first, followed by a
+one-based `choose`, then the ordered `prefer` list. Strict mode refuses an
+unmatched or ambiguous option without sending an answer; non-strict mode
+retains the final-option fallback. `continue_only: true` omits `npc` and drains
+an already-open conversation without talking or walking.
+
+`interact` and `use_on` may declare `dialogue` with the same options object.
+`"continue"` drains pages in strict mode and refuses an unconfigured menu.
+For `interact`, omission or `"none"` leaves continuation to the next owner.
+An accepted `use_on` with omitted dialogue options drains an observed chat modal
+or visible Continue control with the shared default continuation. Explicit
+`"none"` leaves those pages to the next owner, including during count repetition.
+A Continue-only page remains active even when its chat root is absent.
+Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
 identities. Book forwarding resolves the script's forward handler separately
 from its last-page visibility marker; generic component names in revision 274
@@ -287,7 +318,59 @@ main asset and its source provenance, not the opt-in `DebugCatalog`.
 Message and object-box `mesbox` pages are chat surfaces and keep the ordinary
 chat continuation path.
 
-### Exact use-on targets
+The shared continuation driver closes a selected main scroll and advances a
+selected main book until its last-page marker permits closing. Each action
+waits for changed page evidence or observed modal disappearance. Unsupported,
+ambiguous, missing-control or unchanged pages fail without a guessed fallback.
+`Dialogue::owned_chat_page` borrows only the first chat page from that driver's
+accepted NPC Talk request. It requires a newer game tick and a change from the
+pre-Talk page, and returns no page after Continue or an answer is emitted.
+
+`interact` accepts `target: {"held": "death_iou"}` with an observed operation
+such as `"op": "Read"`. It selects the exact inventory item and slot, verifies
+the operation, and requires dispatch acceptance. The host revalidates the exact
+item id and slot; substitution never falls back to a same-name row. A declared
+approach `anchor` still applies to held operations such as Dig.
+
+Loc/name interaction targets may add `tile: [x,z,level]` and `source` inside
+`target` to select an exact loc rather than the nearest same-definition loc.
+`reachable_only: true` requires a known reachable candidate. `interact.until`
+uses the same `{obj,qty}` inventory-count goal as `use_on.until`; it waits for
+active work, re-arms after progress and idle, and remains bounded by `settle_ms`.
+Count-repeated loc operations also require known reach evidence.
+
+If the clicked loc disappears or transforms, reach completes only after acceptance
+of that exact dispatched interaction. It does not select a replacement. Authored
+settlement predicates still prove the quest effect.
+
+`use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
+"source": "content provenance"}`. The optional tile selects an exact ground
+stack; source and target item ids remain explicit. Inventory-item targets
+dispatch through the host's canonical held-item operation, not an item alias.
+Optional dialogue drains before product/count completion and does not consume
+the operation's product-wait deadline.
+
+For a footprint loc, `use_on` walks to the selected loc's full rotated footprint
+and waits for a legal approach side under live collision and force-approach
+rules. Being inside the authored anchor radius alone is not interaction proof.
+The selected tile stays fixed while approaching, and dispatch retains the exact
+loc id as well as its display name; a nearer or co-located same-name loc cannot
+replace it.
+
+The `ground_item_near` fact may declare `at: [x,z,level]`. It then requires the
+selected item id at that exact tile and within the declared radius; a nearby
+natural spawn or same-name item cannot prove a pedestal placement.
+
+The non-combat `setting` step takes `args: {"retaliate": false}` (or `true`).
+The required state uses the observed `%option_nodef` value: zero is on and one
+is off. It completes only after an accepted setting dispatch and the requested
+state is observed, or immediately when that state is already observed. Unknown
+state and rejected dispatch never prove success; the action has an eight-second
+deadline. The `retaliate` fact takes the same args and remains unknown when the
+varp is absent or invalid. Paths author explicit off/on steps when needed;
+the family does not restore a prior state automatically.
+
+### Exact loc use-on targets
 
 Item/widget use-on dispatch keeps the exact loc tile and applies every supplied
 loc name and id. Names compare without case sensitivity. If a supplied name/id
@@ -330,8 +413,11 @@ emitted walks' crossing scope and protection independently.
 
 ### Quester journal reads
 
-Native Quester dialogue completion requires four observed game ticks with
-chat closed, rather than an elapsed host-millisecond gap. Combat interruption
+Native Quester dialogue completion requires eight observed game ticks with
+chat closed, rather than an elapsed host-millisecond gap. Inventory changes and
+active scripted work may re-arm this gap using a finite budget. This drains
+delayed reward/work pages without allowing unrelated activity to wait forever.
+Combat interruption
 is keyed directly to the client's `in_combat` flag, not to a newly observed hit
 or a combat baseline. The flag stays set for about 8 s after any hitsplat
 (`client.rs:9211` sets it to `loop_cycle + 400`; `decode.rs:1288` reads it).

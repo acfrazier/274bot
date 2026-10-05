@@ -1494,6 +1494,7 @@ mod api_gather_seat {
                 name: "Logs".into(),
                 action: "Drop".into(),
                 slot: None,
+                target_item_id: None,
             },
             InteractReq::RunPolicyOverride {
                 policy: Some(policy_override),
@@ -1884,6 +1885,7 @@ impl crate::native::NativeMachine for StopWork {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(0),
+            target_item_id: None,
         })?;
         Ok(Self {
             _quiet: cx.begin_quiet_read(41)?,

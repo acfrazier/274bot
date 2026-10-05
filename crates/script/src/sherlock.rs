@@ -2152,6 +2152,7 @@ mod tests {
                     name: "Spade".into(),
                     action: "Dig".into(),
                     slot: None,
+                    target_item_id: None,
                 },
                 InteractReq::Loc {
                     x: 1,

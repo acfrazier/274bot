@@ -1617,6 +1617,7 @@ fn v2_clue_run_reads_puzzle_board_and_generation() {
             name: "Puzzle box".to_string(),
             action: "Open".to_string(),
             slot: None,
+            target_item_id: None,
         }]
     );
 

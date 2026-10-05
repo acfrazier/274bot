@@ -97,6 +97,49 @@ fn path_schema_matches_generator() {
 }
 
 #[test]
+fn generated_schema_uses_numeric_bounds_without_rust_formats() {
+    fn assert_no_numeric_formats(value: &Value) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    assert_no_numeric_formats(item);
+                }
+            }
+            Value::Object(object) => {
+                let numeric = match object.get("type") {
+                    Some(Value::String(kind)) => matches!(kind.as_str(), "integer" | "number"),
+                    Some(Value::Array(kinds)) => kinds.iter().any(|kind| {
+                        kind.as_str()
+                            .is_some_and(|kind| matches!(kind, "integer" | "number"))
+                    }),
+                    _ => false,
+                };
+                assert!(
+                    !numeric || !object.contains_key("format"),
+                    "numeric schema contains a nonstandard format: {object:?}"
+                );
+                for child in object.values() {
+                    assert_no_numeric_formats(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    assert_no_numeric_formats(&schema);
+
+    let skill = &schema["$defs"]["SkillMinimum"]["properties"]["skill"];
+    assert_eq!(skill["minimum"], json!(0));
+    assert_eq!(skill["maximum"], json!(255));
+    assert!(skill.get("format").is_none());
+
+    let radius = &schema["$defs"]["WalkArgs"]["properties"]["radius"];
+    assert_eq!(radius["minimum"], json!(0));
+    assert_eq!(radius["maximum"], json!(65535));
+    assert!(radius.get("format").is_none());
+}
+#[test]
 #[ignore]
 fn regen_path_schema() {
     std::fs::write(path_schema_path(), render()).expect("write path.schema.json");
