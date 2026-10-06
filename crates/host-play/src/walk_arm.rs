@@ -230,8 +230,13 @@ pub fn arm_walk_on(
                         })
                     })
             });
+            // A held (non-enforcing) NoPath stays the pre-S2b bare refusal:
+            // it neither creates an arm nor stops one already walking. Only
+            // an enforcing refusal or a live escape is retained on the arm.
+            let retain =
+                admission.enforce || admission.escape.is_some_and(crate::admission::escape_live);
             if let Some(name) =
-                focused.filter(|_| assessment.is_some() || admitted.refusal.is_some())
+                focused.filter(|_| retain && (assessment.is_some() || admitted.refusal.is_some()))
             {
                 if let Some(assessment) = assessment.as_ref() {
                     crate::admission::log(Some(name), assessment, false);

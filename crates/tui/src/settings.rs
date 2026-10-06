@@ -449,11 +449,12 @@ impl Widget for SettingsPane<'_> {
         } else {
             0
         };
+        // One extra row for "[n] dismiss this notice", as for the scope notice.
         let migration_notice_height = if show_survivable_routing_notice {
             wrapped_rows(
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 columns,
-            )
+            ) + 1
         } else {
             0
         };
@@ -917,6 +918,40 @@ mod tests {
         assert!(!text.contains("turn back"));
         assert!(!text.contains("eating"));
         assert!(!text.contains("praying"));
+    }
+
+    #[test]
+    fn survivable_routing_notice_renders_in_full_with_its_dismiss_row() {
+        let notice = frontend_core::walk_permissions::survivable_routing_notice();
+        let squeeze = |text: &str| -> String {
+            text.chars()
+                .filter(|ch| !ch.is_whitespace() && *ch != '│')
+                .collect()
+        };
+        for (w, h) in [(120u16, 50u16), (80, 50), (60, 60)] {
+            let mut settings = ProfileSettings::default();
+            let mut nav = WalkGlobals::default();
+            let mut bake = MapBakeChoice::Ask;
+            let mut state = SettingsState {
+                open: true,
+                row: 0,
+                ..Default::default()
+            };
+            let mut acknowledged = false;
+            let text = render(
+                SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                    .survivable_routing_notice_ack(&mut acknowledged),
+                w,
+                h,
+            );
+            // The pane wraps by character, so drop borders and whitespace
+            // and compare the whole notice, its last words included.
+            let painted = squeeze(&text);
+            assert!(
+                painted.contains(&format!("{}[n]dismissthisnotice", squeeze(notice))),
+                "{w}x{h}: the full notice and its dismiss row paint: {text:?}"
+            );
+        }
     }
 
     #[test]

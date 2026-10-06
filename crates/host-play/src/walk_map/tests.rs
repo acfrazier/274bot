@@ -1777,8 +1777,6 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         "{message}"
     );
     assert!(message.contains("need 60, carrying 30"), "{message}");
-    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
-    let arm = arm.lock().unwrap();
-    assert!(arm.route.is_none() && arm.bank_fetch.is_none());
-    assert!(!arm.admission_pending);
+    // A held default refusal is the pre-S2b bare NoPath: no arm is created.
+    assert!(arms.lock().unwrap().get("alice").is_none());
 }

@@ -4194,26 +4194,12 @@ mod s2b_admission_contract {
     fn frame_projection_freezes_an_armed_walk_through_script_start_pause_and_stop() {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
-        let manual = WalkArm {
-            route: Some(Arc::new(nav::router::Route {
-                legs: vec![nav::router::Leg::Walk {
-                    tiles: vec![tile(0), tile(1)],
-                }],
-                dest: tile(1),
-                ticks: 1.0,
-            })),
-            ..Default::default()
-        };
         let assert_frozen = |expected| {
             let state = crate::script_runtime::script_frame_state(&scripts, "alice");
             assert_eq!(state, Some(expected));
             assert!(crate::play_slots::project_slot_frame_host_move_owned(
                 state, false
             ));
-            assert!(
-                manual.route.is_some(),
-                "the already-armed manual route stays latched while frozen"
-            );
         };
 
         slot.lock()
@@ -4247,10 +4233,6 @@ mod s2b_admission_contract {
         assert!(
             !crate::play_slots::project_slot_frame_host_move_owned(state, false),
             "Stop->Idle releases frontend follow"
-        );
-        assert!(
-            manual.route.is_some(),
-            "the manual walk remains armed to resume"
         );
         assert!(crate::play_slots::project_slot_frame_host_move_owned(
             None, true

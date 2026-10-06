@@ -716,6 +716,8 @@ fn omit_granted_unknowns(
 /// Admission checks the complete plan, not the eight display rows. A fully
 /// granted crossing is exempt from refusal; unknown physics in a mixed
 /// crossing is not. Known granted damage remains in every subsequent floor.
+/// A failed assessment's incomplete plan is never admitted: replaying its
+/// empty plan would certify nothing.
 pub fn admission_passes(
     route: &Route,
     assessment: &RouteAssessment,
@@ -725,12 +727,18 @@ pub fn admission_passes(
     grants: nav::zones::ZoneExempt,
 ) -> Result<bool, UnknownWhy> {
     let plan = &assessment.plan;
+    if !plan.complete {
+        return Err(match assessment.verdict {
+            Verdict::Unknown(why) => why,
+            _ => UnknownWhy::MissingFacts,
+        });
+    }
     let granted = |c: &CrossingGeom| {
         rows(plan, c)
             .iter()
             .all(|row| grants.contains_zone(row.zone, zones))
     };
-    if plan.complete && (plan.crossings.is_empty() || plan.crossings.iter().all(granted)) {
+    if plan.crossings.is_empty() || plan.crossings.iter().all(granted) {
         return Ok(true);
     }
     if let Some(why) = input_problem(&assessment.input, tables) {

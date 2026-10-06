@@ -379,8 +379,9 @@ pub struct TuiApp {
     pub walk_send: WalkSendState,
     /// The focused slot's observed world tile.
     pub here: Option<WorldTile>,
-    /// The armed walk route whose remaining tiles paint `*`.
-    pub route: Option<Route>,
+    /// The armed walk route whose remaining tiles paint `*`. Shared with the
+    /// arm, so each observe is a reference-count bump, not a route copy.
+    pub route: Option<Arc<Route>>,
     /// Armed Walk dest after the host accepts. Refused Walks leave this unset.
     pub walk_dest: Option<Tile>,
     /// Chat pane state (focused option row).
