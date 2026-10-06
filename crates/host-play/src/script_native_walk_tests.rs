@@ -825,8 +825,8 @@ fn seed_missile_launch(snapshot: &mut GameSnapshot) {
             kind: api::snapshot::ActorKind::Player,
             index: me,
         }),
-        t1: 0,
-        t2: 30,
+        t1: 32,
+        t2: 37,
     }]);
 }
 

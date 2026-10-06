@@ -9,8 +9,8 @@ use super::reach::{self, Reach, ReachArgs, ReachKind};
 use super::{compile_dialogue_options, DialogueOptionsDocument, LineRuleDocument};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
-    Tactic, Target,
+    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, SpellRef,
+    Style, Tactic, Target,
 };
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::loadouts_store::WORN_SLOTS;
@@ -83,9 +83,12 @@ pub(super) struct CombatArgs {
     /// Optional named loadout for the encounter.
     #[serde(default)]
     loadout: Option<String>,
-    /// Spell aliases; non-empty spell lists are currently unsupported.
+    /// Selected spell aliases in explicit manual order; null uses native selection.
     #[serde(default)]
     spells: Option<Vec<String>>,
+    /// Permit native selection after the explicit manual order is exhausted.
+    #[serde(default)]
+    fallback_spells: bool,
     /// Optional sourced stand tile; `anchor` is accepted as an alias.
     #[serde(default, alias = "anchor")]
     stand: Option<super::AnchorArg>,
@@ -228,7 +231,7 @@ enum PickArg {
 struct TacticArgs {
     /// Combat opening mode; only `open` is currently supported.
     kind: String,
-    /// Attack style; only `melee` is currently supported.
+    /// Attack style; `melee` and `mage` are supported.
     style: String,
     /// Maximum distance at which to engage a target.
     engage_radius: u8,
@@ -306,10 +309,16 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
             );
         }
     };
-    if args
-        .spells
-        .as_ref()
-        .is_some_and(|spells| !spells.is_empty())
+    let style = match args.tactic.style.as_str() {
+        "melee" => Style::Melee,
+        "mage" => Style::Mage,
+        _ => return Err(CompileError::code("unsupported-combat-style")),
+    };
+    if style != Style::Mage
+        && args
+            .spells
+            .as_ref()
+            .is_some_and(|spells| !spells.is_empty())
     {
         return Err(CompileError::code("unsupported-combat-spells"));
     }
@@ -320,9 +329,6 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .transpose()?;
     if args.tactic.kind != "open" {
         return Err(CompileError::code("unsupported-combat-tactic"));
-    }
-    if args.tactic.style != "melee" {
-        return Err(CompileError::code("unsupported-combat-style"));
     }
     if args.tactic.engage_radius == 0 || args.lost_radius == 0 {
         return Err(CompileError::code("invalid-combat-radius"));
@@ -356,14 +362,40 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .map(|predicate| super::compile_predicate(predicate, cx))
         .transpose()?;
     let tables = build_tables(cx)?;
+    let spells = if style == Style::Mage {
+        args.spells
+            .map(|names| {
+                if names.is_empty() || names.len() > u8::MAX as usize {
+                    return Err(CompileError::code("invalid-combat-spells"));
+                }
+                names
+                    .into_iter()
+                    .map(|name| {
+                        let index = crate::combat::style::magic::spell_index(&tables, &name)
+                            .ok_or_else(|| CompileError::code("unresolved-combat-spell"))?;
+                        Ok(SpellRef {
+                            alias: Arc::from(
+                                tables.selected().spells()[usize::from(index)]
+                                    .source_row
+                                    .as_str(),
+                            ),
+                        })
+                    })
+                    .collect::<Result<Arc<[SpellRef]>, CompileError>>()
+            })
+            .transpose()?
+    } else {
+        None
+    };
 
     let request = CombatRequest {
         target,
         tactic: Tactic::Open,
-        style: Style::Melee,
+        style,
         melee_mode: args.melee_mode,
         kit,
-        spells: None,
+        spells,
+        fallback_spells: args.fallback_spells,
         stand,
         search_bounds,
         engage_radius: args.tactic.engage_radius,

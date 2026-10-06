@@ -146,7 +146,14 @@ pub struct CombatRequest {
     pub style: Style,
     pub melee_mode: Option<MeleeMode>,
     pub kit: Option<Arc<CompiledKit>>,
+    /// An explicit order always uses manual casts, even with an armed staff.
+    /// `None` selects the strongest castable spell (the 16-row chooser when
+    /// a staff is desired, otherwise manual). Manual casts are five ticks apart.
     pub spells: Option<Arc<[SpellRef]>>,
+    /// After no entry of a fixed manual order remains castable, permit the
+    /// strongest castable unrejected spell. Defaults to false; this does not
+    /// change the request's cast mode or bypass spell-specific refusals.
+    pub fallback_spells: bool,
     pub stand: Option<WorldTile>,
     pub search_bounds: Option<Arc<[SceneRegionInput]>>,
     pub engage_radius: u8,
@@ -170,6 +177,7 @@ impl Default for CombatRequest {
             style: Style::Melee,
             kit: None,
             spells: None,
+            fallback_spells: false,
             melee_mode: None,
             stand: None,
             search_bounds: None,

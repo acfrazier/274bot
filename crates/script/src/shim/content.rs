@@ -121,6 +121,7 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
             data.autocast_controls().map(|controls| {
                 serde_json::json!({
                     "staff_tab_root": controls.staff_tab_root,
+                    "spell_text_component": controls.spell_text_component,
                     "spell_panel_root": controls.spell_panel_root,
                     "choose_com": controls.choose_com,
                     "toggle_com": controls.toggle_com,

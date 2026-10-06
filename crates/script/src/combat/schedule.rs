@@ -11,6 +11,7 @@ pub enum OpKind {
     Retaliate,
     Attack,
     Style,
+    Cast,
 }
 impl OpKind {
     pub const fn index(self) -> usize {
@@ -46,8 +47,8 @@ pub fn elapsed(tick: u16, since: u16) -> u16 {
 }
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Schedule {
-    earliest: [u16; 7],
-    pub unsettled: [u8; 7],
+    earliest: [u16; 8],
+    pub unsettled: [u8; 8],
     ready_mask: u8,
     pending_mask: u8,
     pub cycle: Cycle,
@@ -109,6 +110,7 @@ impl Schedule {
             OpKind::Drink | OpKind::Prayer => Some(3),
             OpKind::Wear | OpKind::Retaliate | OpKind::Style => Some(2),
             OpKind::Attack => Some(u16::from(rate.max(1)) + 1),
+            OpKind::Cast => Some(5),
         };
         if kind != OpKind::Prayer || matches!(effect, InputEffect::PrayerOn) {
             if let Some(delay) = delay {
@@ -155,6 +157,16 @@ impl Schedule {
                 self.last_attack = tick;
                 self.attack_valid = true;
                 self.restore_owed = false;
+                self.interaction = Interaction::Unknown;
+            }
+            OpKind::Cast => {
+                self.last_attack = tick;
+                self.attack_valid = true;
+                self.restore_owed = false;
+                self.cycle = Cycle {
+                    deadline: tick.wrapping_add(5),
+                    known: true,
+                };
                 self.interaction = Interaction::Unknown;
             }
         }

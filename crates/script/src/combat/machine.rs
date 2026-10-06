@@ -1,10 +1,12 @@
 use super::arbiter::{self, PlanRow, RowKind, TickPlan};
+use super::arm::{Arm, ArmObservation, ArmStep};
 use super::frame::Frame;
 use super::policy;
 use super::prayer::{PrayerSweep, RaisedPrayers};
 use super::request::*;
 use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
 use super::select;
+use super::style::magic::{self, CastMode, Refusal};
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
@@ -28,6 +30,7 @@ enum Phase {
 struct Counters {
     ticks: u16,
     swings: u16,
+    casts: u16,
     damage: u16,
     food: u8,
     prayer: u8,
@@ -48,18 +51,97 @@ struct PendingRow {
     baseline: i16,
     age: u8,
 }
+struct MeleeState {
+    anim_id: i32,
+    anim_frame: i32,
+    mode_fallback: Option<MeleeMode>,
+}
+
+/// NPC type and player name hash are mutually exclusive engagement identities.
+#[derive(Default)]
+enum EngagementIdentity {
+    #[default]
+    None,
+    Npc(i32),
+    Player(Option<i32>),
+}
+
+/// One request has one attack style; idle runs do not carry other styles' state.
+enum StyleState {
+    Melee(MeleeState),
+    Ranged,
+    Magic(Box<MagicState>),
+}
+
+struct MagicState {
+    arm: Option<Arm>,
+    rejected: u32,
+    spell_order: [u8; u8::MAX as usize],
+    spell_order_len: u8,
+    ordered_mask: u32,
+    rune_base: i32,
+    arm_since: u16,
+    arm_wait: u8,
+    selected: Option<u8>,
+    last_launched: Option<u8>,
+    cursor: u8,
+    mode: Option<CastMode>,
+    armed: bool,
+    rune_seen: bool,
+    /// Initial arm adoption is allowed once per fresh combat machine only.
+    initial_arm_checked: bool,
+}
+
+impl Default for MagicState {
+    fn default() -> Self {
+        Self {
+            arm: None,
+            rejected: 0,
+            spell_order: [0; u8::MAX as usize],
+            spell_order_len: 0,
+            ordered_mask: 0,
+            rune_base: 0,
+            arm_since: 0,
+            arm_wait: 0,
+            selected: None,
+            last_launched: None,
+            cursor: 0,
+            mode: None,
+            armed: false,
+            rune_seen: false,
+            initial_arm_checked: false,
+        }
+    }
+}
+
+impl MagicState {
+    fn reset_for_engagement(&mut self) {
+        self.arm = None;
+        self.rejected = 0;
+        self.rune_base = 0;
+        self.arm_since = 0;
+        self.arm_wait = 0;
+        self.selected = None;
+        self.last_launched = None;
+        self.cursor = 0;
+        self.armed = false;
+        self.rune_seen = false;
+        // Keep the initial observation one-shot across target changes in this machine.
+    }
+}
 /// One shared planner and one host owner. Observation commits are independent
 /// from admitted-operation commits; no-op ticks are real progress.
 pub struct Combat {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
-    player_ident: Option<i32>,
+    identity: EngagementIdentity,
     deadline: Duration,
     pending_walk: Option<NonZeroU64>,
     threats: ThreatSet,
     schedule: Schedule,
     sweep: PrayerSweep,
     counters: Counters,
+    style_state: StyleState,
     plan: TickPlan,
     plan_first_id: u64,
     pending: [PendingRow; 5],
@@ -72,17 +154,13 @@ pub struct Combat {
     raised_prayers: RaisedPrayers,
     eat_ready: u16,
     food_total: u16,
-    mode_fallback: Option<MeleeMode>,
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
     // The remaining bits hold Prep-origin and skipped boost-family masks.
     prep_failures: u64,
     sequence: u64,
     rhand_pick: i32,
-    engaged_type: i32,
     suspended_type: i32,
     chat_since: i32,
-    anim_id: i32,
-    anim_frame: i32,
     engaged: Option<ActorRef>,
     suspended: Option<ActorRef>,
     end: Option<CombatEnd>,
@@ -122,8 +200,8 @@ impl NativeMachine for Combat {
         (request, tables): Self::Args,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, ActionError> {
-        if request.style != Style::Melee {
-            return Err(unavailable("style slice"));
+        if request.style == Style::Ranged {
+            return Err(unavailable("ranged slice"));
         }
         if request.prayer_mode != PrayerMode::Hold {
             return Err(unavailable("flick slice"));
@@ -154,15 +232,45 @@ impl NativeMachine for Combat {
                 return Err(unavailable("unattackable npc target"));
             }
         }
+        if request.style == Style::Mage
+            && (tables.selected().spells().is_empty() || tables.selected().spells().len() > 32)
+        {
+            return Err(unavailable("combat spell facts"));
+        }
         let ticks = if request.budget_ticks == 0 {
             1500
         } else {
             request.budget_ticks
         };
+        let style_state = match request.style {
+            Style::Melee => StyleState::Melee(MeleeState {
+                anim_id: -1,
+                anim_frame: -1,
+                mode_fallback: None,
+            }),
+            Style::Ranged => StyleState::Ranged,
+            Style::Mage => {
+                let mut state = Box::<MagicState>::default();
+                if let Some(order) = &request.spells {
+                    if order.is_empty() || order.len() > u8::MAX as usize {
+                        return Err(unavailable("combat spell order"));
+                    }
+                    for (slot, spell) in order.iter().enumerate() {
+                        let Some(index) = magic::spell_index(&tables, &spell.alias) else {
+                            return Err(unavailable("combat spell order"));
+                        };
+                        state.spell_order[slot] = index;
+                        state.ordered_mask |= 1u32 << index;
+                    }
+                    state.spell_order_len = order.len() as u8;
+                }
+                StyleState::Magic(state)
+            }
+        };
         let mut machine = Self {
             request,
             tables,
-            player_ident: None,
+            identity: EngagementIdentity::None,
             deadline: cx
                 .active_now()
                 .saturating_add(Duration::from_millis(u64::from(ticks) * 600)),
@@ -171,13 +279,11 @@ impl NativeMachine for Combat {
             schedule: Schedule::default(),
             sweep: PrayerSweep::new(),
             counters: Counters::default(),
+            style_state,
             sequence: 0,
             rhand_pick: -1,
-            engaged_type: -1,
             suspended_type: -1,
             chat_since: -1,
-            anim_id: -1,
-            anim_frame: -1,
             engaged: None,
             suspended: None,
             end: None,
@@ -196,7 +302,6 @@ impl NativeMachine for Combat {
             raised_prayers: RaisedPrayers::default(),
             eat_ready: 0,
             food_total: 0,
-            mode_fallback: None,
             prep_failures: 0,
             phase: Phase::Prep,
             flags: 0,
@@ -222,6 +327,9 @@ impl NativeMachine for Combat {
                 machine.engage(actor, &frame);
             }
             machine.pick_weapon(&frame);
+            if machine.request.style == Style::Mage {
+                machine.resolve_magic_mode(&frame);
+            }
             machine.resolve_worth(&frame);
         }
         Ok(machine)
@@ -277,6 +385,7 @@ impl NativeMachine for Combat {
             .counters
             .protected
             .saturating_add(events.positive_protected);
+        self.observe_magic(&frame, tick);
         self.settle(&frame, tick);
         let died = chat
             .value
@@ -290,6 +399,11 @@ impl NativeMachine for Combat {
                 self.finish(CombatEnd::Died, tick);
             } else {
                 self.observe_target(&frame, tick);
+                if self.request.style == Style::Mage {
+                    for line in chat.value.iter() {
+                        self.magic_refusal(&line.text);
+                    }
+                }
             }
             if self.phase != Phase::WindDown && cx.active_now() >= self.deadline {
                 self.finish(CombatEnd::Budget, tick);
@@ -316,7 +430,9 @@ impl NativeMachine for Combat {
             }
             if self.phase != Phase::WindDown {
                 let failure = if self.flags & FAILED_WEAPON != 0 {
-                    Some(AbortReason::PrepFailed(PrepItem::Weapon))
+                    Some(AbortReason::PrepFailed(weapon_prep_item(
+                        self.request.style,
+                    )))
                 } else if self.flags & FAILED_SHIELD != 0 {
                     Some(AbortReason::PrepFailed(PrepItem::Shield))
                 } else if self.flags & FAILED_ATTACK != 0 {
@@ -424,6 +540,46 @@ impl Combat {
     pub fn engaged(&self) -> Option<ActorRef> {
         self.engaged
     }
+    /// Observed resource consumption counts splashes as casts, never as hits.
+    pub fn casts(&self) -> u16 {
+        self.counters.casts
+    }
+    pub fn selected_spell(&self) -> Option<u8> {
+        match &self.style_state {
+            StyleState::Magic(state) => state.selected,
+            _ => None,
+        }
+    }
+    pub fn last_launched_spell(&self) -> Option<u8> {
+        match &self.style_state {
+            StyleState::Magic(state) => state.last_launched,
+            _ => None,
+        }
+    }
+    fn engaged_type(&self) -> i32 {
+        match self.identity {
+            EngagementIdentity::Npc(id) => id,
+            _ => -1,
+        }
+    }
+    fn player_ident(&self) -> Option<i32> {
+        match self.identity {
+            EngagementIdentity::Player(id) => id,
+            _ => None,
+        }
+    }
+    fn magic(&self) -> &MagicState {
+        let StyleState::Magic(state) = &self.style_state else {
+            unreachable!("magic mechanics require the magic style");
+        };
+        state
+    }
+    fn magic_mut(&mut self) -> &mut MagicState {
+        let StyleState::Magic(state) = &mut self.style_state else {
+            unreachable!("magic mechanics require the magic style");
+        };
+        state
+    }
     fn finish(&mut self, end: CombatEnd, _tick: u16) {
         if self.end.is_some() {
             return;
@@ -438,10 +594,10 @@ impl Combat {
             end: self.end.expect("terminal phase has a latched end"),
             evidence,
             engaged: self.engaged,
-            engaged_npc_type: self.engaged_type,
+            engaged_npc_type: self.engaged_type(),
             ticks: self.counters.ticks,
             swings: self.counters.swings,
-            casts: 0,
+            casts: self.counters.casts,
             damage_taken: self.counters.damage,
             food: self.counters.food,
             prayer_doses: self.counters.prayer,
@@ -454,13 +610,312 @@ impl Combat {
             restorations: self.counters.restorations,
             locked_ticks: self.counters.locked,
             multi_op_plans: self.counters.multi,
-            melee_mode_fallback: self.mode_fallback,
+            melee_mode_fallback: match &self.style_state {
+                StyleState::Melee(state) => state.mode_fallback,
+                _ => None,
+            },
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
         }
     }
+    fn clear_pending_cast(&mut self) {
+        for pending in &mut self.pending {
+            if pending.row.kind == RowKind::Cast {
+                *pending = PendingRow::default();
+            }
+        }
+        self.schedule.settle(OpKind::Cast);
+    }
+    fn deselect(&mut self, reject: bool) {
+        if reject {
+            if let Some(index) = self.magic().selected {
+                self.magic_mut().rejected |= 1 << index;
+            }
+        }
+        {
+            let state = self.magic_mut();
+            state.selected = None;
+            state.armed = false;
+            state.arm = None;
+            state.rune_seen = false;
+        }
+        self.clear_pending_cast();
+    }
+    fn magic_refusal(&mut self, line: &str) {
+        let Some(index) = self.magic().selected else {
+            return;
+        };
+        let spell = &self.tables.selected().spells()[usize::from(index)];
+        match magic::refusal(line, spell) {
+            Some(Refusal::Spell) => self.deselect(true),
+            Some(Refusal::Runes) => self.deselect(false),
+            None => {}
+        }
+    }
+    fn resolve_magic_mode(&mut self, frame: &Frame<'_>) {
+        if self.magic().mode.is_none() {
+            let rhand = self.desired(3).or_else(|| {
+                frame
+                    .equipment
+                    .iter()
+                    .find(|row| row.slot == 3)
+                    .map(|row| row.def.id)
+            });
+            self.magic_mut().mode = Some(magic::resolve(&self.request, &self.tables, rhand));
+        }
+    }
+    fn observe_magic(&mut self, frame: &Frame<'_>, tick: u16) {
+        if self.request.style != Style::Mage {
+            return;
+        }
+        let Some(index) = self.magic().selected else {
+            return;
+        };
+        let spell = &self.tables.selected().spells()[usize::from(index)];
+        let runes = magic::rune_count(spell, frame, &self.tables);
+        let spent = runes
+            .is_some_and(|(count, _)| self.magic().rune_seen && count < self.magic().rune_base);
+        // Rune consumption is the cast acknowledgement even when the server
+        // sends a failedspell_impact without a target damage mask.
+        let accepted_cast = if self.magic().mode == Some(CastMode::Manual) {
+            self.pending_id(RowKind::Cast, i32::from(index))
+        } else {
+            self.magic().armed && self.flags & ENGAGEMENT_ATTACK != 0
+        };
+        if spent && accepted_cast {
+            self.magic_mut().last_launched = Some(index);
+            self.counters.casts = self.counters.casts.saturating_add(1);
+            if self.magic().mode == Some(CastMode::Autocast) {
+                self.schedule.observe_swing(tick, magic::CAST_TICKS as u8);
+            } else {
+                self.schedule.interaction = Interaction::Installed;
+            }
+            if self.magic().mode == Some(CastMode::Manual) {
+                self.magic_mut().cursor = self.magic().cursor.wrapping_add(1);
+                self.clear_pending_cast();
+            }
+        }
+        self.magic_mut().rune_base = runes.map_or(0, |(count, _)| count);
+        self.magic_mut().rune_seen = runes.is_some();
+    }
+    fn choose_spell(&mut self, frame: &Frame<'_>) -> bool {
+        let mode = self.magic().mode.expect("magic mode resolved");
+        let rejected = self.magic().rejected;
+        let selected = if self.request.spells.is_some() {
+            let order_len = usize::from(self.magic().spell_order_len);
+            let cursor = usize::from(self.magic().cursor);
+            let mut selected = None;
+            for offset in 0..order_len {
+                let order_cursor = (cursor + offset) % order_len;
+                let index = self.magic().spell_order[order_cursor];
+                let spell = &self.tables.selected().spells()[usize::from(index)];
+                if rejected & (1 << index) == 0
+                    && magic::castable(spell, frame, &self.tables, self.engaged)
+                {
+                    self.magic_mut().cursor = order_cursor as u8;
+                    selected = Some(index);
+                    break;
+                }
+            }
+            selected.or_else(|| {
+                self.request
+                    .fallback_spells
+                    .then(|| {
+                        magic::strongest(
+                            frame,
+                            &self.tables,
+                            self.engaged,
+                            CastMode::Manual,
+                            rejected,
+                        )
+                    })
+                    .flatten()
+            })
+        } else {
+            magic::strongest(frame, &self.tables, self.engaged, mode, rejected)
+        };
+        if selected != self.magic().selected {
+            self.deselect(false);
+            self.magic_mut().selected = selected;
+            if let Some(index) = selected {
+                let spell = &self.tables.selected().spells()[usize::from(index)];
+                let runes = magic::rune_count(spell, frame, &self.tables);
+                self.magic_mut().rune_base = runes.map_or(0, |(count, _)| count);
+                self.magic_mut().rune_seen = runes.is_some();
+            }
+        }
+        selected.is_some()
+    }
+    /// Returns true while magic preparation owns this tick's style work.
+    fn magic_prepare(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &ActionContext<'_>,
+    ) -> bool {
+        if self.pending_row(RowKind::Wear)
+            || plan.contains(RowKind::Wear)
+            || self.pending_row(RowKind::Arm)
+        {
+            return true;
+        }
+        self.resolve_magic_mode(frame);
+        if self.pending_row(RowKind::Cast) {
+            return self.magic().mode == Some(CastMode::Manual);
+        }
+        if !self.choose_spell(frame) {
+            let ordered_mask = self.magic().ordered_mask;
+            let rejected = self.magic().rejected;
+            let mode = self.magic().mode.expect("magic mode resolved");
+            let rune_exhausted =
+                self.tables
+                    .selected()
+                    .spells()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, spell)| {
+                        let ordered = self.request.spells.is_none()
+                            || self.request.fallback_spells
+                            || ordered_mask & (1u32 << index) != 0;
+                        ordered
+                            && rejected & (1u32 << index) == 0
+                            && (mode == CastMode::Manual || spell.autocast_selectable)
+                            && magic::eligible(spell, frame, &self.tables, self.engaged)
+                    });
+            let reason = if rune_exhausted {
+                AbortReason::Unprotected(Unprotected::NoRunes)
+            } else if mode == CastMode::Manual {
+                AbortReason::Unresponsive
+            } else {
+                AbortReason::PrepFailed(PrepItem::Arm)
+            };
+            self.finish(CombatEnd::Aborted(reason), tick);
+            return true;
+        }
+        if self.magic().mode == Some(CastMode::Manual) {
+            return false;
+        }
+        let Some(controls) = self.tables.selected().autocast_controls() else {
+            self.finish(
+                CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Arm)),
+                tick,
+            );
+            return true;
+        };
+        let Some(side) = cx.snapshot().active_side_tab() else {
+            return true;
+        };
+        let Some(root) = frame.combat_tab else {
+            return true;
+        };
+        let Some(value) = frame
+            .varps
+            .iter()
+            .find(|row| row.index == controls.magic_varp)
+        else {
+            return true;
+        };
+        // Borrow only the style field: arming also reads the shared tables.
+        let StyleState::Magic(state) = &mut self.style_state else {
+            unreachable!("magic preparation requires magic state")
+        };
+        if !state.initial_arm_checked {
+            state.initial_arm_checked = true;
+            let spell = &self.tables.selected().spells()
+                [usize::from(state.selected.expect("selected spell"))];
+            if value.value == controls.armed_value
+                && magic::observed_autocast_spell_matches(
+                    cx.snapshot(),
+                    controls,
+                    side.value,
+                    root,
+                    spell,
+                )
+            {
+                state.arm = None;
+                state.arm_since = 0;
+                state.arm_wait = 0;
+                state.armed = true;
+                return false;
+            }
+        }
+        if state.armed && value.value == controls.armed_value {
+            return false;
+        }
+        state.armed = false;
+        if plan.len != 0 {
+            return true;
+        }
+        if state.arm.is_none() {
+            let spell = &self.tables.selected().spells()
+                [usize::from(state.selected.expect("selected spell"))];
+            let component = self.tables.selected().spell_button_com(&spell.name);
+            state.arm = Some(Arm::new(component));
+            state.arm_wait = 0;
+        }
+        let obs = ArmObservation {
+            ingame: true,
+            active_side_tab: side.value,
+            combat_tab_root: root,
+            magic_varp_value: value.value,
+        };
+        let timeout =
+            state.arm_wait != 0 && elapsed(tick, state.arm_since) >= u16::from(state.arm_wait);
+        let step = state
+            .arm
+            .as_mut()
+            .expect("active arm")
+            .poll(obs, controls, timeout);
+        match step {
+            ArmStep::Emit(request, ms) => {
+                let wait = ms.div_ceil(600) as u8;
+                let row = match request {
+                    InteractReq::SideTab { .. } => {
+                        PlanRow::new(RowKind::Arm, 0, wait | arbiter::ARM_SIDE_TAB_FLAG)
+                    }
+                    InteractReq::IfButton { component_id } => {
+                        PlanRow::new(RowKind::Arm, component_id, wait)
+                    }
+                    _ => unreachable!("shared arm emits controls only"),
+                };
+                self.push(plan, row);
+                true
+            }
+            ArmStep::Wait => true,
+            ArmStep::Done(Ok(())) => {
+                state.arm = None;
+                state.armed = true;
+                false
+            }
+            ArmStep::Done(Err(failure)) => {
+                let item = if matches!(failure, super::arm::ArmFailure::StaffMissing) {
+                    PrepItem::Staff
+                } else {
+                    PrepItem::Arm
+                };
+                self.finish(CombatEnd::Aborted(AbortReason::PrepFailed(item)), tick);
+                true
+            }
+        }
+    }
+    fn manual_cast(&self, plan: &mut TickPlan, _frame: &Frame<'_>, tick: u16) {
+        if !plan.closed(&self.tables)
+            && self.engaged.is_some()
+            && !self.pending_row(RowKind::Cast)
+            && self.schedule.ready(OpKind::Cast, tick)
+            && (!self.schedule.cycle.known || reached(tick, self.schedule.cycle.deadline))
+        {
+            if let Some(index) = self.magic().selected {
+                self.push(plan, PlanRow::new(RowKind::Cast, i32::from(index), 0));
+            }
+        }
+    }
     fn rate(&self, frame: &Frame<'_>) -> u8 {
+        if self.request.style == Style::Mage {
+            return magic::CAST_TICKS as u8;
+        }
         frame
             .equipment
             .iter()
@@ -470,6 +925,9 @@ impl Combat {
     }
     fn engage(&mut self, actor: ActorRef, frame: &Frame<'_>) {
         if self.engaged != Some(actor) {
+            if let StyleState::Magic(state) = &mut self.style_state {
+                state.reset_for_engagement();
+            }
             for pending in &mut self.pending {
                 if pending.row.kind == RowKind::Attack {
                     *pending = PendingRow::default();
@@ -479,47 +937,43 @@ impl Combat {
         }
         self.engaged = Some(actor);
         self.flags &= !LOST;
-        match actor.kind {
-            ActorKind::Npc => {
-                self.engaged_type = frame
+        self.identity = match actor.kind {
+            ActorKind::Npc => EngagementIdentity::Npc(
+                frame
                     .npcs
                     .iter()
                     .find(|row| row.index == usize::from(actor.index))
                     .and_then(|row| row.r#type)
-                    .map_or(-1, |id| id as i32);
-                self.player_ident = None;
-            }
-            ActorKind::Player => {
-                self.engaged_type = -1;
-                self.player_ident = frame
+                    .map_or(-1, |id| id as i32),
+            ),
+            ActorKind::Player => EngagementIdentity::Player(
+                frame
                     .players
                     .iter()
                     .find(|row| row.index == usize::from(actor.index))
                     .and_then(|row| row.actor.name.as_deref())
-                    .map(select::ident::fnv1a);
-            }
-        }
+                    .map(select::ident::fnv1a),
+            ),
+        };
         self.schedule.interaction = Interaction::Unknown;
         self.resolve_worth(frame);
     }
     fn resolve_worth(&mut self, frame: &Frame<'_>) {
         let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
-                [
-                    PotionKind::SuperAttack,
-                    PotionKind::SuperStrength,
-                    PotionKind::SuperDefence,
-                ]
-                .iter()
-                .any(|kind| {
+                self.boost_kinds().iter().any(|kind| {
                     self.tables.potion(*kind).is_some_and(|family| {
                         family.doses.iter().flatten().any(|dose| dose.id == *id)
                     })
                 })
             })
         });
-        let worth =
-            select::offensives_worth(self.engaged, self.engaged_type, &self.tables, carries_boost);
+        let worth = select::offensives_worth(
+            self.engaged,
+            self.engaged_type(),
+            &self.tables,
+            carries_boost,
+        );
         if worth {
             self.flags |= BOOST_WORTH;
         } else {
@@ -527,7 +981,7 @@ impl Combat {
         }
         if self
             .tables
-            .npc(self.engaged_type)
+            .npc(self.engaged_type())
             .is_some_and(|row| row.dragonfire.is_some())
         {
             self.flags |= SHIELD_OVERRIDE;
@@ -539,6 +993,29 @@ impl Combat {
         }
     }
     fn pick_weapon(&mut self, frame: &Frame<'_>) {
+        if self.request.style == Style::Mage {
+            if self.request.kit.is_none() {
+                self.rhand_pick = frame
+                    .equipment
+                    .iter()
+                    .find(|row| row.slot == 3)
+                    .filter(|row| {
+                        self.tables
+                            .weapon_style(row.def.id)
+                            .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
+                    })
+                    .or_else(|| {
+                        frame.inventory.iter().find(|row| {
+                            self.tables
+                                .weapon_style(row.def.id)
+                                .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
+                                && row.count > 0
+                        })
+                    })
+                    .map_or(-1, |row| row.def.id);
+            }
+            return;
+        }
         if self.request.kit.is_some() {
             return;
         }
@@ -596,7 +1073,7 @@ impl Combat {
                         .find(|row| row.index == usize::from(actor.index))
                     {
                         let ty = row.r#type.map_or(-1, |id| id as i32);
-                        let same = ty == self.engaged_type;
+                        let same = ty == self.engaged_type();
                         let listed = match &self.request.target {
                             Target::Npc { types, .. } => types.contains(&ty),
                             _ => same,
@@ -611,7 +1088,7 @@ impl Combat {
                                 <= i32::from(self.request.lost_radius);
                         killed = same && row.total_health > 0 && row.health == 0;
                         if present && !same {
-                            self.engaged_type = ty;
+                            self.identity = EngagementIdentity::Npc(ty);
                             self.schedule.interaction = Interaction::Unknown;
                             self.resolve_worth(frame);
                         }
@@ -620,9 +1097,9 @@ impl Combat {
                 ActorKind::Player => {
                     if let Some(row) = frame.players.iter().find(|row| {
                         row.index == usize::from(actor.index)
-                            && self.player_ident.is_some()
+                            && self.player_ident().is_some()
                             && row.actor.name.as_deref().map(select::ident::fnv1a)
-                                == self.player_ident
+                                == self.player_ident()
                     }) {
                         present =
                             distance(row.actor.tile, self.request.stand.unwrap_or(frame.here))
@@ -684,7 +1161,7 @@ impl Combat {
                 .map(|threat| threat.actor);
             if let Some(actor) = player {
                 self.suspended = self.engaged;
-                self.suspended_type = self.engaged_type;
+                self.suspended_type = self.engaged_type();
                 self.engage(actor, frame);
                 self.counters.intruders = self.counters.intruders.saturating_add(1);
                 self.phase = Phase::Fight;
@@ -748,6 +1225,9 @@ impl Combat {
         let mut schedule = self.schedule;
         if self.plan_first_id != 0 {
             for row in self.plan.iter() {
+                if row.kind == RowKind::Arm && row.aux & arbiter::ARM_SIDE_TAB_FLAG != 0 {
+                    continue;
+                }
                 schedule.admitted(
                     op_kind(row.kind),
                     self.emitted_tick,
@@ -799,6 +1279,20 @@ impl Combat {
             let slot = stage.trailing_zeros() as usize;
             stage &= !(1 << slot);
             let row = self.plan.rows[index];
+            if row.kind == RowKind::Arm {
+                self.pending[slot] = PendingRow::default();
+                if index < accepted as usize {
+                    if let Some(arm) = &mut self.magic_mut().arm {
+                        arm.emitted();
+                        self.magic_mut().arm_since = self.emitted_tick;
+                        self.magic_mut().arm_wait = row.aux & arbiter::ARM_WAIT_MASK;
+                    }
+                    if row.aux & arbiter::ARM_SIDE_TAB_FLAG == 0 {
+                        self.schedule.clear(self.emitted_tick, 1, fight);
+                    }
+                }
+                continue;
+            }
             if index >= accepted as usize {
                 self.pending[slot] = PendingRow::default();
                 continue;
@@ -813,7 +1307,10 @@ impl Combat {
                     }
                 }
             }
-            if fight && row.kind != RowKind::Attack && self.flags & RESTORE_COUNTED == 0 {
+            if fight
+                && !matches!(row.kind, RowKind::Attack | RowKind::Cast)
+                && self.flags & RESTORE_COUNTED == 0
+            {
                 self.counters.restorations = self.counters.restorations.saturating_add(1);
                 self.flags |= RESTORE_COUNTED;
             }
@@ -879,10 +1376,16 @@ impl Combat {
                     }
                 }
                 RowKind::Style => {
-                    if let Some(mode) = MeleeMode::from_code((row.aux >> 2) & 3) {
-                        self.mode_fallback =
-                            (Some(mode) != self.request.melee_mode).then_some(mode);
+                    if let StyleState::Melee(state) = &mut self.style_state {
+                        if let Some(mode) = MeleeMode::from_code((row.aux >> 2) & 3) {
+                            state.mode_fallback =
+                                (Some(mode) != self.request.melee_mode).then_some(mode);
+                        }
                     }
+                }
+                RowKind::Cast => {
+                    self.flags |= ENGAGEMENT_ATTACK;
+                    self.flags &= !RESTORE_COUNTED;
                 }
                 RowKind::Attack => {
                     self.flags |= ENGAGEMENT_ATTACK;
@@ -931,14 +1434,19 @@ impl Combat {
                 self.raised_prayers.accepted(row.varp, false, 0);
             }
         }
-        if super::style::melee::onset(
-            &frame.local.player.actor,
-            self.engaged,
-            &self.tables,
-            &mut self.anim_id,
-            &mut self.anim_frame,
-        ) && (!self.schedule.clear_valid
-            || (reached(tick, self.schedule.last_clear) && tick != self.schedule.last_clear))
+        let melee_onset = match &mut self.style_state {
+            StyleState::Melee(state) => super::style::melee::onset(
+                &frame.local.player.actor,
+                self.engaged,
+                &self.tables,
+                &mut state.anim_id,
+                &mut state.anim_frame,
+            ),
+            _ => false,
+        };
+        if melee_onset
+            && (!self.schedule.clear_valid
+                || (reached(tick, self.schedule.last_clear) && tick != self.schedule.last_clear))
         {
             self.counters.swings = self.counters.swings.saturating_add(1);
             self.schedule.observe_swing(tick, self.rate(frame));
@@ -987,6 +1495,8 @@ impl Combat {
                                 || (reached(tick, self.schedule.last_clear)
                                     && tick != self.schedule.last_clear))
                     }
+                    RowKind::Cast => false,
+                    RowKind::Arm => false,
                     RowKind::Empty => false,
                 };
             if settled {
@@ -1006,6 +1516,7 @@ impl Combat {
                     RowKind::Attack => self.schedule.interaction = Interaction::Installed,
                     RowKind::Wear => self.prep_failures &= !(7 << (u32::from(row.aux) * 3)),
                     RowKind::Retaliate => self.flags &= !PREP_RETALIATE,
+                    RowKind::Cast => self.schedule.interaction = Interaction::Installed,
                     _ => {}
                 }
                 if !self.pending_row(row.kind) {
@@ -1018,6 +1529,8 @@ impl Combat {
                     RowKind::Drink | RowKind::Wear | RowKind::Retaliate | RowKind::Style => 4,
                     RowKind::Prayer if row.aux == 0 => 4,
                     RowKind::Prayer | RowKind::Attack => 8,
+                    RowKind::Cast => 10,
+                    RowKind::Arm => unreachable!("arm receipts settle independently"),
                     RowKind::Empty => unreachable!("pending row"),
                 };
                 if self.pending[slot].age < window {
@@ -1036,6 +1549,8 @@ impl Combat {
                 }
                 let failures = self.schedule.unsettled[kind.index()];
                 match row.kind {
+                    RowKind::Cast if failures >= 2 => self.deselect(true),
+                    RowKind::Cast => {}
                     RowKind::Wear => {
                         let shift = u32::from(row.aux) * 3;
                         let count = (((self.prep_failures >> shift) & 3) + 1).min(3);
@@ -1558,7 +2073,7 @@ impl Combat {
                     CombatEnd::Aborted(AbortReason::PrepFailed(if conflict {
                         PrepItem::Shield
                     } else {
-                        PrepItem::Weapon
+                        weapon_prep_item(self.request.style)
                     })),
                     tick,
                 );
@@ -1566,6 +2081,9 @@ impl Combat {
             }
             self.wear(&mut plan, frame, tick);
             self.style(&mut plan, frame, tick);
+            if self.request.style == Style::Mage && self.magic_prepare(&mut plan, frame, tick, cx) {
+                return Ok(plan);
+            }
             self.retaliate(&mut plan, frame, tick);
             if self.flags & SHIELD_OVERRIDE != 0
                 && (!self.antifire(tick) || elapsed(tick, self.antifire_sip) >= 590)
@@ -1612,6 +2130,15 @@ impl Combat {
         if self.phase == Phase::Engage {
             self.style(&mut plan, frame, tick);
             self.retaliate(&mut plan, frame, tick);
+            if self.request.style == Style::Mage {
+                if self.magic_prepare(&mut plan, frame, tick, cx) {
+                    return Ok(plan);
+                }
+                if self.magic().mode == Some(CastMode::Manual) {
+                    self.manual_cast(&mut plan, frame, tick);
+                    return Ok(plan);
+                }
+            }
             if self.engaged.is_some()
                 && (plan.len != 0
                     || (!self.pending_row(RowKind::Attack)
@@ -1666,7 +2193,8 @@ impl Combat {
         if plan.closed(&self.tables) {
             return Ok(plan);
         }
-        let offense = self.flags & BOOST_WORTH != 0
+        let offense = self.request.style == Style::Melee
+            && self.flags & BOOST_WORTH != 0
             && prayer_allowed
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
@@ -1710,6 +2238,15 @@ impl Combat {
         self.wear(&mut plan, frame, tick);
         self.style(&mut plan, frame, tick);
         self.retaliate(&mut plan, frame, tick);
+        if self.request.style == Style::Mage {
+            if self.magic_prepare(&mut plan, frame, tick, cx) {
+                return Ok(plan);
+            }
+            if self.magic().mode == Some(CastMode::Manual) {
+                self.manual_cast(&mut plan, frame, tick);
+                return Ok(plan);
+            }
+        }
         let mismatch = self.engaged.is_some_and(|actor| {
             frame
                 .in_combat
@@ -1741,17 +2278,22 @@ impl Combat {
             rate,
         )
     }
+    fn boost_kinds(&self) -> &'static [PotionKind] {
+        match self.request.style {
+            Style::Mage => &[PotionKind::Magic, PotionKind::SuperDefence],
+            Style::Ranged => &[PotionKind::Ranging, PotionKind::SuperDefence],
+            Style::Melee => &[
+                PotionKind::SuperAttack,
+                PotionKind::SuperStrength,
+                PotionKind::SuperDefence,
+            ],
+        }
+    }
     fn boost(&self, frame: &Frame<'_>) -> Option<PotionKind> {
         if !self.request.allow.potions {
             return None;
         }
-        [
-            PotionKind::SuperAttack,
-            PotionKind::SuperStrength,
-            PotionKind::SuperDefence,
-        ]
-        .into_iter()
-        .find(|kind| {
+        self.boost_kinds().iter().copied().find(|kind| {
             let Some(family) = self.tables.potion(*kind) else {
                 return false;
             };
@@ -1876,21 +2418,23 @@ impl Combat {
                 ),
             );
         } else {
-            self.mode_fallback = (choice.actual != wanted).then_some(choice.actual);
+            if let StyleState::Melee(state) = &mut self.style_state {
+                state.mode_fallback = (choice.actual != wanted).then_some(choice.actual);
+            }
         }
     }
     fn retaliate(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
+        let wanted = self.request.retaliate
+            && !(self.request.style == Style::Mage
+                && (self.request.spells.is_some() || self.magic().mode == Some(CastMode::Manual)));
         if !plan.contains(RowKind::Retaliate)
             && self.request.allow.retaliate_toggle
-            && retaliate_on(frame) != self.request.retaliate
+            && retaliate_on(frame) != wanted
             && self.flags & SKIP_RETALIATE == 0
             && self.schedule.ready(OpKind::Retaliate, tick)
             && !self.pending_row(RowKind::Retaliate)
         {
-            self.push(
-                plan,
-                PlanRow::new(RowKind::Retaliate, 0, u8::from(self.request.retaliate)),
-            );
+            self.push(plan, PlanRow::new(RowKind::Retaliate, 0, u8::from(wanted)));
         }
     }
     fn target_above_quarter(&self, frame: &Frame<'_>) -> bool {
@@ -1924,7 +2468,7 @@ impl Combat {
                 .iter()
                 .find(|row| {
                     row.index == usize::from(actor.index)
-                        && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type
+                        && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type()
                 })
                 .map(|row| row.tile),
             ActorKind::Player => frame
@@ -1932,8 +2476,9 @@ impl Combat {
                 .iter()
                 .find(|row| {
                     row.index == usize::from(actor.index)
-                        && self.player_ident.is_some()
-                        && row.actor.name.as_deref().map(select::ident::fnv1a) == self.player_ident
+                        && self.player_ident().is_some()
+                        && row.actor.name.as_deref().map(select::ident::fnv1a)
+                            == self.player_ident()
                 })
                 .map(|row| row.actor.tile),
         }?;
@@ -2015,6 +2560,55 @@ impl Combat {
                     name: item_name(frame.inventory, row.id)?.to_owned(),
                 },
                 RowKind::Retaliate => InteractReq::SetRetaliate { on: row.aux != 0 },
+                RowKind::Arm if row.aux & arbiter::ARM_SIDE_TAB_FLAG != 0 => {
+                    InteractReq::SideTab { tab: 0 }
+                }
+                RowKind::Arm => InteractReq::IfButton {
+                    component_id: row.id,
+                },
+                RowKind::Cast => {
+                    let actor = self
+                        .engaged
+                        .ok_or_else(|| unavailable("cast target disappeared"))?;
+                    if !select::actor_attackable(frame, actor) {
+                        return Err(unavailable("unattackable cast target"));
+                    }
+                    let (tile, name) = match actor.kind {
+                        ActorKind::Npc => frame
+                            .npcs
+                            .iter()
+                            .find(|npc| {
+                                npc.index == usize::from(actor.index)
+                                    && npc.r#type == usize::try_from(self.engaged_type()).ok()
+                            })
+                            .map(|npc| (npc.network, npc.name.as_deref())),
+                        ActorKind::Player => frame
+                            .players
+                            .iter()
+                            .find(|player| {
+                                player.index == usize::from(actor.index)
+                                    && player.actor.name.as_deref().map(select::ident::fnv1a)
+                                        == self.player_ident()
+                            })
+                            .map(|player| (player.actor.tile, player.actor.name.as_deref())),
+                    }
+                    .ok_or_else(|| unavailable("cast target identity changed"))?;
+                    let spell = &self.tables.selected().spells()[row.id as usize];
+                    InteractReq::UseWidgetOn {
+                        component_id: spell.component_id,
+                        kind: if actor.kind == ActorKind::Npc {
+                            "npc"
+                        } else {
+                            "player"
+                        }
+                        .into(),
+                        target_name: name.map(str::to_owned),
+                        x: tile.x,
+                        z: tile.z,
+                        level: tile.level,
+                        index: Some(i32::from(actor.index)),
+                    }
+                }
                 RowKind::Attack => {
                     let actor = self
                         .engaged
@@ -2032,7 +2626,7 @@ impl Combat {
                                 .iter()
                                 .find(|row| {
                                     row.index == usize::from(actor.index)
-                                        && row.r#type == usize::try_from(self.engaged_type).ok()
+                                        && row.r#type == usize::try_from(self.engaged_type()).ok()
                                 })
                                 .ok_or_else(|| unavailable("npc identity changed"))?;
                             InteractReq::Npc {
@@ -2051,9 +2645,9 @@ impl Combat {
                                 .iter()
                                 .find(|row| {
                                     row.index == usize::from(actor.index)
-                                        && self.player_ident.is_some()
+                                        && self.player_ident().is_some()
                                         && row.actor.name.as_deref().map(select::ident::fnv1a)
-                                            == self.player_ident
+                                            == self.player_ident()
                                 })
                                 .and_then(|row| row.actor.name.as_deref())
                                 .ok_or_else(|| unavailable("player identity"))?;
@@ -2101,6 +2695,12 @@ impl Combat {
         Ok(())
     }
 }
+fn weapon_prep_item(style: Style) -> PrepItem {
+    match style {
+        Style::Mage => PrepItem::Staff,
+        Style::Melee | Style::Ranged => PrepItem::Weapon,
+    }
+}
 fn op_kind(kind: RowKind) -> OpKind {
     match kind {
         RowKind::Eat => OpKind::Eat,
@@ -2110,6 +2710,10 @@ fn op_kind(kind: RowKind) -> OpKind {
         RowKind::Style => OpKind::Style,
         RowKind::Retaliate => OpKind::Retaliate,
         RowKind::Attack => OpKind::Attack,
+        RowKind::Cast => OpKind::Cast,
+        // Autocast buttons share Style's IfButton cadence; the zero-wire
+        // SideTab row is skipped in projected_schedule and settled separately.
+        RowKind::Arm => OpKind::Style,
         RowKind::Empty => unreachable!("empty pending operation"),
     }
 }

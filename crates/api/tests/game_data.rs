@@ -231,6 +231,7 @@ fn generated_spell_and_staff_facts_match_selected_content() {
         assert_eq!(data.spell_button_com("unknown"), -1);
         let autocast = data.autocast_controls().expect("autocast controls");
         assert_eq!(autocast.staff_tab_root, 328);
+        assert_eq!(autocast.spell_text_component, 352);
         assert_eq!(autocast.choose_com, 353);
         assert_eq!(autocast.spell_panel_root, 1829);
         assert_eq!(autocast.toggle_com, 349);
