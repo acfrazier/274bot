@@ -118,15 +118,8 @@
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }
             ]
           },
-          "settle": {
-            "Any": [
-              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } },
-              { "All": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you pour water over the cog"] } } }
-              ] }
-            ]
-          }
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+          "comment": "Cooling returns bucket_empty before a mesbox Continue page; that modal text is not a chat-ring message."
         },
         {
           "id": "black-take-ground-cog",
@@ -164,6 +157,7 @@
           "kind": "walk",
           "version": 1,
           "args": { "tile": [2583, 9613, 0], "source": "C:maps/m40_150.jm2:9466; C:pack/obj.pack:24", "radius": 1 },
+          "comment": "The red cog is beside three level-53 ogres at [2585,9608,0], [2586,9614,0] and [2588,9606,0] (C:maps/m40_150.jm2:9415-9419; C:scripts/areas/area_yanille/configs/ogre.npc:1-24). Bring food and full HP. No cross grant, protection or walking-time eating is promised; Stop on unsafe HP or a named-zone refusal.",
           "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2583, 9613, 0], "radius": 1 } } } ] },
           "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2583, 9613, 0], "radius": 1 } } }
         },
@@ -338,12 +332,12 @@
         "source": "C:maps/m40_150.jm2:map square m40_150; C:maps/m40_150.jm2:9462-9467,7287,7407,7424,7561,7916"
       },
       "blue_pocket": {
-        "boxes": [[2572, 9631, 2574, 9634, 0]],
-        "source": "C:maps/m40_150.jm2:7287,7407,9464; C:pack/loc.pack:1587"
+        "boxes": [[2572, 9631, 2575, 9633, 0]],
+        "source": "C:maps/m40_150.jm2:7287,7407,9464; Push from outside lands on secretdoor2 [2575,9631,0], rotation 2; C:scripts/doors/scripts/open_and_close_doors.rs2:43-62"
       },
       "rat_pen": {
-        "boxes": [[2580, 9652, 2595, 9662, 0]],
-        "source": "C:maps/m40_150.jm2:9403,9408-9409,9411,9414,9417-9418,9421-9422,9427-9428,7561,7916,8131,8212,8291"
+        "boxes": [[2580, 9654, 2595, 9659, 0]],
+        "source": "C:maps/m40_150.jm2:7560-7565,7665,7714,7777,7816,7875,7916-7917,7957,8009,8043,8083,8130,8291-8295; pen-only side south of z9660 wall, excluding north corridor and z9652-9653"
       },
       "white_pocket": {
         "boxes": [[2575, 9654, 2578, 9657, 0]],
@@ -408,13 +402,14 @@
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "loc": "ctlevera" },
-                "op": "Pull",
-                "anchor": { "tile": [2591, 9661, 0], "source": "C:maps/m40_150.jm2:8131; C:pack/loc.pack:34-36; C:scripts/quests/quest_cog/configs/quest_cog.loc:65-84; C:scripts/quests/quest_cog/scripts/locs/quest_cog_gates_and_levers.rs2:27-42" },
+                "target": { "loc": "ctratgatea" },
+                "op": "Open",
+                "anchor": { "tile": [2595, 9657, 0], "source": "C:maps/m40_150.jm2:8291; C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:15-19; C:scripts/quests/quest_cog/scripts/locs/quest_cog_gates_and_levers.rs2:10-24; inside gate column" },
                 "radius": 3
               },
               "skip_if": { "Any": [ { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "rat_pen" } } } }, { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } } ] },
-              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } }
+              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } },
+              "comment": "Open gate A from inside after its 500-tick reset; the script also changes the outside lever to ctlevera2. This opens the exit, not a teleport; later movement leaves through the open gate."
             },
             {
               "id": "place-held-black",

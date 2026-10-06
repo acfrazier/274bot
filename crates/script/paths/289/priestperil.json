@@ -3,13 +3,38 @@
   "schema": 3,
   "id": "priestperil",
   "display_name": "Priest in Peril",
-  "required": [],
+  "required": ["kit:attack-40", "kit:defence-40", "essence:rune-mysteries", "essence:mining-1"],
   "tested_stats": null,
   "partner": null,
   "quest": {
     "members": true,
     "quest_points": 1,
-    "requirements": [],
+    "requirements": [
+      {
+        "id": "kit:attack-40",
+        "kind": {"Skill": {"skill": "attack", "level": 40}},
+        "at": "start",
+        "source": "Path eligibility for the authored rune scimitar, not a server quest prerequisite"
+      },
+      {
+        "id": "kit:defence-40",
+        "kind": {"Skill": {"skill": "defence", "level": 40}},
+        "at": "start",
+        "source": "Path eligibility for the authored rune armour and shield, not a server quest prerequisite"
+      },
+      {
+        "id": "essence:rune-mysteries",
+        "kind": {"Quest": "runemysteries"},
+        "at": "start",
+        "source": "C scripts/skill_runecraft/scripts/essence_mine.rs2:1-6; required for the mining fallback; this Path gates Start even when essence is banked"
+      },
+      {
+        "id": "essence:mining-1",
+        "kind": {"Skill": {"skill": "mining", "level": 1}},
+        "at": "start",
+        "source": "C scripts/skill_mining/configs/mine.dbrow:1-8; selected method mining.rune stones"
+      }
+    ],
     "items": [
       {
         "obj": "pipkey_gold",
@@ -49,6 +74,12 @@
       },
       {
         "obj": "dagger_wolfbane",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bronze_pickaxe",
         "qty": 1,
         "kind": "acquirable",
         "acquire": null
@@ -1467,12 +1498,20 @@
                     "obj": "pipkey_gold"
                   }
                 }
+              },
+              {
+                "All": [
+                  {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                  {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "pipkey_iron"}}}},
+                  {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "pipkey_gold"}}}}
+                ]
               }
             ]
           },
           "settle": {
             "All": []
-          }
+          },
+          "comment": "Only visit Varrock East when key stock is present or not yet observed; a complete bank memo with neither key skips this detour."
         },
         {
           "id": "gold-key-return-temple-door",
@@ -2095,7 +2134,8 @@
             "at": "quest_bank",
             "keep": [
               "lobster",
-              "coins"
+              "coins",
+              "bronze_pickaxe"
             ]
           },
           "skip_if": {
@@ -2104,7 +2144,7 @@
           "settle": {
             "All": []
           },
-          "comment": "Stage-specific pack ownership. Keep food and the coin stack; deposit bucket/keys/notes so there is room for twenty unnoted essences."
+          "comment": "Stage-specific pack ownership. Keep food, coins and the fallback bronze pickaxe; deposit bucket/keys/notes. With eight lobsters, one coin stack and the pickaxe, eighteen slots remain; the twenty-essence bank request may be partial."
         },
         {
           "id": "withdraw-unnoted-essence-batch",
@@ -2165,6 +2205,68 @@
               }
             ]
           }
+        }
+      ],
+      "get:mined-essence-batch": [
+        {
+          "id": "mine-essence-leave-cell",
+          "kind": "acquire", "version": 1,
+          "args": {"recipe": "leave:cell"},
+          "skip_if": {"Not": {"Any": [
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell_floor"}}},
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_upper"}}}
+          ]}},
+          "settle": {"Not": {"Any": [
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell_floor"}}},
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_upper"}}}
+          ]}}
+        },
+        {
+          "id": "mine-essence-leave-crypt",
+          "kind": "acquire", "version": 1,
+          "args": {"recipe": "leave:crypt"},
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "crypt"}}}},
+          "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "crypt"}}}}
+        },
+        {
+          "id": "mine-essence-clear-pack",
+          "kind": "bank", "version": 1,
+          "args": {"op": "deposit_all", "at": "quest_bank", "keep": ["lobster", "coins", "bronze_pickaxe"]},
+          "skip_if": {"Any": []},
+          "settle": {"All": []},
+          "comment": "Clear puzzle items before each mined batch, including a resume with a known-empty essence bank. Eight lobsters, coins and one pickaxe leave eighteen mining slots."
+        },
+        {
+          "id": "mine-essence-withdraw-pickaxe",
+          "kind": "bank", "version": 1,
+          "args": {"op": "withdraw", "at": "quest_bank", "items": [{"obj": "bronze_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+        },
+        {
+          "id": "mine-essence-approach-aubury",
+          "kind": "walk", "version": 1,
+          "args": {
+            "tile": [3253,3401,0],
+            "source": "C scripts/skill_runecraft/configs/runecraft.constant:15 Aubury return anchor 0_50_53_53_9; scripts/areas/area_varrock/scripts/aubury.rs2:32-33",
+            "radius": 2
+          },
+          "skip_if": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3253,3401,0], "radius": 2}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3253,3401,0], "radius": 2}}}
+        },
+        {
+          "id": "gather-rune-essence-batch",
+          "kind": "gather", "version": 1, "advances": false,
+          "args": {
+            "skill": "mining",
+            "method": "mining.rune stones",
+            "until": {"obj": "blankrune", "qty": 18},
+            "anchor": {"tile": [2893,4812,0], "source": "C maps/m45_75.jm2:6139 blankrunestone loc 2491; scripts/skill_mining/configs/mine.dbrow:1-8"},
+            "radius": 12
+          },
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blankrune", "qty": 18}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blankrune", "qty": 18}}},
+          "comment": "Mining 1 and Rune Mysteries complete. From Aubury, native navigation uses the essence-mine entry; later crypt approach uses EssenceSession return. Mine eighteen unnoted essence per batch; Drezel accepts partial deliveries until fifty total. Banked essence is tried first. Routing and pickaxe use are not live-tested."
         }
       ],
       "open:morytania": [
@@ -2418,7 +2520,7 @@
             3405,
             9880,
             3430,
-            9895,
+            9894,
             0
           ]
         ],
@@ -2439,7 +2541,8 @@
     },
     "tools": [
       "obj:coins",
-      "obj:lobster"
+      "obj:lobster",
+      "obj:bronze_pickaxe"
     ],
     "owns_inventory": true
   },
@@ -3618,40 +3721,12 @@
               }
             },
             {
-              "id": "GAP-mine-rune-essence-missing-selected-gather-method",
-              "kind": "wait",
-              "version": 1,
-              "args": {
-                "until": {
-                  "Fact": {
-                    "kind": "has_item",
-                    "version": 1,
-                    "args": {
-                      "obj": "blankrune"
-                    }
-                  }
-                },
-                "max_ticks": 10
-              },
-              "skip_if": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "blankrune"
-                  }
-                }
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "blankrune"
-                  }
-                }
-              },
-              "comment": "GAP: selected 289 gathering catalog has no rune-essence method. Content scripts/skill_mining/configs/mine.dbrow:1-8 and scripts/skill_mining/scripts/mining.rs2:9-11 support blankrunestone -> blankrune, but no released selected method can compile it. This top-level named step parks after bounded failed waits when bank supplies run out. Supply fifty unnoted essence in the bank for completion; no fake mining or notes."
+              "id": "mine-next-unnoted-essence-batch",
+              "kind": "acquire", "version": 1,
+              "args": {"recipe": "get:mined-essence-batch"},
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blankrune"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blankrune"}}},
+              "comment": "Real fallback after the bank-first step proves no essence stock. Bring eight lobsters, one coin stack and a bronze pickaxe in inventory or bank; no missing-catalog GAP remains."
             },
             {
               "id": "deliver-essence-reach-drezel",
