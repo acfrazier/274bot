@@ -43,6 +43,7 @@ use api::interact;
 use api::selected::{Knowledge, RunKey};
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, WorldTile};
 use host::Pump;
+use host_play::evidence_writer::{EvidenceJob, EvidenceRequest, EvidenceWriter, PngColor};
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, Scenario, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
@@ -437,14 +438,30 @@ fn card_complete(status: &ScriptStatus, quest: &str) -> bool {
             && progress.complete == api::selected::Truth::True)
 }
 
-fn save_capture(
+/// A capture handed to the background writer, awaiting its outcome. The PNG
+/// path is fixed at submit so completion order (the writer is FIFO) keeps
+/// the historic `captures` sequence.
+struct PendingCapture {
+    sequence: usize,
+    label: String,
+    png_path: PathBuf,
+    job: EvidenceJob,
+}
+
+/// The slot-thread half of a quester capture: render (needs the client) into
+/// native pixmap words and hand them plus the JSON receipt to the shared
+/// background evidence writer. The hook polls the job and records the path
+/// only once the files are durable.
+fn submit_capture(
     client: &mut client::client::Client,
+    writer: &EvidenceWriter,
     directory: &Path,
     sequence: usize,
     label: &str,
     mut receipt: Value,
-) -> Result<PathBuf, String> {
+) -> Result<PendingCapture, String> {
     let stem = format!("{sequence:02}-{label}");
+    let render_start = Instant::now();
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);
@@ -453,33 +470,33 @@ fn save_capture(
     let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
         return Err("capture needs BOT_CPU=1 (no CPU PixMap)".into());
     };
-    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
-    for pixel in &pixels.pixels {
-        rgba.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-            u8::MAX,
-        ]);
-    }
-    let png_path = directory.join(format!("{stem}.png"));
-    let file = std::fs::File::create(&png_path).map_err(|error| error.to_string())?;
-    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .map_err(|error| error.to_string())?
-        .write_image_data(&rgba)
-        .map_err(|error| error.to_string())?;
+    println!(
+        "capture-render site=quester {stem} {}x{} render_ms={:.1}",
+        pixels.width,
+        pixels.height,
+        render_start.elapsed().as_secs_f64() * 1000.0,
+    );
     receipt["frame"] = json!({"renderer": "real Client CpuPix3D framebuffer",
         "width": pixels.width, "height": pixels.height});
-    std::fs::write(
-        directory.join(format!("{stem}.json")),
-        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(png_path)
+    let png_path = directory.join(format!("{stem}.png"));
+    let job = writer.submit(EvidenceRequest {
+        png_path: png_path.clone(),
+        width: pixels.width as u32,
+        height: pixels.height as u32,
+        pixels: pixels.pixels,
+        color: PngColor::Rgba,
+        sidecar: Some(host_play::evidence_writer::EvidenceSidecar {
+            path: directory.join(format!("{stem}.json")),
+            receipt,
+            patch_error: None,
+        }),
+    });
+    Ok(PendingCapture {
+        sequence,
+        label: label.to_owned(),
+        png_path,
+        job,
+    })
 }
 
 struct LiveCell {
@@ -545,6 +562,13 @@ struct ActorShared {
     step_observations: Vec<Value>,
     pending_captures: Vec<(String, Value)>,
     captures: Vec<PathBuf>,
+    /// Monotonic capture sequence assigned at submit; the FIFO writer
+    /// completes in order, so stems match the old synchronous numbering.
+    capture_seq: usize,
+    /// Captures handed to the background writer, awaiting their outcomes.
+    pending_jobs: Vec<PendingCapture>,
+    /// One shared background evidence writer per run (all roles).
+    evidence: Arc<EvidenceWriter>,
     last_tile: Option<WorldTile>,
     error: Option<String>,
     capture_error: Option<String>,
@@ -1051,6 +1075,9 @@ fn run_cells(
     }
 
     let track_steps = mode.death_target().is_some() || mode.restart_step_target().is_some();
+    let evidence = Arc::new(EvidenceWriter::new(
+        host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
+    ));
     let mut actors = Vec::with_capacity(cells.len());
     for (index, cell) in cells.into_iter().enumerate() {
         let mut runner = ScenarioRunner::with_world(cell.scenario, template.world());
@@ -1100,6 +1127,9 @@ fn run_cells(
             step_observations: Vec::new(),
             pending_captures: Vec::new(),
             captures: Vec::new(),
+            capture_seq: 0,
+            pending_jobs: Vec::new(),
+            evidence: Arc::clone(&evidence),
             last_tile: None,
             error: None,
             capture_error: None,
@@ -1362,19 +1392,55 @@ fn run_cells(
                         .take(12)
                         .map(|line| line.text.to_string())
                         .collect::<Vec<_>>());
-                    let sequence = actor.captures.len() + 1;
-                    match save_capture(client, &actor.directory, sequence, &label, receipt) {
-                        Ok(path) => {
-                            actor.captures.push(path);
-                            if label == "end-pass" || label == "end-fail" {
-                                actor.end_captured = true;
-                            }
-                        }
+                    actor.capture_seq += 1;
+                    let sequence = actor.capture_seq;
+                    match submit_capture(
+                        client,
+                        &actor.evidence,
+                        &actor.directory,
+                        sequence,
+                        &label,
+                        receipt,
+                    ) {
+                        Ok(pending) => actor.pending_jobs.push(pending),
                         Err(error) => {
                             let error = format!("capture {label}: {error}");
                             actor.capture_error = Some(error.clone());
                             actor.error = Some(error);
                         }
+                    }
+                }
+            }
+            // The run's terminal wait already polls `end_captured` under a
+            // deadline; completions land here, which is the bounded flush:
+            // paths are recorded only once the files are durable.
+            let evidence = Arc::clone(&actor.evidence);
+            let mut completed = Vec::new();
+            actor
+                .pending_jobs
+                .retain(|pending| match evidence.poll(&pending.job) {
+                    Some(outcome) => {
+                        completed.push((
+                            pending.label.clone(),
+                            pending.png_path.clone(),
+                            outcome.error,
+                        ));
+                        false
+                    }
+                    None => true,
+                });
+            for (label, png_path, error) in completed {
+                match error {
+                    None => {
+                        actor.captures.push(png_path);
+                        if label == "end-pass" || label == "end-fail" {
+                            actor.end_captured = true;
+                        }
+                    }
+                    Some(error) => {
+                        let error = format!("capture {label}: {error}");
+                        actor.capture_error = Some(error.clone());
+                        actor.error = Some(error);
                     }
                 }
             }

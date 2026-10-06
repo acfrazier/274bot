@@ -376,44 +376,18 @@ fn wait_frame_after(mailbox: &FrameBuf, generation: u64, timeout: Duration) -> O
     }
 }
 
-fn encode_png(frame: FrameOutput) -> Result<(Vec<u8>, u32, u32), String> {
-    let (width, height, pixels) = match frame {
-        FrameOutput::PixMap(pixmap) => (
-            u32::try_from(pixmap.width).map_err(|error| error.to_string())?,
-            u32::try_from(pixmap.height).map_err(|error| error.to_string())?,
-            pixmap.pixels,
-        ),
-        FrameOutput::Texture(texture) => (texture.width, texture.height, texture.read_back()),
-    };
-    let pixel_count = (width as usize)
-        .checked_mul(height as usize)
-        .ok_or_else(|| "rendered frame dimensions overflow".to_string())?;
-    if width == 0 || height == 0 || pixels.len() < pixel_count {
-        return Err(format!(
-            "rendered frame has invalid dimensions/data: {width}x{height}, {} pixels",
-            pixels.len()
-        ));
+/// Native pixmap words for one mailbox frame. Conversion and PNG encoding
+/// run on the shared background evidence writer; callers only move the
+/// already-rendered frame off the mailbox.
+fn frame_words(frame: FrameOutput) -> Result<(u32, u32, Vec<i32>), String> {
+    match frame {
+        FrameOutput::PixMap(pixmap) => {
+            let width = u32::try_from(pixmap.width).map_err(|error| error.to_string())?;
+            let height = u32::try_from(pixmap.height).map_err(|error| error.to_string())?;
+            Ok((width, height, pixmap.pixels))
+        }
+        FrameOutput::Texture(texture) => Ok((texture.width, texture.height, texture.read_back())),
     }
-    let mut rgba = Vec::with_capacity(pixel_count * 4);
-    for pixel in pixels.into_iter().take(pixel_count) {
-        rgba.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-            0xff,
-        ]);
-    }
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
-        writer
-            .write_image_data(&rgba)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok((bytes, width, height))
 }
 
 fn route_sample(play: &Play, account: &str) -> Option<RouteSample> {
@@ -583,7 +557,10 @@ impl EvidenceContext<'_> {
 }
 
 /// Writes a real rendered frame (when one is available) and its matching JSON
-/// before the caller performs the corresponding assertion.
+/// before the caller performs the corresponding assertion. The frame is
+/// already rendered by the slot; conversion, PNG encoding and the PNG write
+/// run on a background evidence writer, and this waits bounded for the file
+/// before writing the matching JSON, so success contents are unchanged.
 pub(super) fn write_capture(
     run_dir: &Path,
     stamp: &str,
@@ -600,29 +577,47 @@ pub(super) fn write_capture(
     let png_path = run_dir.join(format!("{stem}.png"));
     let json_path = run_dir.join(format!("{stem}.json"));
     let generation = mailbox.generation();
-    let encoded = wait_frame_after(mailbox, generation, Duration::from_secs(8)).map(encode_png);
-    let (png_written, capture) = match encoded {
-        Some(Ok((bytes, width, height))) => match std::fs::write(&png_path, bytes) {
-            Ok(()) => (
-                true,
-                json!({
-                    "frame_source": "host::FrameBuf actual rendered FrameOutput",
-                    "png_file": png_path.file_name().and_then(|name| name.to_str()),
-                    "width": width,
-                    "height": height,
-                    "png_written": true,
-                }),
-            ),
-            Err(error) => (
-                false,
-                json!({
-                    "frame_source": "host::FrameBuf actual rendered FrameOutput",
-                    "png_file": png_path.file_name().and_then(|name| name.to_str()),
-                    "png_written": false,
-                    "png_error": error.to_string(),
-                }),
-            ),
-        },
+    let framed = wait_frame_after(mailbox, generation, Duration::from_secs(8)).map(frame_words);
+    let (png_written, capture) = match framed {
+        Some(Ok((width, height, pixels))) => {
+            let writer = evidence_writer::EvidenceWriter::new(evidence_writer::DEFAULT_QUEUE_BOUND);
+            let job = writer.submit(evidence_writer::EvidenceRequest {
+                png_path: png_path.clone(),
+                width,
+                height,
+                pixels,
+                color: evidence_writer::PngColor::Rgba,
+                sidecar: None,
+            });
+            match writer.wait(&job, evidence_writer::DEFAULT_FLUSH_WAIT) {
+                Some(outcome) if outcome.error.is_none() => (
+                    true,
+                    json!({
+                        "frame_source": "host::FrameBuf actual rendered FrameOutput",
+                        "png_file": png_path.file_name().and_then(|name| name.to_str()),
+                        "width": outcome.width,
+                        "height": outcome.height,
+                        "png_written": true,
+                    }),
+                ),
+                Some(outcome) => (
+                    false,
+                    json!({
+                        "frame_source": "host::FrameBuf actual rendered FrameOutput",
+                        "png_written": false,
+                        "capture_error": outcome.error.unwrap_or_else(|| "unknown".into()),
+                    }),
+                ),
+                None => (
+                    false,
+                    json!({
+                        "frame_source": "host::FrameBuf actual rendered FrameOutput",
+                        "png_written": false,
+                        "capture_error": "evidence writer did not finish before the capture deadline",
+                    }),
+                ),
+            }
+        }
         Some(Err(error)) => (
             false,
             json!({
