@@ -12,6 +12,8 @@
     { "id": "hetty", "file": "hetty.json" },
     { "id": "prince", "file": "prince.json" },
     { "id": "hunt", "file": "hunt.json" },
+    { "id": "demon", "file": "demon.json" },
+    { "id": "squire", "file": "squire.json" },
     {
       "id": "hauntedmine",
       "name": "Haunted Mine",
