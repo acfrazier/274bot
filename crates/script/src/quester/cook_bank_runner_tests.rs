@@ -1,6 +1,6 @@
 use super::*;
 use crate::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
-use crate::quester::families::tests::{def, local_player, with_tick_output};
+use crate::quester::families::tests::{def, local_player, with_tick_output, with_tick_output_bank};
 use crate::shim::InteractReq;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::snapshot::{
@@ -25,7 +25,9 @@ struct CookFixture {
     script: Quester,
     snapshot: GameSnapshot,
     ledger: Option<Box<crate::native::ledger::Ledger>>,
-    bank: NamedBank,
+    /// The account's bank memory, filled the way the host fills it.
+    bank: api::bank_memory::BankMemory,
+    bank_fixture: NamedBank,
     stock: Vec<ItemView>,
     output: Capture,
     visits: usize,
@@ -87,7 +89,8 @@ impl CookFixture {
             script,
             snapshot,
             ledger: None,
-            bank,
+            bank: api::bank_memory::BankMemory::default(),
+            bank_fixture: bank,
             stock: Vec::new(),
             output: Capture::default(),
             visits: 0,
@@ -216,8 +219,12 @@ impl CookFixture {
             } else {
                 Vec::new()
             });
-        with_tick_output(
+        // The host's per-frame observe (design-bank-snapshot §1.3): mirror the
+        // open bank into the account memory before the scripted tick reads it.
+        self.bank.track(&self.snapshot, tick);
+        with_tick_output_bank(
             &self.snapshot,
+            Some(&self.bank),
             &mut self.ledger,
             tick,
             &mut self.output,
@@ -245,11 +252,11 @@ impl CookFixture {
                         evidence,
                         selected: crate::bank::SelectedBank {
                             bank_index: 0,
-                            access_tile: self.bank.tile,
+                            access_tile: self.bank_fixture.tile,
                             kind: crate::bank::PickKind::Reachable,
                             access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank,
-                                stand_tile: self.bank.tile,
+                                bank: self.bank_fixture,
+                                stand_tile: self.bank_fixture.tile,
                                 kind: crate::bank::AccessKind::Booth,
                                 stand_op: 1,
                                 name: None,
@@ -477,9 +484,19 @@ fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
         fixture.visits, 1,
         "ground egg acquisition must not erase the observed empty bank and trigger a second trip"
     );
+    // Nothing in the script mutates the account memory: the empty Session
+    // rows the scan observed stay known between recipes.
+    assert!(
+        fixture.bank.known(),
+        "the observed empty bank must stay known between recipes"
+    );
+    assert_eq!(
+        fixture.bank.origin(),
+        api::bank_memory::Origin::Session,
+        "the fixture bank is really opened, not hinted"
+    );
     assert_eq!(
         fixture
-            .script
             .bank
             .count(fixture.script.selected.item_by_alias("egg").unwrap().id),
         Some(0)

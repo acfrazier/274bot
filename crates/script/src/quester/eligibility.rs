@@ -1,9 +1,10 @@
 //! Queue-row eligibility from quest-tab, skill, varp, world and bank evidence.
-use super::bank_memo::BankMemo;
 use super::compile::{CompiledEligibility, CompiledItemKind, CompiledPath, CompiledRequirement};
+use api::bank_memory::Origin;
 use api::quest_facts::QuestCatalog;
 use api::selected::{QuestGate, RequirementKind, SkillMinimum};
 use api::snapshot::{QuestListStatus, SnapshotView, StatView};
+use api::stock::Stock;
 use std::sync::Arc;
 
 const QUEST_POINTS_VARP: i32 = 101;
@@ -48,14 +49,14 @@ pub struct EligibilityResult {
 }
 
 /// Evaluate one compiled queue row. A completed quest is terminal before any
-/// requirements; item requirements apply only before the quest starts.
+/// requirements; item requirements apply only before the quest starts and
+/// read the frame's `Stock` (pack, worn and the account's bank memory).
 pub fn evaluate(
     path: &CompiledPath,
     view: &SnapshotView<'_>,
     quests: &QuestCatalog,
-    bank: &BankMemo,
 ) -> EligibilityResult {
-    evaluate_path(path, &path.eligibility, view, quests, bank)
+    evaluate_path(path, &path.eligibility, view, quests)
 }
 
 fn evaluate_path(
@@ -63,7 +64,6 @@ fn evaluate_path(
     header: &CompiledEligibility,
     view: &SnapshotView<'_>,
     quests: &QuestCatalog,
-    bank: &BankMemo,
 ) -> EligibilityResult {
     let mut skills = Vec::new();
     let status = if path.kind == super::path::PathKind::Miniquest {
@@ -121,7 +121,13 @@ fn evaluate_path(
                 check_skill(requirement, *minimum, stats, &mut skills, &mut reasons);
             }
             RequirementKind::Item(item) if !started => {
-                check_item(requirement, item.item, item.count, view, bank, &mut reasons);
+                check_item(
+                    requirement,
+                    item.item,
+                    item.count,
+                    &view.stock(),
+                    &mut reasons,
+                );
             }
             RequirementKind::Item(_) => {}
             RequirementKind::Quest(gate) => {
@@ -145,6 +151,7 @@ fn evaluate_path(
     }
 
     if !started {
+        let stock = view.stock();
         for item in header
             .items
             .iter()
@@ -159,8 +166,7 @@ fn evaluate_path(
                 },
                 item.id,
                 item.qty,
-                view,
-                bank,
+                &stock,
                 &mut reasons,
             );
         }
@@ -225,44 +231,42 @@ fn check_skill(
     }
 }
 
+/// A `mustHave` row blocks only on a shortage the account's bank memory
+/// observed this session (design-bank-snapshot §2.4): an `Unknown` or
+/// `Hint` bank fails open and the provisioner's verifying scan decides.
+/// Worn items count (a quest item you wear is carried).
 fn check_item(
     requirement: &CompiledRequirement,
     item_id: i32,
     required: u32,
-    view: &SnapshotView<'_>,
-    bank: &BankMemo,
+    stock: &Stock<'_>,
     reasons: &mut Vec<BlockReason>,
 ) {
-    let bank_count = bank.count(item_id);
-    let Some(in_pack) = view.stock().held(item_id) else {
-        if bank_count
-            .is_some_and(|count| u64::try_from(count.max(0)).unwrap_or(0) >= u64::from(required))
-        {
-            return;
-        }
-        if bank_count.is_none() {
-            // An unread bank is not an observed empty bank. Do not turn a
-            // `mustHave` hint into a false blocker before a bank scan exists.
-            return;
-        }
+    if stock.banked_origin() != Origin::Session {
+        return;
+    }
+    let banked = u64::try_from(stock.banked(item_id).unwrap_or(0).max(0)).unwrap_or(0);
+    let required = u64::from(required);
+    if banked >= required {
+        return;
+    }
+    let Some(held) = stock.held(item_id) else {
         reasons.push(requirement_reason(
             requirement,
             "inventory is not observed while checking this required item",
         ));
         return;
     };
-    let in_pack = u64::try_from(in_pack).unwrap_or(0);
-    let Some(bank_count) = bank_count else {
-        // An unread bank is unknown, never an empty bank. The pack observation
-        // alone cannot prove that a `mustHave` requirement is missing.
-        return;
-    };
-    let total = in_pack.saturating_add(u64::try_from(bank_count.max(0)).unwrap_or(0));
-    if total < u64::from(required) {
+    let worn = u64::try_from(stock.worn(item_id).unwrap_or(0).max(0)).unwrap_or(0);
+    let total = u64::try_from(held.max(0))
+        .unwrap_or(0)
+        .saturating_add(worn)
+        .saturating_add(banked);
+    if total < required {
         reasons.push(requirement_reason(
             requirement,
             &format!(
-                "item {} requires {required}, only {total} is in pack and known bank",
+                "item {} requires {required}, only {total} is carried or in the bank seen this session",
                 requirement.id.0
             ),
         ));
@@ -367,9 +371,13 @@ mod tests {
         QuestItemDocument, QuestItemKindDocument, QuestRequirementDocument,
         QuestRequirementKindDocument,
     };
+    use api::bank_memory::BankMemory;
     use api::quest_progress::EvidenceStamp;
     use api::selected::{ClientRevision, FactKey, RunKey};
-    use api::snapshot::{GameSnapshot, QuestStatusView, StatView, VarpView, WorldStateView};
+    use api::snapshot::{
+        GameSnapshot, ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView,
+        VarpView, WorldStateView,
+    };
 
     fn fixture() -> (
         Arc<api::game_data::SelectedGameData>,
@@ -405,7 +413,7 @@ mod tests {
         path: &CompiledPath,
         quests: &QuestCatalog,
         snapshot: &GameSnapshot,
-        bank: &BankMemo,
+        bank: &BankMemory,
     ) -> EligibilityResult {
         let view = SnapshotView::new(
             Some(snapshot),
@@ -418,8 +426,24 @@ mod tests {
                 tick: 1,
                 sequence: 1,
             },
-        );
-        evaluate(path, &view, quests, bank)
+        )
+        .with_bank_memory(Some(bank));
+        evaluate(path, &view, quests)
+    }
+
+    fn must_have_egg_path(
+        selected: &api::game_data::SelectedGameData,
+        quests: &QuestCatalog,
+    ) -> Arc<CompiledPath> {
+        let mut document = decode_cook().unwrap();
+        document.quest.as_mut().unwrap().items = vec![QuestItemDocument {
+            obj: "egg".into(),
+            qty: 1,
+            kind: QuestItemKindDocument::MustHave,
+            acquire: None,
+            from_stage: None,
+        }];
+        compile_uncached_for_test(&document, selected, quests).unwrap()
     }
 
     #[test]
@@ -442,7 +466,7 @@ mod tests {
             used: true,
         }]);
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
-        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default());
+        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemory::default());
         let Eligibility::Blocked(reasons) = result.state else {
             panic!("a below-minimum skill must block the queue row");
         };
@@ -512,7 +536,7 @@ mod tests {
             &compiled_egg.kind,
             RequirementKind::Item(item) if item.item == egg_id && item.count == 1
         ));
-        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default());
+        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemory::default());
         let Eligibility::Blocked(reasons) = result.state else {
             panic!("unmet quest-point and quest-completion gates must block");
         };
@@ -525,27 +549,15 @@ mod tests {
     #[test]
     fn unread_bank_does_not_block_must_have_but_known_empty_bank_does() {
         let (selected, quests, snapshot) = fixture();
-        let mut document = decode_cook().unwrap();
-        document.quest.as_mut().unwrap().items = vec![QuestItemDocument {
-            obj: "egg".into(),
-            qty: 1,
-            kind: QuestItemKindDocument::MustHave,
-            acquire: None,
-            from_stage: None,
-        }];
-        let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
-        assert!(!BankMemo::default().known());
+        let path = must_have_egg_path(&selected, &quests);
+        assert!(!BankMemory::default().known());
         assert_eq!(
-            evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default()).state,
+            evaluate_snapshot(&path, &quests, &snapshot, &BankMemory::default()).state,
             Eligibility::Ready,
             "an unread bank is unknown, not an empty bank"
         );
 
-        let mut known_empty = BankMemo::default();
-        known_empty.update(&crate::native_bank::BankReceipt {
-            counts: Vec::new(),
-            complete: true,
-        });
+        let known_empty = BankMemory::seeded(&[], Origin::Session);
         let result = evaluate_snapshot(&path, &quests, &snapshot, &known_empty);
         let Eligibility::Blocked(reasons) = result.state else {
             panic!("known absence from both pack and bank must block mustHave");
@@ -556,23 +568,66 @@ mod tests {
             .any(|reason| reason.id.as_ref() == expected_id));
     }
 
+    /// design-bank-snapshot §2.4 / §6 bug 7: only a `Session` shortage blocks;
+    /// a `Hint` absence is advisory (the provisioner's scan verifies it) and a
+    /// worn `mustHave` item is carried.
+    #[test]
+    fn hint_absence_and_worn_items_never_block_a_must_have() {
+        let (selected, quests, mut snapshot) = fixture();
+        let path = must_have_egg_path(&selected, &quests);
+        let egg = selected.item_by_alias("egg").expect("egg alias").id;
+
+        let hint_empty = BankMemory::seeded(&[], Origin::Hint);
+        assert_eq!(
+            evaluate_snapshot(&path, &quests, &snapshot, &hint_empty).state,
+            Eligibility::Ready,
+            "a hint that lacks the item is advisory, never a block"
+        );
+        let hint_stocked = BankMemory::seeded(&[(egg, 1)], Origin::Hint);
+        assert_eq!(
+            evaluate_snapshot(&path, &quests, &snapshot, &hint_stocked).state,
+            Eligibility::Ready
+        );
+
+        let session_empty = BankMemory::seeded(&[], Origin::Session);
+        snapshot.seed_equipment(vec![ItemView {
+            def: api::obj_names::ItemDefView {
+                id: egg,
+                name: Some("Egg".into()),
+                stackable: false,
+                members: false,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Equipment,
+            action_family: ItemActionFamily::Component,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        }]);
+        assert_eq!(
+            evaluate_snapshot(&path, &quests, &snapshot, &session_empty).state,
+            Eligibility::Ready,
+            "a worn mustHave item is carried; the empty session bank does not block it"
+        );
+        snapshot.seed_equipment(Vec::new());
+        assert!(
+            matches!(
+                evaluate_snapshot(&path, &quests, &snapshot, &session_empty).state,
+                Eligibility::Blocked(_)
+            ),
+            "with nothing worn the session-known absence blocks again"
+        );
+    }
+
     #[test]
     fn item_requirements_are_ignored_after_the_quest_starts_and_complete_is_done() {
         let (selected, quests, mut snapshot) = fixture();
-        let mut document = decode_cook().unwrap();
-        document.quest.as_mut().unwrap().items = vec![QuestItemDocument {
-            obj: "egg".into(),
-            qty: 1,
-            kind: QuestItemKindDocument::MustHave,
-            acquire: None,
-            from_stage: None,
-        }];
-        let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
-        let mut known_empty = BankMemo::default();
-        known_empty.update(&crate::native_bank::BankReceipt {
-            counts: Vec::new(),
-            complete: true,
-        });
+        let path = must_have_egg_path(&selected, &quests);
+        let known_empty = BankMemory::seeded(&[], Origin::Session);
         snapshot.seed_quest_statuses(
             vec![QuestStatusView {
                 name: "Cook's Assistant".into(),
@@ -608,7 +663,7 @@ mod tests {
             members: false,
             ..WorldStateView::default()
         });
-        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default());
+        let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemory::default());
         let Eligibility::Blocked(reasons) = result.state else {
             panic!("a free-to-play world must block a members quest");
         };
@@ -619,7 +674,7 @@ mod tests {
             ..WorldStateView::default()
         });
         assert_eq!(
-            evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default()).state,
+            evaluate_snapshot(&path, &quests, &snapshot, &BankMemory::default()).state,
             Eligibility::Ready
         );
     }

@@ -1,5 +1,4 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
-use super::bank_memo::BankMemo;
 use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
     StepOutcome, StepRun, StepTraceEvent,
@@ -44,27 +43,13 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
 
-// Reports a newly published bank receipt. Unchanged stamps avoid receipt inspection.
-fn publish_in_flight_bank_receipt(
-    outcome: &StepOutcome,
-    bank: &mut BankMemo,
-    published_bank_receipt: &mut Option<EvidenceStamp>,
-    dirty: &mut bool,
-) -> bool {
-    if *published_bank_receipt == Some(outcome.evidence) {
-        return false;
-    }
-    let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
-        receipt
-            .as_any()
-            .downcast_ref::<crate::native_bank::BankReceipt>()
-    }) else {
-        return false;
-    };
-    bank.update(receipt);
-    *published_bank_receipt = Some(outcome.evidence);
-    *dirty = true;
-    true
+/// Whether the frame's bank memory is known (`Hint` or `Session`): the gate
+/// for a predicate scan — an `Unknown` bank is the only one a trip can teach.
+fn bank_known(tick: &NativeTick<'_>) -> bool {
+    tick.cx
+        .snapshot()
+        .bank_memory()
+        .is_some_and(api::bank_memory::BankMemory::known)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,13 +228,12 @@ pub struct Quester {
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
     custom_reader: Option<Box<dyn StepRun>>,
-    custom_read_after: Option<api::quest_progress::EvidenceStamp>,
+    custom_read_after: Option<EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
     pair_admission_since: Option<Duration>,
     pair_begin_since: Option<Duration>,
     pair_admitted: bool,
     gang_reader: super::gang::GangRead,
-    bank: BankMemo,
     last_read: Option<Arc<JournalRead>>,
     journal_text: Option<Arc<str>>,
     read_requested: bool,
@@ -258,7 +242,7 @@ pub struct Quester {
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
     /// Freshness boundary for the active step; overwritten at each successful begin.
-    step_after: api::quest_progress::EvidenceStamp,
+    step_after: EvidenceStamp,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
     trace: RunTrace,
     parked_step: Option<ParkedStep>,
@@ -266,7 +250,6 @@ pub struct Quester {
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
     last_outcome: Option<StepOutcome>,
-    published_bank_receipt: Option<EvidenceStamp>,
     /// Latest Combat family receipt, kept after later non-combat steps begin
     /// so Path `combat_end` skip_if can still select the caller walk-out
     /// (design-combat.md:664).
@@ -569,7 +552,6 @@ impl Quester {
             pair_begin_since: None,
             pair_admitted: false,
             gang_reader: super::gang::GangRead::default(),
-            bank: BankMemo::default(),
             last_read: None,
             journal_text: None,
             read_requested: false,
@@ -586,7 +568,6 @@ impl Quester {
             prayer_cleanup_pending: false,
             prayer_cleanup_owned: RaisedPrayers::empty(),
             last_outcome: None,
-            published_bank_receipt: None,
             last_combat: None,
             published_receipt: None,
             advances: false,
@@ -744,7 +725,6 @@ impl Quester {
                 .map(std::slice::from_ref)
                 .unwrap_or(&[]),
             required_after,
-            bank: &self.bank,
             banks: &self.banks,
             choices: &self.choices,
         };
@@ -784,14 +764,6 @@ impl Quester {
         self.dirty |= self.provisioner.status_revision() != revision;
         match result {
             Poll::Pending => {
-                if let Some(outcome) = self.provisioner.in_flight_outcome() {
-                    publish_in_flight_bank_receipt(
-                        outcome,
-                        &mut self.bank,
-                        &mut self.published_bank_receipt,
-                        &mut self.dirty,
-                    );
-                }
                 if self.provisioner.needs_progress_read() {
                     self.needs_read = true;
                     self.dirty = true;
@@ -799,8 +771,10 @@ impl Quester {
                 false
             }
             Poll::Ready(Ok(ProvisionEvent::Ready)) => true,
-            Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt))) => {
-                self.bank.update(&receipt);
+            Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {
+                // The open table reached the account's bank memory through the
+                // host's per-frame observe (design-bank-snapshot §1.3); the
+                // step only needs to know its scan is over.
                 if let Some(step) = self.step.as_mut() {
                     step.bank_scan_completed();
                 }
@@ -808,9 +782,7 @@ impl Quester {
                 false
             }
             Poll::Ready(Ok(ProvisionEvent::Acquired)) => {
-                self.published_bank_receipt = None;
                 // Inventory changes outside the bank do not change its stock.
-                // Recipe bank operations already publish their own receipts.
                 self.dirty = true;
                 false
             }
@@ -833,7 +805,6 @@ impl Quester {
                 // policy too; it must not turn one transient family refusal into
                 // an immediate parked quest.
                 self.provisioner.cancel();
-                self.published_bank_receipt = None;
                 self.record_step_failure(error, tick);
                 false
             }
@@ -852,7 +823,6 @@ impl Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]),
                 required_after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -868,7 +838,6 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
-        self.published_bank_receipt = None;
         self.trace.flush_repeats(tick.output);
         self.trace.terminal(
             tick.output,
@@ -1401,7 +1370,6 @@ impl Quester {
         self.provisioner.cancel();
         self.clear_prayers = None;
         self.last_outcome = None;
-        self.published_bank_receipt = None;
         self.journal = None;
         self.custom_reader = None;
         self.custom_read_after = None;
@@ -1719,7 +1687,6 @@ impl Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -1753,7 +1720,6 @@ impl Quester {
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after: after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -1877,7 +1843,6 @@ impl Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -1900,7 +1865,6 @@ impl Quester {
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after: after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -2183,7 +2147,6 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
                     outcome: self.last_outcome.as_ref(),
-                    bank: &self.bank,
                 };
                 self.current_step()
                     .map(|step| step.settle.evaluate(&pred))
@@ -2289,7 +2252,6 @@ impl Script for Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]);
                 let outcome = self.last_combat.as_ref().or(self.last_outcome.as_ref());
-                let bank = &self.bank;
                 let stage = self
                     .stage
                     .as_ref()
@@ -2304,7 +2266,6 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
                     outcome,
-                    bank,
                 };
                 match select_with_skips(path, seq_index, &pred, |step| {
                     trace.record(
@@ -2344,7 +2305,7 @@ impl Script for Quester {
                             self.path.id.0
                         ),
                     );
-                    if requires_bank && !self.bank.known() {
+                    if requires_bank && !bank_known(tick) {
                         self.start_predicate_bank_scan(tick);
                         self.selection_since = None;
                         self.publish(tick.output);
@@ -2442,7 +2403,6 @@ impl Script for Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -2495,8 +2455,9 @@ impl Script for Quester {
         let bank_scan_active = self.provisioner.bank_phase().is_some();
         let bank_scan_status =
             self.step.is_some() && self.provisioner.status().phase == ProvisionPhase::Scanning;
-        if (needs_bank_scan && !self.bank.known()) || bank_scan_active || bank_scan_status {
-            if needs_bank_scan && !self.bank.known() && !bank_scan_active {
+        let bank_known = bank_known(tick);
+        if (needs_bank_scan && !bank_known) || bank_scan_active || bank_scan_status {
+            if needs_bank_scan && !bank_known && !bank_scan_active {
                 self.start_predicate_bank_scan(tick);
             }
             if !self.poll_provision(tick) {
@@ -2515,7 +2476,6 @@ impl Script for Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]),
                 required_after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -2533,22 +2493,6 @@ impl Script for Quester {
         }
         match poll {
             Poll::Pending => {
-                if let Some(outcome) = self.step.as_ref().and_then(|step| step.in_flight_outcome())
-                {
-                    let carries_bank_receipt = publish_in_flight_bank_receipt(
-                        outcome,
-                        &mut self.bank,
-                        &mut self.published_bank_receipt,
-                        &mut self.dirty,
-                    );
-                    if carries_bank_receipt {
-                        self.last_outcome = Some(StepOutcome {
-                            progress: outcome.progress.clone(),
-                            evidence: outcome.evidence,
-                            receipt: outcome.receipt.clone(),
-                        });
-                    }
-                }
                 if self
                     .step
                     .as_ref()
@@ -2572,13 +2516,8 @@ impl Script for Quester {
                 if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
                     self.active_loadout = Some(loadout);
                 }
-                if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
-                    receipt
-                        .as_any()
-                        .downcast_ref::<crate::native_bank::BankReceipt>()
-                }) {
-                    self.bank.update(receipt);
-                }
+                // The bank's rows are the host's to observe (design-bank-snapshot
+                // §1.3); a bank receipt carries nothing the memory lacks.
                 if outcome.receipt.as_ref().is_some_and(|receipt| {
                     receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
                 }) {
@@ -2722,7 +2661,6 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
-                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.settling = false;
@@ -2741,7 +2679,6 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
-                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
@@ -2772,7 +2709,6 @@ impl Script for Quester {
             self.clear_prayers = None;
             self.journal = None;
             self.needs_read = true;
-            self.published_bank_receipt = None;
             self.last_outcome = None;
             self.last_combat = None;
             self.advances = false;
@@ -2807,7 +2743,6 @@ impl Script for Quester {
         self.waiting = None;
         self.clear_prayers = None;
         self.prayer_cleanup_pending = false;
-        self.published_bank_receipt = None;
         self.last_outcome = None;
         self.last_combat = None;
     }
@@ -3086,12 +3021,7 @@ impl QueuedQuester {
 
     fn activate(&mut self, tick: &mut NativeTick<'_>, path: Arc<CompiledPath>) {
         let index = self.active_index.expect("preparing queue row");
-        let result = super::eligibility::evaluate(
-            &path,
-            &tick.cx.snapshot(),
-            &self.quests,
-            &BankMemo::default(),
-        );
+        let result = super::eligibility::evaluate(&path, &tick.cx.snapshot(), &self.quests);
         self.gate_fields = skill_status_fields(&result.skill_gates);
         match result.state {
             super::eligibility::Eligibility::Done => self.queue.mark_done(index),
@@ -3530,14 +3460,14 @@ mod tests {
         );
     }
 
+    /// The Quester holds no bank table of its own (design-bank-snapshot D8):
+    /// the account's memory is the host's and reaches it as a borrow.
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        let bank_bytes = std::mem::size_of::<BankMemo>();
         assert!(std::mem::size_of::<QueuedQuester>() < 4096);
-        eprintln!("Quester size_of={bytes}; BankMemo size_of={bank_bytes}, heap=0");
+        eprintln!("Quester size_of={bytes}; bank memory borrowed, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
-        assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
     #[test]
     fn combat_report_is_exposed_in_quester_status() {
@@ -3797,7 +3727,6 @@ mod tests {
                     quests: &script.quests,
                     progress: &[],
                     required_after,
-                    bank: &script.bank,
                     banks: &script.banks,
                     choices: &script.choices,
                 };
@@ -5360,7 +5289,9 @@ mod tests {
         script: Quester,
         snapshot: api::snapshot::GameSnapshot,
         ledger: Option<Box<crate::native::ledger::Ledger>>,
-        bank: api::named_banks::NamedBank,
+        /// The account's bank memory, filled the way the host fills it.
+        bank: api::bank_memory::BankMemory,
+        bank_fixture: api::named_banks::NamedBank,
         bank_tile: api::snapshot::WorldTile,
         stock: Vec<api::snapshot::ItemView>,
         selected_bank: bool,
@@ -5369,8 +5300,11 @@ mod tests {
 
     impl BankSkipFixture {
         fn drive(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
-            let flow = super::super::families::tests::with_tick_output(
+            // The host's per-frame observe (design-bank-snapshot §1.3).
+            self.bank.track(&self.snapshot, tick);
+            let flow = super::super::families::tests::with_tick_output_bank(
                 &self.snapshot,
+                Some(&self.bank),
                 &mut self.ledger,
                 tick,
                 output,
@@ -5408,7 +5342,7 @@ mod tests {
                             access_tile: self.bank_tile,
                             kind: crate::bank::PickKind::Reachable,
                             access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank,
+                                bank: self.bank_fixture,
                                 stand_tile: self.bank_tile,
                                 kind: crate::bank::AccessKind::Booth,
                                 stand_op: 1,
@@ -5556,7 +5490,8 @@ mod tests {
             script,
             snapshot,
             ledger: None,
-            bank,
+            bank: api::bank_memory::BankMemory::default(),
+            bank_fixture: bank,
             bank_tile,
             stock,
             selected_bank: false,
@@ -5572,7 +5507,7 @@ mod tests {
         ] {
             let mut fixture = bank_skip_fixture(bank_count, false);
             let mut output = StatusCapture::default();
-            assert!(!fixture.script.bank.known());
+            assert!(!fixture.bank.known());
 
             fixture.drive(1, &mut output);
             assert_eq!(
@@ -5588,7 +5523,7 @@ mod tests {
 
             for tick in 2..=64 {
                 fixture.drive(tick, &mut output);
-                if fixture.script.bank.known() && fixture.script.step.is_some() {
+                if fixture.bank.known() && fixture.script.step.is_some() {
                     break;
                 }
             }
@@ -5598,9 +5533,12 @@ mod tests {
                 fixture.opened_bank,
                 "the real scan opens the selected stand"
             );
-            assert!(fixture.script.bank.known(), "the scan publishes a receipt");
+            assert!(
+                fixture.bank.known(),
+                "the scan opens the bank and the host observes it"
+            );
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
-            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(fixture.bank.count(logs_id), Some(bank_count));
             assert_eq!(
                 fixture.script.current_step().map(|step| step.id.0.as_ref()),
                 Some(expected_step),
@@ -5635,9 +5573,7 @@ mod tests {
             for tick in 4..=64 {
                 fixture.drive(tick, &mut output);
                 let status = output.0.last().unwrap();
-                if fixture.script.bank.known()
-                    && status_text(status, "child_step_id") == expected_step
-                {
+                if fixture.bank.known() && status_text(status, "child_step_id") == expected_step {
                     break;
                 }
             }
@@ -5647,12 +5583,9 @@ mod tests {
                 fixture.opened_bank,
                 "the child scan opens the selected stand"
             );
-            assert!(
-                fixture.script.bank.known(),
-                "the child scan publishes a receipt"
-            );
+            assert!(fixture.bank.known(), "the child scan observes the bank");
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
-            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(fixture.bank.count(logs_id), Some(bank_count));
             assert_eq!(
                 status_text(output.0.last().unwrap(), "child_step_id"),
                 expected_step,
@@ -5727,3 +5660,7 @@ mod cook_bank_tests;
 #[cfg(test)]
 #[path = "cook_dialogue_runner_tests.rs"]
 mod cook_dialogue_tests;
+
+#[cfg(test)]
+#[path = "squire_bank_runner_tests.rs"]
+mod squire_bank_tests;
