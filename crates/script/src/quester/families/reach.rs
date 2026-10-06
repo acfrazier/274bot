@@ -216,6 +216,7 @@ impl Reach {
                     *id,
                     name.as_deref(),
                     Some(&self.args.op),
+                    self.args.anchor,
                     PROBE_RADIUS,
                     self.args.target_tile,
                     self.args.reachable_only,
@@ -285,6 +286,7 @@ impl Reach {
                     None,
                     Some(name),
                     Some(&self.args.op),
+                    self.args.anchor,
                     self.args.radius,
                     self.args.target_tile,
                     self.args.reachable_only,
@@ -461,6 +463,7 @@ pub fn target_available(
     kind: &ReachKind,
     op: &str,
     radius: i32,
+    anchor: Option<WorldTile>,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 ) -> bool {
@@ -482,6 +485,7 @@ pub fn target_available(
             *id,
             name.as_deref(),
             Some(op),
+            anchor,
             PROBE_RADIUS,
             target_tile,
             reachable_only,
@@ -492,6 +496,7 @@ pub fn target_available(
             None,
             Some(name),
             Some(op),
+            anchor,
             radius,
             target_tile,
             reachable_only,
@@ -553,11 +558,15 @@ fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
     )
 }
 
+/// An authored anchor owns the search origin; live player distance is only
+/// used when no anchor was supplied. Exact target tiles remain pinned.
+#[allow(clippy::too_many_arguments)]
 pub fn nearest_loc<'a>(
     cx: &'a ActionContext<'_>,
     id: Option<i32>,
     name: Option<&str>,
     op: Option<&str>,
+    anchor: Option<WorldTile>,
     radius: i32,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
@@ -581,7 +590,8 @@ pub fn nearest_loc<'a>(
                     .iter()
                     .flatten()
                     .any(|a| a.eq_ignore_ascii_case(op))
-            }) && (radius <= 0 || loc.distance <= radius)
+            }) && (radius <= 0
+                || anchor.map_or(loc.distance, |anchor| chebyshev(anchor, loc.tile)) <= radius)
                 && target_tile.is_none_or(|tile| loc.tile == tile)
                 && (!reachable_only
                     || cx.snapshot().reach().is_some_and(|reach| {
@@ -594,7 +604,26 @@ pub fn nearest_loc<'a>(
                         )
                     }))
         })
-        .min_by_key(|loc| loc.distance)
+        .min_by_key(|loc| anchor.map_or(loc.distance, |anchor| chebyshev(anchor, loc.tile)))
+}
+
+/// The same live stand predicate used by native walks, including footprint
+/// approach masks and straight-wall operations that do not have a footprint.
+pub fn loc_arrived(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> bool {
+    let snapshot = cx.snapshot();
+    snapshot.here().is_some_and(|here| {
+        if loc_walk_id(loc).is_some() {
+            snapshot.walk_loc_arrived(here.value, loc.tile, 1, loc.id)
+        } else {
+            (loc.layer == api::snapshot::LocLayer::Wall
+                && door_wall_reachable(here.value, loc, snapshot.reach().map(|reach| reach.value)))
+                || snapshot.walk_arrived(here.value, loc.tile, 1)
+        }
+    })
+}
+
+pub fn loc_walk_id(loc: &api::snapshot::LocView) -> Option<i32> {
+    api::query::loc_approach::distance_from(loc, loc.tile).map(|_| loc.id)
 }
 
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {

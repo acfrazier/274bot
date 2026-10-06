@@ -2487,10 +2487,13 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
-        let needs_bank_scan = self.step.as_ref().is_some_and(|step| step.needs_bank_scan());
+        let needs_bank_scan = self
+            .step
+            .as_ref()
+            .is_some_and(|step| step.needs_bank_scan());
         let bank_scan_active = self.provisioner.bank_phase().is_some();
-        let bank_scan_status = self.step.is_some()
-            && self.provisioner.status().phase == ProvisionPhase::Scanning;
+        let bank_scan_status =
+            self.step.is_some() && self.provisioner.status().phase == ProvisionPhase::Scanning;
         if (needs_bank_scan && !self.bank.known()) || bank_scan_active || bank_scan_status {
             if needs_bank_scan && !self.bank.known() && !bank_scan_active {
                 self.start_predicate_bank_scan(tick);
@@ -5404,7 +5407,7 @@ mod tests {
                             access_tile: self.bank_tile,
                             kind: crate::bank::PickKind::Reachable,
                             access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank.clone(),
+                                bank: self.bank,
                                 stand_tile: self.bank_tile,
                                 kind: crate::bank::AccessKind::Booth,
                                 stand_op: 1,
@@ -5431,12 +5434,8 @@ mod tests {
                         chat_since: 0,
                     },
                 );
-                self.snapshot.seed_bank_observation(
-                    1,
-                    tick,
-                    Some(self.stock.clone()),
-                    Vec::new(),
-                );
+                self.snapshot
+                    .seed_bank_observation(1, tick, Some(self.stock.clone()), Vec::new());
                 self.opened_bank = true;
             } else if self
                 .ledger
@@ -5502,32 +5501,30 @@ mod tests {
             level: 0,
         };
         let bank = api::named_banks::NamedBank::new("Runner predicate bank", bank_tile);
-        script.banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
-            bank.clone(),
-        ]));
+        script.banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
         let logs = script.selected.item_by_alias("logs").unwrap();
-        let stock = (bank_count > 0)
-            .then(|| {
-                vec![api::snapshot::ItemView {
-                    def: api::obj_names::ItemDefView {
-                        id: logs.id,
-                        name: Some("Logs".into()),
-                        stackable: false,
-                        members: false,
-                        base_value: 0,
-                        noted: false,
-                        certificate_link: -1,
-                        certificate_template: -1,
-                    },
-                    container: ItemContainer::Bank,
-                    action_family: ItemActionFamily::Component,
-                    slot: 0,
-                    count: bank_count,
-                    actions: vec![Some("Withdraw-1".into())],
-                    component_id: 7,
-                }]
-            })
-            .unwrap_or_default();
+        let stock = if bank_count > 0 {
+            vec![api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: logs.id,
+                    name: Some("Logs".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Bank,
+                action_family: ItemActionFamily::Component,
+                slot: 0,
+                count: bank_count,
+                actions: vec![Some("Withdraw-1".into())],
+                component_id: 7,
+            }]
+        } else {
+            Vec::new()
+        };
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_local_player(super::super::families::tests::local_player(bank_tile));
         snapshot.seed_locs(vec![LocView {
@@ -5596,15 +5593,15 @@ mod tests {
             }
 
             assert!(fixture.selected_bank, "the real scan selects a bank");
-            assert!(fixture.opened_bank, "the real scan opens the selected stand");
+            assert!(
+                fixture.opened_bank,
+                "the real scan opens the selected stand"
+            );
             assert!(fixture.script.bank.known(), "the scan publishes a receipt");
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
             assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
             assert_eq!(
-                fixture
-                    .script
-                    .current_step()
-                    .map(|step| step.id.0.as_ref()),
+                fixture.script.current_step().map(|step| step.id.0.as_ref()),
                 Some(expected_step),
                 "the observed bank receipt resolves the nested skip predicate"
             );
@@ -5645,8 +5642,14 @@ mod tests {
             }
 
             assert!(fixture.selected_bank, "the child scan selects a real bank");
-            assert!(fixture.opened_bank, "the child scan opens the selected stand");
-            assert!(fixture.script.bank.known(), "the child scan publishes a receipt");
+            assert!(
+                fixture.opened_bank,
+                "the child scan opens the selected stand"
+            );
+            assert!(
+                fixture.script.bank.known(),
+                "the child scan publishes a receipt"
+            );
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
             assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
             assert_eq!(
@@ -5698,7 +5701,9 @@ mod tests {
             script.provisioner.status().phase,
             super::super::provision::ProvisionPhase::Ready
         );
-        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 }
 
