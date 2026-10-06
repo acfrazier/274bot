@@ -1,0 +1,1595 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "demon",
+  "display_name": "Demon Slayer",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [],
+    "items": [],
+    "acquire": {
+      "acquire:traiborn": [
+        {
+          "id": "bank-for-bones",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit_all",
+            "at": "nearest",
+            "keep": [
+              "coins",
+              "bones",
+              "silverlight_key_1",
+              "silverlight_key_2",
+              "silverlight_key_3",
+              "silverlight"
+            ]
+          },
+          "comment": "Traiborn's ritual needs 25 free slots. Keep coins, bones, any keys and Silverlight; everything else goes in before the goblin grind. Skipped once the grind has started (bones held).",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bones"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "bones",
+                    "qty": 25
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "collect-25-bones",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": [
+                "goblin",
+                "goblin_armed",
+                "goblin_helmet"
+              ],
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 12,
+              "auto_retaliate": true
+            },
+            "stand": {
+              "tile": [
+                3147,
+                3231,
+                0
+              ],
+              "source": "C maps/m49_50.jm2:5435-5446 (goblin spawns 3141-3146,3227-3234); walkable field tile east of the spawns"
+            },
+            "area": {
+              "box": [
+                3136,
+                3220,
+                3160,
+                3242,
+                0
+              ],
+              "source": "C maps/m49_50.jm2:5435-5446; the Draynor jail-guard zones (always aggressive) end at x=3135 so the field box stays east of them"
+            },
+            "lost_radius": 16,
+            "kill_budget_ticks": 100,
+            "loadout": "bones",
+            "loot": [
+              {
+                "obj": "bones",
+                "qty": 25
+              }
+            ],
+            "until": {
+              "Fact": {
+                "kind": "item_count_at_least",
+                "version": 1,
+                "args": {
+                  "obj": "bones",
+                  "qty": 25
+                }
+              }
+            }
+          },
+          "comment": "Every goblin drops bones (npc_combat.param:29-31 death_drop default; drop tables/scripts/goblin.rs2:8-14). Loot stops at 25 held.",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "bones",
+                    "qty": 25
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "bones",
+                    "qty": 25
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "walk-traiborn-floor",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3105,
+              3160,
+              1
+            ],
+            "source": "C ladders+stairs/scripts/stairs.rs2:204 (spiralstairs 0_48_49_31_23 -> 1_48_49_33_24); maps/m48_49.jm2:6251 (traiborn spawn 3112,3162,1)",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3112,
+                      3162,
+                      1
+                    ],
+                    "radius": 10
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3105,
+                  3160,
+                  1
+                ],
+                "radius": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "ask-traiborn",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "traiborn",
+            "anchor": {
+              "tile": [
+                3112,
+                3162,
+                1
+              ],
+              "source": "C maps/m48_49.jm2:6251; areas/area_draynor/scripts/traiborn.rs2:1-8,34-39,41-54,130-147"
+            },
+            "leash": 4,
+            "prefer": [
+              "I need to get a key given to you by Sir Prysin.",
+              "Well, have you got any keys knocking around?",
+              "I'll get the bones for you."
+            ]
+          },
+          "comment": "At key-hunt varp 2 this opens the ritual (varp 3). At varp 3-27 Traiborn instead takes every bone held (traiborn.rs2:10-32), so a restart here is harmless and may already yield the key.",
+          "advances": true,
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "silverlight_key_1"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "give-traiborn-bones",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "traiborn",
+            "anchor": {
+              "tile": [
+                3112,
+                3162,
+                1
+              ],
+              "source": "C maps/m48_49.jm2:6251; areas/area_draynor/scripts/traiborn.rs2:10-32,191-212"
+            },
+            "leash": 4,
+            "prefer": [
+              "I need to get a key given to you by Sir Prysin.",
+              "Well, have you got any keys knocking around?",
+              "I'll get the bones for you."
+            ]
+          },
+          "comment": "Traiborn takes one bone per tick (25 ticks), then the incantation pages and the key (traiborn.rs2:22-32,201-212).",
+          "advances": true,
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "silverlight_key_1"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "silverlight_key_1"
+              }
+            }
+          }
+        }
+      ],
+      "acquire:drain": [
+        {
+          "id": "buy-bucket",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper2",
+              "anchor": {
+                "tile": [
+                  3218,
+                  3415,
+                  0
+                ],
+                "source": "C maps/m50_53.jm2:12901 (generalshopkeeper2 spawn); areas/area_varrock/configs/varrock.inv:22-36 (generalshop2 stock4 bucket_empty)"
+              }
+            },
+            "obj": "bucket_empty",
+            "qty": 1,
+            "est_gp": 20
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_water"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "sewer"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_empty"
+              }
+            }
+          }
+        },
+        {
+          "id": "fill-bucket",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "bucket_empty",
+            "target": {
+              "loc": "sink2"
+            },
+            "anchor": {
+              "tile": [
+                3223,
+                3495,
+                0
+              ],
+              "source": "C maps/m50_54.jm2:7833 (sink2 at 3224,3494 in the palace kitchen; kitchen floor tile west of it); general_use/scripts/water_sources.rs2:63-84"
+            },
+            "radius": 3,
+            "product": "bucket_water"
+          },
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_water"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "sewer"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_water"
+              }
+            }
+          }
+        },
+        {
+          "id": "wash-key-down-drain",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "bucket_water",
+            "target": {
+              "loc": "questdrain"
+            },
+            "anchor": {
+              "tile": [
+                3225,
+                3495,
+                0
+              ],
+              "source": "C maps/m50_54.jm2:7899 (questdrain wall decor on the outside face of the kitchen's east wall; the engine reaches a straight wall decor from its own tile, through the kitchen's east door loc_1514 at 3224,3493); quests/quest_demon/scripts/demon_slayer.rs2:23-40"
+            },
+            "radius": 3,
+            "product": "bucket_empty",
+            "settle_ms": 10000
+          },
+          "comment": "The key appears on the sewer floor at 3225,9897 for 300 ticks (demon_slayer.rs2:39). Pouring again while the key is held or banked does nothing (demon_slayer.rs2:31).",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "sewer"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": [
+                  "i think i've washed the key down to the sewer"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "open-manhole",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "manholeclosed"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3237,
+                3458,
+                0
+              ],
+              "source": "C maps/m50_54.jm2:8342 (manholeclosed); general_use/scripts/manholes.rs2:1-6"
+            },
+            "radius": 3,
+            "wait_if_missing": true
+          },
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "sewer"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "manholeopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "manholeopen"
+              }
+            }
+          }
+        },
+        {
+          "id": "climb-down-manhole",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "manholeopen"
+            },
+            "op": "Climb down",
+            "anchor": {
+              "tile": [
+                3237,
+                3458,
+                0
+              ],
+              "source": "C maps/m50_54.jm2:8342; general_use/scripts/manholes.rs2:8-10 (telejump z+6400 -> 3237,9858,0)"
+            },
+            "radius": 3,
+            "wait_if_missing": true,
+            "settle_ms": 10000
+          },
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "sewer"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "sewer"
+              }
+            }
+          }
+        },
+        {
+          "id": "walk-to-sewer-key",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3225,
+              9897,
+              0
+            ],
+            "source": "C quests/quest_demon/scripts/demon_slayer.rs2:39 (obj_add 0_50_154_25_41 = 3225,9897,0)",
+            "radius": 1,
+            "cross": [
+              "giantspider2@3220,9888,0",
+              "giantspider2@3217,9889,0",
+              "giantspider2@3217,9886,0",
+              "zombie_armed@3226,9903,0",
+              "zombie_armed@3224,9906,0",
+              "zombie_armed@3230,9903,0",
+              "zombie_armed@3230,9906,0"
+            ]
+          },
+          "comment": "The key tile sits inside three giant-spider zones (level 27, aggressive up to combat 54); the zombie zones only matter below combat 49. Named per spawn from maps/m50_154.jm2:8853-8872.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3225,
+                      9897,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3225,
+                  9897,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "take-sewer-key",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "ground": "silverlight_key_3"
+            },
+            "op": "Take",
+            "anchor": {
+              "tile": [
+                3225,
+                9897,
+                0
+              ],
+              "source": "C quests/quest_demon/scripts/demon_slayer.rs2:39"
+            },
+            "radius": 3,
+            "wait_if_missing": true
+          },
+          "advances": false,
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "silverlight_key_3"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "silverlight_key_3"
+              }
+            }
+          }
+        },
+        {
+          "id": "climb-out-of-sewer",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ladder_from_cellar"
+            },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [
+                3237,
+                9858,
+                0
+              ],
+              "source": "C maps/m50_154.jm2:7911 (ladder_from_cellar); ladders+stairs/scripts/ladders.rs2:87-94"
+            },
+            "radius": 3,
+            "wait_if_missing": true,
+            "settle_ms": 10000
+          },
+          "advances": false,
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "sewer"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "sewer"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 200,
+    "loadouts": {
+      "bones": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "rune_scimitar"
+        },
+        "carry": []
+      },
+      "delrith": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "silverlight"
+        },
+        "carry": [
+          {
+            "item": "lobster",
+            "qty": 4
+          }
+        ]
+      }
+    },
+    "areas": {
+      "sewer": {
+        "boxes": [
+          [
+            3200,
+            9856,
+            3263,
+            9919,
+            0
+          ]
+        ],
+        "source": "C maps/m50_154.jm2 (Varrock sewer map square); quests/quest_demon/scripts/demon_slayer.rs2:39"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:bones",
+      "obj:bucket_empty",
+      "obj:bucket_water",
+      "obj:silverlight_key_1",
+      "obj:silverlight_key_2",
+      "obj:silverlight_key_3",
+      "obj:silverlight"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:demon",
+      "progress": {
+        "colour": {
+          "not_started": "demon:0",
+          "in_progress": "demon:1",
+          "complete": "demon:30"
+        },
+        "rules": [
+          {
+            "stage": "demon:30",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": 30
+          },
+          {
+            "stage": "demon:29",
+            "all": [
+              "now i should go to the stone circle"
+            ],
+            "varp": 29
+          },
+          {
+            "stage": "demon:2",
+            "all": [
+              "3 keys"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "demon:1",
+            "all": [
+              "i should ask sir prysin"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "demon:0",
+            "all": [
+              "i can start this quest"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "bone-gathering-kit",
+          "kind": "loadout",
+          "version": 1,
+          "args": {
+            "loadout": "bones",
+            "at": "nearest"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "any": [
+                      "demon:29",
+                      "demon:30"
+                    ]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "bones"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loadout_ready",
+              "version": 1,
+              "args": {
+                "loadout": "bones"
+              }
+            }
+          }
+        },
+        {
+          "id": "demon-coin-float",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 200
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "Aris takes 1 coin to start (gypsy.rs2:162-165); the bucket costs a few coins.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "any": [
+                      "demon:30"
+                    ]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "coins",
+                    "qty": 50
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "coins",
+                "qty": 50
+              }
+            }
+          }
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "demon:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-aris",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "aris",
+                "anchor": {
+                  "tile": [
+                    3203,
+                    3424,
+                    0
+                  ],
+                  "source": "C maps/m50_53.jm2:12895 (aris spawn); areas/area_varrock/scripts/gypsy.rs2:77-100,159-191,233-239"
+                },
+                "leash": 6,
+                "prefer": [
+                  "Ok, here you go.",
+                  "Okay, where is he? I'll kill him for you!",
+                  "Okay, thanks. I'll do my best to stop the demon."
+                ]
+              },
+              "comment": "Needs 1 coin held. The varp is set before the last two menus (gypsy.rs2:238); the closing preference stops the incantation/Silverlight loop.",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "any": [
+                      "demon:1"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "demon:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-prysin",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "sir_prysin",
+                "anchor": {
+                  "tile": [
+                    3204,
+                    3473,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11740 (sir_prysin spawn); areas/area_varrock/scripts/sir_prysin.rs2:7-15,17-30,78-132,189-191"
+                },
+                "leash": 6,
+                "prefer": [
+                  "Gypsy Aris said I should come and talk to you.",
+                  "I need to find Silverlight.",
+                  "So give me the keys!",
+                  "Well I'd better go key hunting."
+                ]
+              },
+              "comment": "Varp 2 is set when Prysin lists the three keys (sir_prysin.rs2:123); every later menu offers 'Well I'd better go key hunting.'",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "any": [
+                      "demon:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "demon:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "retrieve-banked-keys",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "silverlight_key_1",
+                    "qty": 1
+                  },
+                  {
+                    "obj": "silverlight_key_2",
+                    "qty": 1
+                  },
+                  {
+                    "obj": "silverlight_key_3",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "A banked drain key stops the drain from giving another (demon_slayer.rs2:31) and a banked Traiborn key changes his dialogue (traiborn.rs2:2); withdraw first.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "silverlight_key_1"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "silverlight_key_2"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "silverlight_key_3"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "silverlight_key_1"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "silverlight_key_2"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "silverlight_key_3"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "traiborn-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:traiborn"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_1"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-rovin-tower",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3204,
+                  3497,
+                  2
+                ],
+                "source": "C ladders+stairs/scripts/stairs.rs2:202,261 (Varrock Palace NW tower spiral stairs 3202,3497 -> level 2 landing 3204,3497); maps/m50_54.jm2:11766 (captain_rovin spawn)",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight_key_2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3204,
+                          3496,
+                          2
+                        ],
+                        "radius": 8
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3204,
+                      3497,
+                      2
+                    ],
+                    "radius": 3
+                  }
+                }
+              }
+            },
+            {
+              "id": "rovin-key",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "captain_rovin",
+                "anchor": {
+                  "tile": [
+                    3204,
+                    3496,
+                    2
+                  ],
+                  "source": "C maps/m50_54.jm2:11766; areas/area_varrock/scripts/captain_rovin.rs2:4-6,27-45,57-62"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Yes I know, but this is important.",
+                  "There's a demon who wants to invade this city."
+                ]
+              },
+              "comment": "Rovin's third option exists only during the key hunt (captain_rovin.rs2:60-61) and he hands the key every time it is asked for.",
+              "advances": false,
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_2"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_2"
+                  }
+                }
+              }
+            },
+            {
+              "id": "drain-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:drain"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "silverlight_key_3"
+                  }
+                }
+              }
+            },
+            {
+              "id": "receive-silverlight",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "sir_prysin",
+                "anchor": {
+                  "tile": [
+                    3204,
+                    3473,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11740 (sir_prysin spawn); areas/area_varrock/scripts/sir_prysin.rs2:7-15,32-76"
+                },
+                "leash": 6,
+                "prefer": [
+                  "I'm still looking."
+                ]
+              },
+              "comment": "With all three keys held there is no menu: Prysin takes the keys and hands Silverlight after two short delays (sir_prysin.rs2:64-76).",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "any": [
+                      "demon:29"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "demon:29",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "retrieve-banked-silverlight",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "silverlight",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Prysin refuses a replacement while Silverlight is banked (sir_prysin.rs2:274-280).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "silverlight"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "recover-silverlight",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "sir_prysin",
+                "anchor": {
+                  "tile": [
+                    3204,
+                    3473,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11740 (sir_prysin spawn); areas/area_varrock/scripts/sir_prysin.rs2:7-15,193-209"
+                },
+                "leash": 6,
+                "prefer": [
+                  "No, I'm afraid I've lost Silverlight."
+                ]
+              },
+              "advances": false,
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "silverlight"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "delrith-kit",
+              "kind": "loadout",
+              "version": 1,
+              "args": {
+                "loadout": "delrith",
+                "at": "nearest"
+              },
+              "comment": "Delrith can only be attacked with Silverlight wielded (skill_combat/scripts/npc/npc_combat.rs2:174-187).",
+              "skip_if": {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "delrith"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "delrith"
+                  }
+                }
+              }
+            },
+            {
+              "id": "banish-delrith",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "delrith",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 10,
+                  "auto_retaliate": true
+                },
+                "stand": {
+                  "tile": [
+                    3229,
+                    3372,
+                    0
+                  ],
+                  "source": "C maps/m50_52.jm2:8237 (delrith spawn 3229,3369, size 2); open circle tile three north of the spawn, clear of the dolmen and henge stones"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 200,
+                "loadout": "delrith",
+                "finish": {
+                  "npc": "delrith_weakened",
+                  "prefer": [
+                    "Carlem Aber Camerinthum Purchai Gabindo"
+                  ],
+                  "strict": true,
+                  "max_ticks": 100
+                }
+              },
+              "comment": "At 0 hp Delrith becomes delrith_weakened in the same slot for 100 ticks and the player gets the four-way incantation menu; option 4 banishes him, any other restores him at full health (quests/quest_demon/scripts/delrith.rs2:4-55).",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "demon",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "demon:30",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}
