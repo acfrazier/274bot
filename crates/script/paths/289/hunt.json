@@ -1122,9 +1122,10 @@
               "kind": "bank",
               "version": 1,
               "args": { "op": "scan", "at": "nearest" },
-              "comment": "Make bank_has evidence available before the rum-withdrawal skip; on Karamja the rum step is skipped instead.",
+              "comment": "Make bank_has evidence available before the rum-withdrawal skip; on Karamja, or with rum already held, the rum step is skipped instead.",
               "skip_if": { "Any": [
                 { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
                 { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
               ] },
               "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }

@@ -104,7 +104,7 @@
           "advances": false,
           "args": {
             "tile": [3271, 3366, 0],
-            "source": "content/maps/m51_52.jm2:6256-6260; engine/src/engine/GameMap.ts:71-73,162-164 (redberry spawn at [3271,3366,0])",
+            "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164 (redberry spawn at [3271,3366,0])",
             "radius": 3
           },
           "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
@@ -120,14 +120,14 @@
             "op": "Take",
             "anchor": {
               "tile": [3271, 3366, 0],
-              "source": "content/maps/m51_52.jm2:6256-6260; engine/src/engine/GameMap.ts:71-73,162-164"
+              "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164"
             },
             "radius": 12,
             "wait_if_missing": true,
             "until": { "obj": "redberries", "qty": 3 },
             "settle_ms": 300000
           },
-          "comment": "The map has three static redberry spawns in this radius; redberries have no item-specific respawn override, so the default 100-tick (one-minute) respawn applies. The five-minute settle bound allows the ground spawns to return if needed. Sources: content/maps/m51_52.jm2:6256-6260; content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj:157-165; engine/src/cache/config/ObjType.ts:181-182,284-285; engine/src/engine/GameMap.ts:160-175; engine/src/engine/script/handlers/ObjOps.ts:156-159.",
+          "comment": "The map has three static redberry spawns in this radius; redberries have no item-specific respawn override, so the default 100-tick (one-minute) respawn applies. The five-minute settle bound allows the ground spawns to return if needed. Sources: content/maps/m51_52.jm2:6256,6257,6260; content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj:157-165; engine/src/cache/config/ObjType.ts:181-182,284-285; engine/src/engine/GameMap.ts:160-175; engine/src/engine/script/handlers/ObjOps.ts:156-159.",
           "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
           "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } }
         }
