@@ -1,8 +1,11 @@
 name: CI
 
+# fmt and architecture also run on development pushes (dev, release/**), so
+# formatting and crate-boundary drift shows up before a PR to main. The
+# expensive clippy and test lanes stay on main and PRs.
 on:
   push:
-    branches: [main]
+    branches: [main, dev, "release/**"]
   pull_request:
     branches: [main]
 
@@ -43,6 +46,7 @@ jobs:
 
   clippy:
     name: clippy
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -115,6 +119,7 @@ jobs:
 
   test_lanes:
     name: test (${{ matrix.lane }})
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -225,7 +230,7 @@ jobs:
   # Preserve the required `test` status while the expensive commands fan out.
   test:
     name: test
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') }}
     needs: test_lanes
     runs-on: ubuntu-24.04
     steps:
