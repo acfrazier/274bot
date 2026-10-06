@@ -689,7 +689,7 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
 }
 
 #[test]
-fn acquisition_child_identity_is_borrowed_only_while_the_child_is_active() {
+fn acquisition_child_identity_is_borrowed_until_the_child_settles() {
     let snapshot = ready();
     let mut run = policy_s2_recipe_run(Box::new(WaitRun {
         until: Arc::new(AllPlan { items: vec![] }),
@@ -703,7 +703,7 @@ fn acquisition_child_identity_is_borrowed_only_while_the_child_is_active() {
         with_step(tick, |cx| run.poll(cx))
     })
     .is_pending());
-    assert!(run.child_step_id().is_none());
+    assert_eq!(run.child_step_id().unwrap().0.as_ptr(), identity);
     assert!(run.in_flight_outcome().is_some());
     assert!(matches!(
         with_tick(&snapshot, &mut None, 2, |tick| {

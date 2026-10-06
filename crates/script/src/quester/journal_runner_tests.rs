@@ -905,6 +905,7 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
             id: step.id.clone(),
             advances: true,
             skip_if: Arc::clone(&step.skip_if),
+            skip_if_summary: Arc::clone(&step.skip_if_summary),
             settle: Arc::clone(&step.settle),
             plan: Arc::clone(&step.plan),
         }]),

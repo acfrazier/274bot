@@ -798,6 +798,7 @@ fn combat_test_run(
         finish_target_index: None,
         finish_ticks_elapsed: 0,
         finish_last_tick: None,
+        trace_event: None,
     }
 }
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {

@@ -10,7 +10,7 @@ pub struct Selection<'a> {
 
 pub enum SelectionDecision<'a> {
     Selected(Selection<'a>),
-    Unknown,
+    Unknown(Selection<'a>),
     Exhausted,
 }
 
@@ -20,10 +20,25 @@ pub fn select<'a>(
     sequence: usize,
     cx: &PredicateContext<'_, '_>,
 ) -> SelectionDecision<'a> {
+    select_with_skips(path, sequence, cx, |_| {})
+}
+
+pub fn select_with_skips<'a>(
+    path: &'a CompiledPath,
+    sequence: usize,
+    cx: &PredicateContext<'_, '_>,
+    mut on_skip: impl FnMut(&'a CompiledStep),
+) -> SelectionDecision<'a> {
     for (index, step) in path.prelude.iter().enumerate() {
         match step.skip_if.evaluate(cx) {
-            Truth::True => {}
-            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::True => on_skip(step),
+            Truth::Unknown => {
+                return SelectionDecision::Unknown(Selection {
+                    step,
+                    index,
+                    prelude: true,
+                });
+            }
             Truth::False => {
                 return SelectionDecision::Selected(Selection {
                     step,
@@ -42,8 +57,14 @@ pub fn select<'a>(
     let mut best = (i64::MAX, i32::MAX);
     for (index, step) in sequence.steps.iter().enumerate() {
         match step.skip_if.evaluate(cx) {
-            Truth::True => {}
-            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::True => on_skip(step),
+            Truth::Unknown => {
+                return SelectionDecision::Unknown(Selection {
+                    step,
+                    index,
+                    prelude: false,
+                });
+            }
             Truth::False => {
                 let candidate = Selection {
                     step,
@@ -54,7 +75,7 @@ pub fn select<'a>(
                     return SelectionDecision::Selected(candidate);
                 }
                 let (Some(here), Some(anchor)) = (here.as_ref(), step.plan.anchor()) else {
-                    return SelectionDecision::Unknown;
+                    return SelectionDecision::Unknown(candidate);
                 };
                 let distance = (i64::from(here.value.x) - i64::from(anchor.x))
                     .abs()
@@ -214,7 +235,7 @@ mod tests {
                 SelectionDecision::Selected(selected) => {
                     Choice::Step(selected.step.id.0.to_string())
                 }
-                SelectionDecision::Unknown => Choice::Unknown,
+                SelectionDecision::Unknown(_) => Choice::Unknown,
                 SelectionDecision::Exhausted => Choice::Exhausted,
             }
         })
@@ -279,7 +300,7 @@ mod tests {
         };
         let compiled = compile_uncached_for_test(&unknown, &data, &quests).unwrap();
         assert!(
-            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown),
+            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown(_)),
             "unknown inventory must wait, never select an action on login"
         );
     }
