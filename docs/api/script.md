@@ -165,11 +165,17 @@ effective gangs. A separate panel or TUI process is not the same Play. The owned
 Arrav journal determines existing membership; an unjoined account must explicitly
 choose its irreversible gang. Conflicting or ambiguous membership blocks before
 either account joins. A completed quest does not enlist a partner.
-Starts need not be simultaneous. An account waits up to ten minutes of active
-admission time for its saved partner to Start and become ready; expiry parks the
-Path with `partner admission timed out; Stop and Start both accounts`. A peer
-already bound to another Path or protocol is refused before either account is
-reserved.
+Starts and queue order need not match. An account waits up to ten minutes of
+active admission time for its saved partner to Start, become ready and reach
+the same compiled paired Path; expiry parks the Path with
+`partner admission timed out; Stop and Start both accounts`. A peer on an earlier
+solo row or a different Path is not reserved, cancelled or suspended by that wait.
+When a same-Path lease ends before its peer joins, the reservation is released
+without cancelling that peer's run; only joined sides are cancelled.
+Beginning a handoff while the peer is held also waits, without spending failed
+attempts or reserving either account, for up to ten minutes of the actor's active
+time. Expiry parks with
+`partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts`.
 
 Gang proofs belong to the current run, selected content and world. Outside a
 reserved phase, losing readiness clears the cached proof; the same run rereads
@@ -187,8 +193,11 @@ Both inventories must prove the transfer. Stop, Pause, removal, session loss or 
 failed role revokes both phase-owned action authorities before queued work drains.
 Transient guardian, readiness, welcome and same-session boundary holds retain a
 reserved phase. Either account's hold fences both accounts' phase actions and
-pauses both phase deadlines until both accounts are ready again. Death, an actual
-session loss, or the explicit revokers above still cancel the phase.
+pauses the ten-minute inactivity deadline until both accounts are ready again.
+The phase's total limit remains **sixty minutes of wall-clock time**, including
+all holds; expiry revokes both reservations and parks with
+`pair phase exceeded 60-minute wall-clock limit; Stop and Start both accounts`.
+Death, an actual session loss, or the explicit revokers above still cancel the phase.
 The peer blocks rather than being stopped or automatically restarted; explicitly
 Start both accounts again after inspecting server-side items and quest progress.
 Transfer recovery checks bounded native backpack receipts from the matching active
@@ -201,7 +210,7 @@ A paired waiter, including admission before a lease exists, suspends only its
 own gameplay-wedge clock. The actor's gameplay watchdog and both scheduler
 watchdogs remain live. New observed gameplay from a
 joined role, or a peer bound to the same compiled pair, can extend a phase's
-ten-minute inactivity bound, never its sixty-minute active total bound.
+ten-minute inactivity bound, never its sixty-minute wall-clock total bound.
 Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
 Retryable trade-start conditions keep the planned transfer and wait for the next
 eligible frame. A failed, still-owned trade enters bounded decline/close cleanup
@@ -441,16 +450,27 @@ Omission is strict Continue-only for observed chat pages and selected Scroll/Boo
 pages. It drains Continue pages and refuses option menus without sending an
 answer. It leaves unrelated main interfaces untouched. If no page opens, the
 operation waits for acceptance and a newer evidence tick with an observed player
-who is not moving and has no primary animation. Loc/Npc/name interactions require
-their own accepted dispatch receipt. This observation boundary covers pages that
-open on arrival or during the primary animation, without a fixed no-page delay.
-Once the boundary is reached with no page, the normal success conditions can
-complete the step. A page that opens later is outside this optional window.
+who is not moving and has no primary animation. Scene targets also need
+post-acceptance movement or a primary animation unless the player was already
+within interaction range at acceptance. A fresh idle tick is required in either
+case. Adjacent instant scene actions can therefore settle without visible
+activity, while a distant target still requires activity. Loc/Npc/name
+interactions require their own accepted dispatch receipt. This observation
+boundary covers pages that open on arrival or during the primary animation,
+without a fixed no-page delay.
+With omitted dialogue, reaching the `until` count completes immediately, even
+if a page is open or an optional dialogue driver is active. The step does not
+adopt a newly observed page or continue draining an existing one; any remaining
+page is left to the next owner, whether it pre-existed, was opened by the
+accepted action, or appeared while a dialogue driver was waiting. Other
+omission-mode success conditions still use the no-page boundary above.
+`settle_ms` bounds the step even while a page is open and is not extended for
+dialogue draining. A count observed on the exact deadline tick can complete;
+one first observed later times out.
 Use explicit `"continue"` when content requires a page, or the object form when
 it requires menu answers. Explicit `"none"` never touches dialogue and leaves
 those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
-Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
 identities. Book forwarding resolves the script's forward handler separately
 from its last-page visibility marker; generic component names in revision 274
@@ -476,9 +496,12 @@ approach `anchor` still applies to held operations such as Dig.
 Loc/name interaction targets may add `tile: [x,z,level]` and `source` inside
 `target` to select an exact loc rather than the nearest same-definition loc.
 `reachable_only: true` requires a known reachable candidate. `interact.until`
-uses the same `{obj,qty}` inventory-count goal as `use_on.until`; it waits for
-active work, re-arms after progress and idle, and remains bounded by `settle_ms`.
-Count-repeated loc operations also require known reach evidence.
+uses the same `{obj,qty}` inventory-count goal as `use_on.until`; while the
+count is short, it waits for active work and re-arms after progress and idle.
+With omitted dialogue, reaching the count completes immediately even if a page
+is open or an optional dialogue driver is active. The step leaves any remaining
+page to the next owner and does not continue draining it. `settle_ms` bounds the
+step while a page is open and is not extended for dialogue draining.
 
 If the clicked loc disappears or transforms, reach completes only after acceptance
 of that exact dispatched interaction. It does not select a replacement. Authored
@@ -488,8 +511,12 @@ settlement predicates still prove the quest effect.
 "source": "content provenance"}`. The optional tile selects an exact ground
 stack; source and target item ids remain explicit. Inventory-item targets
 dispatch through the host's canonical held-item operation, not an item alias.
-Optional dialogue drains before product/count completion and does not consume
-the operation's product-wait deadline.
+With omitted dialogue and `until`, reaching the count completes immediately
+even if a page is open or an optional dialogue driver is active. The step leaves
+any remaining page to the next owner and does not continue draining it.
+`settle_ms` bounds the step while a page is open and is not extended to drain it.
+For omitted dialogue without a reached `until` count, optional dialogue drains
+before product completion.
 
 For a footprint loc, `use_on` walks to the selected loc's full rotated footprint
 and waits for a legal approach side under live collision and force-approach
@@ -1105,14 +1132,20 @@ Path `cross` names danger-zone exemptions for that walk; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may
 be used with or without that guard.
 
-The guard holds the selected protection prayer without attacking, eating or
-flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces
-one non-terminal `WalkEventKind::Unprotectable` warning for that style and cause.
-The native owner consumes it with `NativeActions::take_walk_event`; the walk
-keeps following and any other held protection remains managed. Quester shows
-the cause under **Walk protection**, for example “Prayer 40 needed for Protect
-from Missiles”, without parking or retrying the step.
-
+The guard holds protection without attacking or flicking. It uses Combat's eat
+line, choosing the largest ordinary food that fits the HP deficit (or the
+smallest available heal if none fits) and respecting the observed food eat
+clock. A sent Eat remains pending for a six-tick observation window so its
+count drop or HP rise can arrive independently of that clock. At or below the
+emergency line, an available Eat takes priority over protection; otherwise
+protection is proposed first. Message-delay food keeps its input lock. A
+Prayer-level shortfall, or zero points with no prayer potion,
+produces one non-terminal `WalkEventKind::Unprotectable` warning for that
+style and cause. The native owner consumes it with
+`NativeActions::take_walk_event`; the walk keeps following and any other held
+protection remains managed. Quester shows the cause under **Walk protection**,
+for example “Prayer 40 needed for Protect from Missiles”, without parking or
+retrying the step.
 The guard owns only a protect it raised during this walk. A protect already on
 when the walk begins, or raised by another owner, is not turned off at the end.
 Only one protect can be active: switching from a pre-existing user protect to

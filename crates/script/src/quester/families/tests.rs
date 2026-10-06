@@ -844,7 +844,7 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
 }
 
 #[test]
-fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
+fn vanished_clicked_loc_rejected_dispatch_fails_without_retargeting_a_replacement() {
     for kind in [
         reach::ReachKind::Loc {
             id: Some(1551),
@@ -1348,6 +1348,8 @@ fn interact_false_is_failure_not_success() {
         dialogue_started: None,
         dialogue_completed: false,
         accepted_tick: None,
+        scene_activity_observed: false,
+        scene_in_range_at_acceptance: false,
         until: None,
         target_tile: None,
         reachable_only: false,
@@ -4875,6 +4877,8 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         dialogue_started: None,
         dialogue_completed: false,
         accepted_tick: None,
+        scene_activity_observed: false,
+        scene_in_range_at_acceptance: false,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))

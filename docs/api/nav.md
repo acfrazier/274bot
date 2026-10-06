@@ -103,8 +103,9 @@ files.
 | --- | --- | --- |
 | `BOT_NAV_BUILD` | `require` | `skip`: no artifact baked/staged, checked-in identities only |
 | `BOT_NAV_REVISION` | `289` | selected release revision (`274` supported) |
-| `BOT_NAV_ENGINE_DIR`, `ENGINE_DIR` | none; required for bundled navigation | bake input root |
-| `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree |
+| `ENGINE_DIR` | none; required for bundled navigation | the engine root: the `engine/` folder of the engine checkout. A leading `~/` is expanded. To avoid exporting it in every shell, set it once under `[env]` in `~/.cargo/config.toml` |
+| `BOT_NAV_ENGINE_DIR` | `ENGINE_DIR` | the same setting, overriding `ENGINE_DIR` for this build only |
+| `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree; set it only when content isn't beside the engine root |
 | `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
 | `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
 | `BOT_NAV_SNAPSHOT_ROOT` | `~/.274bot/unpack[-289]` | complete version-keyed decoded snapshot, read-only bake input |

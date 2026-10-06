@@ -4,7 +4,9 @@ use super::frame::Frame;
 use super::policy;
 use super::prayer::{PrayerSweep, RaisedPrayers};
 use super::request::*;
-use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
+use super::schedule::{
+    elapsed, reached, Interaction, OpKind, Schedule, EAT_OBSERVATION_WINDOW_TICKS,
+};
 use super::select;
 use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
@@ -1596,7 +1598,7 @@ impl Combat {
             } else {
                 self.pending[slot].age = pending.age.saturating_add(1);
                 let window = match row.kind {
-                    RowKind::Eat => 6,
+                    RowKind::Eat => EAT_OBSERVATION_WINDOW_TICKS,
                     RowKind::Drink
                     | RowKind::Wear
                     | RowKind::Retaliate
@@ -1772,31 +1774,21 @@ impl Combat {
             return;
         }
         let (hp, max) = arbiter::stat(frame, 3);
-        let ordinary = self.plain_food(frame, tick, None);
+        let Some(choice) =
+            policy::eat_choice(frame, &self.tables, &self.schedule, danger, hp, max, tick)
+        else {
+            return;
+        };
+        let ordinary = choice.ordinary;
         if let Some(id) = ordinary {
             if !self.push(plan, PlanRow::new(RowKind::Eat, id, 0)) {
                 return;
             }
         }
-        let heal = ordinary
-            .and_then(|id| self.tables.food(id))
-            .map_or(0, |food| food.heal);
-        let plain_insufficient =
-            hp.saturating_add(heal).min(max) <= select::lines(danger, max).drink_gate;
-        if ordinary.is_some() && (!plain_insufficient || !reached(tick, self.eat_ready)) {
+        if ordinary.is_some() && !reached(tick, self.eat_ready) {
             return;
         }
-        let combo = arbiter::food_by(frame, &self.tables, None, |food| {
-            let Some(delay) = food.message_delay else {
-                return false;
-            };
-            let gate = danger.map_or((max + 1) / 2, |danger| {
-                danger.saturating_mul(delay + 2).saturating_add(1)
-            });
-            food.eat_delay_arg.is_none()
-                && hp.saturating_add(heal).saturating_add(food.heal).min(max) > gate
-        });
-        if let Some(id) = combo {
+        if let Some(id) = choice.combo {
             self.push(plan, PlanRow::new(RowKind::Eat, id, 0));
         }
     }
