@@ -1694,8 +1694,17 @@ pub const RUNE_MYSTERIES_JSON: &str = include_str!("../../paths/289/runemysterie
 pub const ROMEO_AND_JULIET_JSON: &str = include_str!("../../paths/289/romeojuliet.json");
 pub const IMP_JSON: &str = include_str!("../../paths/289/imp.json");
 pub const VAMPIRE_JSON: &str = include_str!("../../paths/289/vampire.json");
+pub const DORIC_JSON: &str = include_str!("../../paths/289/doric.json");
+pub const GOBLIN_DIPLOMACY_JSON: &str = include_str!("../../paths/289/gobdip.json");
+pub const HETTY_JSON: &str = include_str!("../../paths/289/hetty.json");
+pub const PRINCE_JSON: &str = include_str!("../../paths/289/prince.json");
+pub const HUNT_JSON: &str = include_str!("../../paths/289/hunt.json");
 pub const DEMON_JSON: &str = include_str!("../../paths/289/demon.json");
 pub const SQUIRE_JSON: &str = include_str!("../../paths/289/squire.json");
+pub const DEATH_JSON: &str = include_str!("../../paths/289/death.json");
+pub const DESERT_RESCUE_JSON: &str = include_str!("../../paths/289/desertrescue.json");
+pub const PRIEST_PERIL_JSON: &str = include_str!("../../paths/289/priestperil.json");
+pub const CLOCK_TOWER_JSON: &str = include_str!("../../paths/289/cog.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -1706,15 +1715,17 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
         "imp" => Some(IMP_JSON.as_bytes()),
         "vampire" => Some(VAMPIRE_JSON.as_bytes()),
-        "doric" => Some(include_str!("../../paths/289/doric.json").as_bytes()),
-        "gobdip" => Some(include_str!("../../paths/289/gobdip.json").as_bytes()),
-        "hetty" => Some(include_str!("../../paths/289/hetty.json").as_bytes()),
-        "prince" => Some(include_str!("../../paths/289/prince.json").as_bytes()),
-        "hunt" => Some(include_str!("../../paths/289/hunt.json").as_bytes()),
+        "doric" => Some(DORIC_JSON.as_bytes()),
+        "gobdip" => Some(GOBLIN_DIPLOMACY_JSON.as_bytes()),
+        "hetty" => Some(HETTY_JSON.as_bytes()),
+        "prince" => Some(PRINCE_JSON.as_bytes()),
+        "hunt" => Some(HUNT_JSON.as_bytes()),
         "demon" => Some(DEMON_JSON.as_bytes()),
         "squire" => Some(SQUIRE_JSON.as_bytes()),
-        "priestperil" => Some(include_bytes!("../../paths/289/priestperil.json")),
-        "cog" => Some(include_bytes!("../../paths/289/cog.json")),
+        "death" => Some(DEATH_JSON.as_bytes()),
+        "desertrescue" => Some(DESERT_RESCUE_JSON.as_bytes()),
+        "priestperil" => Some(PRIEST_PERIL_JSON.as_bytes()),
+        "cog" => Some(CLOCK_TOWER_JSON.as_bytes()),
         _ => None,
     }
 }
