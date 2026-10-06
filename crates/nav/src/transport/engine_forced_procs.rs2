@@ -30,6 +30,13 @@ def_int $change_x = calc(coordx($dest_coord) - coordx(coord));
 def_int $change_z = calc(coordz($dest_coord) - coordz(coord));
 ~agility_walk($change_x, $change_z, false);
 
+[proc,agility_force_move](int $xp, seq $walk_seq, coord $dest)
+~set_forcemove_bas($walk_seq);
+def_int $change_x = calc(coordx($dest) - coordx(coord));
+def_int $change_z = calc(coordz($dest) - coordz(coord));
+~agility_walk($change_x, $change_z, true);
+stat_advance(agility, $xp);
+
 [proc,agility_exactmove](seq $anim, int $anim_delay, int $movement_delay, coord $start_coord, coord $end_coord, int $start_cycle, int $end_cycle, int $direction, boolean $merge_with_loc)
 anim($anim, $anim_delay);
 if($merge_with_loc = true) {

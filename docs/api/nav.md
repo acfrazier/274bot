@@ -87,6 +87,20 @@ and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
+
+Ranged hunters with content `check_vis=lineofsight` retain their
+range-derived bounds, but the bake carves permanent occlusion only for `nomove`
+NPCs and NPCs with `wanderrange=0`. The engine checks LOS from the NPC's
+current tile; the bake uses the spawn tile for these static or zero-wander
+configurations. Positive-wander hunters retain their conservative rectangles.
+An already-engaged hunter can pursue the player, so this is not immunity from
+one that has moved into visible range. Areas containing openable doors also
+retain conservative rectangles. Curated group rectangles select and name spawn
+members; they are not additional exclusion surfaces. In particular, the Death
+Plateau scouting ridge is occluded from the throwers where it clips their
+eight-tile hunt boxes, and needs no `cross` grant. Rebake packs to obtain these
+carves; runtime routing does not require the raw flags sidecar.
+
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
 Ladder; v16 retains this encoding. The remaining kind value keeps its kind.
@@ -324,6 +338,16 @@ variants with their source skill/use-level gates. The selected tool identity
 remains opaque, so priority-dependent tool choices cannot invent a trajectory.
 Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
 without a real requirement are refused rather than emitted as free shortcuts.
+
+The pinned `agility_force_move` primitive shares this machine with exact
+movement. Death Plateau's east-side climbing rocks (`death_climbingrocks_top`
+and `death_climbingrocks_bottom`, op1 Climb) retain strict worn climbing-boots
+gates and final south/north three-tile landings. Carried or spiked boots do
+not authorize them. These rocks are east of the quest's scouting destination;
+the ridge walk from Tenzing's stile to that destination does not use them.
+The content permits wearing climbing boots only after `death_equiproom`
+reaches quest completion, so Paths must not require this equipment before
+the pre-completion scouting walk.
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked
