@@ -260,6 +260,7 @@ pub(crate) fn script_observe_cached(
         inv,
         state,
         snapshot,
+        None,
         npc_boxes,
         obj_names,
         scripts,
@@ -333,6 +334,7 @@ pub(crate) fn script_observe_cached_with_channels(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
+    bank_memory: Option<&api::bank_memory::BankMemory>,
     npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
@@ -857,6 +859,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     compiled: script::CompiledTick {
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
+                        bank_memory,
                         hold: hold || ours,
                         ..Default::default()
                     },

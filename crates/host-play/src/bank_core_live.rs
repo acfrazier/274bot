@@ -56,7 +56,7 @@ const COINS: i32 = 995;
 const SEEDED: i32 = 50;
 const TARGET: i32 = 7;
 /// Draynor bank floor, inside the booth row.
-const DRAYNOR: WorldTile = WorldTile {
+pub(super) const DRAYNOR: WorldTile = WorldTile {
     x: 3092,
     z: 3243,
     level: 0,
@@ -64,16 +64,16 @@ const DRAYNOR: WorldTile = WorldTile {
 const CELL_BOUND: Duration = Duration::from_secs(60);
 // Keep the login prerequisite separate from every cell's deadline, with room
 // for the server's 60-second already-logged-in retry message.
-const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
-const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
-const CAPTURE_GRACE: Duration = Duration::from_secs(10);
+pub(super) const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
+pub(super) const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
+pub(super) const CAPTURE_GRACE: Duration = Duration::from_secs(10);
 const FEATHER: i32 = 314;
 const LOGS: i32 = 1511;
 const BONES: i32 = 526;
 const TINDERBOX: i32 = 590;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Prep {
+pub(super) enum Prep {
     Session,
     Teleport,
     WaitArrive,
@@ -86,7 +86,7 @@ enum Prep {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
-struct Trace {
+pub(super) struct Trace {
     bank: Option<String>,
     access_kind: Option<String>,
     access_tile: Option<[i32; 3]>,
@@ -102,8 +102,8 @@ struct Trace {
     cell_ms: Option<u128>,
     live_held: Option<i32>,
     live_bank_open: Option<bool>,
-    failure: Option<String>,
-    passed: bool,
+    pub(super) failure: Option<String>,
+    pub(super) passed: bool,
 }
 
 /// The posted facts a cell decides from, refreshed every in-game frame.
@@ -141,13 +141,13 @@ impl Facts {
     }
 }
 
-struct Cell {
-    phase: Prep,
+pub(super) struct Cell {
+    pub(super) phase: Prep,
     bound: Duration,
     /// Set only once the final seed is posted in an in-game scene-2 frame.
-    started: Option<Instant>,
-    preparation_started: Instant,
-    last_action: Instant,
+    pub(super) started: Option<Instant>,
+    pub(super) preparation_started: Instant,
+    pub(super) last_action: Instant,
     session_runner: scenario::ScenarioRunner,
     preparation_failure: Option<String>,
     /// Seed cheats sent in order once the pack is cleared.
@@ -157,26 +157,26 @@ struct Cell {
     seed_ready: fn(&GameSnapshot) -> bool,
     watch: &'static [i32],
     facts: Facts,
-    script_started: Option<Instant>,
-    trace: Trace,
+    pub(super) script_started: Option<Instant>,
+    pub(super) trace: Trace,
     /// The compat script's own answer.
-    result: Option<serde_json::Value>,
+    pub(super) result: Option<serde_json::Value>,
     /// The receipt's fixed part: scenario, seed and request.
     scenario: serde_json::Value,
     /// Whether the posted frame matches a passing verdict before capture.
     capture_ready: fn(&Cell) -> bool,
-    terminal: bool,
+    pub(super) terminal: bool,
     evidence_dir: PathBuf,
     capture_started: bool,
-    capture_written: bool,
-    capture_error: Option<String>,
+    pub(super) capture_written: bool,
+    pub(super) capture_error: Option<String>,
     /// The frame snapshot, rebuilt in place as the host keeps its own: the
     /// bank session generation is tracked across frames.
     snapshot: Option<GameSnapshot>,
 }
 
 impl Cell {
-    fn new(
+    pub(super) fn new(
         bound: Duration,
         seed: &'static [&'static str],
         seed_ready: fn(&GameSnapshot) -> bool,
@@ -213,7 +213,7 @@ impl Cell {
         }
     }
 
-    fn fail(&mut self, message: String) {
+    pub(super) fn fail(&mut self, message: String) {
         if !self.terminal {
             self.trace.failure = Some(message);
             self.terminal = true;
@@ -277,7 +277,7 @@ fn session_fixture_runner() -> scenario::ScenarioRunner {
     scenario::ScenarioRunner::with_world(scenario, None)
 }
 
-fn count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
+pub(super) fn count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
     script::bank::ops::count_id(items, id)
 }
 
@@ -554,7 +554,7 @@ fn read_facts(snapshot: &GameSnapshot, watch: &[i32], last: &Facts) -> Facts {
     }
 }
 
-fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
+pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     let mut snapshot = shared.lock().snapshot.take().unwrap_or_default();
     snapshot.rebuild(client);
     let now = Instant::now();
@@ -653,7 +653,7 @@ fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     shared.lock().snapshot = Some(snapshot);
 }
 
-fn check_prerequisites(
+pub(super) fn check_prerequisites(
     play: &super::Play,
     account: &str,
     preparation_started: Instant,
@@ -695,7 +695,7 @@ fn check_prerequisites(
     }
 }
 
-fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
+pub(super) fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
     let path = |key: &str| {
         std::env::var_os(key)
             .map(PathBuf::from)

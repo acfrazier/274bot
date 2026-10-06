@@ -78,6 +78,7 @@ mod scatter;
 mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
+mod slot_bank_memory;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
@@ -274,6 +275,11 @@ pub struct Play {
     /// player-info tick. One struct per bot on the pump — no per-bot nav
     /// thread.
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    /// One last-seen bank per account (design-bank-snapshot §1.2), keyed
+    /// by username like the arms. The slot thread is the only writer; the
+    /// map outlives a slot so a stop and respawn keeps the memory. The
+    /// panel/TUI read it through [`Play::bank_rows`].
+    bank_memories: HashMap<String, slot_bank_memory::SharedBankMemory>,
     /// Shared user preference; slot threads read it at the takeover fence.
     pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
     /// One coherent global permission snapshot, shared by every slot admission.
@@ -330,6 +336,21 @@ impl Play {
     /// The immutable process profile, absent only for the legacy 274 entry.
     pub fn server_profile(&self) -> Option<&Arc<ServerProfile>> {
         self.connection.profile()
+    }
+
+    /// The account's last-seen bank (design-bank-snapshot §1.2): one copy
+    /// of the memory's rows with their origin, for an operator walk arm.
+    /// `Unknown` with no rows for a never-observed or unknown account.
+    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+        self.bank_memories
+            .get(name)
+            .map_or_else(nav::bank_fetch::BankRows::default, |memory| {
+                let memory = memory.read();
+                nav::bank_fetch::BankRows {
+                    origin: memory.origin(),
+                    rows: memory.rows().to_vec(),
+                }
+            })
     }
 
     /// WORLD membership bound to this process profile. Unknown is false.
@@ -516,6 +537,8 @@ mod api_gather_live_tests;
 mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;
+#[cfg(test)]
+mod bank_memory_live;
 #[cfg(test)]
 mod bank_npc_live;
 #[cfg(test)]

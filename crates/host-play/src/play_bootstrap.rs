@@ -436,6 +436,7 @@ impl Play {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
+            bank_memories: HashMap::new(),
             pause_script_on_manual_walk_abort: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             walk_globals: Arc::new(Mutex::new(super::WalkGlobals::default())),
             walk_globals_store: None,
