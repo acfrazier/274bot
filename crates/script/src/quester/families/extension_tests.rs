@@ -372,9 +372,18 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
     let mut ledger = None;
     with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
         assert_eq!(
-            reach::nearest_loc(&tick.cx, Some(1000), None, Some("Search"), 6, None, true)
-                .unwrap()
-                .tile,
+            reach::nearest_loc(
+                &tick.cx,
+                Some(1000),
+                None,
+                Some("Search"),
+                None,
+                6,
+                None,
+                true
+            )
+            .unwrap()
+            .tile,
             tile(5, 5)
         );
         assert!(reach::nearest_loc(
@@ -382,6 +391,7 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
             Some(1000),
             None,
             Some("Search"),
+            None,
             6,
             Some(tile(6, 5)),
             true
@@ -390,7 +400,17 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
     });
     with_tick(&snapshot, &mut ledger, 2, |tick| {
         assert!(
-            reach::nearest_loc(&tick.cx, Some(1000), None, Some("Search"), 6, None, true).is_none(),
+            reach::nearest_loc(
+                &tick.cx,
+                Some(1000),
+                None,
+                Some("Search"),
+                None,
+                6,
+                None,
+                true
+            )
+            .is_none(),
             "unknown reach must not select a resource candidate"
         );
     });
@@ -2439,5 +2459,141 @@ fn use_on_settle_deadline_bounds_an_active_dialogue_drain() {
             Poll::Ready(Err(ActionError::Failed(reason)))
                 if reason.as_ref() == "use_on timeout"
         ));
+    });
+}
+
+#[test]
+fn authored_interact_dialogue_progress_outlives_the_default_settle_window() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!({"choose": 1})),
+            false,
+            20_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        for tick in 3..=93 {
+            let page = (tick - 3) / 3;
+            snapshot.seed_chat_modal(100, vec![format!("Drezel story page {page}")]);
+            if page == 14 {
+                snapshot.seed_chat_options(
+                    vec![api::snapshot::ChatOptionView {
+                        component_id: 101,
+                        text: "Yes.".into(),
+                    }],
+                    -1,
+                );
+            } else {
+                snapshot.seed_chat_options(vec![], 105);
+            }
+            let result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            assert!(result.is_pending(), "advancing page {page} at tick {tick}");
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                accept_last(&mut ledger, tick, true);
+            }
+        }
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            entry.effect,
+            HostEffect::Interaction(InteractReq::Answer { option: 1 })
+        )));
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        let mut result = Poll::Pending;
+        for tick in 94..=108 {
+            result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if result.is_ready() {
+                break;
+            }
+        }
+        assert!(matches!(result, Poll::Ready(Ok(_))));
+    });
+}
+
+#[test]
+fn authored_interact_dialogue_progress_has_a_total_cap() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!("continue")),
+            false,
+            20_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        let mut result = Poll::Pending;
+        let mut ended = 0;
+        for tick in 3..=210 {
+            snapshot.seed_chat_modal(100, vec![format!("Endless page {}", (tick - 3) / 3)]);
+            snapshot.seed_chat_options(vec![], 105);
+            result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if result.is_ready() {
+                ended = tick;
+                break;
+            }
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                accept_last(&mut ledger, tick, true);
+            }
+        }
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "interact settle timeout")
+        );
+        assert_eq!(
+            ended, 202,
+            "progress extends inactivity, never the 120-second total cap"
+        );
+    });
+}
+
+#[test]
+fn authored_interact_settle_override_still_bounds_missing_dialogue() {
+    compile_context_test(|compile| {
+        let (snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!("continue")),
+            false,
+            6_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(with_tick(&snapshot, &mut ledger, 12, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }), Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "interact settle timeout"));
     });
 }

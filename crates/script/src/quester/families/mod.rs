@@ -320,6 +320,14 @@ impl PredicatePlan for AllPlan {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         Truth::all(self.items.iter().map(|item| item.evaluate(cx)))
     }
+    fn requires_bank(&self) -> bool {
+        self.items.iter().any(|item| item.requires_bank())
+    }
+    fn bank_item_ids(&self, out: &mut Vec<i32>) {
+        for item in &self.items {
+            item.bank_item_ids(out);
+        }
+    }
 }
 struct AnyPlan {
     items: Vec<Arc<dyn PredicatePlan>>,
@@ -328,6 +336,14 @@ impl PredicatePlan for AnyPlan {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         Truth::any(self.items.iter().map(|item| item.evaluate(cx)))
     }
+    fn requires_bank(&self) -> bool {
+        self.items.iter().any(|item| item.requires_bank())
+    }
+    fn bank_item_ids(&self, out: &mut Vec<i32>) {
+        for item in &self.items {
+            item.bank_item_ids(out);
+        }
+    }
 }
 struct NotPlan {
     inner: Arc<dyn PredicatePlan>,
@@ -335,6 +351,12 @@ struct NotPlan {
 impl PredicatePlan for NotPlan {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         !self.inner.evaluate(cx)
+    }
+    fn requires_bank(&self) -> bool {
+        self.inner.requires_bank()
+    }
+    fn bank_item_ids(&self, out: &mut Vec<i32>) {
+        self.inner.bank_item_ids(out);
     }
 }
 
@@ -1558,7 +1580,7 @@ pub(crate) struct InteractArgs {
     pub(crate) target: InteractTarget,
     /// Interaction option offered by the selected target.
     pub(crate) op: String,
-    /// Optional authored approach anchor and source citation.
+    /// Optional approach anchor; locs are selected nearest this authored tile.
     #[serde(default)]
     pub(crate) anchor: Option<AnchorArg>,
     /// Maximum interaction distance; 0 or omitted means 1 tile.
@@ -1578,8 +1600,9 @@ pub(crate) struct InteractArgs {
     /// With omitted dialogue, reaching `until` completes immediately, even with an open page.
     /// It does not adopt a new page or continue draining one already open; the next owner
     /// handles it.
-    /// `settle_ms` bounds the step while a page is open and is not extended by dialogue
-    /// draining.
+    /// `settle_ms` is the inactivity window for authored dialogue. Advancing
+    /// chat pages renew it, capped at 120 seconds total (or `settle_ms` if larger).
+    /// Omitted dialogue retains its fixed settle deadline.
     /// A count first observed after the deadline times out.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
@@ -1730,6 +1753,8 @@ impl StepPlan for InteractPlan {
             radius: self.radius,
             wait_if_missing: self.wait_if_missing,
             deadline: None,
+            dialogue_cap: None,
+            dialogue_page: None,
             missing_deadline: None,
             waiting: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
@@ -1767,6 +1792,8 @@ struct InteractRun {
     radius: i32,
     wait_if_missing: bool,
     deadline: Option<Duration>,
+    dialogue_cap: Option<Duration>,
+    dialogue_page: Option<(i32, bool, u64)>,
     missing_deadline: Option<Duration>,
     waiting: Option<&'static str>,
     settle_duration: Duration,
@@ -1791,6 +1818,7 @@ struct InteractRun {
 
 impl InteractRun {
     fn clear_round(&mut self) {
+        self.dialogue_page = None;
         self.reach = None;
         self.started = false;
         self.round_before = None;
@@ -1802,9 +1830,45 @@ impl InteractRun {
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
     }
+
+    fn note_dialogue_progress(&mut self, cx: &crate::native::ActionContext<'_>) {
+        if self.default_dialogue || self.dialogue.is_none() {
+            return;
+        }
+        let now = cx.active_now();
+        let Some(deadline) = self.deadline.filter(|deadline| now <= *deadline) else {
+            return;
+        };
+        let Some(chat) = cx.snapshot().chat_modal() else {
+            return;
+        };
+        let chat = chat.value;
+        if chat.root == -1 && chat.continue_component_id == -1 {
+            return;
+        }
+        let page = (
+            chat.root,
+            chat.continue_component_id != -1,
+            api::snapshot::chat_page_fingerprint(
+                chat.texts,
+                chat.options
+                    .iter()
+                    .map(|option| (option.component_id, option.text.as_str())),
+            ),
+        );
+        if self.dialogue_page != Some(page) {
+            self.dialogue_page = Some(page);
+            self.deadline = Some(
+                deadline
+                    .max(now.saturating_add(self.settle_duration))
+                    .min(self.dialogue_cap.expect("armed interact deadline")),
+            );
+        }
+    }
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        self.note_dialogue_progress(&cx.tick.cx);
         let deadline = self.deadline;
         let now = cx.tick.cx.active_now();
         let reached = self.reach.is_none() && until_reached(self.until, &cx.tick.cx);
@@ -1900,8 +1964,9 @@ impl StepRun for InteractRun {
             &self.kind,
             &self.op,
             self.radius,
+            self.tile,
             self.target_tile,
-            self.reachable_only || self.until.is_some(),
+            self.reachable_only || (self.tile.is_none() && self.until.is_some()),
         ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
             || cx.tick.cx.snapshot().inventory().is_some());
         if self.round_accepted {
@@ -1937,6 +2002,43 @@ impl StepRun for InteractRun {
             }
         }
         if !self.started {
+            if let Some(anchor) = self.tile {
+                let selector = match &self.kind {
+                    reach::ReachKind::Loc { id, name } => {
+                        Some((*id, name.as_deref(), reach::PROBE_RADIUS))
+                    }
+                    reach::ReachKind::Name { name } => {
+                        Some((None, Some(name.as_ref()), self.radius))
+                    }
+                    _ => None,
+                };
+                if let Some((id, name, radius)) = selector {
+                    if let Some(loc) = reach::nearest_loc(
+                        &cx.tick.cx,
+                        id,
+                        name,
+                        Some(&self.op),
+                        Some(anchor),
+                        radius,
+                        self.target_tile,
+                        self.reachable_only,
+                    ) {
+                        self.target_tile = Some(loc.tile);
+                        if !reach::loc_arrived(&cx.tick.cx, loc) {
+                            self.walk = Some(cx.tick.actions.begin::<Walk>(
+                                reach::walk_request(
+                                    loc.tile,
+                                    1,
+                                    reach::loc_walk_id(loc),
+                                    cx.required_after,
+                                ),
+                                &mut cx.tick.cx,
+                            )?);
+                            return Poll::Pending;
+                        }
+                    }
+                }
+            }
             if let Some(tile) = self
                 .tile
                 .filter(|_| !available || matches!(self.kind, reach::ReachKind::Held { .. }))
@@ -1959,6 +2061,12 @@ impl StepRun for InteractRun {
         if self.deadline.is_none() {
             if available || !self.wait_if_missing {
                 self.deadline = Some(cx.tick.cx.active_now() + self.settle_duration);
+                self.dialogue_cap = Some(
+                    cx.tick
+                        .cx
+                        .active_now()
+                        .saturating_add(self.settle_duration.max(Duration::from_secs(120))),
+                );
                 self.missing_deadline = None;
                 self.waiting = None;
             } else {
@@ -2008,7 +2116,8 @@ impl StepRun for InteractRun {
                     radius: self.radius,
                     wait_if_missing: self.wait_if_missing,
                     target_tile: self.target_tile,
-                    reachable_only: self.reachable_only || self.until.is_some(),
+                    reachable_only: self.reachable_only
+                        || (self.tile.is_none() && self.until.is_some()),
                 },
                 &mut cx.tick.cx,
             )?);
@@ -2031,7 +2140,7 @@ impl StepRun for InteractRun {
                         Some(&self.op),
                         self.radius,
                         self.target_tile,
-                        self.reachable_only || self.until.is_some(),
+                        self.reachable_only || (self.tile.is_none() && self.until.is_some()),
                     );
                     if self.until.is_some() {
                         self.round_deadline =
@@ -2203,7 +2312,7 @@ fn loc_within_interaction_range(
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 ) -> bool {
-    reach::nearest_loc(cx, id, name, op, radius, target_tile, reachable_only)
+    reach::nearest_loc(cx, id, name, op, None, radius, target_tile, reachable_only)
         .is_some_and(|loc| loc.distance <= 1)
 }
 
@@ -2298,7 +2407,7 @@ pub(super) struct UseOnArgs {
     item: String,
     /// NPC, location, or item target; exactly one is required.
     target: UseOnTarget,
-    /// Optional authored approach anchor and source citation.
+    /// Optional approach anchor; locs are selected nearest this authored tile.
     #[serde(default)]
     anchor: Option<AnchorArg>,
     /// Maximum interaction distance; 0 or omitted means 1 tile.
@@ -2615,7 +2724,20 @@ impl StepRun for UseOnRun {
                 }
                 if let Some(tile) = self.tile {
                     let here = cx.tick.cx.snapshot().here();
-                    if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
+                    if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius))
+                        && !(self.kind.as_ref() == "loc"
+                            && reach::nearest_loc(
+                                &cx.tick.cx,
+                                Some(self.target_id),
+                                None,
+                                None,
+                                Some(tile),
+                                self.radius,
+                                self.target_tile,
+                                false,
+                            )
+                            .is_some())
+                    {
                         self.walk = Some(cx.tick.actions.begin::<Walk>(
                             reach::walk_request(
                                 tile,
@@ -2627,9 +2749,11 @@ impl StepRun for UseOnRun {
                         )?);
                         return Poll::Pending;
                     }
-                    // The anchor locates the initial search area. Once there,
-                    // follow the observed target without re-entering that area.
-                    self.tile = None;
+                    // Loc selection keeps the authored origin even when its
+                    // interactable stand lies outside the anchor radius.
+                    if self.kind.as_ref() != "loc" {
+                        self.tile = None;
+                    }
                 }
                 self.deadline
                     .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
@@ -2667,22 +2791,21 @@ impl StepRun for UseOnRun {
                             Some(self.target_id),
                             None,
                             None,
+                            self.tile,
                             self.radius,
                             self.target_tile,
                             false,
                         ) else {
                             return Poll::Pending;
                         };
-                        if api::query::loc_approach::distance_from(loc, loc.tile).is_some() {
+                        if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
                             self.target_tile = Some(loc.tile);
-                            if !snapshot.here().is_some_and(|here| {
-                                snapshot.walk_loc_arrived(here.value, loc.tile, 1, loc.id)
-                            }) {
+                            if !reach::loc_arrived(&cx.tick.cx, loc) {
                                 self.walk = Some(cx.tick.actions.begin::<Walk>(
                                     reach::walk_request(
                                         loc.tile,
                                         1,
-                                        Some(loc.id),
+                                        reach::loc_walk_id(loc),
                                         cx.required_after,
                                     ),
                                     &mut cx.tick.cx,
@@ -3204,6 +3327,24 @@ impl StepRun for AcquireRun {
     fn progress_read_completed(&mut self, now: Duration) {
         self.waiting_for_read = false;
         self.settle_deadline = now + self.steps[self.index].plan.settle_timeout();
+    }
+    fn needs_bank_scan(&self) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|run| run.needs_bank_scan())
+            || (self.current.is_none()
+                && !self.settling
+                && self.selection_since.is_some()
+                && self
+                    .steps
+                    .get(self.index)
+                    .is_some_and(|step| step.skip_if.requires_bank()))
+    }
+    fn bank_scan_completed(&mut self) {
+        self.selection_since = None;
+        if let Some(run) = self.current.as_mut() {
+            run.bank_scan_completed();
+        }
     }
     fn cancel(&mut self, actions: &mut NativeActions) {
         if let Some(run) = &mut self.current {
