@@ -769,7 +769,7 @@ impl Quester {
                 ProvisionPhase::Scanning => "scan",
                 ProvisionPhase::Spillover => "deposit-capacity",
                 ProvisionPhase::Withdrawing => "withdraw",
-                _ => unreachable!("a provision bank run has a bank phase"),
+                _ => "other",
             };
             self.trace.record(
                 tick.output,

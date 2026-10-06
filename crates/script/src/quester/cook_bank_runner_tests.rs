@@ -703,6 +703,160 @@ fn sheep_fixture(held_wool: usize, banked_goals: bool) -> CookFixture {
     }
     fixture
 }
+fn r2_fixture_from_bundled_path(
+    id: &str,
+    patch: impl FnOnce(&mut serde_json::Value),
+) -> CookFixture {
+    let mut fixture = CookFixture::new(false, false);
+    let bytes = super::super::registry::bundled_path(id).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    patch(&mut value);
+    let document: super::super::path::PathDocument = serde_json::from_value(value).unwrap();
+    fixture.script.path = super::super::compile::compile_uncached_for_test(
+        &document,
+        &fixture.script.selected,
+        &fixture.script.quests,
+    )
+    .unwrap();
+    let display = fixture
+        .script
+        .selected
+        .quest_identity()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|row| row.id == id)
+        .unwrap()
+        .display
+        .clone();
+    fixture.snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: display,
+            component_id: 43,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    fixture
+}
+
+fn r2_seed_rows(fixture: &mut CookFixture, rows: &[(&str, usize)]) {
+    let mut inventory = Vec::new();
+    for (alias, count) in rows {
+        for _ in 0..*count {
+            let mut row = fixture.item(alias, inventory.len() as i32, ItemContainer::Inventory);
+            if *alias == "coins" {
+                row.def.stackable = true;
+            }
+            inventory.push(row);
+        }
+    }
+    fixture.snapshot.seed_inventory(inventory, 28);
+}
+
+fn r2_seed_bank(fixture: &mut CookFixture, rows: &[(&str, i32)]) {
+    fixture.stock = rows
+        .iter()
+        .enumerate()
+        .map(|(slot, (alias, count))| {
+            let mut row = fixture.item(alias, slot as i32, ItemContainer::Bank);
+            row.count = *count;
+            if *alias == "coins" {
+                row.def.stackable = true;
+            }
+            row
+        })
+        .collect();
+}
+
+fn r2_until_provision_decision(fixture: &mut CookFixture) {
+    for tick in 1..=100 {
+        fixture.drive(tick);
+        let phase = fixture.script.provisioner.status().phase;
+        if fixture.script.parked
+            || fixture.script.step.is_some()
+            || phase == super::super::provision::ProvisionPhase::Acquiring
+            || phase == super::super::provision::ProvisionPhase::Blocked
+        {
+            return;
+        }
+    }
+    panic!(
+        "Path did not reach a provisioning decision: {:?}",
+        fixture.output.logs
+    );
+}
+
+#[test]
+fn r2_sheep_optional_coin_float_does_not_park_a_full_path_pack() {
+    let mut fixture = r2_fixture_from_bundled_path("sheep", |_| {});
+    r2_seed_rows(&mut fixture, &[("shears", 1), ("wool", 27)]);
+    r2_seed_bank(&mut fixture, &[("coins", 100)]);
+
+    r2_until_provision_decision(&mut fixture);
+
+    assert!(
+        !fixture.script.parked,
+        "optional coins must not turn a full but runnable Path pack into a capacity park: {:?}",
+        fixture.output.logs
+    );
+    assert!(fixture.script.step.is_some());
+    assert_eq!(
+        fixture.visits, 1,
+        "the bank is scanned before optional coins are skipped"
+    );
+    assert_eq!(fixture.withdrawals, 0);
+    assert_eq!(fixture.deposits, 0);
+}
+
+#[test]
+fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
+    let mut fixture = r2_fixture_from_bundled_path("cook", |value| {
+        value["quest"]["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "obj": "wool", "qty": 20, "kind": "acquirable", "acquire": null
+            }));
+    });
+    r2_seed_rows(&mut fixture, &[("pot_empty", 8)]);
+    r2_seed_bank(&mut fixture, &[("wool", 20)]);
+
+    r2_until_provision_decision(&mut fixture);
+
+    let status = fixture.script.provisioner.status();
+    assert_eq!(
+        status.phase,
+        super::super::provision::ProvisionPhase::Acquiring,
+        "Cook should begin its egg recipe after deferring the non-fitting wool hint: {:?}",
+        fixture.output.logs
+    );
+    assert_eq!(status.item, Some("Egg"));
+    let free = 28 - fixture.snapshot.inventory().len() as i32;
+    assert!(
+        free >= 1,
+        "the egg acquisition must retain its peak free slot; got free={free}, status={:?}",
+        status.phase
+    );
+}
+
+#[test]
+fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
+    let mut fixture = r2_fixture_from_bundled_path("cook", |_| {});
+    r2_seed_rows(&mut fixture, &[("pot_empty", 28)]);
+
+    r2_until_provision_decision(&mut fixture);
+
+    let status = fixture.script.provisioner.status();
+    assert_ne!(
+        status.phase,
+        super::super::provision::ProvisionPhase::Acquiring,
+        "an acquisition whose output cannot fit must not start: {:?}",
+        fixture.output.logs
+    );
+    assert!(fixture.script.parked);
+    assert!(fixture.script.step.is_none());
+}
 
 #[test]
 fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() {
