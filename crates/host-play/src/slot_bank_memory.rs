@@ -77,6 +77,16 @@ pub(crate) fn memory_key(username: &str) -> Cow<'_, str> {
     }
 }
 
+/// One copy of an account's memory for a walk arm's BankBudget planner
+/// (design-bank-snapshot §4 F6): its rows with their origin, taken under a
+/// read guard that ends here. `None` (no memory attached) is the
+/// never-observed `Unknown` bank. Called once per arm, never per tick.
+pub(crate) fn planner_rows(memory: Option<&RwLock<BankMemory>>) -> nav::bank_fetch::BankRows {
+    memory.map_or_else(nav::bank_fetch::BankRows::default, |memory| {
+        nav::bank_fetch::BankRows::of(&memory.read())
+    })
+}
+
 /// How long a leaving slot waits for the writer to settle what it queued
 /// (§1.4: slot exit is a save point, and `Play` joins the slot thread
 /// before the process exits). Past it the slot leaves with one hostlog

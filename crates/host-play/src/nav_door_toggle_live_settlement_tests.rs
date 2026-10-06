@@ -216,6 +216,7 @@ impl SettlementRig {
             self.world.as_ref(),
             false,
             false,
+            None,
             || Arc::new(api::query::ReachQueryView::unavailable()),
         );
     }

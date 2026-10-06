@@ -2,6 +2,7 @@
 //! delivery and native drain, the off-pump route worker and `step_nav_bot`.
 use super::*;
 use client::dash3d::CollisionFlag;
+use nav::bank_fetch::BankRows;
 use script::native::walk::Walk;
 use script::native::{
     ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
@@ -434,6 +435,7 @@ impl Rig {
             self.world.as_ref(),
             false,
             false,
+            None,
             no_reach,
         );
     }
@@ -1638,7 +1640,7 @@ fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
         navs: Arc::clone(&rig.navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     }
     .queue_route_in_snapshot(
         &rig.snapshot,
@@ -2332,6 +2334,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         &rig.navs,
         &rig.world,
         Some(WorldState::empty()),
+        None,
         "alice",
     );
     {
@@ -2406,7 +2409,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
         navs: Arc::clone(&rig.navs),
         name: "alice".into(),
         state: Some(WorldState::empty()),
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     let completed = arm
         .queue_route_in_snapshot_synced(
@@ -3314,7 +3317,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         navs: Arc::clone(&rig.navs),
         name: "alice".to_owned(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     assert!(arm.refresh_route_in_snapshot(
         &rig.snapshot,
@@ -3388,7 +3391,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         arrival: ArrivalKind::Area,
         opts: FindOptions::default(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
         live_candidates: None,
         exclusions: None,
         completion: Default::default(),
@@ -3722,6 +3725,10 @@ fn s2a_compute_only_per_bot_layouts() {
     // slots and u16 masks, WalkGuard 256 -> 264) and `traveller` +16 (648 ->
     // 664; nav-door-expire's per-hop `DoorRetry` re-Open pacing state). Field
     // probe: CORE-INTEGRATOR-6 probe-b656.log / probe-head.log.
+    // BANK-SNAPSHOT-S5 +16 B: the queued `pending_route` and the inspect
+    // `pending` capture each carry the walk's `BankRows` (the bank memory's
+    // origin beside its rows, design-bank-snapshot §4 F6) instead of a bare
+    // rows `Vec`: +8 B each (one origin byte, padded).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -3734,7 +3741,7 @@ fn s2a_compute_only_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3472, 4024, 512, 264)
+        (3488, 4024, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

@@ -66,10 +66,11 @@ pub struct NoPath;
 /// walk out through the exit portal's return hop, a slot with no latch
 /// keeps the mine sealed. `state` gates payable edges: the focused slot's
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
-/// none. `bank` is the open bank's rows (obj id, count) for the BankBudget
-/// session — empty when the bank is closed. There is no closed-bank
-/// inventory: a fetch walk whose only missing items sit in a shut bank
-/// is `NoPath` until that bank is open.
+/// none. `bank` is the account's bank memory rows ([`crate::Play::bank_rows`])
+/// the BankBudget session is planned over
+/// ([`nav::bank_fetch::BankRows::planning_rows`]): a `Session` or `Unknown`
+/// bank that lacks a missing item is `NoPath`; a `Hint` plans the one
+/// verifying trip, which the open bank settles.
 /// On success the caller's picked dest is stored by the arm's route;
 /// when `allow_bank_fetch` is on and `find` fails only on missing
 /// item/worn reqs, a [`PendingBankFetch`] is latched and the post-session
@@ -82,7 +83,7 @@ pub fn arm_walk_on(
     dest: Tile,
     options: FindOptions,
     state: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &nav::bank_fetch::BankRows,
     travellers: &WalkArms,
     focused: Option<&str>,
 ) -> Result<Route, NoPath> {

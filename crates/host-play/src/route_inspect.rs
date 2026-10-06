@@ -6,7 +6,7 @@ use super::NavBot;
 use api::obj_names::ObjNames;
 use api::snapshot::WorldTile;
 use client::config::Cache;
-use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
 use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
@@ -77,7 +77,7 @@ pub(crate) struct InspectCapture {
     pub generation: u64,
     pub world: Arc<NavWorld>,
     pub state: WorldState,
-    pub bank: Vec<(i32, i32)>,
+    pub bank: BankRows,
     pub from: WorldTile,
     pub to: WorldTile,
     pub opts: FindOptions,
@@ -346,7 +346,7 @@ pub(super) fn queue_inspect(
     name: &str,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
-    bank: Vec<(i32, i32)>,
+    bank: BankRows,
     cache: Option<Arc<Cache>>,
     obj_names: Option<Arc<ObjNames>>,
     req: InspectRequest,
@@ -609,7 +609,7 @@ fn calculate_bank(
     let Some(plan) = plan_bank_fetch(
         &missing,
         pre,
-        &capture.bank,
+        &capture.bank.planning_rows(&missing),
         capture.world.banks(),
         capture.from,
         &capture.world.collision,

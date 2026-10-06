@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use host::InputEv;
+use nav::bank_fetch::BankRows;
 use nav::router::FindOptions;
 use nav::tile::Tile;
 use nav::world::NavWorld;
@@ -171,7 +172,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                     ..FindOptions::default()
                 },
                 &WorldState::empty(),
-                &[],
+                &BankRows::default(),
                 &scratch,
                 None,
             )

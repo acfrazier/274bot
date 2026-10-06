@@ -24,6 +24,7 @@ use host::Pump;
 use host_play::{
     arm_walk_on, step_walk_arm_follow, ProfileOptions, SharedClientTemplate, WalkArms,
 };
+use nav::bank_fetch::BankRows;
 use nav::router::{FindOptions, Leg, Route};
 use nav::tile::Tile;
 use nav::transport::{DoorDir, TransportKind};
@@ -239,7 +240,7 @@ fn walk_arm_to(
         },
         FindOptions::default(),
         &state,
-        &[],
+        &BankRows::default(),
         &arms,
         Some(name),
     )

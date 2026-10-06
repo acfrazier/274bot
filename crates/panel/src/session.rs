@@ -4327,22 +4327,15 @@ impl Session {
         .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
-    /// Open bank rows (obj id, count) from the focused slot's last
-    /// published snapshot — empty when the bank is closed or no slot is
-    /// focused (BankBudget has no closed-bank inventory).
-    fn focused_walk_bank(&self) -> Vec<(i32, i32)> {
-        self.walk_bank(self.focused_name().as_deref())
-    }
-
-    fn walk_bank(&self, name: Option<&str>) -> Vec<(i32, i32)> {
-        name.and_then(|name| {
-            self.nav_states
-                .lock()
-                .unwrap()
-                .get(name)
-                .map(|(snap, _)| snap.bank().iter().map(|it| (it.def.id, it.count)).collect())
-        })
-        .unwrap_or_default()
+    /// The named slot's bank memory rows with their origin
+    /// ([`host_play::Play::bank_rows`]): what a WalkTo's BankBudget session
+    /// is planned over, open bank or not. `Unknown` with no rows when no
+    /// slot is named or no host runs.
+    fn walk_bank(&self, name: Option<&str>) -> nav::bank_fetch::BankRows {
+        match (self.core.play(), name) {
+            (Some(play), Some(name)) => play.bank_rows(name),
+            _ => nav::bank_fetch::BankRows::default(),
+        }
     }
 
     pub fn sync_walk_map(&mut self, world: Option<Arc<NavWorld>>) {
@@ -4650,7 +4643,7 @@ impl Session {
             let play = self.core.play().ok_or(ActionError::NoFocus)?;
             self.walk_dest = Some(command.destination());
             let state = self.focused_walk_state();
-            let bank = self.focused_walk_bank();
+            let bank = self.walk_bank(name.as_deref());
             play.map_walk(command, &context, &state, &bank, &self.travellers)
         });
         match result {

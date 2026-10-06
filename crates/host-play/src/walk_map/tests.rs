@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
+use nav::bank_fetch::BankRows;
 use nav::collision::{pack_walk, WorldCollision};
 use nav::map::formats::{ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois};
 use nav::map::identity::{CatalogueIdentity, Digest};
@@ -540,7 +541,14 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
     assert_eq!(command.options(), opts);
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let route = command
-        .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &world,
+            &ctx,
+            "alice",
+            &WorldState::empty(),
+            &BankRows::default(),
+            &arms,
+        )
         .unwrap();
     assert_eq!(route.dest, wt(2, 2, 0));
     assert_eq!(
@@ -564,7 +572,14 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
         .unwrap();
     assert_eq!(
         command
-            .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+            .walk_on(
+                &world,
+                &ctx,
+                "alice",
+                &WorldState::empty(),
+                &BankRows::default(),
+                &arms
+            )
             .unwrap_err(),
         ActionError::NoPath
     );
@@ -588,7 +603,14 @@ fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
         .unwrap();
     let arms = crate::WalkArms::default();
     let error = command
-        .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &world,
+            &ctx,
+            "alice",
+            &WorldState::empty(),
+            &BankRows::default(),
+            &arms,
+        )
         .unwrap_err();
     assert_eq!(error, ActionError::OriginNotStandable);
     assert!(
@@ -664,7 +686,14 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
         .expect("selected members-only destination");
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let error = command
-        .walk_on(&nav, &context, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &nav,
+            &context,
+            "alice",
+            &WorldState::empty(),
+            &BankRows::default(),
+            &arms,
+        )
         .expect_err("F2P must refuse the members-only route");
     assert_eq!(error, ActionError::MembersOnly);
     assert_eq!(error.to_string(), "This route requires a members' world");
@@ -916,7 +945,13 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
         .unwrap();
     let route = play
-        .map_walk(command, &ctx, &WorldState::empty(), &[], &arms)
+        .map_walk(
+            command,
+            &ctx,
+            &WorldState::empty(),
+            &BankRows::default(),
+            &arms,
+        )
         .unwrap();
     assert_eq!(route.dest, wt(3205, 3206, 0));
     let generation = {
@@ -943,8 +978,14 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         )
         .unwrap();
     assert_eq!(
-        play.map_walk(command, &foreign, &WorldState::empty(), &[], &arms)
-            .unwrap_err(),
+        play.map_walk(
+            command,
+            &foreign,
+            &WorldState::empty(),
+            &BankRows::default(),
+            &arms
+        )
+        .unwrap_err(),
         ActionError::Stale
     );
     let arms = arms.lock().unwrap();
@@ -1308,7 +1349,7 @@ fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
             t(3, 3, 0),
             FindOptions::default(),
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             &arms,
             Some("alice"),
         )
@@ -1360,8 +1401,14 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
         )
         .unwrap();
     let arms = Arc::new(Mutex::new(HashMap::new()));
-    play.map_walk(command, &bob_ctx, &WorldState::empty(), &[], &arms)
-        .unwrap();
+    play.map_walk(
+        command,
+        &bob_ctx,
+        &WorldState::empty(),
+        &BankRows::default(),
+        &arms,
+    )
+    .unwrap();
     assert_eq!(
         arms.lock().unwrap()["bob"].lock().unwrap().queued_tile(),
         Some(dest)
@@ -1412,7 +1459,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(model.select_tile(&baked, dest), Some(dest));
 
     let empty = WorldState::empty();
-    let bank: [(i32, i32); 0] = [];
+    let bank = BankRows::default();
     let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
     let reqs: Vec<WalkSlotRequest<'_>> = names
         .iter()
@@ -1566,7 +1613,7 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
         .unwrap();
 
     let state = WorldState::empty();
-    let bank: [(i32, i32); 0] = [];
+    let bank = BankRows::default();
     let request = [WalkSlotRequest {
         name: "alice",
         state: &state,
@@ -1682,7 +1729,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         )
         .unwrap();
     let error = command
-        .walk_on(&nav, &ctx, "alice", &state, &[], &arms)
+        .walk_on(&nav, &ctx, "alice", &state, &BankRows::default(), &arms)
         .unwrap_err();
     let message = error.to_string();
     assert!(

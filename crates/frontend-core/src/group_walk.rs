@@ -28,7 +28,8 @@ const DONE: &str = "walking";
 /// per-bot world snapshot.
 pub struct WalkInputs {
     pub state: WorldState,
-    pub bank: Vec<(i32, i32)>,
+    /// The bot's bank memory rows ([`host_play::Play::bank_rows`]).
+    pub bank: nav::bank_fetch::BankRows,
 }
 
 /// The consumed destination plus the routing options that produced it.

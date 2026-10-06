@@ -16,9 +16,10 @@
 //! bankable, or the relaxed diagnosis shows a skill/quest/varp/worn-all gate) is
 //! `None`: the caller reports `NoPath`.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
-use api::bank_memory::Origin;
+use api::bank_memory::{BankMemory, Origin};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
@@ -36,12 +37,66 @@ pub const SAME_BANK: i32 = 12;
 /// An account's bank rows as the host hands them to a planner: the memory's
 /// `(obj id, count)` rows with the origin they came from
 /// (design-bank-snapshot §1.2, §2.4). `Unknown` with no rows is the
-/// never-observed bank. The rows are one copy per operator walk arm, the
-/// same size the UI collected from the open bank before.
+/// never-observed bank. The rows are one copy per walk arm, never per tick;
+/// while the bank is open and loaded the memory mirrors the live table, so
+/// this is also the open-bank case.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BankRows {
     pub origin: Origin,
     pub rows: Vec<(i32, i32)>,
+}
+
+impl BankRows {
+    /// One copy of `memory`'s rows with its origin.
+    pub fn of(memory: &BankMemory) -> Self {
+        Self {
+            origin: memory.origin(),
+            rows: memory.rows().to_vec(),
+        }
+    }
+
+    /// The rows [`plan_bank_fetch`] plans a session for the route diagnosis
+    /// `missing` over (design-bank-snapshot §2.4, §4 F6). `Session` rows are
+    /// this session's observation and `Unknown` rows are empty: both are
+    /// returned as they are (borrowed), so a shortage there is `NoPath`. A
+    /// `Hint` is advisory, so a shortage it predicts costs one verifying trip
+    /// instead: each diagnosed `Carry { id, count }` is raised to
+    /// `max(hinted, count)` and each `WearAny` none of whose ids is hinted
+    /// gains one unit of its first id. The open bank then settles the trip
+    /// (a withdraw it cannot serve aborts the session). Only the route's own
+    /// diagnosis is overlaid; the rows stay sorted by id. One small owned
+    /// `Vec` per plan, never per tick.
+    pub fn planning_rows(&self, missing: &[MissingReq]) -> Cow<'_, [(i32, i32)]> {
+        if self.origin != Origin::Hint {
+            return Cow::Borrowed(&self.rows);
+        }
+        let hinted = |id: i32| self.rows.iter().any(|&(row, count)| row == id && count > 0);
+        let mut rows = self.rows.clone();
+        let mut raise = |id: i32, count: i32, add: bool| match rows
+            .binary_search_by_key(&id, |&(row, _)| row)
+        {
+            Ok(at) if add => rows[at].1 = rows[at].1.saturating_add(count),
+            Ok(at) => rows[at].1 = rows[at].1.max(count),
+            Err(at) => rows.insert(at, (id, count)),
+        };
+        for req in missing {
+            if let MissingReq::Carry { id, count } = *req {
+                if count > 0 {
+                    raise(id, count, false);
+                }
+            }
+        }
+        for req in missing {
+            if let MissingReq::WearAny { ids } = req {
+                if let Some(&first) = ids.first() {
+                    if !ids.iter().any(|&id| hinted(id)) {
+                        raise(first, 1, true);
+                    }
+                }
+            }
+        }
+        Cow::Owned(rows)
+    }
 }
 
 /// The standable tiles `stand` is used from, by the access rule the C1
@@ -163,10 +218,10 @@ pub struct BankFetch {
 /// withdrawal amount; when another deficiency exists, they may include
 /// targets already held so a matching `WearAny` cannot spend the last
 /// carried unit needed by the route.
-/// `state` is the search's gating facts; `bank` is the **open** bank's
-/// rows (obj id, count) from the live snapshot — empty when the bank is
-/// closed (BankBudget has no closed-bank inventory, so a needed item
-/// that is only banked cannot be proved and this returns `None`);
+/// `state` is the search's gating facts; `bank` is the rows the session is
+/// planned over — [`BankRows::planning_rows`] of the account's bank memory
+/// (the live table while the bank is open); an item the rows do not cover
+/// cannot be proved and this returns `None`;
 /// `stands` is the packed bank stand table
 /// ([`crate::world::NavWorld::banks`]), booths and NPC tellers; `from`
 /// is the player's tile, which picks the nearest stand that has a
@@ -336,8 +391,9 @@ pub fn plan_bank_fetch(
 /// The facts a BankBudget session can establish from `state`, whichever
 /// route it serves: exactly the supply [`plan_bank_fetch`] checks. Every
 /// carried obj can be worn in place; with a bank stand to walk to, every
-/// obj in the open bank's rows (an obj's first row, as the planner reads
-/// it) plus the backpack can be carried at their combined count, and made
+/// obj in the bank rows (the account's bank memory, [`BankRows::rows`]; an
+/// obj's first row, as the planner reads it) plus the backpack can be
+/// carried at their combined count, and made
 /// available to the legacy `worn_req` any-of gate. These are candidate
 /// items, not observed equipment, so `worn_all_req` stays exact.
 /// A strict search under this state reaches only goals whose `item_req`,

@@ -585,6 +585,7 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
                     Some(&world),
                     false,
                     true,
+                    None,
                     || unreachable!("the harness never arms a radius walk"),
                 );
             }

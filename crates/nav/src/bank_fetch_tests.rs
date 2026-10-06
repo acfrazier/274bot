@@ -1,10 +1,13 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use super::{
-    bank_access_tiles, fetchable_state, nearest_bank_access, plan_bank_fetch as plan_with, BankStep,
+    bank_access_tiles, fetchable_state, nearest_bank_access, plan_bank_fetch as plan_with,
+    BankRows, BankStep,
 };
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
@@ -905,5 +908,171 @@ fn packed_bank_fetch_walks_to_access_from_customer_streets() {
         .unwrap_or_else(|err| {
             panic!("{name}: some nearby access tile must be routable from {from:?}: {err:?}")
         });
+    }
+}
+
+fn rows(origin: Origin, rows: &[(i32, i32)]) -> BankRows {
+    BankRows {
+        origin,
+        rows: rows.to_vec(),
+    }
+}
+
+/// The toll route's diagnosis from an empty pack: 10 coins.
+fn toll_missing() -> Vec<MissingReq> {
+    let missing = find_missing_item_reqs(
+        &walled_5x5(),
+        &toll_graph(),
+        tile(0, 0, 0),
+        tile(4, 4, 0),
+        FindOptions::default(),
+        &WorldState::default(),
+    )
+    .expect("only the toll count is missing");
+    assert_eq!(missing, vec![MissingReq::Carry { id: 995, count: 10 }]);
+    missing
+}
+
+/// design-bank-snapshot §2.4/§4 F6: `Session` and `Unknown` rows are the
+/// planner input as they are (borrowed, no copy), so a toll they lack is
+/// `NoPath` in place.
+#[test]
+fn planning_rows_borrow_session_and_unknown_rows() {
+    let missing = toll_missing();
+    let session = rows(Origin::Session, &[(1, 3), (KNIFE, 1)]);
+    let planned = session.planning_rows(&missing);
+    assert!(
+        matches!(planned, Cow::Borrowed(_)),
+        "Session rows are borrowed"
+    );
+    assert_eq!(&*planned, &session.rows[..]);
+    assert_eq!(
+        plan_bank_fetch(
+            &missing,
+            &WorldState::default(),
+            &planned,
+            &[stand(4, 0)],
+            tile(0, 0, 0)
+        ),
+        None,
+        "a Session bank without the toll is NoPath"
+    );
+
+    let unknown = BankRows::default();
+    assert_eq!(unknown.origin, Origin::Unknown);
+    let planned = unknown.planning_rows(&missing);
+    assert!(
+        matches!(planned, Cow::Borrowed(_)),
+        "Unknown rows are borrowed"
+    );
+    assert!(planned.is_empty());
+    assert_eq!(
+        plan_bank_fetch(
+            &missing,
+            &WorldState::default(),
+            &planned,
+            &[stand(4, 0)],
+            tile(0, 0, 0)
+        ),
+        None,
+        "an Unknown bank is NoPath"
+    );
+}
+
+/// A `Hint` shortage is advisory (D4): each diagnosed `Carry` is raised to
+/// `max(hinted, count)`, never lowered, the rows stay sorted, and a toll
+/// the hint lacks plans the one verifying trip — Walk, Open, Withdraw,
+/// Close, never a deposit.
+#[test]
+fn planning_rows_raise_hinted_carry_to_the_diagnosis() {
+    let missing = toll_missing();
+    let lacking = rows(Origin::Hint, &[(1, 3), (KNIFE, 1)]);
+    let planned = lacking.planning_rows(&missing);
+    assert_eq!(&*planned, &[(1, 3), (KNIFE, 1), (995, 10)][..]);
+    let fetch = plan_bank_fetch(
+        &missing,
+        &WorldState::default(),
+        &planned,
+        &[stand(4, 0)],
+        tile(0, 0, 0),
+    )
+    .expect("a Hint without the toll still plans the verifying trip");
+    assert_eq!(
+        fetch.steps,
+        vec![
+            access_walk(&[stand(4, 0)], tile(0, 0, 0)),
+            BankStep::Open,
+            BankStep::Withdraw { id: 995, count: 10 },
+            BankStep::Close,
+        ]
+    );
+    assert_no_deposit(&fetch.steps);
+
+    let short = rows(Origin::Hint, &[(995, 3)]);
+    assert_eq!(&*short.planning_rows(&missing), &[(995, 10)][..]);
+    let rich = rows(Origin::Hint, &[(995, 50)]);
+    assert_eq!(
+        &*rich.planning_rows(&missing),
+        &[(995, 50)][..],
+        "a hinted surplus is kept"
+    );
+}
+
+/// A `WearAny` gains one unit of its first alternative only when the hint
+/// holds none of them; a unit the same id's `Carry` reserves is not one.
+#[test]
+fn planning_rows_add_one_wear_alternative_only_when_none_is_hinted() {
+    let wear = [MissingReq::WearAny {
+        ids: vec![1321, 1323],
+    }];
+    let none = rows(Origin::Hint, &[(995, 5)]);
+    assert_eq!(&*none.planning_rows(&wear), &[(995, 5), (1321, 1)][..]);
+    let second = rows(Origin::Hint, &[(1323, 1)]);
+    let planned = second.planning_rows(&wear);
+    assert_eq!(
+        &*planned,
+        &[(1323, 1)][..],
+        "a hinted alternative adds nothing"
+    );
+
+    let both = [
+        MissingReq::Carry {
+            id: KNIFE,
+            count: 1,
+        },
+        MissingReq::WearAny { ids: vec![KNIFE] },
+    ];
+    let empty = rows(Origin::Hint, &[]);
+    let planned = empty.planning_rows(&both);
+    assert_eq!(&*planned, &[(KNIFE, 2)][..], "carry one and wear one");
+    let fetch = plan_bank_fetch(
+        &both,
+        &WorldState::default(),
+        &planned,
+        &[stand(4, 0)],
+        tile(0, 0, 0),
+    )
+    .expect("the overlay covers the carried and the worn knife");
+    assert!(fetch.steps.contains(&BankStep::Withdraw {
+        id: KNIFE,
+        count: 2
+    }));
+    assert!(fetch.steps.contains(&BankStep::Wear { id: KNIFE }));
+    assert_no_deposit(&fetch.steps);
+}
+
+/// D7 pin: a BankBudget session never deposits. Every step kind is named
+/// here, so a deposit variant cannot be added without revisiting this.
+fn assert_no_deposit(steps: &[BankStep]) {
+    for step in steps {
+        match step {
+            BankStep::Walk { .. }
+            | BankStep::Open
+            | BankStep::Withdraw { .. }
+            | BankStep::WithdrawX { .. }
+            | BankStep::WithdrawXAmount { .. }
+            | BankStep::Wear { .. }
+            | BankStep::Close => {}
+        }
     }
 }
