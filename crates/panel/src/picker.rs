@@ -1470,13 +1470,25 @@ pub fn draw_picker(
             Some(world) => picker_map_body(ui, gpu, session, map, &world),
             None => {
                 map.note_open();
-                ui.text_wrapped("no nav pack — run nav-pack");
+                ui.text_wrapped(walkto_unavailable_text(session.core.play().is_some()));
             }
         });
     if !open {
         session.walkto_open = false;
         PREV_OPEN.store(false, Ordering::Relaxed);
         session.map_model.close();
+    }
+}
+
+/// Why WalkTo has no map. The world is attached when the vault is unlocked
+/// (`start_vault` attaches the play session), so before that the map is
+/// simply not loaded yet; only an attached session without a world means
+/// the pack is missing.
+pub(crate) fn walkto_unavailable_text(play_attached: bool) -> &'static str {
+    if play_attached {
+        "no nav pack — run nav-pack"
+    } else {
+        "The WalkTo map loads when the vault is unlocked."
     }
 }
 
