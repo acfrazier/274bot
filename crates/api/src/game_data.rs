@@ -925,6 +925,13 @@ pub struct NpcNameRow {
     /// onto whatever protect we are not using. Combat holds one protect.
     #[serde(default)]
     pub counter_protect: bool,
+    /// Source poison severity before conversion to per-tick damage. Absent means
+    /// that this selected row carries no explicit poison severity fact.
+    #[serde(default)]
+    pub poison_severity: Option<i32>,
+    /// Selected `npc_forcemulti` content parameter.
+    #[serde(default)]
+    pub forcemulti: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]

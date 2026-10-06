@@ -25,6 +25,8 @@ type NpcBlock = {
     rangebonus: number | null;
     undead: number | null;
     attackrate: number | null;
+    poison_severity: number | null;
+    forcemulti: boolean;
     params: Map<string, string>;
 };
 
@@ -48,7 +50,7 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
     return parseCombatInt(raw, label);
 }
 
-function parseNpcFiles(content: string, revision: 274 | 289) {
+export function parseNpcFiles(content: string, revision: 274 | 289) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const defaultMaxrange = revision === 274 ? 7 : -1;
     const defaultParam = (name: string) => {
@@ -65,6 +67,8 @@ function parseNpcFiles(content: string, revision: 274 | 289) {
     const strengthbonus = defaultParam('strengthbonus');
     const rangebonus = defaultParam('rangebonus');
     const attackrate = defaultParam('attackrate');
+    const poisonSeverity = defaultParam('poison_severity');
+    const forcemulti = (defaultParam('npc_forcemulti') ?? 0) !== 0;
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -96,6 +100,8 @@ function parseNpcFiles(content: string, revision: 274 | 289) {
                     rangebonus,
                     undead: null,
                     attackrate,
+                    poison_severity: poisonSeverity,
+                    forcemulti,
                     params: new Map(),
                 };
                 blocks.set(name, current);
@@ -129,7 +135,11 @@ function parseNpcFiles(content: string, revision: 274 | 289) {
                 else if (param === 'strengthbonus') current.strengthbonus = parseParamInt(rawValue, `${current.name}.strengthbonus`);
                 else if (param === 'rangebonus') current.rangebonus = parseParamInt(rawValue, `${current.name}.rangebonus`);
                 else if (param === 'undead') current.undead = parseParamInt(rawValue, `${current.name}.undead`);
-                else if (param === 'attackrate') {
+                else if (param === 'poison_severity') current.poison_severity = parseParamInt(rawValue, `${current.name}.poison_severity`);
+                else if (param === 'npc_forcemulti') {
+                    const value = parseParamInt(rawValue, `${current.name}.npc_forcemulti`);
+                    if (value !== null) current.forcemulti = value !== 0;
+                } else if (param === 'attackrate') {
                     const rate = parseCombatInt(rawValue, `${current.name}.attackrate`);
                     if (rate !== null && (rate < 0 || rate > 255)) throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
                     current.attackrate = rate;
@@ -137,14 +147,14 @@ function parseNpcFiles(content: string, revision: 274 | 289) {
             }
         }
     }
-    return { blocks, files };
+    return { blocks, files, poisonSeverity, forcemulti };
 }
 
 export function extractNpcNamesFacts(content: string, revision: number, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
     if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
-    const { blocks, files } = parseNpcFiles(content, revision);
+    const { blocks, files, poisonSeverity, forcemulti: defaultForcemulti } = parseNpcFiles(content, revision);
     const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
@@ -189,6 +199,8 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
                 forced_max_hit: combat.forced_max_hit,
                 dragonfire: combat.dragonfire,
                 attackrate: block?.attackrate ?? null,
+                poison_severity: block ? block.poison_severity : poisonSeverity,
+                forcemulti: block?.forcemulti ?? defaultForcemulti,
                 bespoke: combat.bespoke,
                 counter_protect: combat.counter_protect,
             };

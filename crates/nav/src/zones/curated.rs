@@ -54,6 +54,7 @@ pub(crate) struct HazardSpec {
     pub label: &'static str,
     pub rect: AvoidRect,
     pub level: u8,
+    pub damage: Option<u8>,
 }
 
 pub(crate) const HAZARDS: &[HazardSpec] = &[HazardSpec {
@@ -67,4 +68,13 @@ pub(crate) const HAZARDS: &[HazardSpec] = &[HazardSpec {
         level: Some(0),
     },
     level: 0,
+    damage: Some(20),
 }];
+
+/// Fixed hazard damage by curated zone kind id; absent facts stay unknown.
+pub fn hazard_damage(id: &str) -> Option<u8> {
+    HAZARDS
+        .iter()
+        .find(|hazard| hazard.id == id)
+        .and_then(|hazard| hazard.damage)
+}

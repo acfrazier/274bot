@@ -496,6 +496,86 @@ bank/zone diagnosis for every Area tile. This optional hint budget does not
 truncate the route's goals or authorize a route; targets beyond it may have
 no bank-fetch zone attribution.
 
+### Survivable-risk facts (`script::combat::risk`)
+
+`risk::assess` computes an `Arc<RouteAssessment>` from the immutable found
+route, its zone table, shared combat/risk tables, permissions and a compact
+`RiskInput`. It is compute-only: it does not request another route, admit a
+walk, install an observer or execute an escape. Existing walking behavior and
+the pack format are unchanged.
+
+The assessment retains every engaged zone interval and crossing; the first
+eight crossings are display summaries only. Acquisition uses the router's
+activation predicate, carves and stationary shapes. Pursuit continues through
+the engagement envelope, with transport holds and projectile tails included.
+Retreat stays in the same walk leg, and teleports are never credited as
+on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
+`NoWayOut` in its reason.
+
+Food is simulated from actual counts, using the shared guard picker, a
+three-tick bite clock, delayed heals and exact threshold gating. Pre-entry
+top-up never wastes a heal. Message-delay and combo foods are excluded and
+named; only the six largest carried food kinds are retained. Protection
+requires the current level, points, compatible styles and ownership
+conditions, keeps one unprotected volley and never credits carried potions
+or already-launched damage. `FixableWith` reports the least additional
+reference-food count that makes the replay pass within free inventory slots.
+Unsupported facts, missing input, input locks and representational overflow
+remain explicit `Unknown` verdicts.
+
+`PoisonMemory` exposes pure transitions, not a live observer. Known poison
+retains the largest observed pulse through silence, decreasing marks and
+silent reapplication until a confirmed own antipoison decrement or observed
+death followed by respawn. Unknown poison requires the complete accepted-click
+phase evidence to clear; a hitmark kind above two invalidates the whole
+session until reconnect. Poison damages the entire route timeline, including
+safe gaps. Unknown poison alone does not refuse a route without crossings.
+
+`RiskTables` is immutable and reused across assessments. Ordinary slot
+creation does not construct it, and no per-bot state is added by this
+compute-only API. Host admission and shared-world lazy initialization belong
+to the later integration.
+
+The estimate builds a compact `KindRisk` for each packed zone kind from the
+selected `NpcNameRow` and `CombatTables`; it does not change routing or pack
+format. Maximum hits reuse the shared `npc_max_hit` helper, and attack intervals
+use `CombatTables::npc_rate` (the selected combat parameter defaults to four
+ticks). Missing NPC rows or stats, unsupported styles, and values outside the
+compact model stay explicitly unknown rather than becoming zero-risk facts.
+Attack style is explicit: absent `attack_kind` maps to Melee; Magic, Mixed,
+dragonfire and counter-protect kinds stay unsupported.
+Ranged rows also fail closed if their rate permits overlapping launch impacts
+or their flight exceeds `PROJ_LAG = 3`. That value is an explicit tuning/
+inference choice, not a measured upper bound from revision 289: its selected
+NPC facts currently contain no pure `Ranged` attack-kind rows.
+
+The NPC extractor publishes `poison_severity` and `forcemulti` from
+`poison_severity` and `npc_forcemulti` parameters, including their selected
+content defaults. Poison damage per 30-tick pulse is `ceil(severity / 5)`;
+nonzero poison is unsupported on members worlds but retained as a fact on
+F2P. The conservative unknown-poison bound scans every selected NPC row, not
+only NPCs present in a zone; on revision 289, eleven poisoned rows yield a
+maximum severity of 55 and a bound of 11 damage per pulse.
+If any selected NPC row lacks poison severity, the bound is `u8::MAX` and that
+kind is `MissingFacts`; an absent schema field never means zero poison.
+
+| Revision 289 NPC | Maximum event | Attack interval |
+| --- | ---: | ---: |
+| Ice warrior | 6 | 4 ticks |
+| Armed zombie | 3 | 5 ticks |
+| Giant spider | 3 | 4 ticks |
+| Aggressive pirate | 4 | 5 ticks |
+| Jail guard | 3 | 5 ticks |
+| Pack wolf | 3 | 4 ticks |
+| Pack wolf leader | 7 | 4 ticks |
+| Mugger | 1 | 4 ticks |
+| Poison spider | 7 | 4 ticks |
+
+The poison spider remains unknown on members and uses its numeric hit/rate on
+F2P. Curated hazards are separate from NPC stats: the Ikov lava bridge has a
+known 20-damage acquisition event; hazards without curated damage remain
+unknown. The hazard's nonzero rate sentinel is not a repeat interval.
+
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
 NPC-backed hops use the live NPC tile (search radius 8). Paid Al Kharid
