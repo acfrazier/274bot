@@ -36,7 +36,7 @@ pub(crate) fn with_tick_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, None, ledger, tick, output, f)
+    with_tick_output_reach(snapshot, None, Truth::Unknown, ledger, tick, output, f)
 }
 
 pub(crate) fn with_tick_reach<R>(
@@ -46,12 +46,32 @@ pub(crate) fn with_tick_reach<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, Some(reach), ledger, tick, &mut Output, f)
+    with_tick_output_reach(
+        snapshot,
+        Some(reach),
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        f,
+    )
+}
+
+/// A tick whose snapshot view carries the host-bound world type.
+pub(crate) fn with_tick_world<R>(
+    snapshot: &GameSnapshot,
+    world_members: Truth,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(snapshot, None, world_members, ledger, tick, &mut Output, f)
 }
 
 fn with_tick_output_reach<R>(
     snapshot: &GameSnapshot,
     reach: Option<&api::query::ReachQueryView>,
+    world_members: Truth,
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     output: &mut dyn NativeOutput,
@@ -78,7 +98,9 @@ fn with_tick_output_reach<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             pin: &pin,
-            snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(reach),
+            snapshot: SnapshotView::new(Some(snapshot), evidence)
+                .with_reach(reach)
+                .with_world_members(world_members),
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
@@ -99,6 +121,7 @@ fn with_tick_output_reach<R>(
                 reach: None,
                 bank_memory: None,
                 hold: false,
+                world_members,
                 interacts: Some(Vec::new()),
             },
         },
@@ -5796,5 +5819,81 @@ fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
                 ..
             }
         ));
+    });
+}
+
+#[test]
+fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
+    let fact = PredicateDocument::Fact {
+        kind: "members_world".into(),
+        version: 1,
+        args: serde_json::json!({}),
+    };
+    compile_context_test(|cx| {
+        let plain = compile_predicate(&fact, cx).unwrap();
+        let negated =
+            compile_predicate(&PredicateDocument::Not(Box::new(fact.clone())), cx).unwrap();
+        // The account flag the server sent at login is true in every case:
+        // a members account on a free-to-play world must still read False.
+        let mut snapshot = ready();
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..Default::default()
+        });
+        for (world, expected) in [
+            (Truth::True, Truth::True),
+            (Truth::False, Truth::False),
+            (Truth::Unknown, Truth::Unknown),
+        ] {
+            with_tick_world(&snapshot, world, &mut None, 1, |t| {
+                let context = PredicateContext {
+                    cx: &t.cx,
+                    pairs: t.pairs,
+                    quests: cx.quests,
+                    progress: &[],
+                    required_after: t.cx.evidence(),
+                    chat_since: 0,
+                    outcome: None,
+                    bank: &crate::quester::bank_memo::BankMemo::default(),
+                };
+                assert_eq!(plain.evaluate(&context), expected, "{world:?}");
+                assert_eq!(negated.evaluate(&context), !expected, "not {world:?}");
+            });
+        }
+        // A view with no host fact attached (no bound profile) is Unknown.
+        with_tick(&snapshot, &mut None, 1, |t| {
+            let context = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
+            assert_eq!(plain.evaluate(&context), Truth::Unknown);
+        });
+    });
+}
+
+#[test]
+fn members_world_rejects_arguments() {
+    let document = PredicateDocument::Fact {
+        kind: "members_world".into(),
+        version: 1,
+        args: serde_json::json!({"members": true}),
+    };
+    compile_context_test(|cx| {
+        assert_eq!(
+            compile_predicate(&document, cx)
+                .err()
+                .unwrap()
+                .code
+                .as_ref(),
+            "invalid-args"
+        );
     });
 }

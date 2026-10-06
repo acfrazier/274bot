@@ -419,6 +419,10 @@ impl Play {
         slot_script
             .lock()
             .unwrap()
+            .bind_world_members(self.connection.world_members());
+        slot_script
+            .lock()
+            .unwrap()
             .bind_quest_pairs(self.quest_pairs.seat(
                 &username,
                 self.connection.game_host(),

@@ -1470,6 +1470,7 @@ mod tests {
                     reach: None,
                     bank_memory: None,
                     hold: self.hold,
+                    world_members: api::selected::Truth::Unknown,
                     interacts: Some(Vec::new()),
                 },
             }

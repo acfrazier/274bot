@@ -40,6 +40,9 @@ pub struct CompiledTick<'a> {
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.
     pub hold: bool,
+    /// The bound server profile's world type. `Unknown` when the host has no
+    /// profile for this slot, such as a Direct connection.
+    pub world_members: api::selected::Truth,
     /// The compiled interact queue for the tick in flight. [`crate::slot::SlotScript`]
     /// parks its own queue here around the compiled tick and takes it back
     /// when the tick returns; the isolate path forwards a queue of its own

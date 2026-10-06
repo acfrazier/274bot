@@ -1372,6 +1372,7 @@ fn compiled_ctx<'a>(
             reach: None,
             bank_memory: None,
             hold: false,
+            world_members: api::selected::Truth::Unknown,
             interacts: None,
         },
     }
