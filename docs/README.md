@@ -13,6 +13,3 @@ Start here: [README.md](../README.md), [FIRST-START.md](../FIRST-START.md),
 | [`quester-paths.md`](quester-paths.md) | Quester Path authoring guide |
 | [`upgrade-0.2.0.md`](upgrade-0.2.0.md) | Upgrading from 0.1.9.1 to 0.2.0 Beta 1 |
 | [`upgrade-compatibility-0.1.8.1.md`](upgrade-compatibility-0.1.8.1.md) | 0.1.8.1 → 0.1.9 upgrade audit and release gate |
-
-Working notes (plans, campaign state, agent checkouts) live only in a
-local checkout when present and are not published with this repository.

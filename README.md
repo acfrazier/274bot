@@ -8,7 +8,7 @@ The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start /
 
 Native scripts compiled into the host, driven through the panel or TUI script chrome like any other card:
 
-- **Quester** — runs built-in quest Paths on revision 289, reading progress from the quest journal and picking up again after Stop/Start. Pick quests, skips and their order from lists; each run recovers from up to two deaths and stops on the next. Path format: [docs/quester-paths.md](docs/quester-paths.md).
+- **Quester** — runs built-in quest Paths on revision 289, reading progress from the quest journal and picking up again after Stop/Start. Pick quests, skips and their order from lists; each run by default recovers from two deaths (setting) across the queue and stops on the next. Path format: [docs/quester-paths.md](docs/quester-paths.md).
 - **Gatherer** — woodcutting, mining and fishing at a named site, a start tile, a custom area, or Auto search for the nearest usable spots. Power disposition drops products; Bank disposition banks them at the nearest bank you can walk to (or a bank you pick) and walks back.
 - **Combat** — the shared native fight behind the native scripts: melee, ranged and magic with protection prayers, potion sips and eating. Prayers you turned on yourself stay on; only the prayers the bot raised are switched off afterwards.
 - **Clues (Sherlock)** — the Rust-native clue-trail solver: waits for a held clue and works it through the shared clue machine.
@@ -134,15 +134,15 @@ cargo run --release -p host-play -- --profile local-289 --user test
 
 # TUI: same vault, raster Off (no GPU). Same passphrase prompt; from a script use
 # `printf '%s\n' "$PASS" | tui-play --vault-pass-stdin ...` (see docs/api/vault.md).
-cargo run --release -p tui --bin tui-play -- --profile local-289
+cargo run --release -p tui --bin tui-play -- --profile local-289 --user test
 
 # Headed live (no vault passphrase: it makes a throwaway vault): FAIL+exit 1
 cargo run --release -p panel --bin panel-play -- --profile local-289 --live null_raster
-# Nav execute corpus (local engine; unique live account):
+# Nav execute corpus (selected profile's engine; unique live account):
 # cargo run --release -p panel --bin panel-play -- --profile local-289 --live script_nav_routes
-# Headless twin: LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
+# Headless twin (needs a local-274 engine on 127.0.0.1:43594): LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 
-# Headless RSS ladder (all slots Null / set_draw=false). One N per process.
+# Headless RSS ladder (needs a local-274 engine on 127.0.0.1:43594; all slots Null / set_draw=false). One N per process.
 # Prints rss=…; does not fail on size. Not a Started-JS isolate ladder.
 LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 
@@ -160,11 +160,11 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all** and bulk **Start all / Stop all** (script bulk is separate from login bulk). Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords and fresh UIDs. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api…
+**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api…
 
 **Scripts:** panel **Browse / Load / Reload / Start / Pause / Stop** are live; MultiBox rail adds **Start all / Stop all**. Catalog **Refresh catalog** (with confirm when running/paused bots are affected). Successful Start persists a per-profile script assignment and settings bag in the vault. Transpile is content-addressed under `~/.274bot/js-cache` (raw-source SHA-256). WalkTo on the main chrome is host nav, not a script card. Catalog scripts come from your configured `$RS2B0T` / `--catalog` checkout; this repository does not copy their source. Details: [docs/api/script.md](docs/api/script.md).
 
-**Windows:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Unfocused slots paint on the **1 fps** watch cadence; the focused slot runs at **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
+**Window:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Unfocused slots paint at the **1 fps** watch cadence only in a MultiBox wall with *Only render selected* off; otherwise they stay draw-off. The focused slot runs at **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
 ## Nav
 
@@ -198,7 +198,7 @@ Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **
 
 ## Live tests and suite runner
 
-Require the local engine for the profile under test. Quiet unless `BOT_DEBUG=1`. Failures print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`.
+`-p e2e`, `null_raster` and `rss_ladder` connect to a **local-274** engine on `127.0.0.1:43594`; the panel/TUI `--live` runs and the 289-gated host-play tests use the selected profile. Quiet unless `BOT_DEBUG=1`. Failures print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`.
 
 ```bash
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
