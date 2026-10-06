@@ -9,7 +9,14 @@
   "quest": {
     "members": false,
     "quest_points": 3,
-    "requirements": [],
+    "requirements": [
+      {
+        "id": "mining-1",
+        "kind": { "Skill": { "skill": "mining", "level": 1 } },
+        "at": "materials",
+        "source": "scripts/skill_mining/configs/mine.dbrow:10-20,23-34,36-47 (clay, copper and tin rocks require Mining 1)"
+      }
+    ],
     "items": [
       {"obj": "princeskey", "qty": 1, "kind": "acquirable", "acquire": null},
       {"obj": "keyprint", "qty": 1, "kind": "acquirable", "acquire": null},
@@ -180,10 +187,28 @@
           "skip_if": {
             "Any": [
               {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "clay"}}},
-              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}}
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "clay"}}}}
+              ]}
             ]
           },
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "clay"}}}
+        },
+        {
+          "id": "gather-clay-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-clay"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+          ]}
         },
         {
           "id": "clay-water",
@@ -201,7 +226,70 @@
           "args": {"item": "jug_water", "target": {"item": "clay"}, "product": "softclay"},
           "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
-          "comment": "C general_use/scripts/water_sources.rs2:23-28; skill_crafting/scripts/pottery/pottery.rs2 make_softclay. Clay mining is a gather gap; provide 1 clay or softclay in inventory/bank."
+          "comment": "Water softens clay. If neither raw clay nor soft clay is held or banked, the nested Mining 1 gather recipe supplies raw clay from Rimmington."
+        }
+      ],
+      "acquire:rimmington-clay": [
+        {
+          "id": "gather-clay-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "clay",
+            "until": {"obj": "clay", "qty": 1},
+            "anchor": {
+              "tile": [2986, 3239, 0],
+              "source": "maps/m46_50.jm2:6337 (clayrock1 at [2986,3239,0]); pack/loc.pack:2109; scripts/skill_mining/configs/mine.dbrow:10-21"
+            },
+            "radius": 3
+          },
+          "comment": "Optional bank withdrawal is tried first. This Rimmington rock outputs clay at Mining 1.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+        }
+      ],
+      "acquire:rimmington-copper": [
+        {
+          "id": "gather-copper-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "copper",
+            "until": {"obj": "copper_ore", "qty": 1},
+            "anchor": {
+              "tile": [2976, 3247, 0],
+              "source": "maps/m46_50.jm2:6013 (copperrock1 at [2976,3247,0]); pack/loc.pack:2091; scripts/skill_mining/configs/mine.dbrow:23-34"
+            },
+            "radius": 3
+          },
+          "comment": "Optional bank withdrawal is tried first. This Rimmington rock outputs copper ore at Mining 1.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+        }
+      ],
+      "acquire:rimmington-tin": [
+        {
+          "id": "gather-tin-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "tin",
+            "until": {"obj": "tin_ore", "qty": 1},
+            "anchor": {
+              "tile": [2984, 3237, 0],
+              "source": "maps/m46_50.jm2:6266 (tinrock1 at [2984,3237,0]); pack/loc.pack:2095; scripts/skill_mining/configs/mine.dbrow:36-47"
+            },
+            "radius": 3
+          },
+          "comment": "Optional bank withdrawal is tried first. This Rimmington rock outputs tin ore at Mining 1.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
         }
       ],
       "acquire:bronze": [
@@ -226,10 +314,28 @@
           "skip_if": {
             "Any": [
               {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "copper_ore"}}},
-              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}}
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "copper_ore"}}}}
+              ]}
             ]
           },
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "copper_ore"}}}
+        },
+        {
+          "id": "gather-copper-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-copper"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+          ]}
         },
         {
           "id": "tin-bank-gap",
@@ -239,10 +345,28 @@
           "skip_if": {
             "Any": [
               {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tin_ore"}}},
-              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}}
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "tin_ore"}}}}
+              ]}
             ]
           },
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tin_ore"}}}
+        },
+        {
+          "id": "gather-tin-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-tin"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
+          ]}
         },
         {
           "id": "smelt-bronze",
@@ -262,7 +386,7 @@
           },
           "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
-          "comment": "C skill_smithing/configs/smelting/smelting.struct:1-15: one copper + one tin, Smithing1. Only ore gathering is missing; smelting is authored."
+          "comment": "Content smelts one copper ore with one tin ore at Smithing 1. The nested Mining 1 gather recipes supply only any raw-ore deficits left after bank withdrawals."
         }
       ],
       "acquire:ashes": [
