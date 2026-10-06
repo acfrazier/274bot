@@ -1,0 +1,3666 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "death",
+  "display_name": "Death Plateau",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "bread",
+        "qty": 10,
+        "kind": "must_have",
+        "acquire": null
+      },
+      {
+        "obj": "trout",
+        "qty": 10,
+        "kind": "must_have",
+        "acquire": null
+      },
+      {
+        "obj": "iron_bar",
+        "qty": 1,
+        "kind": "must_have",
+        "acquire": null
+      },
+      {
+        "obj": "asgarnian_ale",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "premade_blurberry_special",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 300,
+    "loadouts": {},
+    "areas": {
+      "saba_cave": {
+        "boxes": [
+          [
+            2240,
+            4736,
+            2303,
+            4799,
+            0
+          ]
+        ],
+        "source": "C maps/m35_74.jm2 (whole square; death_hermit at 2270,4759, exit loc 2268,4750)"
+      },
+      "tenzing_hut": {
+        "boxes": [
+          [
+            2818,
+            3553,
+            2822,
+            3557,
+            0
+          ]
+        ],
+        "source": "C maps/m44_55.jm2:4141-4341 death_stonehut walls; front door tile 2822,3555, back door tile 2820,3557"
+      },
+      "tenzing_garden": {
+        "boxes": [
+          [
+            2814,
+            3558,
+            2820,
+            3562,
+            0
+          ]
+        ],
+        "source": "C maps/m44_55.jm2:4113-4306 death_fencing (west x=2813, north edge of z=3563, east edge x=2821) and back door landing 2820,3558"
+      },
+      "secret_way": {
+        "boxes": [
+          [
+            2814,
+            3564,
+            2875,
+            3612,
+            0
+          ]
+        ],
+        "source": "C maps/m44_55.jm2:4152 stile north landing 2817,3564 through quest_death.rs2:130 scout zone 2864..2871,3608..3615"
+      },
+      "harold_room": {
+        "boxes": [
+          [
+            2905,
+            3536,
+            2906,
+            3542,
+            1
+          ]
+        ],
+        "source": "C maps/m45_55.jm2:7249-7337 brickwalls x=2904 east edge, x=2907 west edge, door south edge of 2906,3543; Harold spawn 2905,3539"
+      },
+      "mechanism_alcove": {
+        "boxes": [
+          [
+            2893,
+            3561,
+            2896,
+            3566,
+            0
+          ]
+        ],
+        "source": "C maps/m45_55.jm2:5286-5420 castlewall ring around the pedestals 5332-5372; east column x=2896 open to the hall"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:death_climbingboots",
+      "obj:death_spikedboots",
+      "obj:death_entrancecert",
+      "obj:death_secretwaymap",
+      "obj:death_iou",
+      "obj:death_combination"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:death",
+      "progress": {
+        "colour": {
+          "not_started": "death:0",
+          "in_progress": "death:map",
+          "complete": "death:80"
+        },
+        "rules": [
+          {
+            "stage": "death:80",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": 80
+          },
+          {
+            "stage": "death:map",
+            "all": [
+              "i have offered to help denulth by finding another way up death plateau"
+            ],
+            "varp": null
+          },
+          {
+            "stage": "death:70",
+            "all": [
+              "i put the stone balls in the right places"
+            ],
+            "varp": 70
+          },
+          {
+            "stage": "death:60",
+            "all": [
+              "it turned out the iou was written on the back of the combination"
+            ],
+            "varp": 60
+          },
+          {
+            "stage": "death:55",
+            "all": [
+              "he wrote me an iou"
+            ],
+            "varp": 55
+          },
+          {
+            "stage": "death:50",
+            "all": [
+              "i bought the guard a drink"
+            ],
+            "varp": 50
+          },
+          {
+            "stage": "death:40",
+            "all": [
+              "eohric says to buy the guard a drink"
+            ],
+            "varp": 40
+          },
+          {
+            "stage": "death:30",
+            "all": [
+              "the guard wouldn't talk to me"
+            ],
+            "varp": 30
+          },
+          {
+            "stage": "death:20",
+            "all": [
+              "eohric said that the equipment room guard is staying"
+            ],
+            "varp": 20
+          },
+          {
+            "stage": "death:10",
+            "all": [
+              "i have found another way up death plateau for denulth"
+            ],
+            "varp": 10
+          },
+          {
+            "stage": "death:0",
+            "all": [
+              "i can start this quest by speaking to denulth"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [
+          {
+            "flag": "death:map_ge1",
+            "any": [
+              "saba says that there is a sherpa living nearby",
+              "tenzing will show me a secret way up death plateau",
+              "i gave tenzing the ten loaves of bread"
+            ]
+          },
+          {
+            "flag": "death:map_ge2",
+            "any": [
+              "tenzing will show me a secret way up death plateau",
+              "i gave tenzing the ten loaves of bread"
+            ]
+          },
+          {
+            "flag": "death:map_ge3",
+            "any": [
+              "dunstan will help me if i get his son signed up",
+              "denulth gave me a certificate",
+              "i have given dunstan the certificate"
+            ]
+          },
+          {
+            "flag": "death:map_ge4",
+            "any": [
+              "denulth gave me a certificate",
+              "i have given dunstan the certificate"
+            ]
+          },
+          {
+            "flag": "death:map_ge5",
+            "any": [
+              "i have given dunstan the certificate"
+            ]
+          },
+          {
+            "flag": "death:map_ge6",
+            "any": [
+              "i gave tenzing the ten loaves of bread"
+            ]
+          },
+          {
+            "flag": "death:map_ge7",
+            "any": [
+              "tenzing has given me a map of the secret way"
+            ]
+          },
+          {
+            "flag": "death:map_ge8",
+            "any": [
+              "i checked the secret way and it is safe"
+            ]
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "exit-saba-cave-if-inside",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "loc": "death_hermitcave_exit"
+            },
+            "op": "Exit",
+            "anchor": {
+              "tile": [
+                2269,
+                4752,
+                0
+              ],
+              "source": "C maps/m35_74.jm2:1570 (death_hermitcave_exit 3736 at 2268,4750 3x2); quest_death.rs2:5-7 teleports to 2858,3577"
+            },
+            "radius": 4,
+            "settle_ms": 10000
+          },
+          "comment": "Cross-stage override: the hermit cave exit is a scripted teleport (quest_death.rs2:5-7) that the nav graph does not model, so a run that starts or resumes inside the cave must leave explicitly. Kept while Saba still has to be asked.",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "saba_cave"
+                    }
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "stage_in",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "any": [
+                          "death:map"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "flag",
+                        "version": 1,
+                        "args": {
+                          "quest": "death",
+                          "flag": "death:map_ge1",
+                          "is": true
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "saba_cave"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "return-over-stile",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "loc": "death_fullstyle"
+            },
+            "op": "Climb-over",
+            "anchor": {
+              "tile": [
+                2817,
+                3564,
+                0
+              ],
+              "source": "C maps/m44_55.jm2:4152 (death_fullstyle 3730 at 2817,3562 length 2); quest_death.rs2:103-118 lands 2817,3561 from the north side"
+            },
+            "radius": 3,
+            "settle_ms": 15000
+          },
+          "comment": "Cross-stage override: the only way back from the secret way is the stile behind Tenzing's hut; death_fullstyle is not the generic fullstyle shortcut the nav bakes (nav/src/transport/shortcuts.rs:21), so the return climb is explicit. Skipped while the map track is still scouting.",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "secret_way"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:map"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "secret_way"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "leave-harold-room",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "loc": "death_harold_door"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                2906,
+                3542,
+                1
+              ],
+              "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1 south edge; room side); quest_death.rs2:9-14 opens freely from inside"
+            },
+            "radius": 3,
+            "settle_ms": 10000
+          },
+          "comment": "Cross-stage override: Harold's bedroom door is a scripted knock door without door categories, so the nav cannot route out of the room. Leaves whenever the current stage has no business inside (stages 20, 40 and 50 talk to Harold).",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "harold_room"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:20",
+                      "death:40",
+                      "death:50"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "harold_room"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "death:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-denulth",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_ig_commander",
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3528,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8215 (death_ig_commander 1060); tent door blockwalk=no quest_death.loc:172-177"
+                },
+                "leash": 6,
+                "prefer": [
+                  "Do you have any quests for me?",
+                  "No but perhaps I could try and find one?"
+                ]
+              },
+              "comment": "death_ig_commander.rs2:10-12,91-115: option menu then p_choice2; sets %death_equiproom=10 and Harold's purse to 100 coins.",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "is": "in_progress"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:map",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-saba-cave",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_hermitcave_entrance"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2858,
+                    3577,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:5537 (death_hermitcave_entrance 3735 at 2857,3578 3x2); quest_death.rs2:1-3 teleports to 2269,4752"
+                },
+                "radius": 4,
+                "settle_ms": 10000
+              },
+              "comment": "Saba's cave is a scripted teleport (quest_death.rs2:1-3), not a nav transport.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge1",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "saba_cave"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "saba_cave"
+                  }
+                }
+              }
+            },
+            {
+              "id": "ask-saba",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_hermit",
+                "anchor": {
+                  "tile": [
+                    2270,
+                    4759,
+                    0
+                  ],
+                  "source": "C maps/m35_74.jm2:2217 (death_hermit 1070)"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Do you know of another way up Death Plateau?"
+                ]
+              },
+              "comment": "death_saba.rs2:30-51: option 2 sets map bits to ^death_spoken_saba (1).",
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge1",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge1",
+                    "is": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "exit-saba-cave",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_hermitcave_exit"
+                },
+                "op": "Exit",
+                "anchor": {
+                  "tile": [
+                    2269,
+                    4752,
+                    0
+                  ],
+                  "source": "C maps/m35_74.jm2:1570 (death_hermitcave_exit 3736 at 2268,4750 3x2); quest_death.rs2:5-7 teleports to 2858,3577"
+                },
+                "radius": 4,
+                "settle_ms": 10000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "saba_cave"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "saba_cave"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-tenzing-door-first",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_sherpa_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2823,
+                    3555,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:4336 (death_sherpa_door 3745 at 2822,3555 east edge; doorstep outside); quest_death.rs2:46-61"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the doorstep: 'You knock on the door.' / 'No milk today!' / 'I'm not the milkman' then the door script teleports the player onto 2822,3555 inside (quest_death.rs2:52-60, open_and_close_door2). Needs map>=1. The nav only routes the free (leaving) direction of this door while the quest is in progress (nav/src/transport/quest_doors.rs:176-230).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "tenzing_hut"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge2",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "tenzing_hut"
+                  }
+                }
+              }
+            },
+            {
+              "id": "ask-tenzing",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_sherpa",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3556,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:6372 (death_sherpa 1071)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "OK, I'll get those for you."
+                ]
+              },
+              "comment": "death_sherpa.rs2:154-174: p_choice2 option 1 sets map=2 and hands over the climbing boots (needs one free pack slot).",
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge2",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge2",
+                    "is": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "ask-dunstan-spikes",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_smithy",
+                "anchor": {
+                  "tile": [
+                    2919,
+                    3574,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8233 (death_smithy 1082)"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "death_smithy.rs2:16-30: linear at map=2, sets map=3; Dunstan asks for the Imperial Guard sign-up and an iron bar. Leaving the hut uses the free direction of the front door.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge3",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge3",
+                    "is": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "withdraw-certificate",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "death_entrancecert",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Only when Denulth already issued the certificate (map=4) and it is banked: Denulth checks inv+bank with obj_gettotal before issuing a duplicate (death_ig_commander.rs2:159-169).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_entrancecert"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge5",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "flag",
+                        "version": 1,
+                        "args": {
+                          "quest": "death",
+                          "flag": "death:map_ge4",
+                          "is": true
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "death_entrancecert"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "get-certificate",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_ig_commander",
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3528,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8215 (death_ig_commander 1060); tent door blockwalk=no quest_death.loc:172-177"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "death_ig_commander.rs2:17-18,157-184: linear at map 3 (or 4 with the certificate lost), sets map=4 and gives death_entrancecert. Needs one free pack slot.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_entrancecert"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge5",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_entrancecert"
+                  }
+                }
+              }
+            },
+            {
+              "id": "withdraw-iron-bar",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "iron_bar",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Dunstan takes one iron bar with the climbing boots (death_smithy.rs2:194-204). Listed must_have so Start is refused when neither pack nor bank has one.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "iron_bar"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_spikedboots"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge6",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "iron_bar"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "withdraw-climbing-boots",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "death_climbingboots",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_climbingboots"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_spikedboots"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge6",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "death_climbingboots"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "give-cert-dunstan",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_smithy",
+                "anchor": {
+                  "tile": [
+                    2919,
+                    3574,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8233 (death_smithy 1082)"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "death_smithy.rs2:32-50,187-211: at map 4 takes the certificate (map=5) and continues into the bargain; at map 5 the bargain runs directly. With iron bar + climbing boots in the pack it hands back death_spikedboots. Says 'I don't have the iron bar' / 'climbing boots' otherwise and the settle times out.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_spikedboots"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge6",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_spikedboots"
+                  }
+                }
+              }
+            },
+            {
+              "id": "withdraw-supplies",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "bread",
+                    "qty": 10
+                  },
+                  {
+                    "obj": "trout",
+                    "qty": 10
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Tenzing needs exactly ten bread and ten cooked trout in the pack (death_sherpa.rs2:128-142). Both are must_have rows, so Start is refused unless pack+bank hold them.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "item_count_at_least",
+                          "version": 1,
+                          "args": {
+                            "obj": "bread",
+                            "qty": 10
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "item_count_at_least",
+                          "version": 1,
+                          "args": {
+                            "obj": "trout",
+                            "qty": 10
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge6",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "open-tenzing-door-supplies",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_sherpa_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2823,
+                    3555,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:4336 (death_sherpa_door 3745 at 2822,3555 east edge; doorstep outside); quest_death.rs2:46-61"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Second entry; at map>=2 the door opens without the knock (quest_death.rs2:48-50) but the nav still does not route the entering direction, so the open is explicit.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "tenzing_hut"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge7",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "tenzing_hut"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-supplies-tenzing",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_sherpa",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3556,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:6372 (death_sherpa 1071)"
+                },
+                "leash": 4,
+                "prefer": []
+              },
+              "comment": "death_sherpa.rs2:111-147,181-190: at map 5 with spiked boots, 10 bread and 10 trout in the pack: map=6 then tenzing_secretway sets map=7 and gives death_secretwaymap (linear, two item boxes).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge7",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_secretwaymap"
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-tenzing-backdoor",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_sherpa_backdoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3557,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:4258 (death_sherpa_backdoor 3746 at 2820,3557 north edge; inside tile); quest_death.rs2:63-71"
+                },
+                "radius": 3,
+                "settle_ms": 10000
+              },
+              "comment": "From inside with map>=7 the back door opens and the script teleports the player to 2820,3558 in the garden (quest_death.rs2:63-67). Before map 7 Tenzing says 'This is private property!'.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "tenzing_hut"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge8",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "tenzing_garden"
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-stile-out",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_fullstyle"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    2817,
+                    3561,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:4152 (death_fullstyle 3730 at 2817,3562 length 2); quest_death.rs2:103-118 lands 2817,3564 from the garden side"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Exact-move over the garden fence; lands on 2817,3564 north of the fence (quest_death.rs2:103-118).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "tenzing_garden"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "death",
+                        "flag": "death:map_ge8",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "secret_way"
+                  }
+                }
+              }
+            },
+            {
+              "id": "scout-secret-way",
+              "kind": "walk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "tile": [
+                  2865,
+                  3609,
+                  0
+                ],
+                "source": "C quest_death.rs2:130-136 zone 0_44_56_48_24 = 2864..2871,3608..3615; m44_56.jm2 MAP rows 2864..2869,3609 are the unblocked tiles (f1 absent)",
+                "radius": 1
+              },
+              "comment": "Entering zone 0_44_56_48_24 with map=7 sets map=8 and prints 'You can see that there are no trolls on the secret path.' plus a player chat line (quest_death.rs2:130-136). Tiles 2864..2869,3609 are outside every thrower troll hunt box (huntrange 8 from z=3600, quest_death.npc:1479-1522); no danger-zone grant is authored, so a refused route names the zone to grant.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge8",
+                    "is": true
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "flag": "death:map_ge8",
+                    "is": true
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-eohric",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_headservant",
+                "anchor": {
+                  "tile": [
+                    2902,
+                    3565,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8242 (death_headservant 1080, castle first floor)"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm looking for the guard that was on last night."
+                ]
+              },
+              "comment": "death_headservant.rs2:19-20,49-55: option 1 at stage 10 sets %death_equiproom=20. Eohric wanders (wanderrange 5) on the castle first floor; the castle ladders are generic nav transports.",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:20"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:20",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "knock-harold-door-duty",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_harold_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2906,
+                    3544,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1, south edge; corridor side)"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the corridor: 'You knock on the door.' then Harold's 'Come in!' and the door script teleports the player to 2906,3542 inside (quest_death.rs2:9-25). Refused with 'I'd better not go into someone's bedroom' below stage 20. The Toad and Chicken stairs at 2914,3539 are generic nav stairs.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "ask-harold-duty",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "You're the guard that was on duty last night?"
+                ]
+              },
+              "comment": "death_guard_equiproom.rs2:34-37,264-273: option 1 at stage 20 sets %death_equiproom=30 ('I don't want to talk about it!').",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:30"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-eohric-again",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_headservant",
+                "anchor": {
+                  "tile": [
+                    2902,
+                    3565,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8242 (death_headservant 1080, castle first floor)"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "comment": "death_headservant.rs2:10-15: linear at stage 30, sets 40 ('Perhaps he'd open up after a drink?').",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:40"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-asgarnian-ale",
+              "kind": "buy",
+              "version": 1,
+              "args": {
+                "shop": {
+                  "npc": "death_barman",
+                  "anchor": {
+                    "tile": [
+                      2906,
+                      3537,
+                      0
+                    ],
+                    "source": "C maps/m45_55.jm2:8226 (death_barman 1079); shop death_pub burthorpe.inv:19-25"
+                  }
+                },
+                "obj": "asgarnian_ale",
+                "qty": 1,
+                "est_gp": 10
+              },
+              "comment": "Tostig (op3 Trade, quest_death.npc:712-747) sells asgarnian_ale from death_pub, stock 12, restock 10 ticks (burthorpe.inv:19-25); cost 2 coins (cooking.obj:1-4) at sell multiplier 1000.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "asgarnian_ale"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "asgarnian_ale"
+                  }
+                }
+              }
+            },
+            {
+              "id": "knock-harold-door-ale",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_harold_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2906,
+                    3544,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1, south edge; corridor side)"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the corridor: 'You knock on the door.' then Harold's 'Come in!' and the door script teleports the player to 2906,3542 inside (quest_death.rs2:9-25). Refused with 'I'd better not go into someone's bedroom' below stage 20. The Toad and Chicken stairs at 2914,3539 are generic nav stairs.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-ale-harold",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "Can I buy you a drink?"
+                ]
+              },
+              "comment": "death_guard_equiproom.rs2:29,302-336: at stage 40 the talk goes straight to harold_drink; with asgarnian_ale held it sets 50 and consumes the ale, then opens a 3-option menu where 'Can I buy you a drink?' leads to harold_drink2 (Blurberry Special request; given here if already carried).",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "asgarnian_ale"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:50"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-blurberry-special",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "premade_blurberry_special",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Optional: a Blurberry Special (Blurberry Bar, gnome.inv:146 premade_blurberry_special) makes Harold 'very drunk' so every dice roll is a win (death_guard_equiproom.rs2:134,187-198). Only withdrawn when the bank is already known to hold one; never a bank trip on its own.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "premade_blurberry_special"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "blurberry_special"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_known",
+                        "version": 1,
+                        "args": {}
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "premade_blurberry_special"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "knock-harold-door-drink",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_harold_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2906,
+                    3544,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1, south edge; corridor side)"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the corridor: 'You knock on the door.' then Harold's 'Come in!' and the door script teleports the player to 2906,3542 inside (quest_death.rs2:9-25). Refused with 'I'd better not go into someone's bedroom' below stage 20. The Toad and Chicken stairs at 2914,3539 are generic nav stairs.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-blurberry-harold",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "Can I buy you a drink?"
+                ]
+              },
+              "comment": "death_guard_equiproom.rs2:275-300: at stage 50 (sober) 'Can I buy you a drink?' runs harold_drink2, which takes a Blurberry Special and sets the ^harold_verydrunk bit (not visible in the journal). No chat message, so the settle is the cocktail leaving the pack.",
+              "skip_if": {
+                "Not": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "premade_blurberry_special"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "blurberry_special"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "premade_blurberry_special"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "blurberry_special"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "GAP-harold-dice-gamble",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_iou"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_combination"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "max_ticks": 20
+              },
+              "comment": "GAP: the gamble (death_guard_equiproom.rs2:207-249,70-124) needs 'Would you like to gamble?' then a p_countdialog stake (101..1000 coins, more than Harold's 100-coin purse, at most the coins carried), the death_dice main interface roll button (death_dice:com_28), a click-to-continue, and a win (automatic when very drunk, else player 2d6 > Harold's 2d6, ties lose and the stake goes to Harold). No Quester family answers a count dialog or clicks a custom main interface, so this step only waits 20 ticks for an IOU and fails with 'wait exhausted'; as a top-level step the parked Step field shows this id. Replace with the gamble family when it lands.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:55",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-iou",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "death_iou",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "death_iou"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "knock-harold-door-iou",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_harold_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2906,
+                    3544,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1, south edge; corridor side)"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the corridor: 'You knock on the door.' then Harold's 'Come in!' and the door script teleports the player to 2906,3542 inside (quest_death.rs2:9-25). Refused with 'I'd better not go into someone's bedroom' below stage 20. The Toad and Chicken stairs at 2914,3539 are generic nav stairs.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "reclaim-iou-harold",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "Where were you when you last had the combination?"
+                ]
+              },
+              "comment": "death_guard_equiproom.rs2:22,27,340-352: with neither IOU nor combination in pack or bank Harold writes another IOU at the start of the dialogue; the combination question that follows is harmless.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_iou"
+                  }
+                }
+              }
+            },
+            {
+              "id": "read-iou",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "held": "death_iou"
+                },
+                "op": "Read",
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:27-35: reading the IOU (iop1 Read, quest_death.obj:17-31) swaps it for death_combination and sets %death_equiproom=60.",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "death_iou"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_combination"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:60",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "walk-mechanism-alcove",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2896,
+                  3563,
+                  0
+                ],
+                "source": "C maps/m45_55.jm2 MAP (2896,3562..3565) indoor floor east of the mechanism alcove; locs 5332-5372",
+                "radius": 2
+              },
+              "comment": "The stone mechanism alcove is x 2893..2895, z 3561..3566 inside Burthorpe castle, open to the hall on its east side; the ground-item facts below are only reliable once the scene around it is loaded.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mechanism_alcove"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mechanism_alcove"
+                  }
+                }
+              }
+            },
+            {
+              "id": "take-blue-ball",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "ground": "death_cannonball_blue"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3564,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8253 (obj 3110 death_cannonball_blue)"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "comment": "Single-item ground spawn that respawns; the blue ball goes on the pedestal at 2894,3562 (quest_death.rs2:92 obj_find(0_45_55_14_42)).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_blue"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_blue",
+                        "at": [
+                          2894,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_blue"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stand-blue-ball",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2893,
+                  3562,
+                  0
+                ],
+                "source": "Exact stand tile: the only tile from which the 2894,3562 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2893,
+                          3562,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_blue"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_blue",
+                        "at": [
+                          2894,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2893,
+                      3562,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "place-blue-ball",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "death_cannonball_blue",
+                "target": {
+                  "loc": "death_stone_mechanism_corner"
+                },
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3562,
+                    0
+                  ],
+                  "source": "quest_death.rs2:92 obj_find(0_45_55_14_42) -> pedestal 2894,3562 (maps/m45_55.jm2:5332-5372)"
+                },
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:80-101: using any stone ball on a mechanism pedestal drops it there for 1000 ticks; when blue 2894,3562 / yellow 2895,3562 / red 2894,3563 / purple 2895,3563 / green 2895,3564 are all present and %death_equiproom=60 the door unlocks (stage 70). 'There is already a stone ball here.' if the tile is taken.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_blue"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_blue",
+                        "at": [
+                          2894,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_blue",
+                    "at": [
+                      2894,
+                      3562,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
+              "id": "take-yellow-ball",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "ground": "death_cannonball_yellow"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3561,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8250 (obj 3111 death_cannonball_yellow)"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "comment": "Single-item ground spawn that respawns; the yellow ball goes on the pedestal at 2895,3562 (quest_death.rs2:92 obj_find(0_45_55_15_42)).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_yellow"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_yellow",
+                        "at": [
+                          2895,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_yellow"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stand-yellow-ball",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2896,
+                  3562,
+                  0
+                ],
+                "source": "Exact stand tile: the only tile from which the 2895,3562 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2896,
+                          3562,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_yellow"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_yellow",
+                        "at": [
+                          2895,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2896,
+                      3562,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "place-yellow-ball",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "death_cannonball_yellow",
+                "target": {
+                  "loc": "death_stone_mechanism_corner"
+                },
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3562,
+                    0
+                  ],
+                  "source": "quest_death.rs2:92 obj_find(0_45_55_15_42) -> pedestal 2895,3562 (maps/m45_55.jm2:5332-5372)"
+                },
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:80-101: using any stone ball on a mechanism pedestal drops it there for 1000 ticks; when blue 2894,3562 / yellow 2895,3562 / red 2894,3563 / purple 2895,3563 / green 2895,3564 are all present and %death_equiproom=60 the door unlocks (stage 70). 'There is already a stone ball here.' if the tile is taken.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_yellow"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_yellow",
+                        "at": [
+                          2895,
+                          3562,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_yellow",
+                    "at": [
+                      2895,
+                      3562,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
+              "id": "take-red-ball",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "ground": "death_cannonball_red"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3565,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8254 (obj 3109 death_cannonball_red)"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "comment": "Single-item ground spawn that respawns; the red ball goes on the pedestal at 2894,3563 (quest_death.rs2:93 obj_find(0_45_55_14_43)).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_red"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_red",
+                        "at": [
+                          2894,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_red"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stand-red-ball",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2893,
+                  3563,
+                  0
+                ],
+                "source": "Exact stand tile: the only tile from which the 2894,3563 pedestal is the sole death_stone_mechanism_side within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2893,
+                          3563,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_red"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_red",
+                        "at": [
+                          2894,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2893,
+                      3563,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "place-red-ball",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "death_cannonball_red",
+                "target": {
+                  "loc": "death_stone_mechanism_side"
+                },
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3563,
+                    0
+                  ],
+                  "source": "quest_death.rs2:93 obj_find(0_45_55_14_43) -> pedestal 2894,3563 (maps/m45_55.jm2:5332-5372)"
+                },
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:80-101: using any stone ball on a mechanism pedestal drops it there for 1000 ticks; when blue 2894,3562 / yellow 2895,3562 / red 2894,3563 / purple 2895,3563 / green 2895,3564 are all present and %death_equiproom=60 the door unlocks (stage 70). 'There is already a stone ball here.' if the tile is taken.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_red"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_red",
+                        "at": [
+                          2894,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_red",
+                    "at": [
+                      2894,
+                      3563,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
+              "id": "take-purple-ball",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "ground": "death_cannonball_purple"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3563,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8252 (obj 3112 death_cannonball_purple)"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "comment": "Single-item ground spawn that respawns; the purple ball goes on the pedestal at 2895,3563 (quest_death.rs2:93 obj_find(0_45_55_15_43)).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_purple"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_purple",
+                        "at": [
+                          2895,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_purple"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stand-purple-ball",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2896,
+                  3563,
+                  0
+                ],
+                "source": "Exact stand tile: the only tile from which the 2895,3563 pedestal is the sole death_stone_mechanism_side within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2896,
+                          3563,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_purple"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_purple",
+                        "at": [
+                          2895,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2896,
+                      3563,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "place-purple-ball",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "death_cannonball_purple",
+                "target": {
+                  "loc": "death_stone_mechanism_side"
+                },
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3563,
+                    0
+                  ],
+                  "source": "quest_death.rs2:93 obj_find(0_45_55_15_43) -> pedestal 2895,3563 (maps/m45_55.jm2:5332-5372)"
+                },
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:80-101: using any stone ball on a mechanism pedestal drops it there for 1000 ticks; when blue 2894,3562 / yellow 2895,3562 / red 2894,3563 / purple 2895,3563 / green 2895,3564 are all present and %death_equiproom=60 the door unlocks (stage 70). 'There is already a stone ball here.' if the tile is taken.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_purple"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_purple",
+                        "at": [
+                          2895,
+                          3563,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_purple",
+                    "at": [
+                      2895,
+                      3563,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
+              "id": "take-green-ball",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "ground": "death_cannonball_green"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2893,
+                    3562,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8251 (obj 3113 death_cannonball_green)"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "comment": "Single-item ground spawn that respawns; the green ball goes on the pedestal at 2895,3564 (quest_death.rs2:93 obj_find(0_45_55_15_44)).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_green"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_green",
+                        "at": [
+                          2895,
+                          3564,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_green"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stand-green-ball",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2896,
+                  3564,
+                  0
+                ],
+                "source": "Exact stand tile: the only tile from which the 2895,3564 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2896,
+                          3564,
+                          0
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_green"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_green",
+                        "at": [
+                          2895,
+                          3564,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2896,
+                      3564,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "place-green-ball",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "death_cannonball_green",
+                "target": {
+                  "loc": "death_stone_mechanism_corner"
+                },
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3564,
+                    0
+                  ],
+                  "source": "quest_death.rs2:93 obj_find(0_45_55_15_44) -> pedestal 2895,3564 (maps/m45_55.jm2:5332-5372)"
+                },
+                "radius": 1,
+                "settle_ms": 10000
+              },
+              "comment": "quest_death.rs2:80-101: using any stone ball on a mechanism pedestal drops it there for 1000 ticks; when blue 2894,3562 / yellow 2895,3562 / red 2894,3563 / purple 2895,3563 / green 2895,3564 are all present and %death_equiproom=60 the door unlocks (stage 70). 'There is already a stone ball here.' if the tile is taken.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "death_cannonball_green"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_cannonball_green",
+                        "at": [
+                          2895,
+                          3564,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_cannonball_green",
+                    "at": [
+                      2895,
+                      3564,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:70",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-secret-way-map",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "death_secretwaymap",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "death_secretwaymap"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "withdraw-combination",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "death_combination",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "death_combination"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "open-tenzing-door-reclaim",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_sherpa_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2823,
+                    3555,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:4336 (death_sherpa_door 3745 at 2822,3555 east edge; doorstep outside); quest_death.rs2:46-61"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "tenzing_hut"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "bank_has",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "tenzing_hut"
+                  }
+                }
+              }
+            },
+            {
+              "id": "reclaim-map-tenzing",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "death_sherpa",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3556,
+                    0
+                  ],
+                  "source": "C maps/m44_55.jm2:6372 (death_sherpa 1071)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "Nothing, thanks."
+                ]
+              },
+              "comment": "death_sherpa.rs2:84-94: at map>=7 with no map in pack or bank Tenzing draws another one before any menu.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "bank_has",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_secretwaymap"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_secretwaymap"
+                  }
+                }
+              }
+            },
+            {
+              "id": "knock-harold-door-reclaim",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "death_harold_door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2906,
+                    3544,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:7307 (death_harold_door 3747 at 2906,3543 lvl1, south edge; corridor side)"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "comment": "Knock from the corridor: 'You knock on the door.' then Harold's 'Come in!' and the door script teleports the player to 2906,3542 inside (quest_death.rs2:9-25). Refused with 'I'd better not go into someone's bedroom' below stage 20. The Toad and Chicken stairs at 2914,3539 are generic nav stairs.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "harold_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "reclaim-combination-harold",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
+                },
+                "leash": 4,
+                "prefer": [
+                  "Where were you when you last had the combination?"
+                ]
+              },
+              "comment": "death_guard_equiproom.rs2:11,16,340-348: at stage>=60 with neither IOU nor combination owned Harold hands over the combination directly.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "bank_has",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "death_combination"
+                  }
+                }
+              }
+            },
+            {
+              "id": "hand-in-denulth",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "death_ig_commander",
+                "anchor": {
+                  "tile": [
+                    2896,
+                    3528,
+                    0
+                  ],
+                  "source": "C maps/m45_55.jm2:8215 (death_ig_commander 1060); tent door blockwalk=no quest_death.loc:172-177"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "death_ig_commander.rs2:14-15,186-221: at stage 70 with map=8 Denulth takes the secret way map and the combination from the pack (both required) and queues death_quest_complete: steel claws, 30000 Attack xp, 1 QP (quest_death.rs2:216-222).",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "death:80",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}
