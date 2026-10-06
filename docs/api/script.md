@@ -634,9 +634,13 @@ player; NPC health-bar visibility is not required. Product and live-proof
 receipts use the same evidence predicate.
 Abort walks retain food upkeep and the step's crossing permissions. They request
 protection only when prayer is allowed and the player's Prayer level can use
-Protect; otherwise the host runs a food-only guard without refusing the walk.
+Protect; otherwise they set the walk request's explicit `food_guard` flag and
+the host runs a food-only guard without refusing the walk. Only combat abort
+walks set `food_guard`. Ordinary script and Quester walks, which default to
+`allow.food = true`, start no host guard unless they request `protect`.
 If no engaged actor was recorded, retreat geometry uses the heaviest observed
-live attacker.
+live attacker. Retreat direction compares packet-time network tiles (the
+player's and the attacker's), not interpolated rendered poses.
 An abort walk that fails or arrives while an attacker remains transfers into
 a guarded hold. The hold continues eating and permitted protection even at high
 HP, and ends only after three consecutive ticks without threat evidence.
@@ -645,6 +649,17 @@ unavailable or disallowed, the hold instead makes one unguarded escape walk away
 from the attacker before parking, when a destination can be formed. It does not
 retry that escape indefinitely. Cancellation releases protection owned by the
 hold.
+
+**Known limit (WindDown gap).** Every `Aborted` combat end first enters
+WindDown, which turns all raised prayers off and reports only once they are
+observed off. The abort walk or hold then starts a new guard with an empty
+threat set, which raises Protect again only after it observes attack evidence
+and the varp echo. In that window (about two to four ticks, enough for one
+Warlord swing) a step that authored `guard: "protect"` is unprotected. This
+matters most for `Aborted(Unprotected(NoFood))`, which fires at the emergency
+HP line. It affects only steps with `guard: "protect"`; no shipped Path uses
+that mode. A later change should hand the raised prayers from an abort with a
+live attacker to the abort walk or hold instead of sweeping them.
 
 Abort qualification records the step's prayer permission independently of the
 player's Prayer level. A protected hold must prevent HP loss; a food-only hold

@@ -22,6 +22,10 @@ use scenario::{
 };
 use script::combat::threats::targets_local_with_attack_evidence;
 use script::quester::compile::{compile_path, CompiledPath};
+use script::quester::families::combat::{
+    ABORTED_COMBAT_STEP_REASON, ABORT_HOLD_ESCAPED_REASON, ABORT_HOLD_SAFE_REASON,
+    ABORT_HOLD_UNAVAILABLE_REASON, ABORT_WALK_FAILED_REASON,
+};
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -61,13 +65,6 @@ const RANGED_NATURAL_WARLORD_WAIT_TICKS: u32 = WARLORD_RESPAWN_TICKS + WARLORD_R
 const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
 // Selected R289 data: Protect from Melee requires base Prayer 43.
 const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
-const RANGED_ABORTED_COMBAT_STEP_REASON: &str = "combat aborted; caller must handle the failure";
-const RANGED_ABORT_WALK_FAILED_REASON: &str = "combat abort walk did not reach a safe tile";
-const RANGED_ABORT_HOLD_SAFE_REASON: &str =
-    "combat abort guarded hold ended because the attacker disengaged or HP cleared the guard food line";
-const RANGED_ABORT_HOLD_BOUND_REASON: &str = "combat abort guarded hold reached its 12-tick bound";
-const RANGED_ABORT_HOLD_UNAVAILABLE_REASON: &str =
-    "combat abort safety hold could not start its food guard";
 
 // Outside every nearby static tree's one-tile hunt range. The fixture's first
 // native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
@@ -3124,18 +3121,11 @@ fn ranged_abort_terminal_kind(capture: &CombatCapture) -> Option<&'static str> {
         return None;
     }
     match status["failure"].as_str()? {
-        failure
-            if failure.contains(
-                "combat abort exhausted guard supplies; completed one escape walk and parked",
-            ) =>
-        {
-            Some("exhausted_escape")
-        }
-        failure if failure.contains(RANGED_ABORT_HOLD_SAFE_REASON) => Some("hold_safe"),
-        failure if failure.contains(RANGED_ABORT_HOLD_BOUND_REASON) => Some("hold_bound"),
-        failure if failure.contains(RANGED_ABORT_HOLD_UNAVAILABLE_REASON) => Some("unavailable"),
-        failure if failure.contains(RANGED_ABORT_WALK_FAILED_REASON) => Some("walk_failed"),
-        failure if failure.contains(RANGED_ABORTED_COMBAT_STEP_REASON) => Some("walk_completed"),
+        failure if failure.contains(ABORT_HOLD_ESCAPED_REASON) => Some("exhausted_escape"),
+        failure if failure.contains(ABORT_HOLD_SAFE_REASON) => Some("hold_safe"),
+        failure if failure.contains(ABORT_HOLD_UNAVAILABLE_REASON) => Some("unavailable"),
+        failure if failure.contains(ABORT_WALK_FAILED_REASON) => Some("walk_failed"),
+        failure if failure.contains(ABORTED_COMBAT_STEP_REASON) => Some("walk_completed"),
         _ => None,
     }
 }
@@ -3177,8 +3167,14 @@ fn ranged_abort_prayer_available(policy: RangedAbortPolicy, frame: &Value) -> Op
     Some(stat_base(frame, "prayer")? >= RANGED_ABORT_MIN_PROTECT_LEVEL)
 }
 
-fn ranged_abort_eat_line(policy: RangedAbortPolicy) -> Option<i64> {
-    policy.npc_max_hit?.checked_mul(2)
+/// The product guard's food line for the selected max hit: the same
+/// `select::lines(..).eat` the guard evaluates, not a recomputed copy.
+fn ranged_abort_eat_line(policy: RangedAbortPolicy, hitpoints_max: i64) -> Option<i64> {
+    let danger = i32::try_from(policy.npc_max_hit?).ok()?;
+    let hitpoints_max = i32::try_from(hitpoints_max).ok()?;
+    Some(i64::from(
+        script::combat::select::lines(Some(danger), hitpoints_max).eat,
+    ))
 }
 
 fn ranged_abort_inventory_count(frame: &Value, item_id: i32) -> Option<i64> {
@@ -3224,19 +3220,26 @@ fn ranged_live_attacker(frame: &Value, spawned_index: i64) -> Option<bool> {
     Some(live)
 }
 
-fn ranged_abort_warlord_network_tile(frame: &Value, spawned_index: i64) -> Option<WorldTile> {
+fn ranged_abort_warlord_network_footprint(
+    frame: &Value,
+    spawned_index: i64,
+) -> Option<(WorldTile, i64)> {
     let warlord_type = i64::try_from(WARLORD_NPC_ID).ok()?;
     let warlord = frame["nearby_npcs"].as_array()?.iter().find(|npc| {
         npc["index"].as_i64() == Some(spawned_index) && npc["type"].as_i64() == Some(warlord_type)
     })?;
-    value_tile(&warlord["network"])
+    Some((value_tile(&warlord["network"])?, warlord["size"].as_i64()?))
 }
 
-fn ranged_abort_live_attacker_after_escape(
+/// Live attack evidence for one frame. A missing Warlord row is positive
+/// no-attack evidence only when the frame's NPC list is present, no retained
+/// row targets the local player (receipts keep every such row at any
+/// distance), and the player is beyond the receipt radius of the Warlord's
+/// last observed footprint. Arrival is not required. Otherwise it is unknown.
+fn ranged_abort_live_attacker_or_absent(
     frame: &Value,
     spawned_index: i64,
-    escaped: bool,
-    last_warlord_tile: Option<WorldTile>,
+    last_warlord: Option<(WorldTile, i64)>,
 ) -> Option<bool> {
     let warlord_type = i64::try_from(WARLORD_NPC_ID).ok()?;
     let npcs = frame["nearby_npcs"].as_array()?;
@@ -3244,14 +3247,17 @@ fn ranged_abort_live_attacker_after_escape(
         npc["index"].as_i64() == Some(spawned_index) && npc["type"].as_i64() == Some(warlord_type)
     });
     if !has_warlord {
-        if !escaped {
+        let player_tile = value_tile(&frame["local_player"]["network"])?;
+        let (last_tile, last_size) = last_warlord?;
+        if network_footprint_distance(player_tile, last_tile, last_size)?
+            <= combat_proof::NPC_RECEIPT_RADIUS
+        {
             return None;
         }
-        let player_tile = value_tile(&frame["local_player"]["network"])?;
-        let last_warlord_tile = last_warlord_tile?;
-        // snapshot_facts retains unengaged NPCs through Chebyshev distance 12.
-        if tile_distance(player_tile, last_warlord_tile) <= 12 {
-            return None;
+        for npc in npcs {
+            if npc["targets_local"].as_bool()? {
+                return None;
+            }
         }
     }
     let mut live = false;
@@ -3386,10 +3392,11 @@ fn ranged_abort_food_eats(
     report_tick: i64,
     end_tick: i64,
     policy: RangedAbortPolicy,
+    eat_line: Option<i64>,
 ) -> (Vec<(i64, i64, i64)>, bool) {
     let mut eats = Vec::new();
     let mut valid = true;
-    let Some(eat_line) = ranged_abort_eat_line(policy) else {
+    let Some(eat_line) = eat_line else {
         return (eats, false);
     };
     for action in capture.actions.iter().filter(|action| is_eat(action)) {
@@ -3511,9 +3518,10 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
     let hold_safe_terminal_tick = (terminal_kind == Some("hold_safe"))
         .then_some(terminal_tick)
         .flatten();
-    let eat_line = ranged_abort_eat_line(policy);
+    let eat_line = stat_base(report_frame, "hitpoints")
+        .and_then(|hitpoints_max| ranged_abort_eat_line(policy, hitpoints_max));
     let (food_eats, food_actions_valid) =
-        ranged_abort_food_eats(capture, report_tick, observation_end, policy);
+        ranged_abort_food_eats(capture, report_tick, observation_end, policy, eat_line);
     let food_only = !prayer_available;
     let mut food_observations_valid = true;
     let mut previous_food = None;
@@ -3581,7 +3589,7 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
     let mut previous_food_frame = None;
     let mut observed_ticks = 0;
 
-    let mut last_warlord_tile = None;
+    let mut last_warlord = None;
     for tick in report_tick..=observation_end {
         let mut found_tick = false;
         for frame in capture
@@ -3601,17 +3609,13 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
             if hitpoints <= 0 {
                 positive_hitpoints = false;
             }
-            if let Some(tile) = ranged_abort_warlord_network_tile(frame, spawned_index) {
-                last_warlord_tile = Some(tile);
+            if let Some(footprint) = ranged_abort_warlord_network_footprint(frame, spawned_index) {
+                last_warlord = Some(footprint);
             }
 
-            let escaped = escape_arrival_tick.is_some_and(|arrival_tick| tick >= arrival_tick);
-            let Some(live_attacker) = ranged_abort_live_attacker_after_escape(
-                frame,
-                spawned_index,
-                escaped,
-                last_warlord_tile,
-            ) else {
+            let Some(live_attacker) =
+                ranged_abort_live_attacker_or_absent(frame, spawned_index, last_warlord)
+            else {
                 complete = false;
                 previous_hp = Some(hitpoints);
                 continue;
@@ -3638,8 +3642,10 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
                     let eat_due_without_action = hitpoints <= eat_line.unwrap_or(i64::MIN)
                         && food_count.is_some_and(|count| count > 0)
                         && !has_pending_eat;
+                    // Food exhaustion leaves exactly one unguarded escape; a
+                    // chasing attacker is expected until that walk arrives.
                     let supplied_or_escaping = food_count.is_some_and(|count| count > 0)
-                        || exhausted_escape.is_some_and(|(walk_tick, _)| tick <= walk_tick);
+                        || exhausted_escape.is_some_and(|(_, arrival_tick)| tick <= arrival_tick);
                     guarded_while_threatened &=
                         food_observations_valid && supplied_or_escaping && !eat_due_without_action;
                 }
@@ -3716,7 +3722,6 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
                     && disengaged_from_hold_safe_terminal
                     && (!food_only || food_zero_tick.is_none())
             }
-            Some("hold_bound") => prayer_available && live_threat_seen && terminal_tick_seen,
             Some("walk_completed") => safe_escape && (!food_only || food_zero_tick.is_none()),
             Some("exhausted_escape") => {
                 food_only && food_zero_tick.is_some() && exhausted_escape.is_some() && safe_escape
@@ -3747,6 +3752,7 @@ fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value
         "horizon_start": horizon_start,
         "horizon_end": horizon_end,
         "observation_end": observation_end,
+        "complete": complete,
         "ticks_observed": observed_ticks,
         "expected_ticks": observation_end - horizon_start + 1,
         "policy_allows_prayer": policy.allow_prayer,
@@ -8508,7 +8514,7 @@ fn ranged_food_only_abort_capture(allow_prayer: bool, prayer_level: i64) -> Comb
             76..=81 => 20,
             82 => 14,
             83 => 14,
-            84..=93 => 19,
+            84..=93 => 20,
             94 => 16,
             95 => 28,
             96..=109 => 24,
@@ -8591,9 +8597,63 @@ fn ranged_food_only_abort_capture(allow_prayer: bool, prayer_level: i64) -> Comb
     }));
     capture.statuses.push(json!({
         "phase": "Blocked",
-        "failure": "ScriptFailure { code: \"parked\", message: \"combat abort exhausted guard supplies; completed one escape walk and parked\" }",
+        "failure": format!(
+            "ScriptFailure {{ code: \"parked\", message: \"{ABORT_HOLD_ESCAPED_REASON}\" }}"
+        ),
         "observed_tick": 143,
     }));
+    capture
+}
+
+/// Live-shaped exhausted escape: the Warlord chases the escape walk, then
+/// stops and its row leaves the receipt before the walk arrives.
+///
+/// Escape walk at 129 to (70,100). The player runs two tiles a tick from
+/// (100,100), arriving at 144; the Warlord chases adjacent through 135,
+/// disengages at 136 and stays at (89,100). Its row is retained through 140
+/// (footprint distance 11) and absent from 141 (distance 13). Terminal 146.
+fn ranged_food_only_chase_capture() -> CombatCapture {
+    let mut capture = ranged_food_only_abort_capture(false, 43);
+    let template = capture
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(129))
+        .unwrap()
+        .clone();
+    capture
+        .frames
+        .retain(|frame| frame["tick"].as_i64().is_some_and(|tick| tick < 130));
+    for tick in 130..=146_i64 {
+        let x = (100 - 2 * (tick - 129)).max(70);
+        let mut frame = template.clone();
+        frame["tick"] = json!(tick);
+        frame["stats"][0]["effective"] = json!(25);
+        frame["inventory"] = json!([{"id": LOBSTER_ID, "count": 0}]);
+        frame["tile"] = json!([x, 100, 0]);
+        frame["local_player"]["tile"] = json!({"x": x, "z": 100, "level": 0});
+        frame["local_player"]["network"] = json!({"x": x, "z": 100, "level": 0});
+        let warlord_x = if tick <= 135 { x + 1 } else { 89 };
+        let warlord = &mut frame["nearby_npcs"][0];
+        warlord["tile"] = json!({"x": warlord_x, "z": 100, "level": 0});
+        warlord["network"] = json!({"x": warlord_x, "z": 100, "level": 0});
+        warlord["distance"] = json!((x - warlord_x).abs());
+        if tick > 135 {
+            warlord["target"] = Value::Null;
+            warlord["in_combat"] = json!(false);
+            set_npc_attack_evidence(warlord, false, false, false, false);
+        }
+        if tick >= 141 {
+            frame["nearby_npcs"] = json!([]);
+        }
+        capture.frames.push(frame);
+    }
+    let escape = capture
+        .actions
+        .iter_mut()
+        .find(|action| action["kind"] == json!("walk") && action["tick"] == json!(129))
+        .unwrap();
+    escape["request"]["target"] = json!({"x": 70, "z": 100, "level": 0});
+    capture.statuses.last_mut().unwrap()["observed_tick"] = json!(146);
     capture
 }
 
@@ -8604,7 +8664,8 @@ fn ranged_abort_food_only_receipt_matches_consumption_and_escape() {
     assert_eq!(safety["terminal"], json!("exhausted_escape"));
     assert_eq!(safety["policy_allows_prayer"], json!(false));
     assert_eq!(safety["prayer_available"], json!(false));
-    assert_eq!(safety["eat_line"], json!(18));
+    assert_eq!(safety["eat_line"], json!(19));
+    assert_eq!(safety["complete"], json!(true));
     assert_eq!(safety["food_eats"], json!(6));
     assert_eq!(safety["food_actions_valid"], json!(true));
     assert_eq!(safety["escape_after_food_exhausted"], json!(true));
@@ -8656,6 +8717,200 @@ fn ranged_abort_food_only_receipt_matches_consumption_and_escape() {
         json!(false),
         "a low-HP decision with remaining food requires its own settled Eat"
     );
+}
+
+#[test]
+fn ranged_abort_terminal_kinds_use_the_product_reasons() {
+    let terminal = |message: &str| {
+        let mut capture = CombatCapture::default();
+        capture.statuses.push(json!({
+            "phase": "Blocked",
+            "failure": format!("ScriptFailure {{ code: \"parked\", message: \"{message}\" }}"),
+            "observed_tick": 1,
+        }));
+        ranged_abort_terminal_kind(&capture)
+    };
+    for (reason, kind) in [
+        (ABORT_HOLD_ESCAPED_REASON, "exhausted_escape"),
+        (ABORT_HOLD_SAFE_REASON, "hold_safe"),
+        (ABORT_HOLD_UNAVAILABLE_REASON, "unavailable"),
+        (ABORT_WALK_FAILED_REASON, "walk_failed"),
+        (ABORTED_COMBAT_STEP_REASON, "walk_completed"),
+    ] {
+        assert_eq!(terminal(reason), Some(kind), "{reason}");
+    }
+    for stale in [
+        "combat abort guarded hold ended because the attacker disengaged or HP cleared the guard food line",
+        "combat abort guarded hold reached its 12-tick bound",
+    ] {
+        assert_eq!(
+            terminal(stale),
+            None,
+            "reasons the product no longer emits are not accepted terminals"
+        );
+    }
+}
+
+#[test]
+fn ranged_abort_eat_line_is_the_product_food_line() {
+    let policy = ranged_abort_policy(&ranged_food_only_abort_capture(false, 43)).unwrap();
+    assert_eq!(
+        ranged_abort_eat_line(policy, 40),
+        Some(i64::from(script::combat::select::lines(Some(9), 40).eat))
+    );
+    assert_eq!(ranged_abort_eat_line(policy, 40), Some(19));
+    for (hp, valid) in [(19, true), (20, false)] {
+        let mut capture = ranged_food_only_abort_capture(false, 43);
+        capture
+            .actions
+            .iter_mut()
+            .find(|action| is_eat(action) && action["tick"] == json!(74))
+            .unwrap()["snapshot"]["stats"][0]["effective"] = json!(hp);
+        for frame in capture
+            .frames
+            .iter_mut()
+            .filter(|frame| frame["tick"] == json!(74))
+        {
+            frame["stats"][0]["effective"] = json!(hp);
+        }
+        capture
+            .frames
+            .iter_mut()
+            .rev()
+            .find(|frame| frame["tick"] == json!(75))
+            .unwrap()["stats"][0]["effective"] = json!(hp + 12);
+        let safety = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+        assert_eq!(safety["food_actions_valid"], json!(valid), "Eat at HP {hp}");
+        assert_eq!(safety["valid"], json!(valid), "Eat at HP {hp}");
+    }
+}
+
+#[test]
+fn ranged_abort_exhausted_escape_accepts_a_chase_until_arrival() {
+    let capture = ranged_food_only_chase_capture();
+    let safety = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+    assert_eq!(safety["terminal"], json!("exhausted_escape"));
+    assert_eq!(safety["escape_after_food_exhausted"], json!(true));
+    assert_eq!(safety["live_threat_seen"], json!(true));
+    assert_eq!(
+        safety["guarded_while_live_threat"],
+        json!(true),
+        "a chase during the single exhausted escape walk is not unguarded"
+    );
+    assert_eq!(safety["complete"], json!(true));
+    assert_eq!(safety["safe_escape"], json!(true));
+    assert_eq!(safety["valid"], json!(true));
+    assert!(ranged_ready(Case::R2, &capture));
+
+    // After the escape arrives (144) the product parks; a live attacker there
+    // is no longer covered by the escape.
+    let mut after_arrival = ranged_food_only_chase_capture();
+    let chaser = after_arrival
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(130))
+        .unwrap()["nearby_npcs"][0]
+        .clone();
+    for tick in [145, 146] {
+        let frame = after_arrival
+            .frames
+            .iter_mut()
+            .find(|frame| frame["tick"] == json!(tick))
+            .unwrap();
+        let mut row = chaser.clone();
+        row["tile"] = json!({"x": 71, "z": 100, "level": 0});
+        row["network"] = json!({"x": 71, "z": 100, "level": 0});
+        row["distance"] = json!(1);
+        if tick == 146 {
+            row["target"] = Value::Null;
+            set_npc_attack_evidence(&mut row, false, false, false, false);
+        }
+        frame["nearby_npcs"] = json!([row]);
+    }
+    let late = ranged_abort_safety_receipt(&after_arrival, &after_arrival.statuses[0]);
+    assert_eq!(late["complete"], json!(true));
+    assert_eq!(late["no_threat_at_terminal"], json!(true));
+    assert_eq!(late["guarded_while_live_threat"], json!(false));
+    assert_eq!(late["valid"], json!(false));
+    assert!(!ranged_ready(Case::R2, &after_arrival));
+}
+
+#[test]
+fn ranged_abort_missing_row_before_arrival_is_no_attack_only_beyond_the_receipt_radius() {
+    let capture = ranged_food_only_chase_capture();
+    let absent = capture
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(141))
+        .unwrap()
+        .clone();
+    let stopped = (
+        WorldTile {
+            x: 89,
+            z: 100,
+            level: 0,
+        },
+        1,
+    );
+    // Player (76,100), last Warlord (89,100): footprint distance 13.
+    assert_eq!(
+        ranged_abort_live_attacker_or_absent(&absent, 7, Some(stopped)),
+        Some(false)
+    );
+    let within_radius = (
+        WorldTile {
+            x: 88,
+            z: 100,
+            level: 0,
+        },
+        1,
+    );
+    assert_eq!(
+        ranged_abort_live_attacker_or_absent(&absent, 7, Some(within_radius)),
+        None,
+        "at the receipt radius a missing row is unknown"
+    );
+    assert_eq!(
+        ranged_abort_live_attacker_or_absent(&absent, 7, None),
+        None,
+        "a Warlord never observed cannot be shown absent"
+    );
+    let mut targeted = absent.clone();
+    targeted["nearby_npcs"] = json!([{
+        "index": 9, "type": 1, "targets_local": true, "attack_animation": false,
+        "attack_spot": false, "local_hitmark_recent": false,
+    }]);
+    assert_eq!(
+        ranged_abort_live_attacker_or_absent(&targeted, 7, Some(stopped)),
+        None,
+        "a retained row targeting the player makes the absence inconclusive"
+    );
+    targeted["nearby_npcs"] = Value::Null;
+    assert_eq!(
+        ranged_abort_live_attacker_or_absent(&targeted, 7, Some(stopped)),
+        None,
+        "a missing NPC list is unknown"
+    );
+
+    let safety = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+    assert_eq!(
+        safety["complete"],
+        json!(true),
+        "rows absent 141-143 precede arrival at 144"
+    );
+    let mut near = ranged_food_only_chase_capture();
+    near.frames
+        .iter_mut()
+        .find(|frame| frame["tick"] == json!(140))
+        .unwrap()["nearby_npcs"] = json!([]);
+    let near_safety = ranged_abort_safety_receipt(&near, &near.statuses[0]);
+    assert_eq!(
+        near_safety["complete"],
+        json!(false),
+        "a row missing within the receipt radius (distance 11) is unknown"
+    );
+    assert_eq!(near_safety["valid"], json!(false));
+    assert!(!ranged_ready(Case::R2, &near));
 }
 
 #[test]
@@ -8793,10 +9048,20 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
         "kind": "guard", "tick": 112, "op": "if-button", "component_id": 5623,
         "accepted": true, "snapshot": protect_snapshot
     }));
+    // The protected hold ends only after observed disengagement (123-125).
+    for tick in 123..=125 {
+        let mut frame = capture.frames.last().unwrap().clone();
+        frame["tick"] = json!(tick);
+        frame["nearby_npcs"][0]["target"] = Value::Null;
+        set_npc_attack_evidence(&mut frame["nearby_npcs"][0], false, false, false, false);
+        capture.frames.push(frame);
+    }
     capture.statuses.push(json!({
         "phase": "Blocked",
-        "failure": "ScriptFailure { code: \"parked\", message: \"combat abort guarded hold reached its 12-tick bound\" }",
-        "observed_tick": 122
+        "failure": format!(
+            "ScriptFailure {{ code: \"parked\", message: \"{ABORT_HOLD_SAFE_REASON}\" }}"
+        ),
+        "observed_tick": 125
     }));
     for frame in capture
         .frames
@@ -8812,11 +9077,23 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
     {
         frame["prayer_varps"][2]["value"] = json!(1);
     }
-    let hold_bound_safety = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
-    assert_eq!(hold_bound_safety["terminal"], json!("hold_bound"));
-    assert_eq!(hold_bound_safety["threat_at_abort"], json!(true));
-    assert_eq!(hold_bound_safety["live_threat_seen"], json!(true));
-    assert_eq!(hold_bound_safety["guarded_while_live_threat"], json!(true));
+    let protected_hold = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+    assert_eq!(protected_hold["terminal"], json!("hold_safe"));
+    assert_eq!(protected_hold["threat_at_abort"], json!(true));
+    assert_eq!(protected_hold["live_threat_seen"], json!(true));
+    assert_eq!(protected_hold["guarded_while_live_threat"], json!(true));
+    let hold_safe_status = capture.statuses.last().unwrap().clone();
+    capture.statuses.last_mut().unwrap()["failure"] = json!(
+        "ScriptFailure { code: \"parked\", message: \"combat abort guarded hold reached its 12-tick bound\" }"
+    );
+    let removed_bound = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+    assert_eq!(removed_bound["terminal"], json!("missing_or_unaccepted"));
+    assert_eq!(removed_bound["valid"], json!(false));
+    assert!(
+        !ranged_ready(Case::R2, &capture),
+        "the product no longer has a tick-bounded hold terminal"
+    );
+    *capture.statuses.last_mut().unwrap() = hold_safe_status;
     set_warlord_attack_evidence(&mut capture, 110, false);
     let threat_only_after_abort = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
     assert_eq!(threat_only_after_abort["threat_at_abort"], json!(false));
@@ -8840,12 +9117,17 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
         "declining HP under the live attacker fails the post-abort survival horizon"
     );
     capture.frames[live_threat_tick]["stats"][0]["effective"] = json!(40);
-    let last_horizon_frame = capture.frames.pop().unwrap();
+    let horizon_end_frame = capture
+        .frames
+        .iter()
+        .position(|frame| frame["tick"] == json!(122))
+        .unwrap();
+    let removed_frame = capture.frames.remove(horizon_end_frame);
     assert!(
         !ranged_ready(Case::R2, &capture),
         "eleven observed ticks do not satisfy a twelve-tick survival horizon"
     );
-    capture.frames.push(last_horizon_frame);
+    capture.frames.insert(horizon_end_frame, removed_frame);
     assert!(ranged_ready(Case::R2, &capture));
     let observed_warlord = capture.frames[live_threat_tick]["nearby_npcs"][0].clone();
     capture.frames[live_threat_tick]["nearby_npcs"] = json!([]);
@@ -8869,8 +9151,7 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
     capture.statuses.push(json!({
         "phase": "Blocked",
         "failure": format!(
-            "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
-            RANGED_ABORT_HOLD_SAFE_REASON
+            "ScriptFailure {{ code: \"parked\", message: \"{ABORT_HOLD_SAFE_REASON}\" }}"
         ),
         "observed_tick": 113
     }));
@@ -8934,8 +9215,7 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
         "Blocked after a demonstrated safe escape remains a valid terminal"
     );
     capture.statuses.last_mut().unwrap()["failure"] = json!(format!(
-        "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
-        RANGED_ABORT_HOLD_SAFE_REASON
+        "ScriptFailure {{ code: \"parked\", message: \"{ABORT_HOLD_SAFE_REASON}\" }}"
     ));
     assert_eq!(
         ranged_abort_safety_receipt(&capture, &capture.statuses[0])["terminal"],
@@ -8946,7 +9226,11 @@ fn ranged_wrong_ammo_safety_requires_a_live_attacker_before_and_after_abort() {
     capture.frames[20]["prayer_varps"][0]["value"] = json!(1);
     assert!(!ranged_ready(Case::R2, &capture));
     capture.frames[20]["prayer_varps"][0]["value"] = json!(0);
-    capture.frames.last_mut().unwrap()["nearby_npcs"] = json!([]);
+    capture
+        .frames
+        .iter_mut()
+        .find(|frame| frame["tick"] == json!(122))
+        .unwrap()["nearby_npcs"] = json!([]);
     assert!(!ranged_ready(Case::R2, &capture));
 }
 
@@ -8978,8 +9262,7 @@ fn ranged_verified_no_threat_is_named_but_cannot_pass_r2() {
     capture.statuses.push(json!({
         "phase": "Blocked",
         "failure": format!(
-            "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
-            RANGED_ABORT_WALK_FAILED_REASON
+            "ScriptFailure {{ code: \"parked\", message: \"{ABORT_WALK_FAILED_REASON}\" }}"
         ),
         "observed_tick": 122
     }));

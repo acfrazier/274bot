@@ -386,6 +386,11 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     panic!("the compiled combat transition must submit a native walk");
                 };
                 assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
+                assert_eq!(
+                    request.food_guard,
+                    aborted && !protect,
+                    "only an unprotected abort walk requests the food-only guard"
+                );
                 if aborted {
                     assert_eq!(request.allow.prayer, protect);
                     assert!(request.allow.food);
@@ -1361,6 +1366,7 @@ fn guard_request_from_outbox(
         request.required_after,
     );
     guard_request.protect = request.protect;
+    guard_request.food_guard = request.food_guard;
     guard_request.allow = request.allow;
     guard_request
 }
@@ -1652,6 +1658,79 @@ fn prep_abort_escapes_attack_animation_without_health_bar() {
 }
 
 #[test]
+fn abort_retreat_direction_uses_network_tiles_not_rendered_poses() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    for engaged in [false, true] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            None,
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        let attack_animation = run
+            .tables
+            .selected()
+            .style_seqs()
+            .first()
+            .expect("selected combat data includes attack animations")
+            .seq_id;
+        // The Warlord's packet-time tile is east of the player, while its
+        // interpolated rendered pose still lags to the west.
+        let mut attacker = aborting_npc(
+            7,
+            warlord.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        );
+        attacker.tile = api::WorldTile {
+            x: here.x - 1,
+            z: here.z + 1,
+            ..here
+        };
+        attacker.animation = attack_animation;
+        let mut snapshot = GameSnapshot::new();
+        seed_abort_scene(&mut snapshot, here, 40, vec![attacker], None, None);
+        let mut aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
+            crate::combat::PrepItem::Ammo,
+        )));
+        if engaged {
+            aborted.engaged = Some(crate::combat::ActorRef {
+                kind: api::snapshot::ActorKind::Npc,
+                index: 7,
+            });
+            aborted.engaged_npc_type = warlord.id;
+        }
+        let mut ledger = None;
+
+        assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+            run.on_combat_report(aborted, cx)
+        })
+        .is_pending());
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("a live attacker must trigger the abort walk");
+        };
+        assert!(
+            request.target.x < here.x,
+            "engaged={engaged}: retreat must run west, away from the network tile"
+        );
+        assert_eq!(
+            request.target.z, here.z,
+            "engaged={engaged}: the rendered z offset must not steer the retreat"
+        );
+    }
+}
+
+#[test]
 fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
@@ -1813,6 +1892,19 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         }),
         "protection must not be dropped while the attacker remains live"
     );
+
+    // Cancelling the hold hands its owned protection to the runner's cleanup.
+    assert!(
+        StepRun::prayer_cleanup(&run).contains(protect_varp),
+        "the live hold reports its observed protect prayer as owned"
+    );
+    let mut actions = crate::native::NativeActions { _private: () };
+    run.cancel(&mut actions);
+    assert!(run.action.is_none());
+    assert!(
+        StepRun::prayer_cleanup(&run).contains(protect_varp),
+        "hold cancellation must retain the protect prayer for release"
+    );
 }
 
 #[test]
@@ -1896,6 +1988,10 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         panic!("supply exhaustion must escape with one native walk");
     };
     assert!(!request.protect);
+    assert!(
+        !request.food_guard,
+        "the exhausted escape walk is unguarded"
+    );
     assert!(!request.allow.prayer);
     assert!(!request.allow.food);
     let escape_walk = outbox[0].request_id.get();
@@ -2034,6 +2130,7 @@ fn return_and_abort_walks_use_only_authored_protection() {
             assert_eq!(request.target, stand);
             assert_eq!(request.radius, 1);
             assert_eq!(request.protect, protect);
+            assert_eq!(request.food_guard, aborting && !protect);
             if aborting {
                 assert_eq!(request.allow.prayer, protect);
                 assert!(request.allow.food);

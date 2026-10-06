@@ -19,6 +19,7 @@ struct Walker {
     walks: usize,
     cross_first: Vec<Arc<str>>,
     protect: bool,
+    food_guard: bool,
     disallow_prayer: bool,
     target: Option<WorldTile>,
     later_target: Option<WorldTile>,
@@ -86,6 +87,7 @@ impl Script for WalkerScript {
                 evidence: None,
                 cross: cross.into_boxed_slice(),
                 protect: shared.protect,
+                food_guard: shared.food_guard,
                 allow: script::native::WalkAllow {
                     prayer: !shared.disallow_prayer,
                     ..Default::default()
@@ -689,6 +691,7 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
     for (prayer, disallow_prayer) in [(1, false), (43, true)] {
         let mut rig = open_rig(false);
         rig.shared.lock().disallow_prayer = disallow_prayer;
+        rig.shared.lock().food_guard = true;
         seed_protect_frame(&mut rig.snapshot, prayer);
         rig.snapshot.seed_tick(1);
         rig.observe(1);
@@ -702,6 +705,24 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         assert!(rig.driver.move_calls > 0, "the escape must actually walk");
         assert!(rig.driver.if_button_components.is_empty());
         assert_eq!(rig.end(), None);
+    }
+}
+
+#[test]
+fn a_default_walk_with_food_allowed_starts_no_host_guard() {
+    for prayer in [1, 43] {
+        let mut rig = open_rig(false);
+        seed_protect_frame(&mut rig.snapshot, prayer);
+        rig.snapshot.seed_tick(1);
+        rig.observe(1);
+        rig.wait_routed();
+        assert!(
+            rig.navs.lock().unwrap()["alice"].walk_guard.is_none(),
+            "default walks (allow.food=true, no food_guard) must not start the food-only guard"
+        );
+        rig.step();
+        assert!(rig.walk_armed());
+        assert!(rig.driver.move_calls > 0);
     }
 }
 
@@ -1831,10 +1852,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                 "native walks never use BankBudget"
             );
             if permitted {
-                assert!(
-                    !bot.requested_route.unwrap().4,
-                    "danger crossing does not enable prayer protection; food upkeep is independent"
-                );
+                assert!(!bot.requested_route.unwrap().4);
             } else {
                 assert!(bot.native_walk_failure.is_some());
                 assert!(
@@ -1842,6 +1860,10 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                     "a failed admission retires its route request"
                 );
             }
+            assert!(
+                bot.walk_guard.is_none(),
+                "danger crossing does not start protection"
+            );
         }
         if !permitted {
             rig.observe(2);

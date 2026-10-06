@@ -382,6 +382,7 @@ pub(crate) fn record_walk(
             "target": { "x": request.target.x, "z": request.target.z, "level": request.target.level },
             "radius": request.radius,
             "protect": request.protect,
+            "food_guard": request.food_guard,
             "allow": {
                 "prayer": request.allow.prayer,
                 "food": request.allow.food,
@@ -606,13 +607,18 @@ fn npc_network_distance(snapshot: &GameSnapshot, npc: &api::snapshot::NpcView) -
     })
 }
 
+/// Receipts retain every NPC within this network footprint distance, plus any
+/// NPC in combat or targeting the local player at any distance.
+pub(crate) const NPC_RECEIPT_RADIUS: i32 = 12;
+
 pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) -> Value {
     let local_slot = snapshot.self_slot();
     let nearby_npcs = snapshot
         .npcs()
         .iter()
         .filter(|npc| {
-            npc_network_distance(snapshot, npc).is_some_and(|distance| distance <= 12)
+            npc_network_distance(snapshot, npc)
+                .is_some_and(|distance| distance <= NPC_RECEIPT_RADIUS)
                 || npc.in_combat
                 || npc.target.is_some_and(|target| {
                     target.kind == ActorKind::Player && target.index == local_slot as usize
@@ -747,6 +753,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "roots": roots,
         "inventory": inventory,
         "equipment": equipment,
+        "npc_receipt_radius": NPC_RECEIPT_RADIUS,
         "nearby_npcs": nearby_npcs,
         "projectiles": snapshot.projectiles().iter().map(|projectile| json!({
             "spotanim": projectile.spotanim,

@@ -646,6 +646,7 @@ pub fn walk_request(
         evidence: None,
         cross: Vec::new().into_boxed_slice(),
         protect: false,
+        food_guard: false,
         allow: Default::default(),
     }
 }
