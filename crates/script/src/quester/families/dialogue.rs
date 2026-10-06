@@ -141,6 +141,12 @@ enum Surface {
     Chat,
     Main,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatTransitionAck {
+    Accepted,
+    Pending,
+    Failed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -177,6 +183,8 @@ pub struct Dialogue {
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
     chat_advanced: bool,
+    chat_page_owned: bool,
+    chat_advance_request_id: Option<u64>,
 }
 
 impl NativeMachine for Dialogue {
@@ -214,6 +222,8 @@ impl NativeMachine for Dialogue {
             talk_request_id: None,
             talk_baseline: None,
             chat_advanced: false,
+            chat_page_owned: false,
+            chat_advance_request_id: None,
         };
         dialogue.open(cx)?;
         Ok(dialogue)
@@ -230,6 +240,9 @@ impl NativeMachine for Dialogue {
         let Some(main) = observe_main(cx, self.main_ui) else {
             return Poll::Pending;
         };
+        if !self.chat_page_owned && self.owned_chat_page(cx).is_some() {
+            self.chat_page_owned = true;
+        }
         let chat_active = obs.ready;
         let main_active = main.open();
         match self.surface {
@@ -240,6 +253,19 @@ impl NativeMachine for Dialogue {
                 return self.poll_main(cx, &main, now);
             }
             Surface::Chat if main_active => {
+                if !chat_active && matches!(main.kind, MainKind::Scroll | MainKind::Book) {
+                    match self.chat_transition_acknowledgement(cx) {
+                        ChatTransitionAck::Accepted => {
+                            self.surface = Surface::Main;
+                            self.phase = Phase::Open;
+                            return self.poll_main(cx, &main, now);
+                        }
+                        ChatTransitionAck::Pending if now < self.deadline_ms => {
+                            return Poll::Pending;
+                        }
+                        ChatTransitionAck::Pending | ChatTransitionAck::Failed => {}
+                    }
+                }
                 return Poll::Ready(Ok(DialogueOutcome::Failed));
             }
             Surface::Chat => {}
@@ -389,6 +415,26 @@ impl Dialogue {
         match &self.args.target {
             DialogueTarget::Npc { id, .. } => Some(*id),
             DialogueTarget::Continuation => None,
+        }
+    }
+    fn chat_transition_acknowledgement(&self, cx: &ActionContext<'_>) -> ChatTransitionAck {
+        let Some(request_id) = self.chat_advance_request_id else {
+            return if self.chat_page_owned {
+                ChatTransitionAck::Accepted
+            } else {
+                ChatTransitionAck::Failed
+            };
+        };
+        let Some(receipt) = cx.interaction_receipt(request_id) else {
+            return ChatTransitionAck::Pending;
+        };
+        let evidence = cx.evidence();
+        if !receipt.accepted || receipt.evidence.run != evidence.run {
+            ChatTransitionAck::Failed
+        } else if evidence.tick <= receipt.evidence.tick {
+            ChatTransitionAck::Pending
+        } else {
+            ChatTransitionAck::Accepted
         }
     }
 
@@ -660,7 +706,10 @@ impl Dialogue {
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             self.chat_advanced = true;
             return match cx.emit(InteractReq::ContinueDialog { component_id: None }) {
-                Ok(_) => Poll::Pending,
+                Ok(request_id) => {
+                    self.chat_advance_request_id = Some(request_id);
+                    Poll::Pending
+                }
                 Err(error) => Poll::Ready(Err(error)),
             };
         }
@@ -685,7 +734,10 @@ impl Dialogue {
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             self.chat_advanced = true;
             return match cx.emit(InteractReq::Answer { option }) {
-                Ok(_) => Poll::Pending,
+                Ok(request_id) => {
+                    self.chat_advance_request_id = Some(request_id);
+                    Poll::Pending
+                }
                 Err(error) => Poll::Ready(Err(error)),
             };
         }
@@ -865,7 +917,7 @@ fn observe_main<'a>(
     let kind = if root == -1 {
         MainKind::Closed
     } else if let Some(ids) = ids {
-        if root == ids.scroll_root {
+        if root == ids.scroll_root || root == ids.quest_scroll_root {
             MainKind::Scroll
         } else if root == ids.book_root {
             MainKind::Book

@@ -1936,7 +1936,8 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
         .as_ref()
         .is_none_or(|error| !error.contains("step settle timeout")));
 
-    let dependent = &fixture.script.path.provisioning.recipes["acquire:egg-bank-scan"][1].skip_if;
+    let dependent =
+        &fixture.script.path.provisioning.recipes["acquire:egg-bank-scan"].steps[1].skip_if;
     let outer_settle = &fixture.script.path.sequences[1].steps[0].settle;
     let (dependent_truth, settle_truth) =
         with_tick(&fixture.snapshot, &mut fixture.ledger, 49, |tick| {
@@ -1957,10 +1958,10 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
 }
 
 #[test]
-fn provisioner_pending_publishes_nested_receipt_before_skip_and_invalidates_on_completion() {
+fn provisioner_pending_publishes_nested_receipt_before_skip_and_preserves_on_completion() {
     let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt");
     let mut fixture = nested_bank_fixture(false);
-    let mut invalidated = false;
+    let mut completed = false;
     let mut published = false;
     let mut cleared_before_acquire = false;
     for tick in 1..=64 {
@@ -1986,8 +1987,9 @@ fn provisioner_pending_publishes_nested_receipt_before_skip_and_invalidates_on_c
                 );
                 assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
                 published = true;
-            } else if published && !fixture.script.bank.known() {
-                invalidated = true;
+            } else if published {
+                assert!(fixture.script.bank.known());
+                completed = true;
                 break;
             }
         }
@@ -2007,8 +2009,8 @@ fn provisioner_pending_publishes_nested_receipt_before_skip_and_invalidates_on_c
     );
     assert!(cleared_before_acquire);
     assert!(
-        invalidated,
-        "completed acquisition must still invalidate the memo because inventory may have changed"
+        completed,
+        "completed acquisition must retain the last observed bank stock; only inventory changed"
     );
     assert!(!fixture.script.parked);
     assert!(fixture

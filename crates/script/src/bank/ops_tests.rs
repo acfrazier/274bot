@@ -585,6 +585,92 @@ fn p_settle_posted_empty_is_not_absent() {
     }
 }
 
+#[test]
+fn capacity_deposit_requires_exact_stackability_and_op() {
+    let side = [
+        native(
+            500,
+            "Stack",
+            1,
+            0,
+            2000,
+            &[Some("Deposit-1"), Some("Deposit-All")],
+        ),
+        native(
+            501,
+            "Singles",
+            1,
+            1,
+            2001,
+            &[Some("Deposit-1"), Some("Deposit-All")],
+        ),
+    ];
+    let mut pack = [held(500, 4), held(501, 1), held(502, 1)];
+    pack[0].def.stackable = true;
+    let keep = [502];
+    assert_eq!(
+        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[..]), true),
+        DepositScan::Click(DepositClick {
+            id: 500,
+            slot: 0,
+            component: 2000,
+            operation: 2,
+        })
+    );
+    assert_eq!(
+        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[1..]), true),
+        DepositScan::Click(DepositClick {
+            id: 501,
+            slot: 1,
+            component: 2001,
+            operation: 1,
+        })
+    );
+
+    let wrong_op = [native(501, "Singles", 1, 1, 2001, &[Some("Deposit-All")])];
+    assert_eq!(
+        deposit_capacity_next(&[], Some(&wrong_op[..]), Some(&pack[1..2]), true),
+        DepositScan::MissingRequired,
+        "an unstackable must not fall back from missing Deposit-1 to Deposit-All"
+    );
+    assert_eq!(
+        deposit_capacity_next::<ItemView>(&[], None, Some(&pack[..1]), true),
+        DepositScan::WaitView
+    );
+    let empty_side: [ItemView; 0] = [];
+    assert_eq!(
+        deposit_capacity_next(
+            &[500, 501, 502],
+            Some(&empty_side[..]),
+            Some(&pack[..]),
+            true,
+        ),
+        DepositScan::Done
+    );
+    assert_eq!(
+        deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), false),
+        DepositScan::SessionGone
+    );
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn capacity_deposit_fails_closed_when_stackability_is_unknown() {
+    let side = [compat(
+        500,
+        "Stack",
+        1,
+        Some(0),
+        Some(2000),
+        &[Some("Deposit-All")],
+    )];
+    let pack = [compat(500, "Stack", 4, Some(0), Some(2001), &[])];
+    assert_eq!(
+        deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), true),
+        DepositScan::MissingRequired
+    );
+}
+
 /// The side-root fact, not vector length, decides whether a side posted.
 #[test]
 fn side_observation_reads_the_root_not_the_length() {

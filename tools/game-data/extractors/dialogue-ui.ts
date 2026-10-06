@@ -4,6 +4,7 @@ import { parseBody, walkStatements } from './gathering-rs2.ts';
 
 export type DialogueUiIds = {
     scroll_root: number;
+    quest_scroll_root: number;
     book_root: number;
     book_forward: number;
     book_close: number;
@@ -14,6 +15,7 @@ export const dialogueUiContentFiles = [
     'pack/interface.pack',
     'scripts/general/scripts/book.rs2',
     'scripts/general/scripts/scroll.rs2',
+    'scripts/general/scripts/quests.rs2',
 ] as const;
 
 function body(block: Rs2Block): string {
@@ -28,13 +30,24 @@ function hasStatement(block: Rs2Block, expected: string): boolean {
     return found;
 }
 
+function hasQuestScrollCompletionProof(block: Rs2Block): boolean {
+    const switchBody = /\bswitch_component\s*\(\s*\$component\s*\)\s*\{([\s\S]*?)\n\}/.exec(body(block))?.[1];
+    if (!switchBody) return false;
+    const related = /(?:^|\n)\s*case\s+questlist:seaslug\s*,\s*questlist:itwatchtower\s*:\s*([\s\S]*?)(?=\n\s*case\b|$)/.exec(switchBody)?.[1];
+    const fallback = /(?:^|\n)\s*case\s+default\s*:\s*([\s\S]*?)(?=\n\s*case\b|$)/.exec(switchBody)?.[1];
+    const opensQuestScroll = (branch: string | undefined) =>
+        branch !== undefined && /^\s*if_openmain\(questscroll\)\s*;/m.test(branch);
+    return opensQuestScroll(related) && opensQuestScroll(fallback);
+}
+
+
 function oneBlock(blocks: Rs2Block[], kind: string, name: string): Rs2Block {
     const found = blocks.filter(block => block.kind === kind && block.name === name);
     if (found.length !== 1) throw new Error(`dialogue_ui: expected one [${kind},${name}] block`);
     return found[0];
 }
 
-/** Resolve only source-proven main scroll/book controls, never debug-name guesses. */
+/** Resolve only source-proven generic/quest-completion scrolls and book controls. */
 export function extractDialogueUiFacts(content: string): DialogueUiIds {
     const pack = parsePack(requireGatherText(content, dialogueUiContentFiles[0]));
     const book = parseRs2Blocks(dialogueUiContentFiles[1], requireGatherText(content, dialogueUiContentFiles[1]));
@@ -46,9 +59,17 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
         }
         return id;
     };
-
     if (!hasStatement(oneBlock(scroll, 'label', 'scroll_pirate_message'), 'if_openmain(scroll)')) {
         throw new Error('dialogue_ui: pirate scroll does not open the main scroll root');
+    }
+
+    const questComplete = oneBlock(
+        parseRs2Blocks(dialogueUiContentFiles[3], requireGatherText(content, dialogueUiContentFiles[3])),
+        'proc',
+        'send_quest_complete',
+    );
+    if (!hasQuestScrollCompletionProof(questComplete)) {
+        throw new Error('dialogue_ui: quest completion does not open the authored quest scroll in both branches');
     }
     if (!book.some(block => hasStatement(block, 'if_openmain(book)'))) {
         throw new Error('dialogue_ui: book does not open its main root');
@@ -76,11 +97,12 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
 
     const facts = {
         scroll_root: resolve('scroll'),
+        quest_scroll_root: resolve('questscroll'),
         book_root: resolve('book'),
         book_forward: resolve(forward[0].name),
         book_close: resolve('book:close'),
         book_forward_marker: resolve(hide[1]),
     };
-    if (new Set(Object.values(facts)).size !== 5) throw new Error('dialogue_ui: controls have ambiguous packed identities');
+    if (new Set(Object.values(facts)).size !== 6) throw new Error('dialogue_ui: controls have ambiguous packed identities');
     return facts;
 }

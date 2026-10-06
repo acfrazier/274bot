@@ -383,6 +383,11 @@ fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
 
+Selected dialogue UI identities distinguish the generic `scroll_root` used by
+pirate scrolls from `quest_scroll_root`, which the authored quest-completion
+script opens. These are packed identities, not a general mapping for custom
+scroll variants.
+
 Closed chat completes after eight quiet game ticks. Observed inventory changes,
 server-driven player movement and active scripted animation can extend that
 gap using the same finite per-dialogue budget. An unchanged player position is

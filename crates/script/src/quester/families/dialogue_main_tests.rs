@@ -170,6 +170,26 @@ fn complete_talk(
         },
     );
 }
+fn complete_last_interaction(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    evidence_tick: u64,
+    accepted: bool,
+) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: evidence_tick,
+                sequence: evidence_tick,
+            },
+            accepted,
+            chat_since: 0,
+        },
+    );
+}
 
 struct PageProbe {
     dialogue: Dialogue,
@@ -600,4 +620,126 @@ fn visible_continue_without_chat_root_is_not_a_combat_close() {
         }),
         Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
     ));
+}
+
+#[test]
+fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
+    let ids = dialogue_ui();
+    let mut snapshot = snapshot();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap()
+    });
+    complete_talk(&mut ledger, 2, true, false);
+    snapshot.seed_chat_modal(4882, vec!["Fresh first page".into()]);
+    snapshot.seed_chat_options(vec![], 4883);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+
+    complete_last_interaction(&mut ledger, 5, true);
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 8, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn refused_chat_advance_does_not_adopt_a_main_scroll() {
+    let ids = dialogue_ui();
+    let mut snapshot = snapshot();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap()
+    });
+    complete_talk(&mut ledger, 2, true, false);
+    snapshot.seed_chat_modal(4882, vec!["Fresh first page".into()]);
+    snapshot.seed_chat_options(vec![], 4883);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    complete_last_interaction(&mut ledger, 3, false);
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    assert_eq!(snapshot.modals().main, ids.scroll_root);
+}
+
+#[test]
+fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
+    let ids = dialogue_ui();
+    for root in [ids.scroll_root, ids.quest_scroll_root] {
+        let mut snapshot = snapshot();
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Dialogue>(npc_args(), &mut tick.cx)
+                .unwrap()
+        });
+        complete_talk(&mut ledger, 2, true, false);
+        snapshot.seed_main_modal(root, vec![]);
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(DialogueOutcome::Failed))
+        ));
+        assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+        assert_eq!(snapshot.modals().main, root);
+    }
 }

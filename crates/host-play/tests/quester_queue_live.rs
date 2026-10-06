@@ -207,19 +207,8 @@ struct NativeQueueReceipt {
     queue: String,
     completed: i64,
     deaths: i64,
-    retreat_count: i64,
-    last_retreat: Option<String>,
     quest_id: Option<String>,
     display: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct RetreatReceipt {
-    count: i64,
-    quest_id: String,
-    completed: i64,
-    active_quest: Option<String>,
-    queue: String,
 }
 
 #[derive(Default)]
@@ -228,7 +217,6 @@ struct QueueEvidence {
     active_order: Vec<String>,
     queue_states: Vec<String>,
     completed_states: Vec<i64>,
-    retreat_receipts: Vec<RetreatReceipt>,
     deaths: Option<i64>,
     complete_observed: bool,
 }
@@ -239,7 +227,6 @@ impl QueueEvidence {
             return Ok(());
         }
         let queue = text_field(status, "queue")?.ok_or("Quester status is missing queue text")?;
-        let last_retreat = text_field(status, "last_retreat")?;
         let quest_id = text_field(status, "quest_id")?;
         let display = text_field(status, "display")?;
         let receipt = NativeQueueReceipt {
@@ -247,8 +234,6 @@ impl QueueEvidence {
             queue,
             completed: integer_field(status, "completed")?,
             deaths: integer_field(status, "deaths")?,
-            retreat_count: integer_field(status, "retreat_count")?,
-            last_retreat,
             quest_id,
             display,
         };
@@ -259,11 +244,6 @@ impl QueueEvidence {
         }
         if receipt.deaths < 0 {
             return Err(format!("Quester deaths count is negative: {receipt:?}"));
-        }
-        if receipt.retreat_count < 0 || receipt.retreat_count > 2 {
-            return Err(format!(
-                "Quester retreat count is outside the two non-owning Paths: {receipt:?}"
-            ));
         }
         if receipt.quest_id.is_some() != receipt.display.is_some() {
             return Err(format!(
@@ -298,52 +278,6 @@ impl QueueEvidence {
                     "Quester deaths count regressed: {previous:?} → {receipt:?}"
                 ));
             }
-            if receipt.retreat_count < previous.retreat_count {
-                return Err(format!(
-                    "Quester retreat count regressed: {previous:?} → {receipt:?}"
-                ));
-            }
-            if receipt.retreat_count == previous.retreat_count
-                && receipt.last_retreat != previous.last_retreat
-            {
-                return Err(format!(
-                    "Quester last-retreat id changed without a count: {previous:?} → {receipt:?}"
-                ));
-            }
-            if receipt.retreat_count > previous.retreat_count {
-                if receipt.retreat_count != previous.retreat_count + 1 {
-                    return Err(format!(
-                        "Quester retreat count skipped a receipt: {previous:?} → {receipt:?}"
-                    ));
-                }
-                let expected = EXPECTED_QUESTS
-                    .get(self.retreat_receipts.len())
-                    .filter(|id| matches!(**id, "cook" | "sheep"))
-                    .copied()
-                    .ok_or_else(|| format!("unexpected extra retreat: {receipt:?}"))?;
-                let next = EXPECTED_QUESTS
-                    .get(self.retreat_receipts.len() + 1)
-                    .copied();
-                if receipt.last_retreat.as_deref() != Some(expected)
-                    || receipt.completed < receipt.retreat_count
-                    || receipt.quest_id.as_deref() == next
-                {
-                    return Err(format!(
-                        "retreat for {expected} was not witnessed before its next activation: {receipt:?}"
-                    ));
-                }
-                self.retreat_receipts.push(RetreatReceipt {
-                    count: receipt.retreat_count,
-                    quest_id: expected.to_owned(),
-                    completed: receipt.completed,
-                    active_quest: receipt.quest_id.clone(),
-                    queue: receipt.queue.clone(),
-                });
-            }
-        } else if receipt.retreat_count != 0 || receipt.last_retreat.is_some() {
-            return Err(format!(
-                "first observed native receipt already contains a retreat, so ordering cannot be proven: {receipt:?}"
-            ));
         }
 
         if self.queue_states.last() != Some(&receipt.queue) {
@@ -363,29 +297,10 @@ impl QueueEvidence {
                         self.active_order
                     ));
                 }
-                let expected_retreat = match id {
-                    "cook" => {
-                        if receipt.completed != 0 || receipt.retreat_count != 0 {
-                            return Err(format!(
-                                "Cook did not activate from the clean queue start: {receipt:?}"
-                            ));
-                        }
-                        None
-                    }
-                    "sheep" => Some(("cook", 1, 1)),
-                    "romeojuliet" => Some(("sheep", 2, 2)),
-                    "imp" => Some(("sheep", 2, 3)),
-                    _ => unreachable!(),
-                };
-                if let Some((retreated, count, minimum_completed)) = expected_retreat {
-                    if receipt.retreat_count != count
-                        || receipt.last_retreat.as_deref() != Some(retreated)
-                        || receipt.completed < minimum_completed
-                    {
-                        return Err(format!(
-                            "{id} activated before the preceding generic retreat: {receipt:?}"
-                        ));
-                    }
+                if receipt.completed != self.active_order.len() as i64 {
+                    return Err(format!(
+                        "{id} activated before the preceding Path completed: {receipt:?}"
+                    ));
                 }
                 self.active_order.push(id.to_owned());
             }
@@ -393,18 +308,15 @@ impl QueueEvidence {
 
         if status.phase == NativePhase::Complete {
             if receipt.completed != EXPECTED_QUESTS.len() as i64
-                || receipt.retreat_count != 2
-                || receipt.last_retreat.as_deref() != Some("sheep")
                 || self
                     .active_order
                     .iter()
                     .map(String::as_str)
                     .ne(EXPECTED_QUESTS.iter().copied())
-                || self.retreat_receipts.len() != 2
             {
                 return Err(format!(
-                    "native Complete arrived before the full queue and both generic retreats: {receipt:?}, active_order={:?}, retreats={:?}",
-                    self.active_order, self.retreat_receipts
+                    "native Complete arrived before the full queue: {receipt:?}, active_order={:?}",
+                    self.active_order
                 ));
             }
             self.complete_observed = true;
@@ -422,18 +334,15 @@ impl QueueEvidence {
         if !self.complete_observed
             || receipt.phase != "Complete"
             || receipt.completed != EXPECTED_QUESTS.len() as i64
-            || receipt.retreat_count != 2
-            || receipt.last_retreat.as_deref() != Some("sheep")
             || self
                 .active_order
                 .iter()
                 .map(String::as_str)
                 .ne(EXPECTED_QUESTS.iter().copied())
-            || self.retreat_receipts.len() != 2
         {
             return Err(format!(
-                "native terminal receipt does not prove the required queue: {receipt:?}, active_order={:?}, retreats={:?}",
-                self.active_order, self.retreat_receipts
+                "native terminal receipt does not prove the required queue: {receipt:?}, active_order={:?}",
+                self.active_order
             ));
         }
         Ok(())
@@ -448,15 +357,6 @@ impl QueueEvidence {
             "completed": latest.map(|receipt| receipt.completed),
             "completed_states": self.completed_states,
             "deaths": self.deaths,
-            "retreat_count": latest.map(|receipt| receipt.retreat_count),
-            "last_retreat": latest.and_then(|receipt| receipt.last_retreat.as_deref()),
-            "retreat_receipts": self.retreat_receipts.iter().map(|receipt| json!({
-                "count": receipt.count,
-                "quest_id": receipt.quest_id,
-                "completed": receipt.completed,
-                "active_quest": receipt.active_quest,
-                "queue": receipt.queue,
-            })).collect::<Vec<_>>(),
             "active_quest_id": latest.and_then(|receipt| receipt.quest_id.as_deref()),
             "display": latest.and_then(|receipt| receipt.display.as_deref()),
             "native_phase": latest.map(|receipt| receipt.phase.as_str()),

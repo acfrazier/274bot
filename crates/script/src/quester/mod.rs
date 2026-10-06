@@ -32,6 +32,4 @@ pub struct QuesterRetained {
     pub death_seq: Option<i32>,
     pub deaths: u16,
     pub completed: u16,
-    pub retreats: u16,
-    pub last_retreat: Option<std::sync::Arc<str>>,
 }

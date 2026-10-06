@@ -81988,6 +81988,7 @@
   },
   "dialogue_ui": {
     "scroll_root": 1136,
+    "quest_scroll_root": 297,
     "book_root": 837,
     "book_forward": 841,
     "book_close": 10162,

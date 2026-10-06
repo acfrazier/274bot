@@ -46,6 +46,7 @@ use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, Scenario, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
+use script::ScriptLifecycleReceipt;
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
@@ -164,8 +165,14 @@ pub type StartFamily = Box<
 >;
 
 /// Return a receipt only after the family action produces fresh evidence.
-pub type ObserveFamily =
-    Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Result<Option<Value>, String> + Send>;
+pub type ObserveFamily = Box<
+    dyn FnMut(
+            &GameSnapshot,
+            Option<&ScriptStatus>,
+            Option<&ScriptLifecycleReceipt>,
+        ) -> Result<Option<Value>, String>
+        + Send,
+>;
 
 /// One live cell.
 pub struct Cell {
@@ -2082,7 +2089,11 @@ fn run_cells(
                     Ok(state) => state,
                     Err(_) => break 'run Err("live state poisoned".into()),
                 };
-                match observe(&state.actors[0].snapshot, observations[0].status.as_deref()) {
+                match observe(
+                    &state.actors[0].snapshot,
+                    observations[0].status.as_deref(),
+                    observations[0].lifecycle.as_ref(),
+                ) {
                     Ok(Some(receipt)) => {
                         family_receipt = Some(receipt);
                         break 'run Ok(());
