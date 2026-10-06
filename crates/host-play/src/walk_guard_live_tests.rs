@@ -107,16 +107,19 @@ fn path_json(dest: WorldTile) -> String {
 fn throwers_crossing_path_compiles_with_current_schema() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-    compile_path(
-        path_json(WorldTile {
-            x: 2880,
-            z: 3590,
-            level: 0,
-        })
-        .as_bytes(),
-        &selected,
-        &quests,
-    )
+    script::quester::compile::prepare_for_test(move |cap| {
+        compile_path(
+            path_json(WorldTile {
+                x: 2880,
+                z: 3590,
+                level: 0,
+            })
+            .as_bytes(),
+            &selected,
+            &quests,
+            cap,
+        )
+    })
     .expect("the live crossing fixture must compile before launching a client");
 }
 
