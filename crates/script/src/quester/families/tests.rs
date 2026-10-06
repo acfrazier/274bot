@@ -485,6 +485,7 @@ fn reach_picks_the_observed_loc_not_the_anchor() {
         false,
     );
     args.op = Arc::from("Pick");
+    args.anchor = None;
     let _handle = with_tick(&s, &mut ledger, 1, |t| {
         t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
     });
@@ -859,6 +860,7 @@ fn vanished_clicked_loc_rejected_dispatch_fails_without_retargeting_a_replacemen
         s.seed_locs(vec![original.clone()]);
         let mut args = reach_args(kind, false);
         args.op = Arc::from("Pick");
+        args.anchor = Some(original.tile);
         args.radius = 4;
         let mut ledger = None;
         let handle = with_tick(&s, &mut ledger, 1, |t| {
@@ -892,6 +894,7 @@ fn vanished_clicked_loc_with_accepted_dispatch_does_not_retarget_replacements() 
             snapshot.seed_locs(vec![original.clone()]);
             let mut args = reach_args(kind.clone(), false);
             args.op = Arc::from("Open");
+            args.anchor = Some(original.tile);
             args.radius = 4;
             let mut ledger = None;
             let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -951,6 +954,7 @@ fn vanished_clicked_loc_with_rejected_dispatch_fails_without_retargeting() {
             snapshot.seed_locs(vec![original.clone()]);
             let mut args = reach_args(kind.clone(), false);
             args.op = Arc::from("Open");
+            args.anchor = Some(original.tile);
             args.radius = 4;
             let mut ledger = None;
             let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1336,6 +1340,8 @@ fn interact_false_is_failure_not_success() {
         radius: 2,
         wait_if_missing: false,
         deadline: None,
+        dialogue_cap: None,
+        dialogue_page: None,
         missing_deadline: None,
         waiting: None,
         settle_duration: Duration::from_secs(20),
@@ -1353,6 +1359,8 @@ fn interact_false_is_failure_not_success() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        round_pick: None,
+        retargets_left: reach::RETARGET_LIMIT,
         round_before: None,
         round_deadline: None,
         round_accepted: false,
@@ -3534,10 +3542,12 @@ fn preloaded_hopper_with_spare_grain_operates_instead_of_refilling() {
         type_: 0,
         username: None,
     }]);
-    s.seed_locs(vec![
-        loc(2718, "Hopper controls", "Operate"),
-        loc(2714, "Hopper", "Use"),
-    ]);
+    let mut controls = loc(2718, "Hopper controls", "Operate");
+    controls.tile.level = 2;
+    let mut hopper = loc(2714, "Hopper", "Use");
+    hopper.tile.level = 2;
+    s.seed_local_player(local_player(controls.tile));
+    s.seed_locs(vec![controls, hopper]);
     let plan = compile_context_test(|cx| {
         let mut document = crate::quester::compile::decode_cook().unwrap();
         // Isolate hopper recovery from the preceding navigation leg.
@@ -3591,7 +3601,10 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
         type_: 0,
         username: None,
     }]);
-    s.seed_locs(vec![loc(2718, "Hopper controls", "Operate")]);
+    let mut controls = loc(2718, "Hopper controls", "Operate");
+    controls.tile.level = 2;
+    s.seed_local_player(local_player(controls.tile));
+    s.seed_locs(vec![controls]);
     let plan = compile_context_test(|cx| {
         let document = crate::quester::compile::decode_cook().unwrap();
         let recipe = &document.quest.as_ref().unwrap().acquire["acquire:flour"];
@@ -3974,12 +3987,14 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(-1, vec![]);
-    for tick in 5..13 {
+    // The second gap starts at tick 5, so the quiet close completes at tick
+    // 9 with the four-tick gap (tick 13 with the old eight-tick gap).
+    for tick in 5..9 {
         with_tick(&snapshot, &mut ledger, tick, |t| {
             assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
         });
     }
-    with_tick(&snapshot, &mut ledger, 13, |t| {
+    with_tick(&snapshot, &mut ledger, 9, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
             Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4052,14 +4067,16 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 24..33 {
+    // The second gap starts at tick 25, so the quiet close completes at
+    // tick 29 with the four-tick gap (tick 33 with the old eight-tick gap).
+    for tick in 24..29 {
         assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 33, |tick| {
+        with_tick(&snapshot, &mut ledger, 29, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4107,7 +4124,9 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     .is_pending());
     // One starting unit plus four slack updates may re-arm; later unrelated
     // updates keep happening but must not postpone the fifth quiet deadline.
-    for game_tick in 3..15 {
+    // The gap starts at tick 2 and re-arms at 3, 4, 5, 6, 7, so it completes
+    // at tick 11 with the four-tick gap (tick 15 with the old eight-tick gap).
+    for game_tick in 3..11 {
         snapshot.seed_inventory(
             vec![ItemView {
                 slot: (game_tick % 2) as i32,
@@ -4122,7 +4141,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     }
     snapshot.seed_inventory(vec![ItemView { slot: 1, ..item }], 28);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 15, |tick| {
+        with_tick(&snapshot, &mut ledger, 11, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4871,6 +4890,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         round_deadline: None,
         chat_since: 0,
         target_tile: None,
+        anchored_stand_arrived: false,
         default_dialogue: true,
         dialogue_options: None,
         dialogue: None,
@@ -4879,6 +4899,12 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         accepted_tick: None,
         scene_activity_observed: false,
         scene_in_range_at_acceptance: false,
+        avoid: reach::Avoid::default(),
+        chase: None,
+        chase_rewalks: CHASE_REWALKS,
+        anchor_walk: false,
+        retargets_left: reach::RETARGET_LIMIT,
+        dispatched: None,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))
@@ -5091,6 +5117,8 @@ fn talk_expected_combat_rejects_unknown_npc_config() {
     });
 }
 
+#[path = "chooser_tests.rs"]
+mod chooser_tests;
 #[path = "extension_tests.rs"]
 mod extension_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
@@ -5484,5 +5512,288 @@ fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
                 "exclusive-loadout-requires-exact-items"
             );
         }
+    });
+}
+
+#[test]
+fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let from = tile(origin.x - 4, origin.z);
+        let (mut snapshot, mut target, _) = use_on_footprint_fixture(cx, from);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"},
+                "anchor": {"tile": [3166, 3308, 0], "source": "unit fixture"},
+                "radius": 3
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().and_then(|ledger| ledger.outbox.first()).map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == origin && request.loc_id == Some(target.id)
+                        && request.radius == 1
+            ),
+            "arrival at the authored radius edge must still approach the actual loc"
+        );
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 3;
+        let mut decoy = target.clone();
+        decoy.tile.x += 4;
+        decoy.distance = 1;
+        snapshot.seed_locs(vec![decoy, target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                emitted(&ledger),
+                InteractReq::UseOn { x, z, target_item_id: Some(id), .. }
+                    if (*x, *z, *id) == (origin.x, origin.z, target.id)
+            ),
+            "the anchor-selected loc stays pinned after approaching outside the anchor radius"
+        );
+    });
+}
+
+#[test]
+fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let (mut snapshot, mut target, _) =
+            use_on_footprint_fixture(cx, tile(origin.x - 7, origin.z));
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"},
+                "anchor": {"tile": [3166, 3308, 0], "source": "unit fixture"},
+                "radius": 3
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().and_then(|ledger| ledger.outbox.first()).map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == origin && request.loc_id == Some(target.id)
+            ),
+            "a visible anchored loc is approached directly, not via the anchor radius"
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.cx.active_now = Duration::from_secs(30);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "the initial stand approach must not spend the use-on settle window"
+        );
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 3;
+        snapshot.seed_locs(vec![target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                emitted(&ledger),
+                InteractReq::UseOn { x, z, target_item_id: Some(id), .. }
+                    if (*x, *z, *id) == (origin.x, origin.z, target.id)
+            ),
+            "arrival after more than twenty seconds still dispatches the selected loc use"
+        );
+        assert!(
+            matches!(
+                with_tick(&snapshot, &mut ledger, 5, |tick| {
+                    tick.cx.active_now = Duration::from_secs(52);
+                    with_step(tick, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == "use_on timeout"
+            ),
+            "the actual use-on settle window remains bounded after arrival"
+        );
+    });
+}
+
+#[test]
+fn anchored_use_on_retries_share_the_first_stand_arrival_settle_window() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let (mut snapshot, mut target, _) =
+            use_on_footprint_fixture(cx, tile(origin.x - 7, origin.z));
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"},
+                "anchor": {"tile": [3166, 3308, 0], "source": "unit fixture"},
+                "radius": 3, "until": {"obj": "wool", "qty": 1},
+                "settle_ms": 20_000
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_secs(30);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 1;
+        snapshot.seed_locs(vec![target.clone()]);
+        post_user_input_walk_receipt(&mut ledger, 4);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Arrived;
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+
+        accept_last(&mut ledger, 5, true);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        // Let the silent round expire from away from the stand so its retry
+        // must walk back before issuing the next use_on.
+        snapshot.seed_local_player(local_player(tile(origin.x + 5, origin.z)));
+        target.distance = 5;
+        snapshot.seed_locs(vec![target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.cx.active_now = Duration::from_secs(39);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().and_then(|ledger| ledger.outbox.last()).map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == origin && request.loc_id == Some(target.id)
+        ));
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 1;
+        snapshot.seed_locs(vec![target.clone()]);
+        post_user_input_walk_receipt(&mut ledger, 7);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Arrived;
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            tick.cx.active_now = Duration::from_secs(45);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+
+        accept_last(&mut ledger, 8, true);
+        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+            tick.cx.active_now = Duration::from_secs(46);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                with_tick(&snapshot, &mut ledger, 9, |tick| {
+                    tick.cx.active_now = Duration::from_secs(51);
+                    with_step(tick, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "use_on timeout"
+            ),
+            "repeated anchored attempts must not extend the settle deadline past the first stand arrival"
+        );
+    });
+}
+
+/// "This specific loc" is an explicit `target.tile` (the cog ladder's
+/// contract): same-id locs nearer the player never replace it, before or
+/// after the stand approach. Without a tile the target is fungible.
+#[test]
+fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let (mut snapshot, target, _) = use_on_footprint_fixture(cx, tile(3163, 3308));
+        let mut decoy = target.clone();
+        decoy.tile.x = 3162;
+        decoy.distance = 1;
+        snapshot.seed_locs(vec![decoy.clone(), target.clone()]);
+        let plan = InteractPlan {
+            kind: reach::ReachKind::Loc {
+                id: Some(target.id),
+                name: None,
+            },
+            op: Arc::from("Use"),
+            tile: Some(tile(3166, 3308)),
+            radius: 3,
+            wait_if_missing: false,
+            settle_ms: None,
+            ambiguous: false,
+            default_dialogue: false,
+            dialogue_options: None,
+            until: None,
+            target_tile: Some(origin),
+            reachable_only: false,
+        };
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == origin && request.loc_id == Some(target.id)
+            ),
+            "a same-id loc near the player must not bypass the exact loc and its stand"
+        );
+        snapshot.seed_local_player(local_player(tile(3170, 3308)));
+        decoy.tile.x = 3171;
+        snapshot.seed_locs(vec![decoy, target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc {
+                x: 3167,
+                z: 3308,
+                ..
+            }
+        ));
     });
 }

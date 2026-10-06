@@ -10,7 +10,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::task::Poll;
 
-pub const DIALOG_GAP_TICKS: u64 = 8;
+pub const DIALOG_GAP_TICKS: u64 = 4;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
 pub const DRIVE_STEPS: u32 = 120;
@@ -174,6 +174,7 @@ pub struct Dialogue {
     due_tick: u64,
     gap_inventory: Option<u64>,
     gap_position: Option<api::WorldTile>,
+    gap_chat_mark: i32,
     gap_rearms_left: u64,
     ack_page: PageAcknowledgement,
     npc_index: i32,
@@ -200,6 +201,7 @@ impl NativeMachine for Dialogue {
             due_tick: 0,
             gap_inventory: None,
             gap_position: None,
+            gap_chat_mark: reach::last_chat_seq(cx),
             // Each held unit can be transferred once. Allow four additional
             // observed changes for batched rewards or server-driven movement,
             // but never let unrelated activity keep closed dialogue alive.
@@ -248,9 +250,26 @@ impl NativeMachine for Dialogue {
         match self.surface {
             Surface::Main => {
                 if chat_active {
-                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                    // A level-up page can open on the chat surface after our
+                    // own Main close (Cook's hand-in: quest scroll, our
+                    // `CloseModal`, then "Congratulations, you just advanced
+                    // a Cooking level"). Once the owned modal is observed
+                    // closed, adopt the page as a continuation and drain it
+                    // with the normal chat driver instead of failing. A chat
+                    // page while Main is still open stays `Failed`.
+                    let own_close = matches!(
+                        self.phase,
+                        Phase::WaitMainCloseAck | Phase::WaitMainCloseTick
+                    );
+                    if own_close && main.root == -1 {
+                        self.surface = Surface::Chat;
+                        self.phase = Phase::Drive;
+                    } else {
+                        return Poll::Ready(Ok(DialogueOutcome::Failed));
+                    }
+                } else {
+                    return self.poll_main(cx, &main, now);
                 }
-                return self.poll_main(cx, &main, now);
             }
             Surface::Chat if main_active => {
                 if !chat_active && matches!(main.kind, MainKind::Scroll | MainKind::Book) {
@@ -371,11 +390,30 @@ impl NativeMachine for Dialogue {
                     let moved = position
                         .zip(self.gap_position)
                         .is_some_and(|(here, before)| here != before);
-                    if (inventory != self.gap_inventory || moved) && self.gap_rearms_left > 0 {
-                        // Bulk hand-ins and server cutscenes can close chat
-                        // before reopening it. Spend the existing finite budget.
+                    // Scripted `mes` output (Oddenstein's hand-in `mes` /
+                    // `p_delay` run) arrives as game chat messages: `type_ ==
+                    // 0` with no username, the same filter as
+                    // `reach::saw_game_message` / `reach::last_chat_seq`. A
+                    // new one re-arms the gap on the same finite budget.
+                    let chat_mark = reach::last_chat_seq(cx);
+                    let chat_new =
+                        cx.snapshot()
+                            .chat_lines(self.gap_chat_mark)
+                            .is_some_and(|lines| {
+                                lines
+                                    .value
+                                    .iter()
+                                    .any(|line| line.username.is_none() && line.type_ == 0)
+                            });
+                    if (inventory != self.gap_inventory || moved || chat_new)
+                        && self.gap_rearms_left > 0
+                    {
+                        // Bulk hand-ins, server cutscenes, and scripted `mes`
+                        // output can close chat before reopening it. Spend
+                        // the existing finite budget.
                         self.gap_inventory = inventory;
                         self.gap_position = position;
+                        self.gap_chat_mark = chat_mark;
                         self.gap_rearms_left -= 1;
                         self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
                     }
@@ -695,6 +733,7 @@ impl Dialogue {
             self.phase = Phase::WaitGap;
             self.gap_inventory = inventory_fingerprint(cx);
             self.gap_position = cx.snapshot().here().map(|here| here.value);
+            self.gap_chat_mark = reach::last_chat_seq(cx);
             self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
             return Poll::Pending;
         }

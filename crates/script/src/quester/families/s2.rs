@@ -1536,6 +1536,13 @@ impl PredicatePlan for BankHas {
             None => Truth::Unknown,
         }
     }
+
+    fn requires_bank(&self) -> bool {
+        true
+    }
+    fn bank_item_ids(&self, ids: &mut Vec<i32>) {
+        ids.push(self.id);
+    }
 }
 
 pub(super) fn compile_loadout_ready(

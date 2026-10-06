@@ -11,9 +11,9 @@
     "quest_points": 1,
     "requirements": [],
     "items": [
-      { "obj": "egg", "qty": 1, "kind": "acquirable", "acquire": "acquire:egg" },
-      { "obj": "bucket_milk", "qty": 1, "kind": "acquirable", "acquire": "acquire:milk" },
-      { "obj": "pot_flour", "qty": 1, "kind": "acquirable", "acquire": "acquire:flour" }
+      { "obj": "pot_flour", "qty": 1, "kind": "acquirable", "acquire": "acquire:flour", "from_stage": "cook:1" },
+      { "obj": "egg", "qty": 1, "kind": "acquirable", "acquire": "acquire:egg", "from_stage": "cook:1" },
+      { "obj": "bucket_milk", "qty": 1, "kind": "acquirable", "acquire": "acquire:milk", "from_stage": "cook:1" }
     ],
     "acquire": {
       "acquire:egg": [

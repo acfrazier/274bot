@@ -546,15 +546,21 @@ impl NativeMachine for BankMachine {
                             else {
                                 return Poll::Pending;
                             };
-                            let Some(loc) = crate::quester::families::reach::nearest_loc(
+                            // A player-radius area and strict reachability
+                            // keep the old `reachable_only` object probe.
+                            let Some(loc) = crate::quester::families::reach::choose_loc(
                                 cx,
                                 Some(candidate.id),
                                 None,
                                 Some(operation.op),
-                                BANK_OBJECT_RADIUS,
+                                crate::quester::families::reach::Area::new(
+                                    None,
+                                    BANK_OBJECT_RADIUS,
+                                ),
                                 Some(candidate.tile),
-                                true,
-                            ) else {
+                                &crate::quester::families::reach::Avoid::default(),
+                            )
+                            .reachable() else {
                                 return Poll::Pending;
                             };
                             if opening_first {
