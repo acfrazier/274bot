@@ -23,8 +23,8 @@ recording stub. The kernel never injects a raw opcode that skips ISAAC.
 | `answer_count(driver, n)` | `RESUME_P_COUNTDIALOG` via `Out` |
 | `login(driver, u, p, reconnect)` | `Client::login` handshake |
 | `logout(driver, ifaces)` | `IF_BUTTON` on the `CC_LOGOUT` iface (client code 205) via `doAction`; missing iface is `false`, no panic |
-| `cheat(driver, cmd)` | `CLIENT_CHEAT` via `Out` (body as given — `tele`/`setvar` have no `~`; debugprocs are `~name`) |
-| `mainland_hop(driver)` | two `cheat`s: `tele` courtyard + `setvar tutorial 1000` |
+| `cheat(driver, cmd)` | `CLIENT_CHEAT` via the driver's `send_cheat` (body as given — `tele`/`setvar` have no `~`; debugprocs are `~name`); refused unless the profile admits cheats (local profiles only) |
+| `mainland_hop(driver)` | two `cheat`s: `tele` courtyard + `setvar tutorial 1000`; returns without sending unless `cheat_allowed(driver.cheat_admission())` |
 | `seed_at(driver, level, x, z)` | `setvar tutorial 1000` then `tele level,mx,mz,lx,lz` |
 
 `Driver::click_side_tab(tab)` flips the client's local active side icon
@@ -34,14 +34,17 @@ scenery/ground-decor typecode at a scene tile.
 ## `Interactions` (the orchestration layer)
 
 `Interactions<'a>` holds `&'a GameSnapshot` + `&'a mut dyn Driver` and
-returns `SendResult` (a `WireCommand`, or a `SendReason` refusal). Its 19
+returns `SendResult` (a `WireCommand`, or a `SendReason` refusal). Its 26
 methods: `apply_amount_key`, `interact(target, action)`, `wear(id)`,
 `unequip(id)`, `use_item_on(item, target)`, `use_widget_on(widget, target)`,
 `press(widget)`, `if_button(widget)`, `continue_dialog(component_id)`,
-`open_nearest_booth()`, `close_modal()`, `answer_count(value)`,
-`walk(tile)`, `walk_nearest(tile)`, `click_side_tab(tab)`,
+`open_nearest_booth()`, `open_booth_at(tile, expected_id)`,
+`open_named_booth_at(tile, expected_id, expected_name, expected_action)`,
+`answer_choice(option)`, `close_modal()`, `answer_count(value)`,
+`shop_buy(name, chunk)`, `shop_sell(name, chunk)`, `walk(tile)`,
+`walk_nearest(tile)`, `pending_door_step(tile)`, `click_side_tab(tab)`,
 `login(user, pass)`, `clear_local_modal(component_id)`, `set_run(on)`,
-`set_retaliate(on)`. Each does: precondition (attached/ingame/scene/
+`set_retaliate(on)`, `set_note_mode(on)`. Each does: precondition (attached/ingame/scene/
 count-dialog) → target identity (`still_present`) → label/opcode resolve
 (`operation_of`/`offers_operation`) → dispatch a `WireCommand` through
 `Driver`.
