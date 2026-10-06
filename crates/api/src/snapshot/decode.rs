@@ -534,6 +534,14 @@ impl GameSnapshot {
         } else {
             inv_items(client, self.bank_component_id, ItemContainer::Bank).unwrap_or_default()
         };
+        self.bank_size = if self.bank_component_id == -1 {
+            0
+        } else {
+            client
+                .if_(self.bank_component_id as usize)
+                .and_then(|com| com.link_obj_type.as_ref().map(|ids| ids.len() as i32))
+                .unwrap_or(0)
+        };
         self.bank_note_controls = if client.main_modal_id == -1 {
             None
         } else {

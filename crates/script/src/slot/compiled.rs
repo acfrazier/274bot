@@ -295,7 +295,8 @@ pub(super) fn frame_context<'a>(
         evidence,
         pin,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
-            .with_reach(ctx.compiled.reach),
+            .with_reach(ctx.compiled.reach)
+            .with_bank_memory(ctx.compiled.bank_memory),
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now),
@@ -391,6 +392,7 @@ impl CompiledRun {
                     compiled: crate::CompiledTick {
                         selected: Some(&self.selected),
                         reach: ctx.compiled.reach,
+                        bank_memory: ctx.compiled.bank_memory,
                         hold: ctx.compiled.hold,
                         #[cfg(feature = "load")]
                         interacts,

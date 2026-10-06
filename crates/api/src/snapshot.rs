@@ -23,6 +23,9 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
+/// Slot count an open [`GameSnapshot::seed_bank_observation`] fixture
+/// reports (a fixture bank is never smaller than its rows).
+const FIXTURE_BANK_SIZE: i32 = 64;
 /// Maximum locally relevant projectiles; incoming threats retain priority.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
@@ -148,6 +151,11 @@ pub struct GameSnapshot {
     /// The open main modal's withdraw component (the m8aq
     /// `bankComponentId`); -1 while no bank is open.
     bank_component_id: i32,
+    /// The open withdraw component's slot count (its `link_obj_type`
+    /// length, decoded like `inventory_size`); 0 while no bank is open. A
+    /// `GameSnapshot` fact only, never posted to the script FlatBuffer: the
+    /// bank memory reserves its rows from it.
+    bank_size: i32,
     /// The open puzzle board's identified TYPE_INV component (the first
     /// depth-first component with `obj_ops` under the main modal); -1 while
     /// no board is open.
@@ -310,6 +318,7 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_size: 0,
             bank_component_id: -1,
+            bank_size: 0,
             puzzle_board_component_id: -1,
             puzzle_board_size: 0,
             puzzle_session_generation: 0,
@@ -451,6 +460,10 @@ impl GameSnapshot {
         }
         self.bank_last_inv_com = component_id;
         self.bank_last_inv_generation = generation;
+        self.bank_size = match &rows {
+            Some(rows) if self.bank_loaded => FIXTURE_BANK_SIZE.max(rows.len() as i32),
+            _ => 0,
+        };
         self.bank = rows.unwrap_or_default();
         self.bank_side = side;
         self.modals.side = if component_id < 0 {
@@ -954,6 +967,13 @@ impl GameSnapshot {
     /// rebuild; -1 while no bank is open.
     pub fn bank_component_id(&self) -> i32 {
         self.bank_component_id
+    }
+
+    /// The open withdraw component's slot count (the m8aq bank grid's
+    /// `link_obj_type` length); 0 while no bank is open. Never the row
+    /// count: an occupied 3-row bank still reports every slot.
+    pub fn bank_size(&self) -> i32 {
+        self.bank_size
     }
 
     /// The open puzzle board: the identified TYPE_INV component (the first

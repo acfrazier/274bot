@@ -440,6 +440,29 @@ impl Play {
             bot.walk_globals = Some(Arc::clone(&self.walk_globals));
             bot.walk_globals_store = self.walk_globals_store.clone();
         }
+        // The account's bank memory and its hint file, both resolved here on
+        // the spawning thread (design-bank-snapshot §1.2, §1.4): the slot
+        // thread never resolves `HOME`, so a test's thread-local
+        // `IsolatedEnv` pin covers every save.
+        let bank_memory = Arc::clone(self.bank_memories.entry(username.clone()).or_default());
+        let bank_hint = match self.connection.profile() {
+            Some(profile) => {
+                match script::bank_hints::HintFile::for_account(profile.name(), &username) {
+                    Ok(hint) => Some(hint),
+                    Err(error) => {
+                        host_log!(
+                            Category::BankOp,
+                            Level::Warn,
+                            slot = &username,
+                            "bank hints: {error}; the memory lives for this process only"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let slot_bank = super::slot_bank_memory::SlotBankMemory::new(bank_memory, bank_hint);
         let world = world_round.as_ref().and_then(|round| {
             self.connection
                 .profile()
@@ -473,6 +496,7 @@ impl Play {
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
             Arc::clone(&self.navs),
+            slot_bank,
             Arc::clone(&self.pause_script_on_manual_walk_abort),
             self.world.clone(),
             Arc::clone(&self.obj_names),
@@ -740,6 +764,7 @@ fn spawn_slot_thread(
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    slot_bank: super::slot_bank_memory::SlotBankMemory,
     slot_manual_abort_pause: Arc<std::sync::atomic::AtomicBool>,
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
@@ -779,6 +804,9 @@ fn spawn_slot_thread(
             };
             #[cfg(feature = "memory-profile")]
             let _duel_retirement = memory::DuelReportRetirement { name: &username };
+            // Pending bank observations are saved however the worker leaves
+            // (design-bank-snapshot §1.4: slot exit is a save point).
+            let _bank_exit_save = super::slot_bank_memory::ExitSave(&slot_bank);
             #[cfg(test)]
             if let Some(published) = startup_entries_published {
                 published.send(()).unwrap();
@@ -1173,6 +1201,9 @@ fn spawn_slot_thread(
                         let slot_manual_abort_pause = Arc::clone(&slot_manual_abort_pause);
                         let slot_world = slot_world.clone();
                         let observe_channels = slot_channels.clone();
+                        // Borrowed, not cloned: the slot thread's one handle
+                        // on the account's bank memory and hint file.
+                        let slot_bank = &slot_bank;
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
                         let map_members = connection
                             .profile()
@@ -1250,6 +1281,9 @@ fn spawn_slot_thread(
                                         &slot_navs,
                                         &observe_channels,
                                     );
+                                    // Before the first script tick of the
+                                    // session (design-bank-snapshot §1.4).
+                                    slot_bank.session_started();
                                 } else {
                                     end_slot_session(
                                         name,
@@ -1260,10 +1294,14 @@ fn spawn_slot_thread(
                                         &slot_navs,
                                         &observe_channels,
                                     );
+                                    slot_bank.session_ended();
                                 }
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            // The open bank's rows reach the account memory
+                            // here (design-bank-snapshot §1.3); a close saves.
+                            slot_bank.observe_frame(&nav_snapshot);
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -1503,6 +1541,10 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
+                            // The compiled tick borrows the account's bank
+                            // memory through this read guard; the slot's own
+                            // write for the frame already happened above.
+                            let bank_memory = slot_bank.read();
                             let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
@@ -1518,6 +1560,7 @@ fn spawn_slot_thread(
                                 inv,
                                 nav_state,
                                 Some(&nav_snapshot),
+                                Some(&*bank_memory),
                                 npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
@@ -1535,6 +1578,7 @@ fn spawn_slot_thread(
                                 Some(run_policy),
                                 Some(&mut debug_replies),
                             );
+                            drop(bank_memory);
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
@@ -1649,6 +1693,7 @@ fn spawn_slot_thread(
                         &slot_navs,
                         &slot_channels,
                     );
+                    slot_bank.session_ended();
                 }
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
