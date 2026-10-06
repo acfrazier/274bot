@@ -211,7 +211,13 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             )
             .unwrap();
         let arms = WalkArms::default();
-        let result = command.walk_on(&world, &context, account, &state, &[], &arms);
+        let admission = host_play::admission::Admission::manual(
+            command.options(),
+            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            0,
+            host_play::WalkGlobals::default(),
+        );
+        let result = command.walk_on(&world, &context, account, &state, &[], admission, &arms);
         if initial_coins == 30 {
             let error = result.unwrap_err();
             let message = error.to_string();
@@ -240,7 +246,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             client.logout();
             continue;
         }
-        let route = result.expect("sixty coins pays both ships");
+        let route = result.expect("sixty coins pays both ships").route;
         let ships: Vec<_> = route
             .legs
             .iter()
@@ -453,9 +459,16 @@ fn live_shilo_cart_ten_coins_to_zero() {
         )
         .unwrap();
     let arms = WalkArms::default();
+    let admission = host_play::admission::Admission::manual(
+        command.options(),
+        host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+        1,
+        host_play::WalkGlobals::default(),
+    );
     let route = command
-        .walk_on(&world, &context, &account, &state, &[], &arms)
-        .expect("native cart fare is ten coins");
+        .walk_on(&world, &context, &account, &state, &[], admission, &arms)
+        .expect("native cart fare is ten coins")
+        .route;
     let carts: Vec<_> = route
         .legs
         .iter()

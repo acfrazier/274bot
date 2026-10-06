@@ -288,6 +288,9 @@ pub(crate) fn post_user_input_walk_receipt(
         end: crate::native::WalkEnd::UserInput,
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     request_id
 }
@@ -313,6 +316,9 @@ fn mapped_walk_receipt(
         end,
         blocked: None,
         detail,
+        refusal: None,
+        assessment: None,
+        escape: None,
     }
 }
 
@@ -596,7 +602,9 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
-        HostEffect::BankPick(_) => panic!("open door recovery cannot select a bank"),
+        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
+            panic!("open door recovery cannot select a bank or advisory")
+        }
     }
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -732,6 +740,9 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         end: crate::native::WalkEnd::RouteEnded,
         blocked: None,
         detail: Some(Arc::from("route stopped short")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(matches!(
         with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
@@ -815,6 +826,9 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         end: crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
 
     let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
@@ -864,7 +878,9 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
-        HostEffect::BankPick(_) => panic!("door approach cannot select a bank"),
+        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
+            panic!("door approach cannot select a bank or advisory")
+        }
     }
 }
 
@@ -2479,7 +2495,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
                 assert_eq!(request.target, tile(2542, 3170));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("talked before approaching the NPC")
             }
         }
@@ -2568,7 +2584,7 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
                 assert_eq!(request.target, tile(3200, 3276));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("used the item before approaching the NPC")
             }
         }
@@ -4684,7 +4700,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
                     "route to the NPC's side, not an adjacent tile across the barrier"
                 );
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("geometric proximity cannot bypass closed clipping")
             }
         }

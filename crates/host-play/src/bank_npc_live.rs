@@ -501,11 +501,11 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
                 steps: fetch.steps.clone().into(),
                 dest: from,
                 opts: FindOptions::default(),
-                final_route: Route {
+                final_route: Arc::new(Route {
                     legs: vec![Leg::Walk { tiles: vec![from] }],
                     dest: from,
                     ticks: 1.0,
-                },
+                }),
                 avoid: Vec::new(),
                 progress: Default::default(),
             };

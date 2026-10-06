@@ -397,7 +397,7 @@ fn route_sample(play: &Play, account: &str) -> Option<RouteSample> {
     Some(RouteSample {
         request_id: bot.route_request_id,
         generation: bot.route_generation,
-        route: bot.route.clone()?,
+        route: bot.route.as_deref().cloned()?,
     })
 }
 

@@ -103,6 +103,7 @@ pub struct SlotLoadIdentity {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
     pub loadouts: Arc<[crate::loadouts_store::Loadout]>,
+    pub api_family: Option<crate::ApiFamily>,
 }
 
 #[cfg(feature = "load")]
@@ -454,6 +455,9 @@ impl SlotScript {
                     self.pending_logs.push(e.clone());
                 }
                 self.load_identity = Some(SlotLoadIdentity {
+                    api_family: crate::resolve_api_family(&source)
+                        .ok()
+                        .map(|(_, family)| family),
                     source: Arc::from(source),
                     shape,
                     siblings: siblings.into(),
@@ -479,6 +483,9 @@ impl SlotScript {
                     ));
                 }
                 let identity = SlotLoadIdentity {
+                    api_family: crate::resolve_api_family(&source)
+                        .ok()
+                        .map(|(_, family)| family),
                     source: Arc::from(source),
                     shape,
                     siblings: siblings.into(),
@@ -1552,6 +1559,9 @@ impl SlotScript {
                 end: crate::native::WalkEnd::UserInput,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             });
             ledger
                 .outbox
@@ -1651,6 +1661,16 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_bank_pick(authority, receipt);
+        }
+    }
+
+    pub fn complete_native_assess_walk(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native::AssessReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_assess_walk(authority, receipt);
         }
     }
 
@@ -1810,6 +1830,13 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn load_identity(&self) -> Option<&SlotLoadIdentity> {
         self.load_identity.as_ref()
+    }
+
+    /// API family captured with the active Load identity at Start.
+    #[cfg(feature = "load")]
+    pub fn api_family(&self) -> Option<crate::ApiFamily> {
+        self.load.as_ref()?;
+        self.load_identity.as_ref()?.api_family
     }
 
     pub fn watchdog(&self) -> &ProgressWatchdog {

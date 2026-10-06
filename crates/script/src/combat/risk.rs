@@ -10,7 +10,8 @@ pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav::zones::{ZoneKey, ZoneTable};
 pub use replay::{
-    assess, candidate_cost, eat_line, estimated_floor, replay, Estimate, ReplayResult,
+    admission_passes, assess, candidate_cost, eat_line, estimated_floor, replay, Estimate,
+    ReplayResult,
 };
 use std::sync::Arc;
 
@@ -124,6 +125,10 @@ impl ZoneInterval {
     pub fn hazard(self) -> bool {
         self.flags & 4 != 0
     }
+    /// The origin-to-first-exit interval is exposure, not entry authority.
+    pub fn escaping(self) -> bool {
+        self.a == 0 && self.e == 0
+    }
     /// S2 always sums. S3 may set this only after its coverage/census gate.
     pub fn single_safe(self) -> bool {
         self.flags & 8 != 0
@@ -149,6 +154,9 @@ impl CrossingGeom {
 }
 #[derive(Debug, Default)]
 pub struct RoutePlan {
+    /// False only when geometry could not be assessed. An empty complete plan
+    /// proves there is no entering crossing, even when live inputs are unknown.
+    pub complete: bool,
     pub intervals: Box<[ZoneInterval]>,
     pub crossings: Box<[CrossingGeom]>,
     // Walk-leg starts are derived from the retained route, not separately allocated.

@@ -172,6 +172,15 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 },
                 &WorldState::empty(),
                 &[],
+                host_play::admission::Admission::manual(
+                    FindOptions {
+                        zones: nav::zones::ZoneExempt::all(),
+                        ..Default::default()
+                    },
+                    Default::default(),
+                    0,
+                    host_play::WalkGlobals::default(),
+                ),
                 &scratch,
                 None,
             )
@@ -180,7 +189,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 // Keep the real walk within the unchanged 60-second await
                 // budget, without transports or a deadline-only false result.
                 matches!(
-                    route.legs.as_slice(),
+                    route.route.legs.as_slice(),
                     [nav::router::Leg::Walk { tiles }] if tiles.len() <= 48
                 )
             }) {

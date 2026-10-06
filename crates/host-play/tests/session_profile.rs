@@ -2066,7 +2066,7 @@ fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
     use host_play::walk_map::{ActionError, WalkRequest};
     use nav::{
-        router::{find_blocking_zones, find_with, FindOptions},
+        router::{find_blocking_zones, FindOptions},
         world::NavWorld,
         world_state::WorldState,
     };
@@ -2118,13 +2118,30 @@ fn public_profile_routes_lumbridge_to_ardougne() {
             members: selected.world_members(),
         }
         .run(|| {
-            find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
+            let admission = host_play::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                0,
+                host_play::WalkGlobals::default(),
+            );
+            host_play::arm_walk_on(
+                &world,
+                nav::tile::Tile {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                },
+                nav::tile::Tile {
+                    x: to.x,
+                    z: to.z,
+                    level: to.level,
+                },
                 FindOptions::default(),
                 &state,
+                &[],
+                admission,
+                &host_play::WalkArms::default(),
+                None,
             )
             .map_err(|_| ActionError::NoPath)
         });
@@ -2132,6 +2149,7 @@ fn public_profile_routes_lumbridge_to_ardougne() {
         assert_eq!(result.is_ok(), reachable, "{label}: {result:?}");
         if let Ok(route) = &result {
             let walked: Vec<_> = route
+                .route
                 .legs
                 .iter()
                 .flat_map(|leg| match leg {

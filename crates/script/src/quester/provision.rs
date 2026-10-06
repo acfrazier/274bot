@@ -1404,6 +1404,9 @@ mod tests {
             end,
             blocked: None,
             detail,
+            refusal: None,
+            assessment: None,
+            escape: None,
         }
     }
 

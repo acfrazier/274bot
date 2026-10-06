@@ -74,6 +74,13 @@ fn write_receipt(path: &std::path::Path, receipt: &Value) {
     );
 }
 
+fn env_port(name: &str, default: u16) -> u16 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 #[test]
 #[ignore = "requires LIVE=1, NAV_STAIRS_PACK, WORLD_ENGINE_DIR and NAV_STAIRS_RECEIPT; BOT_LIVE_NAME_PREFIX defaults to ns"]
 fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
@@ -90,13 +97,17 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         .expect("system clock")
         .as_millis();
     let engine_dir = PathBuf::from(std::env::var_os("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"));
+    // The shared-engine convention: WORLD_GAME_PORT/WORLD_HTTP_PORT select
+    // another local engine; the defaults are this fixture's original ones.
+    let port = env_port("WORLD_GAME_PORT", 45594);
+    let http_port = env_port("WORLD_HTTP_PORT", 2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(45594),
-        http_port: Some(2080),
+        port: Some(port),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         nav_pack: Some(PathBuf::from(
             std::env::var_os("NAV_STAIRS_PACK").expect("NAV_STAIRS_PACK"),
@@ -180,7 +191,7 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
 
     let mut receipt = json!({
         "scenario": "lumbridge-stairs-loc1738", "account": name, "profile": "local-289",
-        "server": {"host": "127.0.0.1", "game_port": 45594, "http_port": 2080},
+        "server": {"host": "127.0.0.1", "game_port": port, "http_port": http_port},
         "origin": ORIGIN, "wheel_goal": [WHEEL_GOAL.x, WHEEL_GOAL.z, WHEEL_GOAL.level],
         "destination_stand": [DESTINATION.x, DESTINATION.z, DESTINATION.level],
         "destination_rationale": "wheel tile is blocked; route to adjacent operable stand",
@@ -218,8 +229,14 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         });
         let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
         let arms = WalkArms::default();
-        let route = match command.walk_on(&world, &context, &name, &state, &[], &arms) {
-            Ok(route) => route,
+        let admission = host_play::admission::Admission::manual(
+            command.options(),
+            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            0,
+            host_play::WalkGlobals::default(),
+        );
+        let route = match command.walk_on(&world, &context, &name, &state, &[], admission, &arms) {
+            Ok(route) => route.route,
             Err(error) => return Err(format!("walk_on: {error:?}")),
         };
         receipt["route_legs"] = json!(format!("{:?}", route.legs));

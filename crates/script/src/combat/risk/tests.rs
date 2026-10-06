@@ -1,4 +1,4 @@
-use super::replay::{candidate_cost, Estimate};
+use super::replay::{admission_passes, candidate_cost, Estimate};
 use super::*;
 use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
@@ -6,7 +6,7 @@ use api::selected::ClientRevision;
 use api::WorldTile;
 use nav::router::{Leg, Route};
 use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
-use nav::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
+use nav::zones::{Zone, ZoneClass, ZoneExempt, ZoneKey, ZoneKind, ZoneTable};
 use std::sync::Arc;
 fn tile(x: i32) -> WorldTile {
     WorldTile {
@@ -96,6 +96,7 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
 fn corridor_plan(tables: &CombatTables, prefix: u16) -> RoutePlan {
     let ident = known_kind(tables).npc_id;
     RoutePlan {
+        complete: true,
         intervals: vec![ZoneInterval::new(
             0,
             ident,
@@ -142,6 +143,426 @@ fn context<'a>(
         allow: WalkAllow::default(),
         generation: 7,
     }
+}
+
+fn wizard_kind(tables: &CombatTables) -> ZoneKind {
+    let npc = tables.selected().npc_by_config("wizard").unwrap();
+    ZoneKind::new("wizard", "Wizard", npc.id, 1, npc.ap_attack, false)
+}
+
+fn synthetic_zone_table(kinds: Vec<ZoneKind>) -> ZoneTable {
+    let mut definitions: Vec<ZoneKind> = Vec::new();
+    let mut zones = Vec::with_capacity(kinds.len());
+    for (index, kind) in kinds.into_iter().enumerate() {
+        let kind_index = definitions
+            .iter()
+            .position(|definition| definition.npc_id == kind.npc_id && definition.id == kind.id)
+            .unwrap_or_else(|| {
+                let index = definitions.len();
+                definitions.push(kind);
+                index
+            });
+        zones.push(Zone::npc(
+            tile(10 + index as i32 * 20),
+            1,
+            ZoneClass::Always,
+            u16::MAX,
+            kind_index as u16,
+        ));
+    }
+    zone_table(
+        zones,
+        definitions,
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    )
+}
+
+fn synthetic_interval(
+    zone: u16,
+    ident: i32,
+    spawn: WorldTile,
+    (first, last): (u16, u16),
+    max_hit: u8,
+    rate: u8,
+    unknown: bool,
+) -> ZoneInterval {
+    ZoneInterval::new(
+        zone,
+        ident,
+        spawn,
+        first,
+        last,
+        first,
+        last,
+        6,
+        1,
+        max_hit,
+        rate,
+        if unknown {
+            Style::Unknown
+        } else {
+            Style::Melee
+        },
+        unknown,
+        false,
+        false,
+    )
+    .unwrap()
+}
+
+fn synthetic_crossing(
+    first: u16,
+    last: u16,
+    intervals: (u16, u16),
+    has_way_out: bool,
+) -> CrossingGeom {
+    CrossingGeom {
+        first,
+        last,
+        env_first: first,
+        env_last: last,
+        intervals,
+        retreat: if has_way_out {
+            first.checked_sub(1).unwrap_or(CrossingGeom::NONE)
+        } else {
+            CrossingGeom::NONE
+        },
+        forward: if has_way_out {
+            last.checked_add(1).unwrap_or(CrossingGeom::NONE)
+        } else {
+            CrossingGeom::NONE
+        },
+        leg: 0,
+    }
+}
+
+fn synthetic_assessment(
+    input: RiskInput,
+    intervals: Vec<ZoneInterval>,
+    plan_crossings: Vec<CrossingGeom>,
+    displayed: usize,
+    verdict: Verdict,
+) -> RouteAssessment {
+    let more = u8::try_from(plan_crossings.len().saturating_sub(displayed)).unwrap();
+    let crossings = (0..displayed)
+        .map(|index| Crossing {
+            key: ZoneKey::Zone(index as u16),
+            first: 0,
+            last: 0,
+            ticks: 0,
+            worst: 0,
+            volley: 0,
+            max_hit: 0,
+            rate: 0,
+            style: Style::Melee,
+            floor_deep: 0,
+            bites: 0,
+            single: false,
+            protect_credited: false,
+            unknown: false,
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    RouteAssessment {
+        verdict,
+        plan: RoutePlan {
+            complete: true,
+            intervals: intervals.into_boxed_slice(),
+            crossings: plan_crossings.into_boxed_slice(),
+        },
+        crossings,
+        more,
+        supplies: Box::new([]),
+        hp_after: input.hp,
+        volley: 0,
+        input,
+        generation: 7,
+        reason: Arc::from("synthetic admission assessment"),
+    }
+}
+
+#[test]
+fn u2_admission_omits_fully_granted_unknown_physics_and_preserves_assessment() {
+    let tables = tables();
+    let wizard = wizard_kind(&tables);
+    let known = known_kind(&tables);
+    let wizard_id = wizard.npc_id;
+    let known_id = known.npc_id;
+    let zones = synthetic_zone_table(vec![wizard, known]);
+    let walk = route(0, 40);
+    let value = input(20, 20, 0, &tables);
+    let assessment = synthetic_assessment(
+        value,
+        vec![
+            synthetic_interval(0, wizard_id, tile(5), (5, 5), 6, 0, true),
+            synthetic_interval(1, known_id, tile(20), (20, 20), 6, 4, false),
+        ],
+        vec![
+            synthetic_crossing(5, 5, (0, 1), true),
+            synthetic_crossing(20, 20, (1, 2), true),
+        ],
+        2,
+        Verdict::Unknown(UnknownWhy::Kind(0)),
+    );
+    let grants = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants
+        ),
+        Ok(true)
+    );
+    assert_eq!(assessment.plan.intervals.len(), 2);
+    assert!(assessment.plan.intervals[0].unknown());
+    assert_eq!(assessment.plan.intervals[0].rate, 0);
+    assert_eq!(assessment.plan.crossings[0].intervals, (0, 1));
+}
+
+#[test]
+fn u2_admission_rejects_a_mixed_granted_unknown_crossing() {
+    let tables = tables();
+    let wizard = wizard_kind(&tables);
+    let known = known_kind(&tables);
+    let wizard_id = wizard.npc_id;
+    let known_id = known.npc_id;
+    let zones = synthetic_zone_table(vec![wizard, known]);
+    let walk = route(0, 20);
+    let assessment = synthetic_assessment(
+        input(90, 90, 0, &tables),
+        vec![
+            synthetic_interval(0, wizard_id, tile(5), (5, 5), 6, 0, true),
+            synthetic_interval(1, known_id, tile(5), (5, 5), 6, 4, false),
+        ],
+        vec![synthetic_crossing(5, 5, (0, 2), true)],
+        1,
+        Verdict::Unknown(UnknownWhy::Kind(0)),
+    );
+    let grants = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants
+        ),
+        Err(UnknownWhy::Kind(0))
+    );
+}
+
+#[test]
+fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
+    let tables = tables();
+    let known_id = known_kind(&tables).npc_id;
+    let zones = synthetic_zone_table(vec![known_kind(&tables), known_kind(&tables)]);
+    let walk = route(0, 40);
+    let later = synthetic_interval(1, known_id, tile(20), (20, 20), 6, 4, false);
+    let later_only = synthetic_assessment(
+        input(20, 20, 0, &tables),
+        vec![later],
+        vec![synthetic_crossing(20, 20, (0, 1), true)],
+        1,
+        Verdict::Survivable,
+    );
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &later_only,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            ZoneExempt::NONE,
+        ),
+        Ok(true),
+        "the later known crossing is survivable without prior damage"
+    );
+
+    let assessment = synthetic_assessment(
+        input(20, 20, 0, &tables),
+        vec![
+            synthetic_interval(0, known_id, tile(5), (5, 5), 6, 4, false),
+            later,
+        ],
+        vec![
+            synthetic_crossing(5, 5, (0, 1), true),
+            synthetic_crossing(20, 20, (1, 2), true),
+        ],
+        2,
+        Verdict::Unsurvivable,
+    );
+    let grants = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants
+        ),
+        Ok(false),
+        "the granted first crossing's landed hit remains in the later floor"
+    );
+    assert_eq!(assessment.plan.intervals[0].max_hit, 6);
+}
+
+#[test]
+fn u2_admission_checks_ninth_crossing_beyond_display_bound() {
+    let tables = tables();
+    let known_id = known_kind(&tables).npc_id;
+    let zones = synthetic_zone_table((0..9).map(|_| known_kind(&tables)).collect());
+    let walk = route(0, 100);
+    let intervals = (0..9)
+        .map(|zone| {
+            let index = 2 + zone * 10;
+            synthetic_interval(
+                zone,
+                known_id,
+                tile(10 + i32::from(zone)),
+                (index, index),
+                6,
+                4,
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+    let plan_crossings = (0..9)
+        .map(|zone| {
+            let index = 2 + zone * 10;
+            synthetic_crossing(index, index, (zone, zone + 1), true)
+        })
+        .collect::<Vec<_>>();
+    let assessment = synthetic_assessment(
+        input(50, 50, 0, &tables),
+        intervals,
+        plan_crossings,
+        8,
+        Verdict::Unsurvivable,
+    );
+    let keys = (0..8).map(ZoneKey::Zone).collect::<Vec<_>>();
+    let grants = ZoneExempt::named(&keys).unwrap();
+
+    assert_eq!(assessment.plan.crossings.len(), 9);
+    assert_eq!(assessment.crossings.len(), 8);
+    assert_eq!(assessment.more, 1);
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants
+        ),
+        Ok(false),
+        "the ninth ungranted crossing still participates in complete-plan replay"
+    );
+}
+
+#[test]
+fn u2_admission_grants_a_fully_granted_no_way_out_crossing() {
+    let tables = tables();
+    let known = known_kind(&tables);
+    let zones = synthetic_zone_table(vec![known]);
+    let walk = route(0, 20);
+    let assessment = synthetic_assessment(
+        input(90, 90, 0, &tables),
+        vec![synthetic_interval(
+            0,
+            zones.kinds()[0].npc_id,
+            tile(10),
+            (0, 20),
+            6,
+            4,
+            false,
+        )],
+        vec![synthetic_crossing(0, 20, (0, 1), false)],
+        1,
+        Verdict::Unsurvivable,
+    );
+    let grants = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants
+        ),
+        Ok(true)
+    );
+}
+
+#[test]
+fn u2_admission_scopes_unknown_poison_and_exempts_safe_only_walks() {
+    let tables = tables();
+    let known_id = known_kind(&tables).npc_id;
+    let zones = synthetic_zone_table(vec![known_kind(&tables), known_kind(&tables)]);
+    let walk = route(0, 40);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = PoisonState::Unknown { since: 0 };
+    let assessment = synthetic_assessment(
+        value,
+        vec![
+            synthetic_interval(0, known_id, tile(5), (5, 5), 6, 4, false),
+            synthetic_interval(1, known_id, tile(20), (20, 20), 6, 4, false),
+        ],
+        vec![
+            synthetic_crossing(5, 5, (0, 1), true),
+            synthetic_crossing(20, 20, (1, 2), true),
+        ],
+        2,
+        Verdict::Unknown(UnknownWhy::Poison),
+    );
+    let first_granted = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            first_granted,
+        ),
+        Err(UnknownWhy::Poison)
+    );
+    assert_eq!(
+        admission_passes(
+            &walk,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            ZoneExempt::all(),
+        ),
+        Ok(true)
+    );
+
+    let safe = route(0, 20);
+    let safe_only = synthetic_assessment(value, vec![], vec![], 0, Verdict::Survivable);
+    assert_eq!(
+        admission_passes(
+            &safe,
+            &safe_only,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            ZoneExempt::NONE,
+        ),
+        Ok(true)
+    );
 }
 
 pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<RouteAssessment> {
@@ -405,7 +826,9 @@ fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
             };
         }
         let assessment = assess(
-            &route(80, 120),
+            // Start outside the synthetic 64-tile tether so this remains
+            // an entering-overflow probe, not an origin-escape admission.
+            &route(if estimated > 255 { 10 } else { 80 }, 120),
             &context(&zones, &risks, &tables, &wilderness),
             value,
         );
@@ -698,7 +1121,7 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     );
     assert!(assess(&route, &cx, unknown)
         .reason
-        .contains("separate safe walk"));
+        .contains("separate safe-only walk"));
     assert_eq!(assess(&safe, &cx, poisoned).input.poison, poisoned.poison);
 }
 
@@ -780,7 +1203,20 @@ fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
     assert_eq!(hits, [(0, 6), (4, 12), (8, 6), (12, 6)]);
     value.hp = 20;
     value.hp_max = 40;
-    assert_eq!(assess(&short, &cx, value).verdict, Verdict::Unsurvivable);
+    let assessment = assess(&short, &cx, value);
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert!(
+        admission_passes(
+            &short,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            ZoneExempt::NONE
+        )
+        .unwrap(),
+        "the physical damage estimate is honest, but a no-crossing flight is never refused",
+    );
 }
 
 fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
@@ -976,7 +1412,12 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
         &value,
     )
     .unwrap();
-    assert_eq!(plan.crossings[0].retreat, CrossingGeom::NONE);
+    assert!(plan.complete);
+    assert!(
+        plan.crossings.is_empty(),
+        "origin-to-exit is escape exposure"
+    );
+    assert!(plan.intervals.iter().any(|row| row.escaping()));
     let z = one_zone(&tables, 100, 1);
     let r = RiskTables::build(&z, &tables);
     let ladder = Route {
@@ -1609,6 +2050,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let path = RoutePath::new(&walk).unwrap();
     let ident = known_kind(&tables).npc_id;
     let weak = RoutePlan {
+        complete: true,
         intervals: vec![ZoneInterval::new(
             0,
             ident,
@@ -1679,6 +2121,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
         .passed
     );
     let multi = RoutePlan {
+        complete: true,
         intervals: (0..4)
             .map(|i| {
                 ZoneInterval::new(
@@ -2074,7 +2517,12 @@ fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
     let walk = Route {
         legs: vec![
             Leg::Walk {
-                tiles: vec![tile(100)],
+                tiles: vec![tile(80)],
+            },
+            // Enter by transport, so neither a same-leg retreat nor the
+            // following teleport can supply an on-foot exit.
+            Leg::Transport {
+                edge: Box::new(edge(tile(80), tile(100), 5)),
             },
             Leg::Transport {
                 edge: Box::new(teleport),
@@ -2090,6 +2538,11 @@ fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
         &walk,
         &context(&zones, &risk, &tables, &w),
         input(90, 90, 0, &tables),
+    );
+    assert_eq!(
+        result.plan.crossings.len(),
+        1,
+        "this probe enters before teleporting"
     );
     assert_eq!(result.verdict, Verdict::Unsurvivable);
     assert!(result.reason.contains("NoWayOut"));
@@ -2145,4 +2598,156 @@ fn u1_transport_input_hold_boundaries_cover_attached_and_standalone_legs() {
         .point(0)
         .unwrap()
         .input_held(0));
+}
+
+/// S2b R3 M-A: an escape starts only from an engaged origin (inside A_z and
+/// active). A fringe origin inside E_z but outside A_z that walks into A_z
+/// enters the zone and is a crossing.
+#[test]
+fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
+    let tables = tables();
+    let zones = one_zone(&tables, 100, 0);
+    let risk = RiskTables::build(&zones, &tables);
+    let r = i32::from(risk.kind(0).unwrap().r);
+    assert!(r > 0, "the envelope must be wider than the radius-0 rect");
+    let value = input(99, 99, 0, &tables);
+    let wilderness = WildernessRules::default();
+    let plan_from = |first: i32| {
+        let walk = route(first, 100 + r + 5);
+        build_plan(
+            RoutePath::new(&walk).unwrap(),
+            &zones,
+            &risk,
+            &wilderness,
+            &value,
+        )
+        .unwrap()
+    };
+    let fringe = plan_from(100 - r);
+    assert_eq!(fringe.intervals.len(), 1);
+    assert_eq!(i32::from(fringe.intervals[0].a), r, "acquired at the spawn");
+    assert_eq!(fringe.intervals[0].e, 0, "the origin is exposed");
+    assert!(!fringe.intervals[0].escaping());
+    assert_eq!(fringe.crossings.len(), 1, "walking into A_z is entry");
+    let engaged = plan_from(100);
+    assert_eq!(engaged.intervals.len(), 1);
+    assert!(engaged.intervals[0].escaping());
+    assert!(engaged.crossings.is_empty(), "leaving A_z is escape");
+}
+
+/// S2b R3 N1 (reviewer probe `partition_point_skips_a_non_escaping_origin_row`):
+/// an engaged origin outside its own envelope (rect wider than spawn ± R)
+/// would be a non-escaping `a = 0` row and break the escaping-prefix
+/// partition. `ZoneInterval::new` rejects `e > a`, so the plan fails closed
+/// as `Unknown(Overflow)`, never as a misfiled escape or crossing.
+#[test]
+fn r3_engaged_origin_outside_its_envelope_fails_closed() {
+    let tables = tables();
+    let probe = one_zone(&tables, 100, 0);
+    let r = i32::from(RiskTables::build(&probe, &tables).kind(0).unwrap().r);
+    let at = |x: i32, z: i32| WorldTile { x, z, level: 0 };
+    let origin = at(300, 300);
+    // P's rect (radius 2R) covers the origin; its envelope ends at z = 299.
+    let wide = Zone::npc(
+        at(300, 299 - r),
+        u8::try_from(2 * r).unwrap(),
+        ZoneClass::Always,
+        u16::MAX,
+        0,
+    );
+    let local = Zone::npc(origin, 0, ZoneClass::Always, u16::MAX, 0);
+    let zones = zone_table(
+        vec![wide, local],
+        vec![known_kind(&tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let risk = RiskTables::build(&zones, &tables);
+    let mut tiles = vec![origin, at(300, 299), origin];
+    tiles.extend((301..=300 + r + 3).map(|x| at(x, 300)));
+    let walk = Route {
+        dest: *tiles.last().unwrap(),
+        legs: vec![Leg::Walk { tiles }],
+        ticks: 10.0,
+    };
+    let mut value = input(99, 99, 0, &tables);
+    value.pos = origin;
+    assert_eq!(
+        build_plan(
+            RoutePath::new(&walk).unwrap(),
+            &zones,
+            &risk,
+            &WildernessRules::default(),
+            &value,
+        )
+        .unwrap_err(),
+        UnknownWhy::Overflow
+    );
+    let assessment = assess(
+        &walk,
+        &context(&zones, &risk, &tables, &WildernessRules::default()),
+        value,
+    );
+    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+    assert!(!assessment.plan.complete);
+    assert!(admission_passes(
+        &walk,
+        &assessment,
+        &zones,
+        &tables,
+        WalkAllow::default(),
+        ZoneExempt::NONE
+    )
+    .is_err());
+}
+
+/// S2b R3 M-B: a failed assessment carries an empty, incomplete plan.
+/// Replaying that empty plan must never certify the route.
+#[test]
+fn r3_admission_never_passes_an_incomplete_plan() {
+    let tables = tables();
+    // Forty-one overlapping envelopes on a valid walk: the summed way-out
+    // floor exceeds the u8 report bound, so the estimate fails after a
+    // successful `build_plan`.
+    let zones = zone_table(
+        (100..=140)
+            .map(|x| Zone::npc(tile(x), 0, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![known_kind(&tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let risk = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let walk = route(80, 170);
+    assert!(build_plan(
+        RoutePath::new(&walk).unwrap(),
+        &zones,
+        &risk,
+        &wilderness,
+        &input(99, 99, 0, &tables),
+    )
+    .is_ok_and(|plan| !plan.crossings.is_empty()));
+    let assessment = assess(
+        &walk,
+        &context(&zones, &risk, &tables, &wilderness),
+        input(99, 99, 0, &tables),
+    );
+    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+    assert!(!assessment.plan.complete);
+    for grants in [ZoneExempt::NONE, ZoneExempt::all()] {
+        assert_eq!(
+            admission_passes(
+                &walk,
+                &assessment,
+                &zones,
+                &tables,
+                WalkAllow::default(),
+                grants
+            ),
+            Err(UnknownWhy::Overflow)
+        );
+    }
 }

@@ -117,11 +117,7 @@ enum TripStep {
 }
 
 fn walk_failure_message(receipt: &WalkReceipt) -> String {
-    match receipt
-        .detail
-        .as_deref()
-        .filter(|detail| !detail.is_empty())
-    {
+    match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
         Some(detail) => format!("walk ended with {:?}: {detail}", receipt.end),
         None => format!("walk ended with {:?}", receipt.end),
     }
@@ -2010,6 +2006,9 @@ mod tests {
                     end: WalkEnd::Arrived,
                     blocked: None,
                     detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 tick,
             );
@@ -2070,6 +2069,9 @@ mod tests {
                     detail: Some(Arc::from(
                         "Dropped: stuck at (2809,3441,0), aiming (2848,3426,0)",
                     )),
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 tick,
             );
@@ -2132,6 +2134,9 @@ mod tests {
                     end: WalkEnd::UserInput,
                     blocked: None,
                     detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 native,
             );

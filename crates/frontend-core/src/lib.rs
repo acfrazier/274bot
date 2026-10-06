@@ -72,6 +72,7 @@ pub use session::{
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
-    WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING,
-    GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, SCRIPT_SCOPE_NOTICE,
+    DangerLevel, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, SCRIPT_SCOPE_NOTICE,
+    SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };

@@ -611,6 +611,7 @@ impl TuiApp {
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
+        .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
         .quester_paths(&mut self.quester_paths);
         pane.memory = self.settings_memory;
         let outcome = pane.on_key(key);
@@ -625,8 +626,9 @@ impl TuiApp {
                 let pending = frontend_core::WalkGlobalsView {
                     globals: self.nav,
                     script_scope_notice_ack: self.script_scope_notice_ack,
+                    survivable_routing_notice_ack: self.survivable_routing_notice_ack,
                 };
-                if preference == frontend_core::NavPreference::AllowDangerZones
+                if preference == frontend_core::NavPreference::SurvivableRouting
                     && !pending.danger_this_walk(true)
                 {
                     self.map_route_through_zones = false;
@@ -639,6 +641,13 @@ impl TuiApp {
             SettingsKey::ScriptScopeNoticeAck => {
                 self.script_scope_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
+                if self.shared_preferences_path().is_none() {
+                    self.refresh_walk_permissions();
+                }
+            }
+            SettingsKey::SurvivableRoutingNoticeAck => {
+                self.survivable_routing_notice_ack = true;
+                self.queue_nav_preference(frontend_core::NavPreference::SurvivableRoutingNoticeAck);
                 if self.shared_preferences_path().is_none() {
                     self.refresh_walk_permissions();
                 }

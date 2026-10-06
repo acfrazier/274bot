@@ -187,7 +187,7 @@ pub(crate) struct WalkGuardOff {
 }
 
 impl WalkGuardOff {
-    fn blocks_nav(&self, tick: u16) -> bool {
+    pub(crate) fn blocks_nav(&self, tick: u16) -> bool {
         elapsed(tick, self.nav_defer_tick) < GUARD_PRAYER_WINDOW_TICKS
     }
 }
@@ -838,6 +838,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
     {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
+            if let Some(world) = world {
+                crate::admission::publish(bot, world, snapshot, map_members, Some(name));
+            }
             if snapshot
                 .stats()
                 .iter()
@@ -860,6 +863,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
             }
             finish_combat_prayers(driver, snapshot, bot, Some(name));
             if bot.combat_prayer_off.is_some() {
+                return;
+            }
+            if bot.slot_escape().is_some() {
                 return;
             }
         }
@@ -1112,7 +1118,8 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 quest_evidence: bot.route_quest_evidence.as_ref(),
                                 ..TravelOptions::default()
                             };
-                            bot.traveller.follow(driver, snapshot, route, &mut options)
+                            bot.traveller
+                                .follow_shared(driver, snapshot, route, &mut options)
                         };
                         let owned_estimated_end = defer_estimated_end
                             && bot.requested_route == armed
@@ -1208,13 +1215,34 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             }
         }
     }
-    if let Some(pending) = bot.bank_fetch.as_ref() {
-        if pending.steps.is_empty() {
-            let session_dest = pending.dest;
-            log_walk_arm_bot(|| {
-                format!("bank_fetch session cleared complete session_dest={session_dest:?}")
-            });
-            bot.bank_fetch = None;
+    if bot
+        .bank_fetch
+        .as_ref()
+        .is_some_and(|pending| pending.steps.is_empty())
+    {
+        let pending = bot.bank_fetch.take().expect("completed session");
+        log_walk_arm_bot(|| {
+            format!(
+                "bank_fetch session cleared complete session_dest={:?}",
+                pending.dest
+            )
+        });
+        bot.route = Some(Arc::clone(&pending.final_route));
+        if let (Some(world), Some(mut admission)) = (world, bot.admission.as_deref().copied()) {
+            admission.input = crate::admission::capture(
+                snapshot,
+                map_members,
+                admission.input.poison,
+                bot.walk_guard_off.is_some(),
+            );
+            *bot.admission.as_deref_mut().expect("active admission") = admission;
+            bot.assessment = Some(crate::admission::assess(
+                &pending.final_route,
+                world,
+                &admission,
+            ));
+            bot.admission_pending = true;
+            crate::admission::publish(bot, world, snapshot, map_members, None);
         }
     }
     wrote
@@ -1278,52 +1306,79 @@ fn step_walk(
         return (false, StepEnd::Waiting);
     };
     let from = WorldTile { x, z, level };
-    let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    state.quest_evidence = bot
+        .route_basis
+        .as_ref()
+        .and_then(|basis| basis.quest_evidence.clone());
     let opts = FindOptions {
         allow_bank_fetch: false,
         ..pending.opts
     };
-    let route = match find_with_avoid(
-        &w.collision,
-        &w.graph,
-        from,
-        dest,
-        opts,
-        &state,
-        &pending.avoid,
-    ) {
-        Ok(route) => {
-            log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={dest:?}"));
-            route
-        }
-        Err(_) => match arm_access_fallback(w, from, dest, opts, &state, &pending.avoid) {
-            Ok(route) => {
-                let reached = route.dest;
-                if let Some(BankStep::Walk { x, z, level }) =
-                    bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
-                {
-                    *x = reached.x;
-                    *z = reached.z;
-                    *level = reached.level;
-                }
-                log_walk_arm_bot(|| format!("bank_fetch Walk fallback access dest={reached:?}"));
-                route
-            }
-            Err(blocked) => {
-                if let (Some(keys), Some(table)) = (blocked.as_deref(), w.graph.zones.as_ref()) {
-                    api::host_log!(
-                        api::hostlog::Category::NavTrace,
-                        api::hostlog::Level::Warn,
-                        "{}",
-                        super::script_nav::compat_zone_no_route_line(table, keys)
-                    );
-                }
-                return (false, StepEnd::Abort("no route to a bank access tile"));
-            }
-        },
+    let search = |opts| {
+        find_with_avoid(
+            &w.collision,
+            &w.graph,
+            from,
+            dest,
+            opts,
+            &state,
+            &pending.avoid,
+        )
+        .ok()
+        .or_else(|| arm_access_fallback(w, from, dest, opts, &state, &pending.avoid).ok())
+        .map_or(crate::RouteOutcome::NoPath, crate::RouteOutcome::Routed)
     };
-    bot.route = Some(route);
+    let outcome = search(opts);
+    let (outcome, assessment, refusal) =
+        if let Some(mut admission) = bot.admission.as_deref().copied() {
+            admission.input = crate::admission::capture(
+                snapshot,
+                map_members,
+                admission.input.poison,
+                bot.walk_guard_off.is_some(),
+            );
+            *bot.admission.as_deref_mut().expect("active admission") = admission;
+            let route = match &outcome {
+                crate::RouteOutcome::Routed(route) => Some(route),
+                crate::RouteOutcome::BankSession { .. } => {
+                    unreachable!("bank access search cannot start another session")
+                }
+                crate::RouteOutcome::NoPath => None,
+            };
+            let assessment = route.map(|route| crate::admission::assess(route, w, &admission));
+            let refusal = assessment
+                .as_ref()
+                .zip(route)
+                .filter(|(assessment, route)| {
+                    !crate::admission::permits(route, w, &admission, assessment)
+                })
+                .map(|(assessment, _)| crate::admission::verdict_refusal(assessment.verdict));
+            (outcome, assessment, refusal)
+        } else {
+            (outcome, None, None)
+        };
+    bot.assessment = assessment;
+    if let Some(refusal) = refusal {
+        crate::admission::refuse(bot, w, dest, refusal);
+        return (false, StepEnd::Abort("bank access route risk refused"));
+    }
+    let crate::RouteOutcome::Routed(route) = outcome else {
+        return (false, StepEnd::Abort("no route to a bank access tile"));
+    };
+    let reached = route.dest;
+    if let Some(BankStep::Walk { x, z, level }) =
+        bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
+    {
+        *x = reached.x;
+        *z = reached.z;
+        *level = reached.level;
+    }
+    log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={reached:?}"));
+    bot.route = Some(Arc::new(route));
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
+    bot.admission_pending = bot.assessment.is_some();
+    crate::admission::publish(bot, w, snapshot, map_members, None);
     (false, StepEnd::Waiting)
 }
 
@@ -1488,7 +1543,7 @@ fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) 
 /// Withdraw / Withdraw-X / Wear / Close do. Mid-session `final_route` is
 /// never followed.
 pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
-    session_freezes_follow(bot.bank_fetch.as_ref(), bot.route.as_ref())
+    session_freezes_follow(bot.bank_fetch.as_ref(), bot.route.as_deref())
 }
 
 /// [`bank_fetch_freezes_follow`] over a session and the route armed with

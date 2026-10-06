@@ -555,6 +555,9 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
         end: crate::native::WalkEnd::UserInput,
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
 }
 
@@ -1846,6 +1849,9 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
         end: crate::native::WalkEnd::Blocked,
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert_eq!(
         harness.ready(&scene, 4).end,

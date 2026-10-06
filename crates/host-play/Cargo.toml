@@ -48,6 +48,10 @@ required-features = ["memory-profile"]
 name = "script_api_live"
 required-features = ["test-support"]
 
+[[test]]
+name = "survivable_admission_live"
+required-features = ["live-harness", "test-support", "live-probe"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -70,7 +74,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["script/test-hooks"]
+test-support = ["script/test-hooks", "nav/test-support"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

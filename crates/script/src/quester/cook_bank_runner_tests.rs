@@ -271,7 +271,13 @@ impl CookFixture {
                         end: WalkEnd::Arrived,
                         blocked: None,
                         detail: None,
+                        refusal: None,
+                        assessment: None,
+                        escape: None,
                     });
+                }
+                HostEffect::AssessWalk(_) => {
+                    panic!("the Cook bank fixture emits no walk assessment")
                 }
                 HostEffect::Interaction(request) => {
                     match request {
