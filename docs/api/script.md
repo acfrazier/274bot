@@ -165,11 +165,15 @@ effective gangs. A separate panel or TUI process is not the same Play. The owned
 Arrav journal determines existing membership; an unjoined account must explicitly
 choose its irreversible gang. Conflicting or ambiguous membership blocks before
 either account joins. A completed quest does not enlist a partner.
-Starts need not be simultaneous. An account waits up to ten minutes of active
-admission time for its saved partner to Start and become ready; expiry parks the
-Path with `partner admission timed out; Stop and Start both accounts`. A peer
-already bound to another Path or protocol is refused before either account is
-reserved.
+Starts and queue order need not match. An account waits up to ten minutes of
+active admission time for its saved partner to Start, become ready and reach
+the same compiled paired Path; expiry parks the Path with
+`partner admission timed out; Stop and Start both accounts`. A peer on an earlier
+solo row or a different Path is not reserved, cancelled or suspended by that wait.
+Beginning a handoff while the peer is held also waits, without spending failed
+attempts or reserving either account, for up to ten minutes of the actor's active
+time. Expiry parks with
+`partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts`.
 
 Gang proofs belong to the current run, selected content and world. Outside a
 reserved phase, losing readiness clears the cached proof; the same run rereads
@@ -187,8 +191,11 @@ Both inventories must prove the transfer. Stop, Pause, removal, session loss or 
 failed role revokes both phase-owned action authorities before queued work drains.
 Transient guardian, readiness, welcome and same-session boundary holds retain a
 reserved phase. Either account's hold fences both accounts' phase actions and
-pauses both phase deadlines until both accounts are ready again. Death, an actual
-session loss, or the explicit revokers above still cancel the phase.
+pauses the ten-minute inactivity deadline until both accounts are ready again.
+The phase's total limit remains **sixty minutes of wall-clock time**, including
+all holds; expiry revokes both reservations and parks with
+`pair phase exceeded 60-minute wall-clock limit; Stop and Start both accounts`.
+Death, an actual session loss, or the explicit revokers above still cancel the phase.
 The peer blocks rather than being stopped or automatically restarted; explicitly
 Start both accounts again after inspecting server-side items and quest progress.
 Transfer recovery checks bounded native backpack receipts from the matching active
@@ -201,7 +208,7 @@ A paired waiter, including admission before a lease exists, suspends only its
 own gameplay-wedge clock. The actor's gameplay watchdog and both scheduler
 watchdogs remain live. New observed gameplay from a
 joined role, or a peer bound to the same compiled pair, can extend a phase's
-ten-minute inactivity bound, never its sixty-minute active total bound.
+ten-minute inactivity bound, never its sixty-minute wall-clock total bound.
 Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
 Retryable trade-start conditions keep the planned transfer and wait for the next
 eligible frame. A failed, still-owned trade enters bounded decline/close cleanup

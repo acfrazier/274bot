@@ -744,14 +744,30 @@ fn read_document(
     }
     // Revalidate every file, including one whose digest is already in the active cache.
     let gathering = compile::prepare_gathering(&document, selected, worker)?;
-    compile::compile_uncached(
-        &document,
-        compile::digest_bytes(&bytes),
-        selected,
-        quests,
-        gathering,
-        None,
-    )?;
+    let digest = compile::digest_bytes(&bytes);
+    if let Some(partner) = &document.partner {
+        for role in &partner.roles {
+            compile::compile_uncached(
+                &document,
+                digest,
+                selected,
+                quests,
+                gathering.clone(),
+                Some(role.gang),
+            )
+            .map_err(|mut error| {
+                let detail = format!(
+                    "gang {:?}: {}",
+                    role.gang,
+                    error.detail.as_deref().unwrap_or("Path validation failed")
+                );
+                error.role.get_or_insert_with(|| role.id.clone());
+                error.with_detail(detail)
+            })?;
+        }
+    } else {
+        compile::compile_uncached(&document, digest, selected, quests, gathering, None)?;
+    }
     Ok(FolderDocument {
         bytes: Arc::new(bytes),
         display: document.display_name,
