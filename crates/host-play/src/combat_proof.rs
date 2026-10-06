@@ -381,6 +381,11 @@ pub(crate) fn record_walk(
         "request": {
             "target": { "x": request.target.x, "z": request.target.z, "level": request.target.level },
             "radius": request.radius,
+            "protect": request.protect,
+            "allow": {
+                "prayer": request.allow.prayer,
+                "food": request.allow.food,
+            },
         },
         "dispatch": "queued",
         "accepted": null,

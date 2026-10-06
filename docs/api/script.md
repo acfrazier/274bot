@@ -574,6 +574,8 @@ melee distance and no player HP drop may record `not_applicable_no_onset`.
 Missing frames or NPC observations cannot establish that exemption. Restoration
 after Fight protection plans and the Killed/corpse/WindDown checks remain required;
 the exemption is not evidence of timely protection against a melee attack.
+Timing uses the first onset inside the reported combat engagement window;
+a hit recorded during pre-Start staging does not set that engagement's deadline.
 Both launch and no-onset distance evidence use network tiles and the NPC
 footprint, not the interpolated rendered pose. Pickup receipts distinguish
 single-row plan shape from stack accounting: an accepted Take with no observed
@@ -643,6 +645,14 @@ unavailable or disallowed, the hold instead makes one unguarded escape walk away
 from the attacker before parking, when a destination can be formed. It does not
 retry that escape indefinitely. Cancellation releases protection owned by the
 hold.
+
+Abort qualification records the step's prayer permission independently of the
+player's Prayer level. A protected hold must prevent HP loss; a food-only hold
+may take damage, but must keep HP positive and eat at the guard's food line while
+food remains. Exhaustion requires the single escape attempt, not an unguarded
+park under a live attacker. A safe hold terminal requires observed disengagement,
+and a verified no-threat abort is a separate outcome that does not qualify the
+live-threat cell.
 
 The shared combat request's acquisition radius defaults to twelve tiles.
 Quester combat tactics require an explicit `engage_radius`; a ranged tactic
