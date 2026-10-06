@@ -689,6 +689,7 @@ mod tests {
             tactic: None,
             advances: false,
             skip_if: Arc::new(Skip(Truth::False)),
+            skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),
             plan: Arc::new(Anchor(api::WorldTile { x, z, level: 0 })),
         };
