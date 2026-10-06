@@ -4878,6 +4878,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         round_deadline: None,
         chat_since: 0,
         target_tile: None,
+        anchored_stand_arrived: false,
         default_dialogue: true,
         dialogue_options: None,
         dialogue: None,
@@ -5613,6 +5614,103 @@ fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach
                 Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == "use_on timeout"
             ),
             "the actual use-on settle window remains bounded after arrival"
+        );
+    });
+}
+
+#[test]
+fn anchored_use_on_retries_share_the_first_stand_arrival_settle_window() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let (mut snapshot, mut target, _) =
+            use_on_footprint_fixture(cx, tile(origin.x - 7, origin.z));
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"},
+                "anchor": {"tile": [3166, 3308, 0], "source": "unit fixture"},
+                "radius": 3, "until": {"obj": "wool", "qty": 1},
+                "settle_ms": 20_000
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.active_now = Duration::from_secs(30);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 1;
+        snapshot.seed_locs(vec![target.clone()]);
+        post_user_input_walk_receipt(&mut ledger, 4);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Arrived;
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+
+        accept_last(&mut ledger, 5, true);
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        // Let the silent round expire from away from the stand so its retry
+        // must walk back before issuing the next use_on.
+        snapshot.seed_local_player(local_player(tile(origin.x + 5, origin.z)));
+        target.distance = 5;
+        snapshot.seed_locs(vec![target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.cx.active_now = Duration::from_secs(39);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().and_then(|ledger| ledger.outbox.last()).map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == origin && request.loc_id == Some(target.id)
+        ));
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 1;
+        snapshot.seed_locs(vec![target.clone()]);
+        post_user_input_walk_receipt(&mut ledger, 7);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Arrived;
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            tick.cx.active_now = Duration::from_secs(45);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+
+        accept_last(&mut ledger, 8, true);
+        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+            tick.cx.active_now = Duration::from_secs(46);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                with_tick(&snapshot, &mut ledger, 9, |tick| {
+                    tick.cx.active_now = Duration::from_secs(51);
+                    with_step(tick, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "use_on timeout"
+            ),
+            "repeated anchored attempts must not extend the settle deadline past the first stand arrival"
         );
     });
 }
