@@ -1541,10 +1541,9 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            // The compiled tick borrows the account's bank
-                            // memory through this read guard; the slot's own
+                            // The observer borrows the account's bank memory
+                            // for the compiled tick alone; the slot's own
                             // write for the frame already happened above.
-                            let bank_memory = slot_bank.read();
                             let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
@@ -1560,7 +1559,7 @@ fn spawn_slot_thread(
                                 inv,
                                 nav_state,
                                 Some(&nav_snapshot),
-                                Some(&*bank_memory),
+                                Some(slot_bank.memory()),
                                 npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
@@ -1578,7 +1577,6 @@ fn spawn_slot_thread(
                                 Some(run_policy),
                                 Some(&mut debug_replies),
                             );
-                            drop(bank_memory);
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);

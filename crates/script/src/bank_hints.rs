@@ -4,13 +4,21 @@
 //!
 //! `~/.274bot/bank-hints/<profile>/<account>.json`, schema 1, written
 //! `0o600` by [`vault::write_private_file`] (atomic replace, parents
-//! `0o700`). `<profile>` is the launch profile name (already a safe
-//! component when profiles load); `<account>` is the slot username, which
-//! nothing else validates, so [`account_component`] gates it. The path is
-//! resolved **once, on the spawning thread** ([`HintFile::for_account`]):
-//! the slot thread never calls [`crate::bot_file`], so a test's thread-local
-//! [`crate::IsolatedEnv`] pin covers every save, and the operator's real
-//! `~/.274bot` is never touched by a test.
+//! `0o700`). `<profile>` is the launch profile name and must meet the rule
+//! profiles are loaded under, [`vault::valid_component`]; `<account>` is the
+//! slot username as the client's login identity spells it
+//! ([`account_component`]), so one account is one file however the
+//! operator typed it. The path is resolved **once, on the spawning thread**
+//! ([`HintFile::for_account`]): the slot thread never calls
+//! [`crate::bot_file`], so a test's thread-local [`crate::IsolatedEnv`] pin
+//! covers every save, and the operator's real `~/.274bot` is never touched
+//! by a test.
+//!
+//! No file I/O runs under the owner's bank-memory guard (§1.2): a load
+//! reads and checks the file first ([`HintFile::load`]) and the owner
+//! applies the result under a short guard; a save serializes under the
+//! owner's guard ([`HintFile::pending_save`]) and publishes after it is
+//! released ([`HintFile::write`]).
 //!
 //! A load failure never blocks login: the memory stays `Unknown` and the
 //! caller logs one line saying why.
@@ -21,13 +29,14 @@ use std::path::{Path, PathBuf};
 
 use api::bank_memory::{BankMemory, HintRowsError, MAX_HINT_ROWS};
 use serde::{Deserialize, Serialize};
-use vault::{read_private_file, write_private_file};
+use vault::{read_private_file, valid_component, write_private_file};
 
 /// The on-disk format this build writes and the only one it reads.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The longest account name that may be a path component.
-pub const MAX_ACCOUNT_BYTES: usize = 64;
+/// The most characters a game account name has: the login form's limit and
+/// what `JString.toUserhash` reads.
+pub const MAX_ACCOUNT_CHARS: usize = 12;
 
 /// The largest hint file read: the row cap at the widest JSON a row takes
 /// plus the header, with room to spare.
@@ -37,7 +46,7 @@ const MAX_HINT_BYTES: u64 = 64 * 1024;
 /// [`HintRowsError`]; the rest are file-level.
 #[derive(Debug)]
 pub enum HintError {
-    /// The account name cannot be one path component (§1.4).
+    /// The account name is not a game login name ([`account_component`]).
     UnsafeAccount(String),
     /// The profile name cannot be one path component.
     UnsafeProfile(String),
@@ -59,7 +68,11 @@ impl fmt::Display for HintError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HintError::UnsafeAccount(name) => {
-                write!(f, "account {name:?} is not a safe path component")
+                write!(
+                    f,
+                    "account {name:?} is not a login name (at most {MAX_ACCOUNT_CHARS} letters, \
+                     digits, spaces or underscores)"
+                )
             }
             HintError::UnsafeProfile(name) => {
                 write!(f, "profile {name:?} is not a safe path component")
@@ -100,27 +113,34 @@ impl From<HintRowsError> for HintError {
     }
 }
 
-/// The account name as one path component, or why it cannot be one:
-/// non-empty, at most [`MAX_ACCOUNT_BYTES`], not `.` or `..`, and no byte
-/// that is `/`, `\`, NUL or an ASCII control (`< 0x20`, `0x7f`). Everything
-/// else — letters, digits, spaces (legal RS names), `_`, `-` — is used
-/// verbatim. A rejected name means no load and no save for that slot.
-pub fn account_component(account: &str) -> Result<&str, HintError> {
-    if safe_component(account) {
-        Ok(account)
-    } else {
-        Err(HintError::UnsafeAccount(account.to_owned()))
+/// The account name as the one path component the client's login identity
+/// gives it, or why it cannot be one. The game takes at most
+/// [`MAX_ACCOUNT_CHARS`] characters of ASCII letters, digits, spaces and
+/// underscores; its login hash (`JString.toUserhash`) folds case, treats a
+/// space and an underscore as the same separator and drops leading and
+/// trailing separators, so `Alice Smith`, `alice_smith` and ` alice smith`
+/// are one account and get one file, `alice_smith.json`. Anything else — any
+/// other character, a longer name, a name of separators only — is rejected,
+/// which means no load and no save for that slot.
+pub fn account_component(account: &str) -> Result<String, HintError> {
+    let unsafe_account = || HintError::UnsafeAccount(account.to_owned());
+    if !account
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'_'))
+    {
+        return Err(unsafe_account());
     }
-}
-
-fn safe_component(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_ACCOUNT_BYTES
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| !matches!(byte, b'/' | b'\\' | 0..=0x1f | 0x7f))
+    let trimmed = account.trim_matches([' ', '_']);
+    if trimmed.is_empty() || trimmed.len() > MAX_ACCOUNT_CHARS {
+        return Err(unsafe_account());
+    }
+    Ok(trimmed
+        .bytes()
+        .map(|byte| match byte {
+            b' ' => '_',
+            letter => letter.to_ascii_lowercase() as char,
+        })
+        .collect())
 }
 
 /// The persisted document, schema 1:
@@ -151,19 +171,63 @@ pub struct HintFile {
     account: String,
 }
 
+/// A hint file's rows, read and checked with no guard held
+/// ([`HintFile::load`]); the owner applies them under a short write guard.
+#[derive(Debug)]
+pub struct LoadedHint {
+    rows: Vec<(i32, i32)>,
+    observed_at_unix: u64,
+}
+
+impl LoadedHint {
+    /// Fill `memory` from the file's rows (`Hint` origin, nothing to save),
+    /// or refuse them whole when they break the §1.4 row rules and leave
+    /// the memory as it was. The owner applies only into an `Unknown`
+    /// memory (§1.4 precedence), re-checked under its guard.
+    pub fn apply(self, memory: &mut BankMemory) -> Result<(), HintError> {
+        memory.load_hint(self.rows, self.observed_at_unix)?;
+        Ok(())
+    }
+}
+
+/// What a save point took from the memory under its guard
+/// ([`HintFile::pending_save`]): the serialized document and the generation
+/// it describes. Published after the guard is released ([`HintFile::write`]);
+/// on success the owner marks that generation saved.
+#[derive(Debug)]
+pub struct PendingSave {
+    raw: Vec<u8>,
+    generation: u64,
+    rows: usize,
+}
+
+impl PendingSave {
+    /// The memory generation the document describes: the argument to
+    /// `BankMemory::mark_saved` once the write succeeded.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// How many rows the document carries.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+}
+
 impl HintFile {
     /// `~/.274bot/bank-hints/<profile>/<account>.json`, resolved through
-    /// [`crate::bot_file`] on the calling thread. Both names must be safe
-    /// path components.
+    /// [`crate::bot_file`] on the calling thread. The profile must be a
+    /// [`vault::valid_component`] (the rule it was loaded under); the
+    /// account is spelled by [`account_component`].
     pub fn for_account(profile: &str, account: &str) -> Result<Self, HintError> {
-        if !safe_component(profile) {
+        if !valid_component(profile) {
             return Err(HintError::UnsafeProfile(profile.to_owned()));
         }
         let account = account_component(account)?;
         let path = crate::bot_file("bank-hints")
             .join(profile)
             .join(format!("{account}.json"));
-        Ok(Self::at(path, profile, account))
+        Ok(Self::at(path, profile, &account))
     }
 
     /// A hint file at an explicit path (the `LoadoutsStore::at` pattern for
@@ -180,16 +244,14 @@ impl HintFile {
         &self.path
     }
 
-    /// Fill `memory` from the file: `Ok(true)` when rows were loaded,
-    /// `Ok(false)` when there is no file yet (a first run), `Err` when the
-    /// file was refused — wrong schema, another identity, or rows that
-    /// break the §1.4 rules. On `Ok(false)` and `Err` the memory is left as
-    /// it was. The caller loads only into an `Unknown` memory (§1.4
-    /// precedence).
-    pub fn load_into(&self, memory: &mut BankMemory) -> Result<bool, HintError> {
+    /// Read and check the file, holding no guard: `Ok(Some)` carries the
+    /// rows to apply, `Ok(None)` is no file yet (a first run), `Err` is a
+    /// refused file — unreadable, wrong schema, another identity, or more
+    /// rows than [`MAX_HINT_ROWS`].
+    pub fn load(&self) -> Result<Option<LoadedHint>, HintError> {
         let raw = match read_private_file(&self.path, MAX_HINT_BYTES) {
             Ok(raw) => raw,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         let document: HintDocument = serde_json::from_str(&raw)?;
@@ -207,17 +269,18 @@ impl HintFile {
         if document.rows.len() > MAX_HINT_ROWS {
             return Err(HintRowsError::TooManyRows.into());
         }
-        memory.load_hint(document.rows, document.observed_at_unix)?;
-        Ok(true)
+        Ok(Some(LoadedHint {
+            rows: document.rows,
+            observed_at_unix: document.observed_at_unix,
+        }))
     }
 
-    /// Write the memory's rows if it holds unsaved observations: `Ok(true)`
-    /// when a file was written, `Ok(false)` when nothing was pending. A
-    /// write marks the memory saved; a failed write leaves it dirty for the
-    /// next close or session end.
-    pub fn save_if_dirty(&self, memory: &mut BankMemory) -> Result<bool, HintError> {
+    /// Serialize the memory's rows if it holds unsaved observations; no
+    /// I/O, so the caller may hold a read guard. `None` when nothing is
+    /// pending.
+    pub fn pending_save(&self, memory: &BankMemory) -> Result<Option<PendingSave>, HintError> {
         if !memory.dirty() {
-            return Ok(false);
+            return Ok(None);
         }
         let document = HintDocument {
             schema_version: SCHEMA_VERSION,
@@ -226,10 +289,19 @@ impl HintFile {
             observed_at_unix: memory.observed_at().map_or(0, |at| at.unix_secs),
             rows: memory.rows().to_vec(),
         };
-        let raw = serde_json::to_vec(&document)?;
-        write_private_file(&self.path, &raw)?;
-        memory.mark_saved();
-        Ok(true)
+        Ok(Some(PendingSave {
+            raw: serde_json::to_vec(&document)?,
+            generation: memory.generation(),
+            rows: document.rows.len(),
+        }))
+    }
+
+    /// Publish a pending save, holding no guard. On `Ok` the owner marks
+    /// `pending.generation()` saved; on `Err` the memory stays dirty for
+    /// the next close or session end.
+    pub fn write(&self, pending: &PendingSave) -> Result<(), HintError> {
+        write_private_file(&self.path, &pending.raw)?;
+        Ok(())
     }
 }
 
@@ -288,18 +360,84 @@ mod tests {
         write_private_file(path, document.to_string().as_bytes()).unwrap();
     }
 
+    /// The owner's load as one call: read and check, then apply.
+    fn load_into(file: &HintFile, memory: &mut BankMemory) -> Result<bool, HintError> {
+        match file.load()? {
+            Some(loaded) => loaded.apply(memory).map(|()| true),
+            None => Ok(false),
+        }
+    }
+
+    /// The owner's save as one call: serialize, publish, mark saved.
+    fn save_if_dirty(file: &HintFile, memory: &mut BankMemory) -> Result<bool, HintError> {
+        let Some(pending) = file.pending_save(memory)? else {
+            return Ok(false);
+        };
+        file.write(&pending)?;
+        memory.mark_saved(pending.generation());
+        Ok(true)
+    }
+
+    /// What the client logs the name in as: `toRawUsername(toUserhash(name))`.
+    fn client_login_name(name: &str) -> String {
+        let hash = client::util::JString::to_userhash(name);
+        client::util::JString::to_raw_username(i64::try_from(hash).unwrap())
+    }
+
     #[test]
-    fn account_component_rejects_separators_dots_controls_and_empty() {
+    fn account_component_spells_the_name_as_the_client_login_identity() {
+        // Case folds, a space is an underscore, surrounding separators go:
+        // one account, one file.
+        for (typed, file) in [
+            ("alice", "alice"),
+            ("Alice Smith", "alice_smith"),
+            ("alice_smith", "alice_smith"),
+            ("ALICE_SMITH", "alice_smith"),
+            (" alice smith", "alice_smith"),
+            ("alice smith_", "alice_smith"),
+            ("bm4h30nbov_0", "bm4h30nbov_0"),
+            ("Bob_2", "bob_2"),
+            ("a  b", "a__b"),
+        ] {
+            assert_eq!(account_component(typed).unwrap(), file, "{typed:?}");
+            assert_eq!(
+                account_component(typed).unwrap(),
+                client_login_name(typed),
+                "{typed:?}: the file name is the client's login spelling"
+            );
+        }
+        let twelve = "ab3456789xyZ";
+        assert_eq!(twelve.len(), MAX_ACCOUNT_CHARS);
+        assert_eq!(account_component(twelve).unwrap(), "ab3456789xyz");
+        assert_eq!(
+            account_component(twelve).unwrap(),
+            client_login_name(twelve)
+        );
+        // Surrounding separators are not part of the twelve.
+        assert_eq!(account_component(" ab3456789xyZ ").unwrap(), "ab3456789xyz");
+    }
+
+    #[test]
+    fn account_component_rejects_long_hostile_and_separator_only_names() {
+        let thirteen = "ab3456789xyz1";
+        assert_eq!(thirteen.len(), MAX_ACCOUNT_CHARS + 1);
         for rejected in [
+            thirteen,
             "a/b",
             "a\\b",
             "..",
             ".",
+            "../alice",
+            "x-y.z",
             "a\0b",
             "a\x1bb",
             "tab\tname",
             "del\x7f",
+            "élan",
             "",
+            " ",
+            "___",
+            "_ _",
         ] {
             assert!(
                 matches!(
@@ -309,23 +447,12 @@ mod tests {
                 "{rejected:?} must be refused"
             );
         }
-        let long = "a".repeat(MAX_ACCOUNT_BYTES + 1);
-        assert!(matches!(
-            account_component(&long),
-            Err(HintError::UnsafeAccount(_))
-        ));
-        let widest = "b".repeat(MAX_ACCOUNT_BYTES);
-        assert_eq!(account_component(&widest).unwrap(), widest);
-        assert_eq!(account_component("alice smith").unwrap(), "alice smith");
-        assert_eq!(account_component("Bob_2").unwrap(), "Bob_2");
-        assert_eq!(account_component("x-y.z").unwrap(), "x-y.z");
-        assert_eq!(account_component("...").unwrap(), "...");
     }
 
     #[test]
     fn for_account_resolves_under_the_thread_pinned_home() {
         let scratch = IsolatedEnv::enter("bank-hints");
-        let file = HintFile::for_account("local-289", "alice smith").unwrap();
+        let file = HintFile::for_account("local-289", "Alice Smith").unwrap();
         assert_eq!(
             file.path(),
             scratch
@@ -333,7 +460,14 @@ mod tests {
                 .join(".274bot")
                 .join("bank-hints")
                 .join("local-289")
-                .join("alice smith.json")
+                .join("alice_smith.json")
+        );
+        assert_eq!(
+            HintFile::for_account("local-289", "alice_smith")
+                .unwrap()
+                .path(),
+            file.path(),
+            "space and underscore spell the same account: one file"
         );
         assert!(matches!(
             HintFile::for_account("local-289", "../alice"),
@@ -350,18 +484,70 @@ mod tests {
     }
 
     #[test]
+    fn the_profile_keeps_its_own_component_rule() {
+        let scratch = IsolatedEnv::enter("bank-hints");
+        // Any profile name the server list accepts keeps its persistence:
+        // there is no account-sized limit on it, and `.` is legal in it.
+        let long = "a".repeat(65);
+        assert!(valid_component(&long));
+        let file = HintFile::for_account(&long, "alice").unwrap();
+        assert_eq!(
+            file.path(),
+            scratch
+                .home
+                .join(".274bot")
+                .join("bank-hints")
+                .join(&long)
+                .join("alice.json")
+        );
+        let mut memory = observed(&[(LOBSTER, 1)], 9);
+        assert!(save_if_dirty(&file, &mut memory).unwrap());
+        let mut loaded = BankMemory::default();
+        assert!(load_into(&file, &mut loaded).unwrap());
+        assert_eq!(loaded.rows(), &[(LOBSTER, 1)]);
+        assert!(HintFile::for_account("rel.2", "alice").is_ok());
+        // The two rules differ where the server list does: a space is an
+        // account separator but never a profile character.
+        assert!(matches!(
+            HintFile::for_account("local 289", "alice"),
+            Err(HintError::UnsafeProfile(_))
+        ));
+        assert!(matches!(
+            HintFile::for_account("..", "alice"),
+            Err(HintError::UnsafeProfile(_))
+        ));
+    }
+
+    #[test]
+    fn one_account_spelled_two_ways_shares_one_file() {
+        let _scratch = IsolatedEnv::enter("bank-hints");
+        let typed = HintFile::for_account("local-289", "Alice Smith").unwrap();
+        let mut memory = observed(&[(COINS, 7)], 3);
+        assert!(save_if_dirty(&typed, &mut memory).unwrap());
+        let relogged = HintFile::for_account("local-289", "alice_smith").unwrap();
+        let mut loaded = BankMemory::default();
+        assert!(load_into(&relogged, &mut loaded).unwrap());
+        assert_eq!(loaded.rows(), &[(COINS, 7)]);
+        let raw = std::fs::read_to_string(relogged.path()).unwrap();
+        assert!(
+            raw.contains("\"account\":\"alice_smith\""),
+            "the file carries the login spelling: {raw}"
+        );
+    }
+
+    #[test]
     fn save_then_load_round_trips_rows_at_private_mode() {
         let scratch = IsolatedEnv::enter("bank-hints");
         let file = HintFile::for_account("local-289", "alice").unwrap();
         let mut memory = observed(&[(COINS, 3_400), (LOBSTER, 12)], 1_759_700_000);
         assert!(memory.dirty());
         assert!(
-            file.save_if_dirty(&mut memory).unwrap(),
+            save_if_dirty(&file, &mut memory).unwrap(),
             "a dirty memory is written"
         );
         assert!(!memory.dirty());
         assert!(
-            !file.save_if_dirty(&mut memory).unwrap(),
+            !save_if_dirty(&file, &mut memory).unwrap(),
             "a saved memory is not rewritten"
         );
         assert!(file.path().starts_with(&scratch.home));
@@ -392,7 +578,7 @@ mod tests {
         }
 
         let mut loaded = BankMemory::default();
-        assert!(file.load_into(&mut loaded).unwrap());
+        assert!(load_into(&file, &mut loaded).unwrap());
         assert_eq!(loaded.origin(), Origin::Hint);
         assert_eq!(loaded.rows(), &[(LOBSTER, 12), (COINS, 3_400)]);
         assert_eq!(loaded.count(LOBSTER), Some(12));
@@ -408,7 +594,7 @@ mod tests {
         let _scratch = IsolatedEnv::enter("bank-hints");
         let file = HintFile::for_account("local-289", "alice").unwrap();
         let mut memory = BankMemory::default();
-        assert!(!file.load_into(&mut memory).unwrap());
+        assert!(!load_into(&file, &mut memory).unwrap());
         assert!(!memory.known());
     }
 
@@ -471,7 +657,7 @@ mod tests {
         for (label, document, expected) in cases {
             write_document(file.path(), document);
             let mut memory = BankMemory::default();
-            let error = file.load_into(&mut memory).unwrap_err();
+            let error = load_into(&file, &mut memory).unwrap_err();
             assert!(expected(&error), "{label}: {error}");
             assert!(
                 !memory.known(),
@@ -481,7 +667,7 @@ mod tests {
         std::fs::write(file.path(), "not json").unwrap();
         let mut memory = BankMemory::default();
         assert!(matches!(
-            file.load_into(&mut memory).unwrap_err(),
+            load_into(&file, &mut memory).unwrap_err(),
             HintError::Json(_)
         ));
         assert!(!memory.known());
@@ -492,9 +678,9 @@ mod tests {
         let scratch = IsolatedEnv::enter("bank-hints");
         let file = HintFile::at(scratch.dir.join("hint.json"), "p", "a");
         let mut memory = observed(&[(LOBSTER, 1)], 9);
-        assert!(file.save_if_dirty(&mut memory).unwrap());
+        assert!(save_if_dirty(&file, &mut memory).unwrap());
         let mut loaded = BankMemory::default();
-        assert!(file.load_into(&mut loaded).unwrap());
+        assert!(load_into(&file, &mut loaded).unwrap());
         assert_eq!(loaded.rows(), &[(LOBSTER, 1)]);
         assert_eq!(loaded.observed_at().map(|at| at.unix_secs), Some(9));
     }
@@ -504,9 +690,9 @@ mod tests {
         let _scratch = IsolatedEnv::enter("bank-hints");
         let file = HintFile::for_account("local-289", "alice").unwrap();
         let mut memory = observed(&[], 4);
-        assert!(file.save_if_dirty(&mut memory).unwrap());
+        assert!(save_if_dirty(&file, &mut memory).unwrap());
         let mut loaded = BankMemory::default();
-        assert!(file.load_into(&mut loaded).unwrap());
+        assert!(load_into(&file, &mut loaded).unwrap());
         assert!(loaded.known());
         assert_eq!(loaded.count(LOBSTER), Some(0));
     }
@@ -517,14 +703,14 @@ mod tests {
         let file = HintFile::for_account("local-289", "alice").unwrap();
         // A file on disk holding different rows than the session observed.
         let mut stale = observed(&[(LOBSTER, 1)], 1);
-        file.save_if_dirty(&mut stale).unwrap();
+        save_if_dirty(&file, &mut stale).unwrap();
 
         // Known in process: relog keeps the in-memory rows and never re-reads.
         let mut memory = observed(&[(COINS, 99)], 2);
         if memory.known() {
             memory.relogged();
         } else {
-            file.load_into(&mut memory).unwrap();
+            load_into(&file, &mut memory).unwrap();
         }
         assert_eq!(memory.origin(), Origin::Hint);
         assert_eq!(memory.rows(), &[(COINS, 99)]);
@@ -535,7 +721,7 @@ mod tests {
         if fresh.known() {
             fresh.relogged();
         } else {
-            file.load_into(&mut fresh).unwrap();
+            load_into(&file, &mut fresh).unwrap();
         }
         assert_eq!(fresh.origin(), Origin::Hint);
         assert_eq!(fresh.rows(), &[(LOBSTER, 1)]);
@@ -563,13 +749,13 @@ mod tests {
             memory.track(&snapshot, 12),
             api::bank_memory::FrameEvent::Closed
         );
-        assert!(file.save_if_dirty(&mut memory).unwrap());
+        assert!(save_if_dirty(&file, &mut memory).unwrap());
         assert!(file.path().starts_with(&scratch.home));
         let raw = std::fs::read_to_string(file.path()).unwrap();
         assert!(raw.contains(&format!("[[{COINS},43]]")), "{raw}");
         assert!(raw.contains("\"observed_at_unix\":11"), "{raw}");
         assert!(
-            !file.save_if_dirty(&mut memory).unwrap(),
+            !save_if_dirty(&file, &mut memory).unwrap(),
             "exactly one save per close"
         );
     }

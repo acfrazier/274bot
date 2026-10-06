@@ -334,7 +334,7 @@ pub(crate) fn script_observe_cached_with_channels(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
-    bank_memory: Option<&api::bank_memory::BankMemory>,
+    bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
     npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
@@ -847,6 +847,11 @@ pub(crate) fn script_observe_cached_with_channels(
                         canlight,
                     )
                 });
+                // The compiled tick borrows the account's bank memory
+                // through this read guard and nothing after it does
+                // (design-bank-snapshot §1.2): the guard ends with this
+                // block, before effect dispatch, logging and queued cheats.
+                let bank_memory = bank_memory.map(parking_lot::RwLock::read);
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
@@ -859,7 +864,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     compiled: script::CompiledTick {
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
-                        bank_memory,
+                        bank_memory: bank_memory.as_deref(),
                         hold: hold || ours,
                         ..Default::default()
                     },
