@@ -9,13 +9,13 @@ no JavaScript runtime and no gameplay assertion of its own; a green child is a r
 observation that a human still has to read back.
 
 The suite runs the cases for the selected server profile. Revision 289 is
-the production revision; 274 cases run best-effort and are neither tested
-nor claimed.
+the production revision: the product is built, tested and claimed for it.
+Revision 274 cases run best-effort and are neither tested nor claimed.
 
     cargo run -p e2e --bin e2e-suite -- list
     cargo run -p e2e --bin e2e-suite -- dry-run --level quick
     cargo run -p e2e --bin e2e-suite -- run --level quick \
-        --profile local-274 --catalog /path/to/catalog/274 --run-dir /tmp/274-run-1
+        --profile local-289 --catalog /path/to/catalog --run-dir /tmp/289-run-1
 
 ## Commands
 
@@ -31,7 +31,7 @@ start a service, build, log in, play or mutate anything — including the run di
 | `--level full` | vetted + documented + unvetted (manual and broken stay out) |
 | `--level smart` | cases whose declared Rust paths the changed paths touch; a shared path selects every runnable case |
 | `--changed-path PATH` / `--changed-paths-file FILE` | the changed paths `smart` maps (supplied explicitly, so verification is deterministic) |
-| `--only SUB[,SUB...]` | substring selection over case id, live name, scenario, harness, script and reference case ids; replaces the level; repeatable |
+| `--only SUB[,SUB...]` | substring selection over case id, live name, scenario, harness, script and reference case ids; replaces the level and reaches manual and broken cases too; repeatable |
 | `--manifest PATH` | manifest override (default: the tracked fixture, embedded at compile time) |
 | `--json` | machine-readable `list`/`dry-run` output |
 
@@ -44,8 +44,15 @@ reason and are recorded `unavailable`; nothing is substituted or silently droppe
 
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
 launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
-`--world-members true|false`, `--lowmem` (the default) or `--highmem`, `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
-`--exec-external PATH`, `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable).
+`--world-members true|false`, `--lowmem` (the default) or `--highmem`, `--mainland`,
+`--nav-paints on|off`, `--exec-core PATH`, `--exec-pair PATH`, `--exec-external PATH`,
+`--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable). `run` also takes
+`--run-dir DIR` and `--resume`, and `--verbose` streams child output.
+
+Headed runs default to `--nav-paints on`; `--nav-paints off` disables the diagnostic
+layers. The choice is recorded in the resume identity and forwarded to both native
+watcher entrypoints. It changes session visuals without changing routing, teleport
+policy, deadlines or saved operator preferences.
 
 The child command line is the *resolved* executable, the profile flags and the case's live
 name. `--exec-core`/`--exec-pair` and `--cwd` must be absolute; the suite canonicalizes the
@@ -118,7 +125,7 @@ match exactly before any spawn:
   * catalog script tree (`<catalog>/src/bot/scripts`);
   * the vault the selection implies (a file, including a followed symlink; `NotFound` is a
     defined absence);
-  * cache jag archives via the P1 `CacheManifest` identity (not a walk of the pack dir);
+  * cache jag archives via the `CacheManifest` identity (not a walk of the pack dir);
   * nav pack and nav flags files;
   * nav content inputs (`maps/`, door configs, `gates.loc`) — not models/sprites/fonts;
   * the engine RSA pem (`data/config/private.pem`), never the engine tree.
@@ -266,7 +273,6 @@ The manifest cargo-template resolution uses the platform executable suffix, incl
 The runner owns process groups on unix and job objects on Windows as described above;
 platform-specific LIVE proof remains a separate host run.
 
-
 ## Verification without a game
 
 The suite's own behavior is checked offline, with the disposable `e2e-suite-fixture`
@@ -327,11 +333,6 @@ desired run options with their adapter coverage metadata. Reference `vetted`/`pr
 historical upstream evidence, never a native PASS.
 
 ## Not claimed
-
-Headed runs default to `--nav-paints on`; use `--nav-paints off` to disable diagnostic
-layers. The choice is recorded in resume identity and forwarded to both native watcher
-entrypoints. It changes session visuals without changing routing, teleport policy,
-deadlines or saved operator preferences.
 
 The RockCrab cases use the native stand `(2712,3707,0)` and are executable for fixture
 qualification. Their live baseline still requires visible dormant Rocks before Start

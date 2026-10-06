@@ -6,6 +6,10 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
+0.2.0 is Beta 1. Revision 289 is the production revision: the harness cells
+are written, run and claimed for it. Revision 274 cells run best-effort and
+are neither tested nor claimed.
+
 For ordered multi-case native runs with ledgers, receipts and process-tree
 ownership, prefer the tracked suite entrypoint
 [`e2e-suite`](e2e-suite.md). A green child or zero exit is an observation
@@ -24,14 +28,25 @@ LIVE=1 cargo test -p host-play -- --ignored
 LIVE=1 cargo test -p e2e -- --ignored
 ```
 
+Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
+`quester_families_live`, `quester_path_live`, `quester_sheep_live` and
+`cook_bank_loop_live` need `--features "live-harness test-support"`;
+`bank_choice_live`, `quester_queue_live`, `quester_squire_live` and
+`quester_vampire_live` need `live-harness`; `script_api_live` needs
+`test-support`; `debug_panel_live` needs `debug-catalog`;
+`catalog_boundary_live` and `world_boundary_live` need `memory-profile`. The
+`--lib` cells (`walk_guard_live_tests`, `quester_journal_live_tests` and the
+other `*_live*` modules) run under `cargo test`. Each cell file's header lists
+its own environment.
+
 The Quester Path smoke runs one content quest id from the embedded release
 index (or from `QUESTER_PATH_DIR`) under a fixed 45-minute deadline:
 
 ```sh
 env HOME="$(mktemp -d)" LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh BOT_NAV_BUILD=skip \
   WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<274bot.navpack> \
-  WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> \
-  BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> LIVE_EVIDENCE_DIR=<evidence-root> \
+  WORLD_ENGINE_DIR=<engine-dir> RS2B0T=<catalog-root> \
+  BOT_CACHE_DIR=<writable-copy-of-client-cache> LIVE_EVIDENCE_DIR=<evidence-root> \
   QUESTER_PATH=cook QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
   cargo test -p host-play --test quester_path_live --features "live-harness test-support" \
     live_quester_path_smoke -- --ignored --nocapture --test-threads=1
@@ -47,7 +62,7 @@ otherwise starts from a clean account at the Path's authored anchor.
 | Variable | What it holds |
 | --- | --- |
 | `LIVE_EVIDENCE_DIR` | Receipts, CPU-rendered PNGs and captures for `host-play` live cells. Always outside the throwaway HOME. |
-| `BOT_EVIDENCE_DIR` | Receipt root for the older API cells; the test's `HOME` must be a disposable directory under it. |
+| `BOT_EVIDENCE_DIR` | Receipt root for the `script_api_live` cells; the test's `HOME` must be a disposable directory under it. |
 | `274BOT_SMOKE_DIR` | Capture root the `e2e-suite` runner points at its run's `shots/` directory. |
 
 Live cells run under a throwaway `HOME` (`env HOME="$(mktemp -d)"`) with an
@@ -55,6 +70,8 @@ ephemeral vault and minted `live<token>_<i>` accounts, so a run never
 touches `~/.274bot` or the operator's vault. The source client cache is
 copied into the cell's temp root before use; the run never writes the
 source cache.
+Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
+blank `HOME` remains explicit.
 
 ## Live-cell rules
 
@@ -73,85 +90,18 @@ source cache.
   deadlines with a short terminal grace elsewhere. A cell that cannot finish
   inside its bound fails instead of burning the shared engine.
 
-## Path-backed Quester qualification
-
-New quest fixtures use `scenario::quester::quester_stage(QuesterStage { ... })`.
-The older numeric `scenario::quester_stage` remains available to the shipped
-S2, combat and WalkGuard cells; it does not apply the new qualification profile.
-
-Add a `QuestFixtureProfile { quest, profile }` row to `FIXTURE_PROFILES` in
-`crates/scenario/src/quester.rs`. `Base40` and `Base60` set Attack, Strength,
-Defence, Hitpoints, Magic and Ranged to the named floor, and Prayer to 43.
-The builder adds the Path's declared skill requirements, at their exact levels
-for noncombat skills and without reducing a combat floor. The six harder
-quests named by the operator already have Base60 rows. A profile is a fixture
-plan, not an eligibility requirement or evidence of a successful live run.
-
-`QuesterStage` takes a scenario name, the selected quest-tab display,
-the decoded `PathDocument`, its selected `QuestIdentityRow` and
-`SelectedGameData`, a stage key, an optional loadout, extra carried items,
-and the starting tile. Each stage needs a `progress.rules` varp hint;
-missing or contradictory hints fail rather than becoming stage zero.
-
-Paired quests use `quester_role_stage(request, gang, stage_varp, seed_vars)`.
-It selects an explicitly authored Phoenix or Black Arm role, seeds that role's
-real content variable, and keeps prerequisite variables in pre-Start setup.
-`run_pair(PairCell { roles, mode })` prepares both accounts before either Start,
-adds reciprocal account settings, and starts each account's own Quester. Role 0
-is Phoenix; role 1 is Black Arm. Restart cells explicitly Stop and restart both
-accounts; an ordinary paired step never starts or stops the other account.
-Set `BOT_LIVE_NAME_PREFIX` for role 0 and `BOT_LIVE_PARTNER_NAME_PREFIX` for
-role 1. Both names use the same invocation token; the token budget uses the
-longer prefix so each account stays within the engine's 12-character limit.
-Reserved-phase death cells use `PairMode::Death`: inject during the named
-owned combat, observe cancellation, then explicitly Stop both accounts and
-restart them without reseeding. Ordinary-role fights outside a reserved phase
-use `PairMode::DeathIndependent`: the affected account recovers in its original
-run, both finish with one Start and no Stop, and the peer must remain alive.
-Miniquests use `miniquest_stage(MiniquestStage { ... })`, with explicit content
-variable seeds and a proof predicate instead of an invented quest-tab identity.
-Their terminal proof also requires the Path's owned progress reader to publish
-completion; a closed card or successful click alone is not completion.
-
-`FixtureLoadout::Path(name)` seeds that Path's actual kit.
-`FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
-operator's starting gear. Gear never raises the profile to make it wearable:
-an item refusal fails the fixture and is a real qualification limit.
-Product Path loadout headers require selected config aliases. Fixture lookup
-also accepts case-insensitive display names; this does not relax product header
-validation. The builder emits only resolved config aliases in `give` commands
-and merges carried kit/extras by item ID.
-
-The returned `QuesterFixture` has independently owned `scenario`,
-`start_settings`, `seed_commands` and a cloneable `seed`. Move `scenario`
-into `ScenarioRunner`, and retain `seed` and `start_settings` in the live cell.
-Use the returned settings for the compiled Start; they select only this quest.
-The scenario clears carried and worn items, sets the profile and quest stage,
-seeds and equips the chosen kit, then relogs and teleports to the authored
-starting tile. Teleporting after relog prevents the mainland login hop from
-overwriting the fixture origin. Its final pre-Start observation gate requires
-the exact posted base/effective stats, every carried/worn seed and the exact
-starting tile. It reads actual skill slots, including Agility, not the energy
-proof. At Start, record `seed.observe_start(snapshot)` with the live receipt;
-that receipt includes the observed tile. Only actual observations may be used
-to write the Path's `tested_stats`.
-
-All builder cheats occur before Start. After Start it only observes completion.
-Sequence, Stop/restart and death assertions belong to the live cell. Additional
-bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
-never into the gameplay proof. Shared world entities must remain real content.
-
-## Ordinary scenarios
+## Running a scenario
 
 Start the local engine for the profile under test and provide its client
 cache. Application builds already bake and stage nav for the selected
 **build-time** revision (`BOT_NAV_REVISION`, default **289**) next to the
-binary — no manual pack step for ordinary WalkTo. Use `nav-pack` only for
-deliberate custom-input bakes:
+binary, so ordinary WalkTo needs no manual pack step. Use `nav-pack` only for
+deliberate custom-input bakes. `RS2B0T` (or `--catalog DIR`) names the
+external catalog checkout for scenarios that start a catalog script:
 
 ```sh
 export ENGINE_DIR=/absolute/path/to/engine
-export RS2B0T=/absolute/path/to/rs2b0t
+export RS2B0T=/absolute/path/to/catalog
 # optional custom bake (not required for default bundled nav):
 # export NAV_PACK=/absolute/output/274bot.navpack
 # export NAV_FLAGS=/absolute/output/274bot.navflags
@@ -166,7 +116,6 @@ QUESTER_PATH=cook cargo run --locked --release -p panel --bin panel-play -- --pr
 # Run a Path supplied by a folder of Path documents.
 QUESTER_PATH=cook QUESTER_PATH_DIR=/absolute/path/to/paths \
   cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
-
 ```
 
 `script_quester_path` requires `QUESTER_PATH` (for example `cook`) and refuses
@@ -182,6 +131,66 @@ the fixture starts from a clean account and teleports to that anchor after
 relog. `QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
 zero and non-integer values are rejected. A terminal window shot is captured
 when the scenario completes.
+
+Live runs mint fresh accounts named `live<token>_<i>` (at most 12
+characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace
+`live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs can be told
+apart in engine logs and player saves. An invalid value stops the run.
+
+Match `--profile` and the engine ports to the revision (274: `:43594`/`:80`;
+289: `:44594`/`:1080`).
+
+The nav pack is format v16 (magic `274V`); `decode` rejects v15 and older as
+`BadVersion`. A new executable does not rewrite an existing override pack, so
+rebake override packs with `nav-pack` after updating.
+
+The `nav_door` integration test uses hard-coded Direct local-274 options and
+the `ENGINE_DIR/data/pack/client` cache path. `BOT_SERVER_PROFILE` does not
+select that test's endpoint. It also accepts `BOT_NAV_DOOR_REVERSE_LOGIN=1`;
+its closer then stays active while the driven player must reach the exact
+destination:
+
+```sh
+BOT_NAV_REVISION=274 ENGINE_DIR=/absolute/path/to/274-engine LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+```
+
+Direct integration-test helpers that use engine cache data require
+`ENGINE_DIR`; frontend harnesses use the configured engine/cache path from
+the resolved profile.
+
+### Proof baselines
+
+Catalog `stat_xp_gain` proofs capture all later cumulative skill baselines
+immediately before `StartScript`, excluding preparation XP. A gain remains
+observable even if another skill or an item is watched first.
+`fresh_stat_xp_gain` is deliberately different: it arms only when its own
+step begins, so an earlier trip cannot qualify a later bank-return phase.
+Scenarios without `StartScript` retain first-watch cumulative baselines.
+
+Compiled-card scenarios wait for Start to reach Running and fail immediately
+with the recorded rejection or preparation error. Stashed cards survive setup
+settlement: a scenario Stop revokes the script walk and bank selection, verifies
+the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
+resume, restart and login fixtures use this same compiled Start outcome gate.
+
+### Quester journal fixtures
+
+The headless Quester journal fixtures run with
+`LIVE=1 cargo test -p host-play --lib live_quester_journal -- --ignored --nocapture --test-threads=1`.
+Set an inline disposable `HOME`, `BOT_ENGINE_DIR` to the local R289 engine,
+and `BOT_NAV_PACK` to a matching navigation pack; remove the disposable
+directory after the command finishes. `BOT_GAME_PORT` and `BOT_HTTP_PORT`
+override these fixtures' default local endpoints. The fixtures cover a
+synthetic Rune Mysteries stage advance, parked ReadJournal retry, Stop/Start
+and Pause/Resume with a retained journal page, and a DebugPanel `getcoord`
+command sent while the journal is open. The overlap proof requires the host
+chat-reply candidate and the journal's own fresh evidence and close sequence;
+temporal debug replies are never command acknowledgements or journal progress.
+
+The journal and fresh Cook fixtures mint their accounts like every other live
+run, so simultaneous processes do not share an account and
+`BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
+accounting: Stop/Pause recovery adopts the retained page without a new click.
 
 ### Headed recording
 
@@ -212,64 +221,136 @@ resolved from `HEADED_RECORD_FFMPEG`, then `/opt/homebrew/bin/ffmpeg`,
 then `PATH`; when it is missing the run logs one warning and continues
 without recording.
 
-Live runs mint fresh accounts named `live<token>_<i>` (at most 12
-characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace
-`live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs can be told
-apart in engine logs and player saves. An invalid value stops the run.
+### Catalog scenario notes
 
-Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
-289: `:44594`/`:1080`). The door test also accepts
-`BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
-player must reach the exact destination. Pack format is version **16**
-(magic `274V`; `decode` rejects v15 and older as `BadVersion`). **Rebake
-existing override packs** after updating. A new executable does not rewrite
-an existing override pack on its own.
+A scenario that waits for a card's clean stop (`wait_script_stop`) must
+also watch the card's own work. Its post-Start watch and terminal proof must
+be an outcome its pre-Start seed cannot already satisfy, or the run passes
+on its Start snapshot and the 45-second stop grace becomes the only check.
+The catalog test `clean_stop_scenarios_are_not_satisfied_by_their_own_seed`
+builds each such scenario's seeded state (mainland landing, then its fixture
+prerequisites) and fails any proof that already holds there. Cards that
+only observe prove themselves with the receipt row they paint
+(`script_receipt(prefix)`); cards that walk use `arrived_ring` around the
+tile they start on.
 
-The `nav_door` integration test uses hard-coded Direct local-274 options and
-the `ENGINE_DIR/data/pack/client` cache path. `BOT_SERVER_PROFILE` does not
-select that test's endpoint:
+The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
+step, for a nearby unengaged Guard with native scene line of sight before
+starting the catalog script. It prepares Attack, Strength and Hitpoints 70
+with the same adamant scimitar so back-to-back Guard fights do not consume
+the entire stall watch. A ready Guard can still wander away: the Strength
+watch tolerates one catch-less stall session, observes its bank visit,
+closure and return, then requires renewed Guard readiness at the stall.
+A second unqualified bank visit fails rather than admitting a third try.
+The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+watch; the Thieving XP and exact Cake watches retain their original bounds.
+All three still require real post-Start evidence; no catch is forced.
+Script kill messages alone are not XP evidence:
+in a crowded single-combat camp, a selected NPC can disappear after
+another player kills it while the observing slot receives no XP.
+
+### Core-gated qualification
+
+A scenario PASS alone proves the scenario's own predicates. The shared core
+witnesses in `host-play` (`catalog_core`, `paired_core`) prove the full
+post-Start cycle. Both front ends run them through one gate,
+`host_play::live_gate`:
 
 ```sh
-BOT_NAV_REVISION=274 ENGINE_DIR=/absolute/path/to/274-engine LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_flax_runner --pair-core
+# environment form for harnesses that pass only environment:
+BOT_LIVE_CORE=catalog cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 ```
 
-Direct integration-test helpers that use engine cache data require
-`ENGINE_DIR`; frontend harnesses use the configured engine/cache path from
-the resolved profile.
-Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
-blank `HOME` remains explicit.
+These are the panel's `catalog_watch` / `pair_watch` modes. The witness is
+armed before either slot publishes, and its Start baseline is frozen
+immediately before the actual isolate Start. While the witness is Pending,
+a scenario PASS is held and the 45-second clean-stop grace has not started.
+A failed witness, or one still unqualified at the scenario deadline
+(`BUDGET_S` when set), fails the run. The compact witness receipt is printed
+as `CATALOG_CORE: script_<name> {…}` / `PAIRED_CORE: script_<name> {…}`
+next to the terminal line. The paired proofs (`nature_crafter_air`,
+`mule_crafter_air`, `flax_runner`, `duel_arena`) refuse to run without the
+pair gate.
 
-Catalog `stat_xp_gain` proofs capture all later cumulative skill baselines
-immediately before `StartScript`, excluding preparation XP. A gain remains
-observable even if another skill or an item is watched first.
-`fresh_stat_xp_gain` is deliberately different: it arms only when its own
-step begins, so an earlier trip cannot qualify a later bank-return phase.
-Scenarios without `StartScript` retain first-watch cumulative baselines.
+## Path-backed Quester qualification
 
-Compiled-card scenarios wait for Start to reach Running and fail immediately
-with the recorded rejection or preparation error. Stashed cards survive setup
-settlement: a scenario Stop revokes the script walk and bank selection, verifies
-the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
-resume, restart and login fixtures use this same compiled Start outcome gate.
+New quest fixtures use `scenario::quester::quester_stage(QuesterStage { ... })`.
+The older numeric `scenario::quester_stage` remains available to the shipped
+S2, combat and WalkGuard cells; it does not apply the new qualification profile.
 
-The headless Quester journal fixtures run with
-`LIVE=1 cargo test -p host-play --lib live_quester_journal -- --ignored --nocapture --test-threads=1`.
-Set an inline disposable `HOME`, `BOT_ENGINE_DIR` to the local R289 engine,
-and `BOT_NAV_PACK` to a matching navigation pack; remove the disposable
-directory after the command finishes. `BOT_GAME_PORT` and `BOT_HTTP_PORT`
-override these fixtures' default local endpoints. The fixtures cover a
-synthetic Rune Mysteries stage advance, parked ReadJournal retry, Stop/Start
-and Pause/Resume with a retained journal page, and a DebugPanel `getcoord`
-command sent while the journal is open. The overlap proof requires the host
-chat-reply candidate and the journal's own fresh evidence and close sequence;
-temporal debug replies are never command acknowledgements or journal progress.
+Add a `QuestFixtureProfile { quest, profile }` row to `FIXTURE_PROFILES` in
+`crates/scenario/src/quester.rs`. `Base40` and `Base60` set Attack, Strength,
+Defence, Hitpoints, Magic and Ranged to the named floor, and Prayer to 43.
+The builder adds the Path's declared skill requirements, at their exact levels
+for noncombat skills and without reducing a combat floor. The harder quests
+(Dragon Slayer, Temple of Ikov, Underground Pass, Legends Quest, Elemental
+Workshop, Horror from the Deep) already have Base60 rows. A profile is a
+fixture plan, not an eligibility requirement or evidence of a successful
+live run.
 
-The journal and fresh Cook fixtures mint their accounts like every other live
-run, so simultaneous processes do not share an account and
-`BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
-accounting: Stop/Pause recovery adopts the retained page without a new click.
+`QuesterStage` takes a scenario name, the selected quest-tab display,
+the decoded `PathDocument`, its selected `QuestIdentityRow` and
+`SelectedGameData`, a stage key, an optional loadout, extra carried items,
+and the starting tile. Each stage needs a `progress.rules` varp hint;
+missing or contradictory hints fail rather than becoming stage zero.
 
-### Gatherer target-switch checks
+Paired quests use `quester_role_stage(request, gang, stage_varp, seed_vars)`.
+It selects an explicitly authored Phoenix or Black Arm role, seeds that role's
+real content variable, and keeps prerequisite variables in pre-Start setup.
+`run_pair(PairCell { roles, mode })` prepares both accounts before either Start,
+adds reciprocal account settings, and starts each account's own Quester. Role 0
+is Phoenix; role 1 is Black Arm. Restart cells explicitly Stop and restart both
+accounts; an ordinary paired step never starts or stops the other account.
+Set `BOT_LIVE_NAME_PREFIX` for role 0 and `BOT_LIVE_PARTNER_NAME_PREFIX` for
+role 1. Both names use the same invocation token; the token budget uses the
+longer prefix so each account stays within the engine's 12-character limit.
+Reserved-phase death cells use `PairMode::Death`: inject during the named
+owned combat, observe cancellation, then explicitly Stop both accounts and
+restart them without reseeding. Ordinary-role fights outside a reserved phase
+use `PairMode::DeathIndependent`: the affected account recovers in its original
+run, both finish with one Start and no Stop, and the peer must remain alive.
+Miniquests use `miniquest_stage(MiniquestStage { ... })`, with explicit content
+variable seeds and a proof predicate instead of an invented quest-tab identity.
+Their terminal proof also requires the Path's owned progress reader to publish
+completion; a closed card or successful click alone is not completion.
+
+`FixtureLoadout::Path(name)` seeds that Path's actual kit.
+`FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
+standard starting kits. Gear never raises the profile to make it wearable:
+an item refusal fails the fixture and is a real qualification limit.
+Product Path loadout headers require selected config aliases. Fixture lookup
+also accepts case-insensitive display names; this does not relax product header
+validation. The builder emits only resolved config aliases in `give` commands
+and merges carried kit/extras by item ID.
+
+The returned `QuesterFixture` has independently owned `scenario`,
+`start_settings`, `seed_commands` and a cloneable `seed`. Move `scenario`
+into `ScenarioRunner`, and retain `seed` and `start_settings` in the live cell.
+Use the returned settings for the compiled Start; they select only this quest.
+The scenario clears carried and worn items, sets the profile and quest stage,
+seeds and equips the chosen kit, then relogs and teleports to the authored
+starting tile. Teleporting after relog prevents the mainland login hop from
+overwriting the fixture origin. Its final pre-Start observation gate requires
+the exact posted base/effective stats, every carried/worn seed and the exact
+starting tile. It reads actual skill slots, including Agility, not the energy
+proof. At Start, record `seed.observe_start(snapshot)` with the live receipt;
+that receipt includes the observed tile. Only actual observations may be used
+to write the Path's `tested_stats`.
+
+All builder cheats occur before Start. After Start it only observes completion.
+Sequence, Stop/restart and death assertions belong to the live cell. Additional
+bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
+never into the gameplay proof. Shared world entities must remain real content.
+
+## Gatherer live cells
+
+Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
+isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
+`GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
+
+### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through
 `GATHERER_MINE_RESOURCES` and an explicit `GATHERER_MINE_TILE=x,z,level`.
@@ -289,7 +370,7 @@ remain fenced to a later tick. If no replacement target is available, terminal
 unavailability is confirmed on the next observation so a delayed yield packet is
 accounted before the runner blocks.
 
-## Gatherer fishing bank returns
+### Fishing bank returns
 
 The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell tests a fixed
 Start location at Catherby with an inventory harpoon and one seeded `casket`
@@ -347,15 +428,16 @@ selection instead of falsely declaring the spot absent. A live actor clears
 empty evidence but does not renew the approach budget; positive gather progress
 does. Rock and tree placement observation still uses the loaded map rectangle.
 
-## Walk Guard W1 live and receipt replay
+## Walk Guard live cells and receipt replay
 
-The ignored W1 fixtures exercise the `death-plateau-throwers` crossing against
-the local R289 engine. The gate retains the ranged-projectile queue rule
-`floor((32 + 5d) / 30)` without relaxing it; at distance 1 the expected delay
-is one tick. The first thrower is staged on a standable tile three to five
-tiles ahead of the route start: the fixture teleports there, spawns the NPC,
-then teleports back to the route start before scripted movement begins. This
-avoids attributing a distance-zero launch at the start to the moving crossing.
+The ignored W1 cells (`--lib`, module `walk_guard_live_tests`) exercise the
+`death-plateau-throwers` crossing against the local 289 engine. The gate
+retains the ranged-projectile queue rule `floor((32 + 5d) / 30)` without
+relaxing it; at distance 1 the expected delay is one tick. The first thrower
+is staged on a standable tile three to five tiles ahead of the route start:
+the fixture teleports there, spawns the NPC, then teleports back to the route
+start before scripted movement begins. This avoids attributing a
+distance-zero launch at the start to the moving crossing.
 
 The live and replay gate requires exactly two accepted guard clicks, both
 component 5622. The enable click must show Missiles off before the click and
@@ -379,78 +461,51 @@ the post-click frame is a separate cleanup observation at that tick. Receipts
 label those phases explicitly; they do not invent a game tick or waive the
 inclusive arrival requirement.
 
-Use the isolated worktree's nav pack and retained cache snapshot. The host
-connects through builder ports `45594/2080`, forwarded to the local engine's
-`44594/1080` endpoints. Set `LIVE_EVIDENCE_DIR` to the R2 evidence directory;
-both the test's generated HOME and launcher HOME are under it:
+| Cell | What it proves |
+| --- | --- |
+| `live_walk_guard_w1_protected_crossing` | The full gate above over one crossing. |
+| `live_walk_guard_w1_stop_mid_crossing` | The real `ScriptStartHandle::stop` API after Missiles is observed on during the crossing and before arrival: every prayer turns off within four ticks of Stop and stays off for three more observed ticks. |
+| `live_walk_guard_eat_crossing` | A Prayer 37, HP 20/40 account with four lobsters crosses and eats: the guard's Eat click is followed within four ticks by an HP rise and one lobster consumed. Name prefix `ge`, endpoints `44594`/`1080`, and an isolated `HOME` you set yourself. |
+| `live_walk_guard_eat_no_food_control` | The same seed with no lobsters crosses without an Eat. |
+
+The two W1 cells connect through the forwarded builder ports `45594`/`2080`, set
+their own `BOT_LIVE_NAME_PREFIX` (`wg`) and create a throwaway `HOME` under
+`$LIVE_EVIDENCE_DIR/homes/`:
 
 ```sh
-WT=/path/to/walk-guard-lifecycle
-ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=$LIVE_EVIDENCE_DIR
-CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
-mkdir -p "$EVIDENCE/launcher-home"
-cd "$WT"
-export CARGO_HOME RUSTUP_HOME
-HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR="$EVIDENCE" \
-BOT_LIVE_NAME_PREFIX=wg \
-BOT_ENGINE_DIR="$ENGINE_DIR" \
-WORLD_ENGINE_DIR="$ENGINE_DIR" \
-BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-BOT_COMBAT_CACHE_SNAPSHOT=/path/to/retained-cache-snapshot \
-cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_protected_crossing -- --exact --ignored --nocapture --test-threads=1
+LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=<evidence-root> \
+  BOT_ENGINE_DIR=<engine-dir> BOT_NAV_PACK=<274bot.navpack> \
+  BOT_COMBAT_CACHE_SNAPSHOT=<retained-cache-snapshot> \
+  cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_protected_crossing \
+    -- --exact --ignored --nocapture --test-threads=1
 ```
 
-The separate `live_walk_guard_w1_stop_mid_crossing` test uses the real
-`ScriptStartHandle::stop` API after Missiles is observed on during the crossing
-and before arrival. It requires every prayer to turn off within four ticks of
-Stop and remain off for three more observed ticks:
+Replace the cell name to run the others. Every run saves a real final scene
+PNG with a matching JSON/Core record in a per-run capture folder under
+`$LIVE_EVIDENCE_DIR`; inspect that image alongside the receipt before
+accepting the live proof. The final receipt's `tile` is normalized to
+`local_player.tile`. An explicit navigation pack must have its
+`.navpack.json`, `.navreach`, `.navflags`, `.navcanlight` and `.navpois` files
+beside it.
+
+The ignored offline replay `replay_walk_guard_w1_retained_receipts` applies
+the same gate to three retained receipts (one bad, two passing) read from
+`$LIVE_EVIDENCE_DIR`, skips with a message when the directory is unset or a
+receipt is absent, and writes `$LIVE_EVIDENCE_DIR/W1-lifecycle-replay.json`.
+Legacy receipts without per-tick rows use their guard-click pre-click prayer
+varps, recorded protect/off observations, and holds between clicks; the
+replay output marks that their crossing frames and three post-off ticks were
+not directly recorded and does not fabricate per-tick rows:
 
 ```sh
-WT=/path/to/walk-guard-lifecycle
-ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=$LIVE_EVIDENCE_DIR
-CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
-mkdir -p "$EVIDENCE/launcher-home"
-cd "$WT"
-export CARGO_HOME RUSTUP_HOME
-HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR="$EVIDENCE" \
-BOT_LIVE_NAME_PREFIX=wg \
-BOT_ENGINE_DIR="$ENGINE_DIR" \
-WORLD_ENGINE_DIR="$ENGINE_DIR" \
-BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
-BOT_COMBAT_CACHE_SNAPSHOT=/path/to/retained-cache-snapshot \
-cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_stop_mid_crossing -- --exact --ignored --nocapture --test-threads=1
+LIVE_EVIDENCE_DIR=<evidence-root> \
+cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts \
+  -- --exact --ignored --nocapture
 ```
 
-Both modes save a real final scene PNG with a matching JSON/Core record in an
-R2 per-run capture folder under `$LIVE_EVIDENCE_DIR`; inspect that image
-alongside the receipt before accepting the live proof. The final receipt's
-`tile` is normalized to `local_player.tile`. The explicit navigation pack
-must have its matching `.navpack.json`, `.navreach`, `.navflags`,
-`.navcanlight`, and `.navpois` files beside it.
+## JS API v2 checks
 
-The ignored offline replay applies the same gate to the retained bad receipt
-`W1-wgkiu3hcw6_0-receipt.json` and passing receipts `W1-wg9l6smxhw_0-receipt.json`
-and `W1-wgefe0xaj8_0-receipt.json`, all read from `$LIVE_EVIDENCE_DIR`. The
-replay skips with a message when the directory is unset or a receipt is
-absent. Legacy receipts without per-tick
-rows use their guard-click pre-click prayer varps, recorded protect/off
-observations, and holds between clicks; the replay output marks that their
-crossing frames and three post-off ticks were not directly recorded. It does
-not fabricate per-tick rows. The replay table is written to
-`$LIVE_EVIDENCE_DIR/W1-lifecycle-replay.json`:
-
-```sh
-LIVE_EVIDENCE_DIR=/path/to/w1-evidence \
-cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts -- --exact --ignored --nocapture
-```
-
-## JS API v2 GatherQuest sample checks
+### Declarations and sample
 
 The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
 the Rust API tables. Regenerate it with:
@@ -468,7 +523,7 @@ including the `gather_quest_v2.ts` sample. Its probe checks with and without
 cargo test -p script --test host_js -- --ignored tsc
 ```
 
-## JS API v2 GatherQuest live cells
+### Live cells
 
 The ignored `script_api_live` tests load the checked-in `gather_quest_v2.js`
 through the real Load path and exercise it against a local R289 server. The
@@ -498,58 +553,7 @@ matching the real closed-journal observation after the acquired observation.
 Its receipt, `script-api-progress-journal-receipt.json`, contains both reads,
 their host evidence stamps and the journal open/close packet trace.
 
-A scenario that waits for a card's clean stop (`wait_script_stop`) must
-also watch the card's own work. Its post-Start watch and terminal proof must
-be an outcome its pre-Start seed cannot already satisfy, or the run passes
-on its Start snapshot and the 45-second stop grace becomes the only check.
-The catalog test `clean_stop_scenarios_are_not_satisfied_by_their_own_seed`
-builds each such scenario's seeded state (mainland landing, then its fixture
-prerequisites) and fails any proof that already holds there. Cards that
-only observe prove themselves with the receipt row they paint
-(`script_receipt(prefix)`); cards that walk use `arrived_ring` around the
-tile they start on.
-
-The `ardy_cakes_fight` fixture waits, within its ordinary bounded scenario
-step, for a nearby unengaged Guard with native scene line of sight before
-starting the catalog script. It prepares Attack, Strength and Hitpoints 70
-with the same adamant scimitar so back-to-back Guard fights do not consume
-the entire stall watch. A ready Guard can still wander away: the Strength
-watch tolerates one catch-less stall session, observes its bank visit,
-closure and return, then requires renewed Guard readiness at the stall.
-A second unqualified bank visit fails rather than admitting a third try.
-The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
-watch; the Thieving XP and exact Cake watches retain their original bounds.
-All three still require real post-Start evidence; no catch is forced.
-Script kill messages alone are not XP evidence:
-in a crowded single-combat camp, a selected NPC can disappear after
-another player kills it while the observing slot receives no XP.
-
-### Core-gated qualification
-
-A scenario PASS alone proves the scenario's own predicates. The shared core
-witnesses in `host-play` (`catalog_core`, `paired_core`) prove the full
-post-Start cycle. Both front ends run them through one gate,
-`host_play::live_gate`:
-
-```sh
-cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever --catalog-core
-cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_flax_runner --pair-core
-# environment form for harnesses that pass only environment:
-BOT_LIVE_CORE=catalog cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
-```
-
-These are the panel's `catalog_watch` / `pair_watch` modes. The witness is
-armed before either slot publishes, and its Start baseline is frozen
-immediately before the actual isolate Start. While the witness is Pending,
-a scenario PASS is held and the 45-second clean-stop grace has not started.
-A failed witness, or one still unqualified at the scenario deadline
-(`BUDGET_S` when set), fails the run. The compact witness receipt is printed
-as `CATALOG_CORE: script_<name> {…}` / `PAIRED_CORE: script_<name> {…}`
-next to the terminal line. The paired proofs (`nature_crafter_air`,
-`mule_crafter_air`, `flax_runner`, `duel_arena`) refuse to run without the
-pair gate.
-
-## Fleet preparation and basic samples
+## Fleet memory harness
 
 Both frontends expose the same opt-in `host_play::memory::{Config, Run, Sample}`
 harness. Build with `memory-profile` for allocation counters, or
@@ -560,7 +564,7 @@ Unset `BOT_MEMORY_N` for normal interactive use.
 ```sh
 cargo build --locked --release -p tui -p panel --features memory-profile-no-alloc
 
-LIVE=1 BOT_SERVER_PROFILE=local-274 \
+LIVE=1 \
 BOT_MEMORY_N=1 BOT_MEMORY_WORKLOAD=active BOT_MEMORY_SUSTAIN=1 \
 BOT_MEMORY_WARMUP_S=30 BOT_MEMORY_OBSERVE_S=240 \
 BOT_MEMORY_OUTPUT=/absolute/new-run/samples.jsonl \
@@ -663,11 +667,7 @@ state), so a cell leaves nothing for the next one.
 Seed/proof or script failures fail the run and return a nonzero exit, and so does
 a fleet that has not qualified after 30 minutes (`blocked: ready=… seeded=…
 proved=… wanted=… ever_ready=…`). A `duel_arena` fleet stages one pair at a time,
-so that bound is 60 minutes; on the reference M4 Max host N=50 qualifies in
-about 40 minutes and N=10 in about 8. The perf runner's default per-cell timeout
-is this bound plus the warmup, observe and teardown windows and 300 s of launch
-and exit time, so the product's own bound, not the runner's kill, ends an
-unqualified cell. Every such failure first appends one
+so that bound is 60 minutes. Every such failure first appends one
 `"phase":"failed"` record to `samples.qualification.jsonl` with the error and,
 for every slot, whether it ever reached `ingame && scene_state == 2` (and when),
 its last observed session state (startup phase and how long it has been in it,
@@ -742,17 +742,18 @@ not apply (a headless `tui-play` has no adapter or panel frames):
 `samples.qualification.jsonl` contains observation start/end progress and, for a
 failed fleet, the per-slot failure record above. With optional diagnostics,
 `samples.diagnostics.jsonl` adds bounded per-slot evidence.
-Detailed navigation history is null because the campaign capture system is not
-part of this harness. Direct-owner census, scheduling/latency journals, managed
-process controllers and campaign replay/provisioning tools are not dependencies.
+The diagnostics sidecar's `recent_navigation` is always null: detailed
+navigation history, direct-owner census, scheduling/latency journals, managed
+process controllers and campaign replay/provisioning tools are not part of
+this harness.
 
 Compare matched workloads, platforms and intervals. Allocation avoidance is not
 necessarily an RSS reduction, and current RSS must not be confused with peak RSS
 or allocator counts. Negative or non-monotonic RSS slopes can be sampler noise,
 especially with macOS `resident_size`; they are measurements, not savings
-claims. The selected fixes have focused allocation/ownership evidence; they do
-not establish an additive total saving, universal responsiveness improvement,
-low-end budget, or 128-client capacity guarantee.
+claims. Allocation-focused changes do not establish an additive total saving,
+universal responsiveness improvement, low-end budget, or 128-client capacity
+guarantee.
 
 ## Known validation limits
 
@@ -760,13 +761,6 @@ The revision-specific stun recovery infers an onset from spot animation 245 and
 waits eleven distinct player-update ticks, at most once per follow run. It is not
 a universal stunned flag. Seeing an ordinary thieving stun does not prove the
 navigation recovery path ran.
-
-The client still has a documented Windows/Linux GPU shade-boundary test failure
-(expected approximately 223, observed 255) and a Windows unreachable-CRC timing
-assumption that can exceed five seconds. The modal restoration addresses a
-separate black-modal defect. Some older panel unit fixtures create real network
-workers and need a reachable local fixture for prompt teardown; this remains a
-test isolation limitation.
 
 Runner completion is not script qualification. Prefer capability language over
 copying rapidly changing pass/fail inventory counts into product docs.

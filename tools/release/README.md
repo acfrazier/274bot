@@ -6,10 +6,11 @@
 platforms:
 
 ```sh
+TAG=0.2.0   # the Cargo version, or a numeric patch tag beginning with it
 COMMIT="$(git rev-parse HEAD)"
 python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
 python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
-  --tag 0.1.9 --dry-run
+  --tag "$TAG" --dry-run
 python3 tools/release/release.py verify --commit "$COMMIT" --platform all --dry-run
 ```
 
@@ -20,8 +21,12 @@ push, or publish.
 Before packaging, sweep every tracked doc against the release commit:
 `README`, `FIRST-START`, `CONTRIBUTING`, `CONTEXT`, `NOTICE`, `docs/**`
 and the tools READMEs. Fix status and version words, removed or renamed
-features, and new features, so the packaged public docs describe the
-candidate. `package.py` ships those docs as staged.
+features, and new features, so the docs describe the candidate. Set
+`[workspace.package] version` in `Cargo.toml` and `RELEASE` in
+`crates/panel/src/build_info.rs` first; the package version and the app's
+display name come from them. `package.py` stages only `LICENSE`,
+`NOTICE.md` and `FIRST-START.md` into the package; the other docs are read
+from the repository at the release commit.
 
 For a real candidate, give the controller a local work directory and the three
 canonical revision-289 input roots:
@@ -54,6 +59,7 @@ per-commit workspace, recomputes all three input digests, and then builds:
 
 ```text
 GIT_DIRTY=0
+BOT_NAV_REVISION=289
 BOT_NAV_BUILD=require
 cargo build --locked --release -p panel --bin panel-play -p tui --bin tui-play
 ```
@@ -88,7 +94,8 @@ prepare removes its partial directory automatically.
   `RELEASE_*` environment variables). Batch mode and strict host-key checking
   are always enabled.
 - Remote work roots default to the home-relative `274bot-release` and can be
-  changed with `--linux-remote-root` / `--windows-remote-root`. Cargo output is
+  changed with `--linux-remote-root` / `--windows-remote-root` (or
+  `RELEASE_LINUX_ROOT` / `RELEASE_WINDOWS_ROOT`). Cargo output is
   cached below the platform's per-commit workspace, so artifacts from different
   commits cannot mix. Remote roots must stay below the remote home directory.
 - `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
@@ -106,7 +113,7 @@ After all native package directories exist:
 ```sh
 python3 tools/release/release.py finalize \
   --commit "$COMMIT" --platform all --work-dir "$WORK" \
-  --artifact-dir "$ARTIFACTS" --tag 0.1.9 \
+  --artifact-dir "$ARTIFACTS" --tag "$TAG" \
   --release-notes "$RELEASE_NOTES"
 
 python3 tools/release/release.py verify \
@@ -114,10 +121,10 @@ python3 tools/release/release.py verify \
 ```
 
 Finalization first refuses a tag that is neither the Cargo version nor a
-numeric patch tag beginning with that version (for example, version `0.1.8`
-may finalize as `0.1.8.1`). It also requires the staged manifest's version and
+numeric patch tag beginning with that version (for example, version `0.2.0`
+may finalize as `0.2.0.1`). It also requires the staged manifest's version and
 public release name to match the pinned source. The final package and archive
-are named from the tag (`274bot-0.1.8.1-linux-x64.tar.gz`), so a patch release
+are named from the tag (`274bot-0.2.0.1-linux-x64.tar.gz`), so a patch release
 never reuses the base release's archive names; the build stages under the Cargo
 version and finalize renames the staged directory. It then copies the release
 notes, records platform runtime requirements, rehashes every package file,
@@ -171,12 +178,11 @@ The controller intentionally has no tag, push, upload, or GitHub-release
 operation. Those remain explicit operator actions after native verification.
 
 The package version comes from `[workspace.package]` in `Cargo.toml`; the public
-name comes from `crates/panel/src/build_info.rs` `RELEASE`. Release targets:
+name comes from `crates/panel/src/build_info.rs` `RELEASE` (`beta 1`). Release targets:
 
 - macOS ARM64: Developer ID signed `274bot.app`, `panel-play`, `tui-play`.
 - Windows x64: `panel-play.exe`, `tui-play.exe`.
-- Linux x64: `panel-play`, `tui-play` (the panel from 0.1.9; see
-  [Linux panel runtime](#linux-panel-runtime)).
+- Linux x64: `panel-play`, `tui-play` (see [Linux panel runtime](#linux-panel-runtime)).
 
 `host-play` remains a developer tool. Build default features with
 `cargo build --locked --release`; do not enable profiling features. Build from
@@ -191,8 +197,8 @@ artifact's relative path to its SHA-256. It verifies hashes before staging.
 It copies only the selected binaries, navigation artifacts, and public docs;
 it excludes machine-local bake stamps, engine/cache data and credentials.
 
-Revision 289 packages also ship the WalkTo map terrain (operator decision
-2026-09-26). After staging the binaries, `package.py` runs the staged
+Revision 289 packages also ship the WalkTo map terrain. After staging the
+binaries, `package.py` runs the staged
 `tui-play --map-bundle` against the pinned client cache the nav bundle was
 built from: `--map-cache` (its jag directory) and `--map-unpack` (the snapshot
 root holding its decoded snapshot). Both are required, either explicitly or
@@ -208,8 +214,7 @@ identity differs from `274bot.navpack.json`'s `content_id`, re-verifies every
 shipped file against those receipts, records the description as
 `map_images` in `release-manifest.json` (whose `files` list, and so the
 archive `SHA256SUMS`, covers every tile), and copies `map/` into the macOS
-bundle's `Contents/Resources` beside `nav/`. The 289 terrain is 1,702 tiles,
-about 19 MB on disk, and the bake step takes about 25 s. The app installs it into
+bundle's `Contents/Resources` beside `nav/`. The app installs it into
 `~/.274bot/map-cache` only when the identity matches the bound client cache
 exactly; otherwise the local bake stays behind the operator's consent.
 
@@ -246,14 +251,13 @@ checks and smoke results with each candidate. Release notes must disclose the
 remaining catalog limitations; historical scoped script passes do not imply
 all scripts/options passed with a new binary.
 
-Initial distributed packages target `rs2b2t`. Build their navigation with a
+Distributed packages target `rs2b2t`. Build their navigation with a
 separate engine-input directory containing the public endpoint's CRC-verified
-cache under data/pack/client, and BOT_NAV_CONTENT_DIR pointing at canonical
-289 content. Do not overwrite the local engine cache. The public 289 archive
-identity was checked on 2026-09-16 via HTTPS /crc and all eight archive CRCs;
-only versionlist differs from the existing local 289 set. Both exact cache
-identities remain recognized. Local servers with another cache require their
-own matching navigation build or explicit external navigation resources.
+cache under data/pack/client, and `BOT_NAV_CONTENT_DIR` pointing at canonical
+289 content. Do not overwrite the local engine cache. Both the public and the
+local 289 cache identities are recognized. Local servers with another cache
+need their own matching navigation build or explicit external navigation
+resources.
 
 ## Linux panel runtime
 
@@ -281,9 +285,6 @@ newer.
   libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0
   libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
 
-Checked 2026-09-27 on the Ubuntu 24.04 builder: `package.py --check
---platform linux` staged 1,715 files (both binaries, `nav/289`, `map/289`,
-docs), and the staged `panel-play` ran on Xvfb with Mesa lavapipe
-(`adapter name=llvmpipe … backend=Vulkan`), logged a throwaway local account
-in, and opened WalkTo on the shipped terrain (installed into the scratch
-`~/.274bot/map-cache` byte for byte) without a bake prompt.
+The Linux package is checked with `package.py --check --platform linux` on the
+builder. A real launch of the staged `panel-play` needs a display and Vulkan
+driver as listed above; `tui-play` needs neither.
