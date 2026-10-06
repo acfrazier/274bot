@@ -223,7 +223,6 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
         gathering: None,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         areas: &areas,
         loadouts: &loadouts,
@@ -532,7 +531,6 @@ fn fixture_compile_context<'a>(
         gathering: None,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         areas,
         loadouts,
@@ -639,7 +637,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         assert_eq!(predicate.evaluate(&context), Truth::True);
@@ -660,7 +657,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&other),
         };
         assert_eq!(predicate.evaluate(&context), Truth::False);
@@ -671,7 +667,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: None,
         };
         assert_eq!(predicate.evaluate(&context), Truth::False);
@@ -712,7 +707,6 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
                 progress: &[],
                 required_after: tick.cx.evidence(),
                 chat_since: 0,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
                 outcome: None,
             };
             let crate::quester::select::SelectionDecision::Selected(selected) =
@@ -767,7 +761,6 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
@@ -829,7 +822,6 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
@@ -879,7 +871,6 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         assert!(
@@ -1132,14 +1123,12 @@ fn with_step_context_at_walk_seq<R>(
         native.cx.observed_walk_outcome_seq = walk_outcome_seq;
         let quests = QuestCatalog::empty();
         let required_after = native.cx.evidence();
-        let bank = crate::quester::bank_memo::BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         f(&mut StepContext {
             tick: native,
             quests: &quests,
             progress: &[],
             required_after,
-            bank: &bank,
             banks: &banks,
             choices: &crate::quester::choices::QuestChoices::default(),
         })

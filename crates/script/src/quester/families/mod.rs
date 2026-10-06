@@ -323,11 +323,6 @@ impl PredicatePlan for AllPlan {
     fn requires_bank(&self) -> bool {
         self.items.iter().any(|item| item.requires_bank())
     }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        for item in &self.items {
-            item.bank_item_ids(out);
-        }
-    }
 }
 struct AnyPlan {
     items: Vec<Arc<dyn PredicatePlan>>,
@@ -339,11 +334,6 @@ impl PredicatePlan for AnyPlan {
     fn requires_bank(&self) -> bool {
         self.items.iter().any(|item| item.requires_bank())
     }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        for item in &self.items {
-            item.bank_item_ids(out);
-        }
-    }
 }
 struct NotPlan {
     inner: Arc<dyn PredicatePlan>,
@@ -354,9 +344,6 @@ impl PredicatePlan for NotPlan {
     }
     fn requires_bank(&self) -> bool {
         self.inner.requires_bank()
-    }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        self.inner.bank_item_ids(out);
     }
 }
 
@@ -3240,7 +3227,6 @@ impl StepRun for UseOnRun {
                 required_after: cx.required_after,
                 chat_since: self.chat_since,
                 outcome: None,
-                bank: cx.bank,
             };
             if self
                 .no_product
@@ -3499,7 +3485,6 @@ impl StepRun for AcquireRun {
                 required_after: cx.required_after,
                 chat_since: self.chat_since,
                 outcome: self.child_outcome.as_ref(),
-                bank: cx.bank,
             });
             if truth != Truth::True {
                 if cx.tick.cx.active_now() >= self.settle_deadline {
@@ -3523,7 +3508,6 @@ impl StepRun for AcquireRun {
                     required_after: cx.required_after,
                     chat_since: reach::last_chat_seq(&cx.tick.cx),
                     outcome: None,
-                    bank: cx.bank,
                 });
                 if skip == Truth::Unknown {
                     let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
@@ -3705,7 +3689,6 @@ impl StepRun for WaitRun {
             required_after: cx.required_after,
             chat_since: self.chat_since,
             outcome: None,
-            bank: cx.bank,
         };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;

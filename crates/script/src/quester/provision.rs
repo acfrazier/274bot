@@ -1,21 +1,29 @@
 //! Inventory-first preparation and selective capacity deposits for one Path.
-use super::bank_memo::{BankMemo, MAX_BANK_MEMO};
+//!
+//! Needs are planned from the frame's [`Stock`]: the pack, the worn table and
+//! the account's bank memory (design-bank-snapshot §4 N2). An `Unknown` bank
+//! or a `Hint`-predicted shortage costs one scan trip that observes the whole
+//! bank; only a `Session`-known shortage blocks in place (§2.4).
+use super::bank_run::BankRun;
 use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
-use super::families::{self, AcquirePlan};
-use crate::bank::ops;
-use crate::bank::{Open, OpenArgs, Select, SelectArgs};
-use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
-use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
-use api::named_banks::NamedBank;
-use api::selected::FactKey;
-use api::snapshot::{ItemView, WorldTile};
+use super::families::AcquirePlan;
+use crate::bank::ops::{self, MAX_MEMO};
+use crate::native::{ActionError, NativeActions};
+use crate::native_bank::{BankAction, BankReceipt, Withdrawal};
+use api::bank_memory::Origin;
+use api::selected::{FactKey, Truth};
+use api::snapshot::ItemView;
 use api::stock::Stock;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+
+/// Whether the frame's bank memory is known (`Hint` or `Session`).
+fn bank_known(cx: &StepContext<'_, '_>) -> bool {
+    cx.tick.cx.snapshot().stock().banked_origin() != Origin::Unknown
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvisionPhase {
@@ -130,7 +138,7 @@ impl Provisioner {
             return self.poll_acquire(cx);
         }
         if plan.owns_inventory {
-            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, cx.bank.known());
+            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
@@ -182,12 +190,6 @@ impl Provisioner {
         self.bank_run.as_ref().map(|_| self.status.phase)
     }
 
-    pub(super) fn in_flight_outcome(&self) -> Option<&super::compile::StepOutcome> {
-        self.acquire_run
-            .as_ref()
-            .and_then(|run| run.in_flight_outcome())
-    }
-
     pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
         self.acquire_run.as_mut()?.take_trace_event()
     }
@@ -224,12 +226,14 @@ impl Provisioner {
         current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let snapshot = cx.tick.cx.snapshot();
+        let stock = snapshot.stock();
+        let known = stock.banked_origin() != Origin::Unknown;
         let Some(inventory) = snapshot.inventory() else {
-            self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, cx.bank.known());
+            self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, known);
             return Poll::Pending;
         };
         let Some(capacity) = snapshot.inventory_capacity() else {
-            self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, cx.bank.known());
+            self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, known);
             return Poll::Pending;
         };
         let inventory = inventory.value;
@@ -263,7 +267,7 @@ impl Provisioner {
                     .map(MissingKind::Acquire)
                     .unwrap_or(MissingKind::Optional),
             };
-            needs.require(&bank_item, target, kind, inventory, cx.bank)?;
+            needs.require(&bank_item, target, kind, Presence::Carried, &stock)?;
         }
         for need in plan.gather_tool_needs.iter() {
             let Some(stats) = snapshot.stats() else {
@@ -291,7 +295,7 @@ impl Provisioner {
                                 continue;
                             };
                             first_tool.get_or_insert(item);
-                            if cx.bank.known() && cx.bank.count(candidate.item).unwrap_or(0) > 0 {
+                            if stock.bank_has(candidate.item, 1) == Truth::True {
                                 banked_tool = Some(item);
                                 break;
                             }
@@ -306,13 +310,9 @@ impl Provisioner {
             if ready {
                 continue;
             }
-            let candidate = if cx.bank.known() {
-                banked_tool
-            } else {
-                first_tool
-            };
+            let candidate = if known { banked_tool } else { first_tool };
             if let Some(item) = candidate {
-                needs.require(item, 1, MissingKind::Optional, inventory, cx.bank)?;
+                needs.require(item, 1, MissingKind::Optional, Presence::Carried, &stock)?;
             }
         }
 
@@ -327,7 +327,9 @@ impl Provisioner {
         let safe_slots = safe_deposit_rows(inventory, &plan.base_spillover_keep) as i32;
 
         // Optional floats can be deferred, so account for the active recipe
-        // before admitting them to the withdrawal plan.
+        // before admitting them to the withdrawal plan. The fit is exact once
+        // the bank is known; an `Unknown` bank admits the need so the scan
+        // learns it (design-bank-snapshot §4 F2).
         if plan.coin_float <= 0 {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
@@ -335,12 +337,12 @@ impl Provisioner {
                 if ops::count_id(inventory, coin.item.id) >= coin.qty {
                     self.set_coin_drawn(true);
                 } else {
-                    let fits = !cx.bank.known() || {
+                    let fits = stock.banked(coin.item.id).is_none_or(|banked| {
                         let incoming = Stock::incoming_slots(
                             ops::count_id(inventory, coin.item.id),
                             coin.qty,
                             coin.stackable,
-                            cx.bank.count(coin.item.id).unwrap_or(0),
+                            banked,
                         );
                         let active_need =
                             needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
@@ -355,14 +357,14 @@ impl Provisioner {
                             <= capacity
                                 .saturating_add(safe_slots)
                                 .saturating_sub(already_planned)
-                    };
+                    });
                     if fits {
                         needs.require(
                             &coin.item,
                             coin.qty,
                             MissingKind::Optional,
-                            inventory,
-                            cx.bank,
+                            Presence::Held,
+                            &stock,
                         )?;
                     }
                 }
@@ -378,12 +380,12 @@ impl Provisioner {
                 if row.qty <= 0 || ops::count_id(inventory, row.item.id) >= row.qty {
                     self.set_carry_latch(row.latch_index);
                 } else {
-                    let fits = !cx.bank.known() || {
+                    let fits = stock.banked(row.item.id).is_none_or(|banked| {
                         let incoming = Stock::incoming_slots(
                             ops::count_id(inventory, row.item.id),
                             row.qty,
                             row.stackable,
-                            cx.bank.count(row.item.id).unwrap_or(0),
+                            banked,
                         );
                         let active_need =
                             needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
@@ -398,14 +400,14 @@ impl Provisioner {
                             <= capacity
                                 .saturating_add(safe_slots)
                                 .saturating_sub(already_planned)
-                    };
+                    });
                     if fits {
                         needs.require(
                             &row.item,
                             row.qty,
                             MissingKind::Optional,
-                            inventory,
-                            cx.bank,
+                            Presence::Held,
+                            &stock,
                         )?;
                     }
                 }
@@ -418,8 +420,8 @@ impl Provisioner {
                     &input.item,
                     input.qty,
                     MissingKind::Optional,
-                    inventory,
-                    cx.bank,
+                    Presence::Held,
+                    &stock,
                 )?;
             }
         }
@@ -432,14 +434,9 @@ impl Provisioner {
             let target = i32::try_from(item.qty).map_err(|_| {
                 ActionError::Unavailable(Arc::from("compiled item quantity overflow"))
             })?;
-            if cx.bank.known() {
+            if let Some(banked) = stock.banked(item.id) {
                 let pack = ops::count_id(inventory, item.id);
-                let incoming = Stock::incoming_slots(
-                    pack,
-                    target,
-                    item.stackable,
-                    cx.bank.count(item.id).unwrap_or(0),
-                );
+                let incoming = Stock::incoming_slots(pack, target, item.stackable, banked);
                 let immediate = {
                     let active_need = needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
                     planned_required_slots(plan, &needs, inventory, active_need, active_recipe)
@@ -461,20 +458,25 @@ impl Provisioner {
                 },
                 target,
                 MissingKind::Optional,
-                inventory,
-                cx.bank,
+                Presence::Carried,
+                &stock,
             )?;
         }
-        if let Some(unknown) = needs.unknown.as_ref() {
+        if let Some(scan) = needs.scan() {
+            // One trip that observes the whole bank (design-bank-snapshot
+            // §2.4): the `Unknown` bank learns, a `Hint` shortage is verified.
+            // The next poll plans from `Session` rows at the open bank.
+            let item = Arc::clone(&scan.item);
+            let (need, pack, bank) = (scan.need, scan.pack, scan.bank);
             self.start_bank(
                 cx,
                 plan,
                 BankAction::Scan,
                 ProvisionPhase::Scanning,
-                Some(Arc::clone(&unknown.item)),
-                unknown.need,
-                unknown.pack,
-                None,
+                Some(item),
+                need,
+                pack,
+                bank,
             );
             return Poll::Pending;
         }
@@ -503,7 +505,7 @@ impl Provisioner {
                     deficit,
                     safe_slots,
                     None,
-                    cx.bank.known(),
+                    bank_known(cx),
                 );
                 return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
             }
@@ -589,7 +591,7 @@ impl Provisioner {
             }
         }
 
-        self.set_status(ProvisionPhase::Ready, None, 0, 0, None, cx.bank.known());
+        self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
         Poll::Ready(Ok(ProvisionEvent::Ready))
     }
 
@@ -666,14 +668,15 @@ impl Provisioner {
         pack: i32,
         bank: Option<i32>,
     ) {
-        let memo_ids = Arc::clone(&plan.memo_ids);
-        self.bank_run = Some(if plan.bank_required {
-            BankRun::new_with_required(plan.bank, true, action, memo_ids, cx)
-        } else {
-            BankRun::new(plan.bank, action, memo_ids, cx)
-        });
+        self.bank_run = Some(BankRun::new(
+            plan.bank,
+            plan.bank_required,
+            Arc::from([action]),
+            false,
+            cx,
+        ));
         self.attempts = self.attempts.saturating_add(1);
-        self.set_status(phase, item, need, pack, bank, cx.bank.known());
+        self.set_status(phase, item, need, pack, bank, bank_known(cx));
     }
 
     fn set_coin_drawn(&mut self, drawn: bool) {
@@ -737,11 +740,24 @@ enum MissingKind {
     Optional,
 }
 
+/// What counts as already present for one need (design-bank-snapshot §2.3
+/// rule 2): kit and quest items you may be wearing, or pack-only consumables.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Presence {
+    Carried,
+    Held,
+}
+
 struct Needs {
-    withdrawals: [Option<Withdrawal>; MAX_BANK_MEMO],
+    withdrawals: [Option<Withdrawal>; MAX_MEMO],
     withdrawal_count: usize,
     first_withdrawal: Option<Need>,
+    /// A need the `Unknown` bank cannot answer: one scan learns it.
     unknown: Option<Need>,
+    /// A need the `Hint` predicts short: one verifying scan (§2.4), after
+    /// which the plan is rebuilt from `Session` rows at the open bank.
+    hint_short: Option<Need>,
+    /// A `Session`-known shortage of a required item: final, in place.
     blocked: Option<Need>,
     acquire: Option<RecipeNeed>,
 }
@@ -753,9 +769,15 @@ impl Needs {
             withdrawal_count: 0,
             first_withdrawal: None,
             unknown: None,
+            hint_short: None,
             blocked: None,
             acquire: None,
         }
+    }
+
+    /// The need that sends the provisioner to look at the bank, if any.
+    fn scan(&self) -> Option<&Need> {
+        self.unknown.as_ref().or(self.hint_short.as_ref())
     }
 
     fn require(
@@ -763,41 +785,46 @@ impl Needs {
         item: &crate::native_bank::BankItem,
         target: i32,
         kind: MissingKind,
-        inventory: &[ItemView],
-        memo: &BankMemo,
+        presence: Presence,
+        stock: &Stock<'_>,
     ) -> Result<(), ActionError> {
         if target <= 0 {
             return Ok(());
         }
-        let pack = ops::count_id(inventory, item.id);
-        if pack >= target {
+        // The pack page is posted here (`poll_prepare` waits for it); an
+        // unposted worn page counts as nothing worn, which only ever
+        // withdraws again, never skips.
+        let held = stock.held(item.id).unwrap_or(0);
+        let present = match presence {
+            Presence::Carried => held.saturating_add(stock.worn(item.id).unwrap_or(0)),
+            Presence::Held => held,
+        };
+        if present >= target {
             return Ok(());
         }
-        let need = Need {
-            id: item.id,
-            item: Arc::clone(&item.name),
-            need: target,
-            pack,
-            bank: None,
-        };
-        if !memo.known() {
+        let Some(banked) = stock.banked(item.id) else {
             if self.unknown.is_none() {
-                self.unknown = Some(need);
+                self.unknown = Some(Need {
+                    id: item.id,
+                    item: Arc::clone(&item.name),
+                    need: target,
+                    pack: present,
+                    bank: None,
+                });
             }
             return Ok(());
-        }
-
-        let banked = memo.count(item.id).unwrap_or(0).max(0);
-        let short = target.saturating_sub(pack);
+        };
+        let banked = banked.max(0);
+        let short = target.saturating_sub(present);
         let take = short.min(banked);
         if take > 0 {
-            self.add_withdrawal(item, pack.saturating_add(take))?;
+            self.add_withdrawal(item, held.saturating_add(take))?;
             if self.first_withdrawal.is_none() {
                 self.first_withdrawal = Some(Need {
                     id: item.id,
                     item: Arc::clone(&item.name),
                     need: target,
-                    pack,
+                    pack: present,
                     bank: Some(banked),
                 });
             }
@@ -809,9 +836,16 @@ impl Needs {
             id: item.id,
             item: Arc::clone(&item.name),
             need: target,
-            pack,
+            pack: present,
             bank: Some(banked),
         };
+        if stock.banked_origin() == Origin::Hint {
+            // Advisory: the one verifying trip, whatever the need's kind.
+            if self.hint_short.is_none() {
+                self.hint_short = Some(missing);
+            }
+            return Ok(());
+        }
         match kind {
             MissingKind::Required => {
                 if self.blocked.is_none() {
@@ -846,9 +880,9 @@ impl Needs {
             existing.target = existing.target.max(target);
             return Ok(());
         }
-        if self.withdrawal_count == MAX_BANK_MEMO {
+        if self.withdrawal_count == MAX_MEMO {
             return Err(ActionError::Unavailable(Arc::from(
-                "provision withdrawal exceeds active bank memo",
+                "provision withdrawal exceeds the bank batch",
             )));
         }
         self.withdrawals[self.withdrawal_count] = Some(Withdrawal {
@@ -859,254 +893,6 @@ impl Needs {
         self.withdrawal_count += 1;
         Ok(())
     }
-}
-
-struct BankRun {
-    bank: Option<NamedBank>,
-    explicit: Option<Arc<str>>,
-    required_bank_missing: bool,
-    selection: Option<ActionHandle<Select>>,
-    picked: bool,
-    access: Option<Arc<crate::native_bank::BankStandAccess>>,
-    target: Option<WorldTile>,
-    walk: Option<ActionHandle<Walk>>,
-    walk_started: bool,
-    opening: Option<ActionHandle<Open>>,
-    open_started: bool,
-    machine: Option<ActionHandle<BankMachine>>,
-    action: BankAction,
-    memo_ids: Arc<[i32]>,
-}
-
-impl BankRun {
-    fn new(
-        path_bank: Option<NamedBank>,
-        action: BankAction,
-        memo_ids: Arc<[i32]>,
-        cx: &StepContext<'_, '_>,
-    ) -> Self {
-        Self::new_with_required(path_bank, false, action, memo_ids, cx)
-    }
-
-    fn new_with_required(
-        path_bank: Option<NamedBank>,
-        bank_required: bool,
-        action: BankAction,
-        memo_ids: Arc<[i32]>,
-        cx: &StepContext<'_, '_>,
-    ) -> Self {
-        let already_open = cx
-            .tick
-            .cx
-            .snapshot()
-            .bank_session()
-            .is_some_and(|session| session.value.open);
-        let already_open_for_optional = already_open && !bank_required;
-        let explicit: Option<Arc<str>> = if bank_required {
-            path_bank.and_then(|wanted| {
-                cx.banks
-                    .banks()
-                    .iter()
-                    .find(|candidate| candidate.tile == wanted.tile)
-                    .map(|candidate| Arc::from(candidate.name))
-            })
-        } else {
-            None
-        };
-        let required_bank_missing = bank_required && explicit.is_none();
-        Self {
-            bank: if already_open_for_optional {
-                path_bank
-            } else {
-                None
-            },
-            explicit,
-            required_bank_missing,
-            selection: None,
-            picked: already_open_for_optional,
-            access: None,
-            target: None,
-            walk: None,
-            walk_started: false,
-            opening: None,
-            open_started: false,
-            machine: None,
-            action,
-            memo_ids,
-        }
-    }
-}
-impl BankRun {
-    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<BankReceipt, ActionError>> {
-        if self.required_bank_missing {
-            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                "required bank is not in the bank catalog",
-            ))));
-        }
-        if !self.picked {
-            if let Some(handle) = self.selection.as_ref() {
-                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(selected)) => {
-                        self.selection = None;
-                        if selected.kind == crate::native_bank::PickKind::NoCandidate {
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "no eligible bank",
-                            ))));
-                        }
-                        let Some(access) = selected.access else {
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "selected bank has no access stand",
-                            ))));
-                        };
-                        let Some(bank) = cx
-                            .banks
-                            .banks()
-                            .get(usize::from(selected.bank_index))
-                            .copied()
-                        else {
-                            return Poll::Ready(Err(ActionError::Stale));
-                        };
-                        self.bank = Some(bank);
-                        self.target = Some(selected.access_tile);
-                        self.access = Some(access);
-                        self.picked = true;
-                    }
-                }
-            }
-            if !self.picked {
-                let Some(from) = cx.tick.cx.snapshot().here() else {
-                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                        "player position unavailable for bank selection",
-                    ))));
-                };
-                self.selection = Some(
-                    match cx.tick.actions.begin::<Select>(
-                        SelectArgs {
-                            facts: Arc::clone(cx.banks),
-                            from: from.value,
-                            preferences: api::named_banks::BankPreferences::default(),
-                            options: WalkOptions::default(),
-                            explicit: self.explicit.clone(),
-                        },
-                        &mut cx.tick.cx,
-                    ) {
-                        Ok(handle) => handle,
-                        Err(error) => return Poll::Ready(Err(error)),
-                    },
-                );
-                return Poll::Pending;
-            }
-        }
-
-        if let Some(handle) = self.walk.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    if let Err(error) = walk_evidence(receipt) {
-                        return Poll::Ready(Err(error));
-                    }
-                    self.walk = None;
-                }
-            }
-        }
-        if !self.walk_started {
-            self.walk_started = true;
-            if let Some(target) = self.target {
-                let near = cx
-                    .tick
-                    .cx
-                    .snapshot()
-                    .here()
-                    .is_some_and(|here| families::reach::within(here.value, target, 0));
-                if !near {
-                    self.walk = Some(
-                        match cx.tick.actions.begin::<Walk>(
-                            families::reach::walk_request(target, 0, None, cx.required_after),
-                            &mut cx.tick.cx,
-                        ) {
-                            Ok(handle) => handle,
-                            Err(error) => return Poll::Ready(Err(error)),
-                        },
-                    );
-                    return Poll::Pending;
-                }
-            }
-        }
-
-        if let Some(handle) = self.opening.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.opening = None,
-            }
-        }
-        if !self.open_started {
-            if let Some(access) = self.access.as_ref() {
-                self.opening = Some(
-                    match cx.tick.actions.begin::<Open>(
-                        OpenArgs {
-                            access: Arc::clone(access),
-                        },
-                        &mut cx.tick.cx,
-                    ) {
-                        Ok(handle) => handle,
-                        Err(error) => return Poll::Ready(Err(error)),
-                    },
-                );
-                self.open_started = true;
-                return Poll::Pending;
-            }
-            self.open_started = true;
-        }
-
-        if let Some(handle) = self.machine.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    self.machine = None;
-                    return Poll::Ready(Ok(receipt));
-                }
-            }
-        }
-        self.machine = Some(
-            match cx.tick.actions.begin::<BankMachine>(
-                BankRequest {
-                    bank: self.bank,
-                    action: self.action.clone(),
-                    memo_ids: Arc::clone(&self.memo_ids),
-                    partial_ok: false,
-                },
-                &mut cx.tick.cx,
-            ) {
-                Ok(handle) => handle,
-                Err(error) => return Poll::Ready(Err(error)),
-            },
-        );
-        Poll::Pending
-    }
-
-    fn cancel(&mut self, actions: &mut NativeActions) {
-        if let Some(handle) = self.selection.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.walk.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.opening.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.machine.take() {
-            actions.cancel(handle);
-        }
-    }
-}
-
-fn walk_evidence(receipt: crate::native::WalkReceipt) -> Result<(), ActionError> {
-    receipt.into_arrival().map(|_| ())
 }
 
 /// Index of the quest's current stage in compiled sequence order.
@@ -1360,12 +1146,14 @@ mod tests {
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
     use crate::quester::compile::{self, CompiledQuestItem};
-    use crate::quester::families::tests::{def, local_player, with_tick};
+    use crate::quester::families::tests::{def, local_player, with_tick, with_tick_bank};
+    use api::bank_memory::{BankMemory, Origin};
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_facts::QuestCatalog;
     use api::selected::{ClientRevision, FactKey};
     use api::snapshot::{
-        GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView, WorldStateView,
+        GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
+        WorldStateView, WorldTile,
     };
     use std::collections::HashMap;
 
@@ -1409,10 +1197,12 @@ mod tests {
 
     #[test]
     fn provision_walk_requires_arrival_and_retains_refusal_detail() {
-        let result = walk_evidence(walk_receipt(
+        let result = walk_receipt(
             crate::native::WalkEnd::RouteEnded,
             Some(Arc::from("route stopped short")),
-        ));
+        )
+        .into_arrival()
+        .map(|_| ());
         assert!(matches!(
             result,
             Err(ActionError::Blocked(detail)) if detail.as_ref() == "route stopped short"
@@ -1425,10 +1215,12 @@ mod tests {
             Arc::from([api::selected::QuestGate::Complete(FactKey::new(
                 "provision-gate",
             ))]);
-        let error = walk_evidence(walk_receipt(
+        let error = walk_receipt(
             crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
             None,
-        ))
+        )
+        .into_arrival()
+        .map(|_| ())
         .unwrap_err();
         assert_eq!(
             format!("{error:?}"),
@@ -1440,7 +1232,9 @@ mod tests {
     #[test]
     fn provision_walk_preserves_manual_cancellation() {
         assert_eq!(
-            walk_evidence(walk_receipt(crate::native::WalkEnd::UserInput, None)),
+            walk_receipt(crate::native::WalkEnd::UserInput, None)
+                .into_arrival()
+                .map(|_| ()),
             Err(ActionError::UserInput)
         );
     }
@@ -1466,7 +1260,6 @@ mod tests {
 
     fn provisioning(
         items: Vec<CompiledQuestItem>,
-        memo_ids: Vec<i32>,
         bank: Option<NamedBank>,
     ) -> CompiledProvisioning {
         let keep: Vec<_> = items.iter().map(|item| item.id).collect();
@@ -1485,7 +1278,6 @@ mod tests {
             loadout_carry: HashMap::new(),
             base_spillover_keep: Arc::from(keep),
             recipes: HashMap::new(),
-            memo_ids: Arc::from(memo_ids),
         }
     }
 
@@ -1497,18 +1289,17 @@ mod tests {
         tick: u64,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
-        memo: &BankMemo,
+        memo: &BankMemory,
         banks: &Arc<api::named_banks::NamedBankFacts>,
         quests: &QuestCatalog,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
-        with_tick(snapshot, ledger, tick, |native| {
+        with_tick_bank(snapshot, Some(memo), ledger, tick, |native| {
             let required_after = native.cx.evidence();
             let mut cx = StepContext {
                 tick: native,
                 quests,
                 progress: &[],
                 required_after,
-                bank: memo,
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
@@ -1525,18 +1316,17 @@ mod tests {
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
         stage: Option<&FactKey>,
-        memo: &BankMemo,
+        memo: &BankMemory,
         banks: &Arc<api::named_banks::NamedBankFacts>,
         quests: &QuestCatalog,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
-        with_tick(snapshot, ledger, tick, |native| {
+        with_tick_bank(snapshot, Some(memo), ledger, tick, |native| {
             let required_after = native.cx.evidence();
             let mut cx = StepContext {
                 tick: native,
                 quests,
                 progress: &[],
                 required_after,
-                bank: memo,
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
@@ -1561,7 +1351,7 @@ mod tests {
             Some("acquire:flour"),
         );
         flour.stackable = true;
-        let plan = provisioning(vec![flour], vec![100, 101, 102], None);
+        let plan = provisioning(vec![flour], None);
         let recipe = CompiledAcquireRecipe {
             steps: Arc::from(Vec::new()),
             peak_items: Arc::from([
@@ -1635,7 +1425,6 @@ mod tests {
                 CompiledItemKind::Acquirable,
                 Some("acquire:milk"),
             )],
-            vec![301, 302, 303],
             None,
         );
         let bucket_input = crate::quester::compile::CompiledRecipeItem {
@@ -1743,7 +1532,6 @@ mod tests {
                 CompiledItemKind::Acquirable,
                 None,
             )],
-            vec![401],
             None,
         );
         assert_eq!(
@@ -1753,13 +1541,8 @@ mod tests {
         );
     }
 
-    fn known_empty(id: i32) -> BankMemo {
-        let mut memo = BankMemo::default();
-        memo.update(&BankReceipt {
-            counts: vec![crate::native_bank::BankCount { id, count: 0 }],
-            complete: true,
-        });
-        memo
+    fn known_empty(_id: i32) -> BankMemory {
+        BankMemory::seeded(&[], Origin::Session)
     }
 
     fn tile(x: i32, z: i32) -> WorldTile {
@@ -1778,17 +1561,16 @@ mod tests {
         ledger: &mut Option<Box<ledger::Ledger>>,
         banks: &Arc<NamedBankFacts>,
     ) -> Result<BankPickRequest, ActionError> {
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         let quests = quest_catalog();
         for tick in 2..=5 {
-            let result = with_tick(snapshot, ledger, tick, |native| {
+            let result = with_tick_bank(snapshot, Some(&memo), ledger, tick, |native| {
                 let required_after = native.cx.evidence();
                 let mut cx = StepContext {
                     tick: native,
                     quests: &quests,
                     progress: &[],
                     required_after,
-                    bank: &memo,
                     banks,
                     choices: &crate::quester::choices::QuestChoices::default(),
                 };
@@ -1832,22 +1614,22 @@ mod tests {
             let snapshot = bank_snapshot();
             let mut ledger = None;
             let quests = quest_catalog();
-            let memo = BankMemo::default();
-            let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+            let memo = BankMemory::default();
+            let mut run = with_tick_bank(&snapshot, Some(&memo), &mut ledger, 1, |native| {
                 let required_after = native.cx.evidence();
                 let cx = StepContext {
                     tick: native,
                     quests: &quests,
                     progress: &[],
                     required_after,
-                    bank: &memo,
                     banks: &banks,
                     choices: &crate::quester::choices::QuestChoices::default(),
                 };
                 BankRun::new(
                     Some(NamedBank::new("Path bank", authored)),
-                    BankAction::Scan,
-                    Arc::from([]),
+                    false,
+                    Arc::from([BankAction::Scan]),
+                    false,
                     &cx,
                 )
             });
@@ -1869,23 +1651,22 @@ mod tests {
         let snapshot = bank_snapshot();
         let mut ledger = None;
         let quests = quest_catalog();
-        let memo = BankMemo::default();
-        let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+        let memo = BankMemory::default();
+        let mut run = with_tick_bank(&snapshot, Some(&memo), &mut ledger, 1, |native| {
             let required_after = native.cx.evidence();
             let cx = StepContext {
                 tick: native,
                 quests: &quests,
                 progress: &[],
                 required_after,
-                bank: &memo,
                 banks: &banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            BankRun::new_with_required(
+            BankRun::new(
                 Some(NamedBank::new("Path bank", draynor)),
                 true,
-                BankAction::Scan,
-                Arc::from([]),
+                Arc::from([BankAction::Scan]),
+                false,
                 &cx,
             )
         });
@@ -1894,22 +1675,21 @@ mod tests {
         let mut open_snapshot = bank_snapshot();
         open_snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
         let mut ledger = None;
-        let mut run = with_tick(&open_snapshot, &mut ledger, 1, |native| {
+        let mut run = with_tick_bank(&open_snapshot, Some(&memo), &mut ledger, 1, |native| {
             let required_after = native.cx.evidence();
             let cx = StepContext {
                 tick: native,
                 quests: &quests,
                 progress: &[],
                 required_after,
-                bank: &memo,
                 banks: &banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            BankRun::new_with_required(
+            BankRun::new(
                 Some(NamedBank::new("Path bank", draynor)),
                 true,
-                BankAction::Scan,
-                Arc::from([]),
+                Arc::from([BankAction::Scan]),
+                false,
                 &cx,
             )
         });
@@ -1918,22 +1698,21 @@ mod tests {
 
         let unmatched = tile(3200, 3200);
         let mut ledger = None;
-        let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+        let mut run = with_tick_bank(&snapshot, Some(&memo), &mut ledger, 1, |native| {
             let required_after = native.cx.evidence();
             let cx = StepContext {
                 tick: native,
                 quests: &quests,
                 progress: &[],
                 required_after,
-                bank: &memo,
                 banks: &banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            BankRun::new_with_required(
+            BankRun::new(
                 Some(NamedBank::new("Path bank", unmatched)),
                 true,
-                BankAction::Scan,
-                Arc::from([]),
+                Arc::from([BankAction::Scan]),
+                false,
                 &cx,
             )
         });
@@ -1957,7 +1736,6 @@ mod tests {
                 CompiledItemKind::MustHave,
                 None,
             )],
-            vec![42],
             None,
         );
         let snapshot = ready_snapshot(vec![item_view(
@@ -1968,7 +1746,7 @@ mod tests {
         )]);
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let quests = quest_catalog();
 
@@ -1992,7 +1770,7 @@ mod tests {
 
     #[test]
     fn missing_preserved_tool_is_not_an_implicit_must_have_requirement() {
-        let mut plan = provisioning(Vec::new(), vec![42], None);
+        let mut plan = provisioning(Vec::new(), None);
         plan.tools = Arc::from([crate::native_bank::BankItem {
             id: 42,
             name: Arc::from("Pot"),
@@ -2000,7 +1778,7 @@ mod tests {
         let snapshot = ready_snapshot(Vec::new());
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let quests = quest_catalog();
         assert!(matches!(
@@ -2051,19 +1829,7 @@ mod tests {
         assert_eq!(path.provisioning.gather_tool_needs.len(), 1);
         assert!(path.provisioning.tools.iter().any(|tool| tool.id == axe_id));
 
-        let mut memo = BankMemo::default();
-        memo.update(&BankReceipt {
-            counts: path
-                .provisioning
-                .memo_ids
-                .iter()
-                .map(|&id| crate::native_bank::BankCount {
-                    id,
-                    count: if id == axe_id { 1 } else { 0 },
-                })
-                .collect(),
-            complete: true,
-        });
+        let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut snapshot = ready_snapshot(Vec::new());
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_stats(vec![StatView {
@@ -2093,14 +1859,17 @@ mod tests {
             &quests,
         )
         .is_pending());
-        let Some(crate::native_bank::BankAction::WithdrawTo { withdrawals }) =
-            provisioner.bank_run.as_ref().map(|run| &run.action)
-        else {
-            panic!("gather tool did not enter the Quester bank withdrawal path");
-        };
-        assert!(withdrawals
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Withdrawing);
+        let tool = path
+            .provisioning
+            .tools
             .iter()
-            .any(|withdrawal| withdrawal.id == axe_id && withdrawal.target == 1));
+            .find(|tool| tool.id == axe_id)
+            .expect("bronze axe gather tool");
+        let status = provisioner.status();
+        assert_eq!(status.item, Some(tool.name.as_ref()));
+        assert_eq!(status.need, 1);
+        assert_eq!(status.bank, Some(1));
     }
 
     #[test]
@@ -2113,7 +1882,6 @@ mod tests {
                 CompiledItemKind::Acquirable,
                 None,
             )],
-            vec![42],
             None,
         );
         let snapshot = ready_snapshot(Vec::new());
@@ -2149,7 +1917,6 @@ mod tests {
                 CompiledItemKind::MustHave,
                 None,
             )],
-            vec![42],
             None,
         );
         let mut snapshot = ready_snapshot(Vec::new());
@@ -2160,7 +1927,7 @@ mod tests {
         }));
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
             NamedBank::new(
                 "Test bank",
@@ -2213,7 +1980,6 @@ mod tests {
                 CompiledItemKind::MustHave,
                 None,
             )],
-            vec![42],
             None,
         );
         let snapshot = ready_snapshot(Vec::new());
@@ -2251,7 +2017,6 @@ mod tests {
                 CompiledItemKind::Acquirable,
                 Some("acquire:token"),
             )],
-            vec![42],
             None,
         );
         plan.recipes.insert(
@@ -2308,7 +2073,7 @@ mod tests {
             id: 42,
             name: Arc::from("Food"),
         };
-        let mut plan = provisioning(Vec::new(), vec![10, 42], None);
+        let mut plan = provisioning(Vec::new(), None);
         plan.coin_float = 100;
         plan.coin = Some(super::super::compile::CompiledCarry {
             item: coin,
@@ -2378,7 +2143,7 @@ mod tests {
     #[test]
     fn r1_missing_coin_and_carry_floats_scan_unknown_bank_but_held_floats_do_not() {
         for (coin_qty, carry_qty) in [(100, 0), (0, 3), (100, 3)] {
-            let mut plan = provisioning(Vec::new(), vec![10, 42], None);
+            let mut plan = provisioning(Vec::new(), None);
             plan.coin_float = coin_qty;
             plan.coin = Some(super::super::compile::CompiledCarry {
                 item: crate::native_bank::BankItem {
@@ -2412,7 +2177,7 @@ mod tests {
                 });
                 let mut provisioner = Provisioner::new();
                 let mut ledger = None;
-                let memo = BankMemo::default();
+                let memo = BankMemory::default();
                 let banks = Arc::new(NamedBankFacts::empty());
                 let quests = quest_catalog();
                 let result = poll_once(
@@ -2439,7 +2204,7 @@ mod tests {
 
     #[test]
     fn owns_inventory_skips_prepare() {
-        let mut plan = provisioning(Vec::new(), Vec::new(), None);
+        let mut plan = provisioning(Vec::new(), None);
         plan.owns_inventory = true;
         let snapshot = ready_snapshot(vec![item_view(
             9,
@@ -2449,7 +2214,7 @@ mod tests {
         )]);
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let quests = quest_catalog();
 
@@ -2481,7 +2246,7 @@ mod tests {
         );
         item.from_stage = Some(FactKey::new("quest:1"));
         item.from_stage_index = Some(1);
-        let mut plan = provisioning(vec![item], vec![42], None);
+        let mut plan = provisioning(vec![item], None);
         plan.stages = Arc::from(vec![FactKey::new("quest:0"), FactKey::new("quest:1")]);
         plan.recipes.insert(
             Arc::from("acquire:token"),
@@ -2502,7 +2267,7 @@ mod tests {
         for stage in [None, Some(&early)] {
             let mut provisioner = Provisioner::new();
             let mut ledger = None;
-            let memo = BankMemo::default();
+            let memo = BankMemory::default();
             assert!(
                 matches!(
                     poll_once_at(
@@ -2527,7 +2292,7 @@ mod tests {
         // At the gated stage the missing item scans the Unknown bank.
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = BankMemo::default();
+        let memo = BankMemory::default();
         assert!(poll_once_at(
             &mut provisioner,
             &snapshot,
@@ -2561,5 +2326,537 @@ mod tests {
         )
         .is_pending());
         assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
+    }
+
+    /// A fixture bank the provisioner can open offline: the player stands on
+    /// the booth tile and the booth loc is posted, so a trip needs no walk.
+    fn openable_bank_fixture() -> (GameSnapshot, NamedBank, Arc<NamedBankFacts>) {
+        let stand = tile(3210, 3210);
+        let bank = NamedBank::new("Test bank", stand);
+        let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(vec![LocView {
+            id: 2213,
+            name: Some("Bank booth".into()),
+            actions: vec![Some("Use-quickly".into())],
+            tile: stand,
+            distance: 0,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer: LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        (snapshot, bank, banks)
+    }
+
+    fn bank_row(id: i32, name: &str, count: i32) -> ItemView {
+        ItemView {
+            def: def(id, name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Component,
+            slot: 0,
+            count,
+            actions: vec![Some("Withdraw-1".into())],
+            component_id: 7,
+        }
+    }
+
+    fn complete_bank_pick(
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        bank: NamedBank,
+        stand: WorldTile,
+        tick: u64,
+    ) {
+        let ledger = ledger.as_mut().expect("bank trip queued a BankPick");
+        let action = ledger.outbox.remove(0);
+        let authority = action.authority();
+        ledger.complete_bank_pick(
+            &authority,
+            crate::bank::BankPickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                selected: crate::bank::SelectedBank {
+                    bank_index: 0,
+                    access_tile: stand,
+                    kind: crate::bank::PickKind::Reachable,
+                    access: Some(Arc::new(crate::bank::BankStandAccess {
+                        bank,
+                        stand_tile: stand,
+                        kind: crate::bank::AccessKind::Booth,
+                        stand_op: 1,
+                        name: None,
+                        choose: None,
+                    })),
+                },
+            },
+        );
+    }
+
+    fn complete_open_stand(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+        let ledger = ledger.as_mut().expect("bank trip queued an OpenStand");
+        let action = ledger.outbox.remove(0);
+        let authority = action.authority();
+        ledger.complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    /// Poll a provisioner bank trip to its receipt, completing the host side
+    /// of the pick and the open the way `BankSkipFixture::drive` does and
+    /// seeding `stock` as the opened bank table.
+    #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
+    fn drive_trip_to_receipt(
+        provisioner: &mut Provisioner,
+        snapshot: &mut GameSnapshot,
+        memory: &mut BankMemory,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        tick: &mut u64,
+        plan: &CompiledProvisioning,
+        banks: &Arc<NamedBankFacts>,
+        quests: &QuestCatalog,
+        bank: NamedBank,
+        stand: WorldTile,
+        stock: Option<Vec<ItemView>>,
+    ) -> BankReceipt {
+        for _ in 0..10 {
+            *tick += 1;
+            memory.track(snapshot, *tick);
+            let result = poll_once(
+                provisioner,
+                snapshot,
+                ledger,
+                *tick,
+                plan,
+                None,
+                memory,
+                banks,
+                quests,
+            );
+            let picked = ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .first()
+                    .is_some_and(|action| matches!(&action.effect, HostEffect::BankPick(_)))
+            });
+            let opening = ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(
+                        &action.effect,
+                        HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                    )
+                })
+            });
+            if picked {
+                complete_bank_pick(ledger, bank, stand, *tick);
+            } else if opening {
+                complete_open_stand(ledger, *tick);
+                snapshot.seed_bank_observation(1, *tick, stock.clone(), Vec::new());
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt))) => return receipt,
+                Poll::Ready(ready) => panic!("bank trip ended without a receipt: {ready:?}"),
+                Poll::Pending => {}
+            }
+        }
+        panic!(
+            "bank trip did not finish: phase {:?}",
+            provisioner.status().phase
+        );
+    }
+
+    #[test]
+    fn hint_shortage_costs_one_scan_then_withdraws_at_the_same_open_bank() {
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let stand = tile(3210, 3210);
+        let quests = quest_catalog();
+        let mut memory = BankMemory::seeded(&[], Origin::Hint);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+
+        // A Hint-predicted shortage is advisory: one verifying scan trip,
+        // never a block and never acquisition before the bank is seen.
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+
+        // The scan trip begins with bank selection: the run starts its
+        // `Select` on the next poll and queues the pick on the one after.
+        let mut tick = 1;
+        for _ in 0..3 {
+            tick += 1;
+            memory.track(&snapshot, tick);
+            assert!(poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            let picking = ledger.as_ref().is_some_and(|ledger| {
+                matches!(
+                    ledger.outbox.first().map(|action| &action.effect),
+                    Some(HostEffect::BankPick(_))
+                )
+            });
+            if picking {
+                break;
+            }
+        }
+        assert!(
+            ledger.as_ref().is_some_and(|ledger| {
+                matches!(
+                    ledger.outbox.first().map(|action| &action.effect),
+                    Some(HostEffect::BankPick(_))
+                )
+            }),
+            "a Scan trip begins with bank selection"
+        );
+        complete_bank_pick(&mut ledger, bank, stand, tick);
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+
+        let receipt = drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            stand,
+            Some(vec![bank_row(42, "Quest token", 1)]),
+        );
+        assert!(receipt.complete);
+        assert_eq!(memory.origin(), Origin::Session);
+        assert_eq!(memory.count(42), Some(1));
+
+        // At the now-open Session bank the need plans a withdrawal that
+        // reuses the open table: no second select, walk or open.
+        tick += 1;
+        memory.track(&snapshot, tick);
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Withdrawing);
+        assert!(
+            provisioner.bank_run.is_some(),
+            "the withdrawal runs as a bank trip at the open bank"
+        );
+        // Three more polls reach the machine's first click at the open
+        // table; a run that did not reuse the bank would have queued its
+        // `BankPick` by then (the scan trip above needed two polls to).
+        let mut first_click = None;
+        for _ in 0..3 {
+            tick += 1;
+            memory.track(&snapshot, tick);
+            let _ = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            if let Some(ledger) = ledger.as_ref() {
+                for action in &ledger.outbox {
+                    assert!(
+                        !matches!(
+                            &action.effect,
+                            HostEffect::BankPick(_)
+                                | HostEffect::Walk(_)
+                                | HostEffect::Interaction(
+                                    crate::shim::InteractReq::OpenStand { .. }
+                                )
+                        ),
+                        "the withdrawal must not start a second bank trip"
+                    );
+                    if let HostEffect::Interaction(request) = &action.effect {
+                        first_click.get_or_insert_with(|| format!("{request:?}"));
+                    }
+                }
+            }
+        }
+        let first_click = first_click.expect("the withdraw acts at the open bank");
+        assert!(
+            first_click.contains("SetNoteMode") || first_click.contains("WithdrawX"),
+            "the first effect is a bank click, not a trip: {first_click}"
+        );
+    }
+
+    #[test]
+    fn stale_hint_stock_costs_one_withdraw_trip_then_session_zero_then_acquisition() {
+        let mut plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::Acquirable,
+                Some("acquire:token"),
+            )],
+            None,
+        );
+        plan.recipes.insert(
+            Arc::from("acquire:token"),
+            CompiledAcquireRecipe {
+                steps: Arc::from(Vec::new()),
+                peak_items: Arc::from([]),
+                consumed_ids: Arc::from([]),
+            },
+        );
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let stand = tile(3210, 3210);
+        let quests = quest_catalog();
+        let mut memory = BankMemory::seeded(&[(42, 10)], Origin::Hint);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+
+        // The hint claims stock, so the need plans a withdrawal trip rather
+        // than a scan.
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Withdrawing);
+
+        let mut tick = 1;
+        for _ in 0..3 {
+            tick += 1;
+            memory.track(&snapshot, tick);
+            assert!(poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            let picking = ledger.as_ref().is_some_and(|ledger| {
+                matches!(
+                    ledger.outbox.first().map(|action| &action.effect),
+                    Some(HostEffect::BankPick(_))
+                )
+            });
+            if picking {
+                break;
+            }
+        }
+        assert!(
+            ledger.as_ref().is_some_and(|ledger| {
+                matches!(
+                    ledger.outbox.first().map(|action| &action.effect),
+                    Some(HostEffect::BankPick(_))
+                )
+            }),
+            "a WithdrawTo trip begins with bank selection"
+        );
+        complete_bank_pick(&mut ledger, bank, stand, tick);
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Withdrawing);
+
+        // The bank opens empty: the withdrawal cannot cover the need, and
+        // the memory is now a Session zero.
+        let receipt = drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            stand,
+            Some(Vec::new()),
+        );
+        assert!(!receipt.complete);
+        assert_eq!(memory.origin(), Origin::Session);
+        assert_eq!(memory.count(42), Some(0));
+
+        // A Session-known shortage of an Acquirable runs its recipe: no
+        // block in place and no second bank trip.
+        tick += 1;
+        memory.track(&snapshot, tick);
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
+        assert!(
+            provisioner.bank_run.is_none(),
+            "the recipe must not start a second bank trip"
+        );
+        assert!(
+            !ledger.as_ref().is_some_and(|ledger| ledger
+                .outbox
+                .iter()
+                .any(|action| { matches!(&action.effect, HostEffect::BankPick(_)) })),
+            "the recipe must not queue bank selection"
+        );
+    }
+
+    #[test]
+    fn session_known_shortage_of_a_must_have_blocks_in_place() {
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                2,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let snapshot = ready_snapshot(Vec::new());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memory = BankMemory::seeded(&[], Origin::Session);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Blocked { item }))
+                if item.as_ref() == "Quest token x2"
+        ));
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Blocked);
+        assert!(ledger.is_none(), "a Session block queues no bank trip");
+    }
+
+    #[test]
+    fn worn_must_have_is_carried_and_not_withdrawn() {
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_equipment(vec![item_view(
+            42,
+            "Quest token",
+            1,
+            ItemContainer::Equipment,
+        )]);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memory = BankMemory::seeded(&[(42, 1)], Origin::Session);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Ready);
+        assert!(ledger.is_none(), "a worn MustHave queues no withdrawal");
     }
 }

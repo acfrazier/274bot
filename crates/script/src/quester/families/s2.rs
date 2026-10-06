@@ -1,17 +1,18 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{reach, walk_step_evidence, NoArgs};
-use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
 use crate::combat::RaisedPrayers;
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkOptions};
-use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
+use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
+use crate::quester::bank_run::BankRun;
 use crate::quester::compile::{
     CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
     StepOutcome, StepPlan, StepRun,
 };
+use api::bank_memory::Origin;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{FactKey, Knowledge, Truth};
 use api::snapshot::WorldTile;
@@ -359,7 +360,6 @@ pub(super) fn compile_bank(
     Ok(Arc::new(BankPlan {
         bank: cx.bank,
         bank_required: cx.bank_required,
-        memo_ids: Arc::from(cx.bank_items),
         actions: Arc::from(actions),
         partial_ok: args.partial_ok,
     }))
@@ -367,260 +367,68 @@ pub(super) fn compile_bank(
 
 struct BankPlan {
     bank: Option<api::named_banks::NamedBank>,
-    memo_ids: Arc<[i32]>,
     bank_required: bool,
     actions: Arc<[BankAction]>,
     partial_ok: bool,
 }
 impl StepPlan for BankPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let memo_ids = Arc::clone(&self.memo_ids);
-        let actions = Arc::clone(&self.actions);
-        let run = if self.bank_required {
-            BankRun::new_with_required(
+        // An authored scan is a request to know the bank. A known memory —
+        // `Hint` included (design-bank-snapshot §8 point 3) — already answers
+        // it, so the step completes without a trip.
+        if self
+            .actions
+            .iter()
+            .all(|action| matches!(action, BankAction::Scan))
+            && cx.tick.cx.snapshot().stock().banked_origin() != Origin::Unknown
+        {
+            return Ok(Box::new(KnownScan));
+        }
+        Ok(Box::new(BankStepRun {
+            run: BankRun::new(
                 self.bank,
-                true,
-                memo_ids,
-                actions,
+                self.bank_required,
+                Arc::clone(&self.actions),
                 self.partial_ok,
-                cx.banks,
-            )
-        } else {
-            BankRun::new(self.bank, memo_ids, actions, self.partial_ok, cx.banks)
-        };
-        Ok(Box::new(run))
+                cx,
+            ),
+        }))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_secs(12)
     }
 }
 
-struct BankRun {
-    bank: Option<api::named_banks::NamedBank>,
-    explicit: Option<Arc<str>>,
-    required_bank_missing: bool,
-    selection: Option<ActionHandle<Select>>,
-    picked: bool,
-    access: Option<Arc<BankStandAccess>>,
-    target: Option<WorldTile>,
-    memo_ids: Arc<[i32]>,
-    actions: Arc<[BankAction]>,
-    partial_ok: bool,
-    index: usize,
-    walk_started: bool,
-    walk: Option<ActionHandle<Walk>>,
-    open_started: bool,
-    opening: Option<ActionHandle<Open>>,
-    machine: Option<ActionHandle<BankMachine>>,
-    last: Option<BankReceipt>,
-}
-impl BankRun {
-    fn new(
-        bank: Option<api::named_banks::NamedBank>,
-        memo_ids: Arc<[i32]>,
-        actions: Arc<[BankAction]>,
-        partial_ok: bool,
-        facts: &api::named_banks::NamedBankFacts,
-    ) -> Self {
-        Self::new_with_required(bank, false, memo_ids, actions, partial_ok, facts)
-    }
-
-    fn new_with_required(
-        bank: Option<api::named_banks::NamedBank>,
-        bank_required: bool,
-        memo_ids: Arc<[i32]>,
-        actions: Arc<[BankAction]>,
-        partial_ok: bool,
-        facts: &api::named_banks::NamedBankFacts,
-    ) -> Self {
-        let explicit = if bank_required {
-            bank.and_then(|requested| {
-                facts
-                    .banks()
-                    .iter()
-                    .find(|candidate| candidate.tile == requested.tile)
-                    .map(|candidate| Arc::from(candidate.name))
-            })
-        } else {
-            None
-        };
-        let required_bank_missing = bank_required && explicit.is_none();
-        Self {
-            bank,
-            explicit,
-            required_bank_missing,
-            selection: None,
-            picked: false,
-            access: None,
-            target: None,
-            memo_ids,
-            actions,
-            partial_ok,
-            index: 0,
-            walk_started: false,
-            walk: None,
-            open_started: false,
-            opening: None,
-            machine: None,
-            last: None,
-        }
-    }
-}
-impl StepRun for BankRun {
+/// `bank {op: scan}` with a known memory: nothing to learn, no trip.
+struct KnownScan;
+impl StepRun for KnownScan {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.required_bank_missing {
-            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                "required bank is not in the bank catalog",
-            ))));
-        }
-        if !self.picked {
-            if let Some(handle) = self.selection.as_ref() {
-                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(selected)) => {
-                        self.selection = None;
-                        if selected.kind == PickKind::NoCandidate {
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "no eligible bank",
-                            ))));
-                        }
-                        let Some(access) = selected.access else {
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "no eligible bank",
-                            ))));
-                        };
-                        let Some(bank) = cx
-                            .banks
-                            .banks()
-                            .get(usize::from(selected.bank_index))
-                            .copied()
-                        else {
-                            return Poll::Ready(Err(ActionError::Stale));
-                        };
-                        self.bank = Some(bank);
-                        self.target = Some(selected.access_tile);
-                        self.access = Some(access);
-                        self.picked = true;
-                    }
-                }
-            }
-            if !self.picked {
-                let Some(from) = cx.tick.cx.snapshot().here() else {
-                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                        "player position unavailable for bank selection",
-                    ))));
-                };
-                self.selection = Some(cx.tick.actions.begin::<Select>(
-                    SelectArgs {
-                        facts: Arc::clone(cx.banks),
-                        from: from.value,
-                        preferences: api::named_banks::BankPreferences::default(),
-                        options: WalkOptions::default(),
-                        explicit: self.explicit.clone(),
-                    },
-                    &mut cx.tick.cx,
-                )?);
-                return Poll::Pending;
-            }
-        }
-
-        if let Some(handle) = self.walk.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
-                    self.walk = None;
-                }
-            }
-        }
-        if !self.walk_started {
-            self.walk_started = true;
-            let target = self.target.ok_or(ActionError::Stale)?;
-            let near = cx
-                .tick
-                .cx
-                .snapshot()
-                .here()
-                .is_some_and(|here| reach::within(here.value, target, 0));
-            if !near {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(target, 0, None, cx.required_after),
-                    &mut cx.tick.cx,
-                )?);
-                return Poll::Pending;
-            }
-        }
-
-        if let Some(handle) = self.opening.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.opening = None,
-            }
-        }
-        if !self.open_started {
-            if let Some(access) = self.access.as_ref() {
-                self.opening = Some(cx.tick.actions.begin::<Open>(
-                    OpenArgs {
-                        access: Arc::clone(access),
-                    },
-                    &mut cx.tick.cx,
-                )?);
-                self.open_started = true;
-                return Poll::Pending;
-            }
-        }
-
-        if let Some(handle) = self.machine.as_ref() {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    if !matches!(self.actions.get(self.index), Some(BankAction::Close)) {
-                        self.last = Some(receipt);
-                    }
-                    self.machine = None;
-                    self.index += 1;
-                }
-            }
-        }
-        if let Some(action) = self.actions.get(self.index).cloned() {
-            self.machine = Some(cx.tick.actions.begin::<BankMachine>(
-                BankRequest {
-                    bank: self.bank,
-                    action,
-                    memo_ids: Arc::clone(&self.memo_ids),
-                    partial_ok: self.partial_ok,
-                },
-                &mut cx.tick.cx,
-            )?);
-            return Poll::Pending;
-        }
-        let receipt = self
-            .last
-            .take()
-            .map(|receipt| Arc::new(receipt) as Arc<dyn FamilyReceipt>);
         Poll::Ready(Ok(StepOutcome {
             progress: None,
             evidence: cx.tick.cx.evidence(),
-            receipt,
+            receipt: Some(Arc::new(BankReceipt { complete: true }) as Arc<dyn FamilyReceipt>),
         }))
     }
+    fn cancel(&mut self, _actions: &mut NativeActions) {}
+}
+
+struct BankStepRun {
+    run: BankRun,
+}
+impl StepRun for BankStepRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        match self.run.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(receipt)) => Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: Some(Arc::new(receipt) as Arc<dyn FamilyReceipt>),
+            })),
+        }
+    }
     fn cancel(&mut self, actions: &mut NativeActions) {
-        if let Some(handle) = self.selection.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.walk.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.opening.take() {
-            actions.cancel(handle);
-        }
-        if let Some(handle) = self.machine.take() {
-            actions.cancel(handle);
-        }
+        self.run.cancel(actions);
     }
 }
 
@@ -1125,7 +933,6 @@ pub(super) fn compile_loadout(
     Ok(Arc::new(LoadoutPlan {
         bank: cx.bank,
         bank_required: cx.bank_required,
-        memo_ids: Arc::from(cx.bank_items),
         row: Arc::new(row.clone()),
         resolved: Arc::from(resolved),
         melee_family,
@@ -1140,7 +947,6 @@ pub(super) fn compile_loadout(
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
-    memo_ids: Arc<[i32]>,
     row: Arc<crate::loadouts_store::Loadout>,
     resolved: Arc<[BankItem]>,
     melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
@@ -1204,13 +1010,15 @@ impl LoadoutPlan {
                 .cloned()
                 .ok_or_else(|| ActionError::Unavailable(Arc::from("unresolved loadout item")))
         };
+        let stock = snapshot.stock();
         let mut bank_actions = Vec::new();
         let mut worn = Vec::new();
+        let mut wears = false;
         if !self.strip {
             for carry in &self.row.carry {
                 let item = resolve(&carry.item)?;
                 let qty = i32::try_from(carry.qty).unwrap_or(i32::MAX);
-                if snapshot.stock().holds(item.id, qty) != Truth::True {
+                if stock.holds(item.id, qty) != Truth::True {
                     bank_actions.push(BankAction::Withdraw { item, qty });
                 }
             }
@@ -1235,37 +1043,56 @@ impl LoadoutPlan {
                     .iter()
                     .map(|name| resolve(name))
                     .collect::<Result<Vec<_>, _>>()?;
-                if self.allow_lower_tier {
-                    bank_actions.push(BankAction::WithdrawAny {
-                        items: Arc::from(items.clone()),
-                        qty: 1,
-                    });
-                } else if snapshot.stock().wears_any(&[items[0].id]) != Truth::True
-                    && snapshot.stock().holds(items[0].id, 1) != Truth::True
-                {
-                    bank_actions.push(BankAction::Withdraw {
-                        item: items[0].clone(),
-                        qty: 1,
-                    });
+                // Tier resolution from `Stock` (design-bank-snapshot §4 F4):
+                // a legal tier already carried needs no bank action; else the
+                // strongest tier the memory banks is a plain `Withdraw`; only
+                // an `Unknown`/`Hint` bank with no banked tier falls back to
+                // `WithdrawAny` at the open table (a `Session` bank with none
+                // is refused in place by the run, D4).
+                let carried = items
+                    .iter()
+                    .any(|item| stock.has(item.id, 1) == Truth::True);
+                if !carried {
+                    wears = true;
+                    if let Some(banked) = items
+                        .iter()
+                        .find(|item| stock.bank_has(item.id, 1) == Truth::True)
+                    {
+                        bank_actions.push(BankAction::Withdraw {
+                            item: banked.clone(),
+                            qty: 1,
+                        });
+                    } else if self.allow_lower_tier {
+                        bank_actions.push(BankAction::WithdrawAny {
+                            items: Arc::from(items.clone()),
+                            qty: 1,
+                        });
+                    } else {
+                        bank_actions.push(BankAction::Withdraw {
+                            item: items[0].clone(),
+                            qty: 1,
+                        });
+                    }
                 }
                 worn.push(Arc::from(items));
             }
-            if !bank_actions.is_empty() {
+            // A wear needs the regular inventory widget, which the open bank
+            // hides; a carry-only trip leaves the bank open for the next
+            // step's run to reuse (design-bank-snapshot §4 F3).
+            if !bank_actions.is_empty() && (wears || self.exclusive) {
                 bank_actions.push(BankAction::Close);
             }
         }
         Ok(LoadoutRun {
-            bank: if bank_actions.is_empty() {
-                None
-            } else {
-                let memo_ids = Arc::clone(&self.memo_ids);
-                let actions = Arc::from(bank_actions);
-                Some(if self.bank_required {
-                    BankRun::new_with_required(self.bank, true, memo_ids, actions, false, cx.banks)
-                } else {
-                    BankRun::new(self.bank, memo_ids, actions, false, cx.banks)
-                })
-            },
+            bank: (!bank_actions.is_empty()).then(|| {
+                BankRun::new(
+                    self.bank,
+                    self.bank_required,
+                    Arc::from(bank_actions),
+                    false,
+                    cx,
+                )
+            }),
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),
             worn_index: 0,
@@ -1416,8 +1243,8 @@ impl StepRun for LoadoutRun {
             match bank.poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(outcome)) => {
-                    self.receipt = outcome.receipt;
+                Poll::Ready(Ok(receipt)) => {
+                    self.receipt = Some(Arc::new(receipt) as Arc<dyn FamilyReceipt>);
                     self.bank = None;
                 }
             }
@@ -1487,14 +1314,22 @@ pub(super) fn compile_bank_known(
     Ok(Arc::new(BankKnown))
 }
 
+/// `True` once the account's bank memory is known (`Hint` or `Session`);
+/// `Unknown` — never `False` — while it was never observed (design-bank-
+/// snapshot §6 bug 6). The runner resolves the `Unknown` with one
+/// provisioning scan, so an authored `scan` guarded by `bank_known` is
+/// skipped after the memory learns the bank.
 struct BankKnown;
 impl PredicatePlan for BankKnown {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        if cx.bank.known() {
-            Truth::True
+        if cx.cx.snapshot().stock().banked_origin() == Origin::Unknown {
+            Truth::Unknown
         } else {
-            Truth::False
+            Truth::True
         }
+    }
+    fn requires_bank(&self) -> bool {
+        true
     }
 }
 
@@ -1525,23 +1360,11 @@ struct BankHas {
 }
 impl PredicatePlan for BankHas {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
-        match cx.bank.count(self.id) {
-            Some(count) => {
-                if count >= self.qty {
-                    Truth::True
-                } else {
-                    Truth::False
-                }
-            }
-            None => Truth::Unknown,
-        }
+        cx.cx.snapshot().stock().bank_has(self.id, self.qty)
     }
 
     fn requires_bank(&self) -> bool {
         true
-    }
-    fn bank_item_ids(&self, ids: &mut Vec<i32>) {
-        ids.push(self.id);
     }
 }
 

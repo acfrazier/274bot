@@ -778,7 +778,6 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
                         required_after: cx.required_after,
                         chat_since: 0,
                         outcome: None,
-                        bank: cx.bank,
                     })
                 })
             })

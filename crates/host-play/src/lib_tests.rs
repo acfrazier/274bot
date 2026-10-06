@@ -8366,7 +8366,6 @@ fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
                                         target: self.target,
                                     }]),
                                 },
-                                memo_ids: Arc::from([]),
                                 partial_ok: false,
                             },
                             &mut tick.cx,

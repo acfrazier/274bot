@@ -14,6 +14,7 @@ use crate::native::{ActionContext, ActionError, NativeMachine, WalkOptions};
 use crate::shim::InteractReq;
 use api::named_banks::{BankOperation, BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
+use api::selected::Truth;
 use api::snapshot::{LocView, QuestListStatus, QuestStatusView, StatView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
@@ -239,20 +240,22 @@ pub enum BankAction {
 pub struct BankRequest {
     pub bank: Option<NamedBank>,
     pub action: BankAction,
-    /// Only these active-Path items enter the runner memo.
-    pub memo_ids: Arc<[i32]>,
     pub partial_ok: bool,
 }
 
+/// One protected pack row's count before a deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BankCount {
     pub id: i32,
     pub count: i32,
 }
 
+/// What a bank action settled to. The bank's rows are not carried here: the
+/// host observes the open table into the account's bank memory
+/// (design-bank-snapshot §1.3), which every reader borrows through
+/// `SnapshotView::stock()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankReceipt {
-    pub counts: Vec<BankCount>,
     pub complete: bool,
 }
 
@@ -372,11 +375,6 @@ impl NativeMachine for BankMachine {
     type Output = BankReceipt;
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        if request.memo_ids.len() > MAX_MEMO {
-            return Err(ActionError::Unavailable(Arc::from(
-                "bank memo exceeds 64 items",
-            )));
-        }
         let protected_capacity = match &request.action {
             BankAction::DepositProducts { keep, .. } | BankAction::DepositCapacity { keep, .. } => {
                 keep.len()
@@ -479,10 +477,10 @@ impl NativeMachine for BankMachine {
                 Phase::Open => {
                     if matches!(self.request.action, BankAction::Close) {
                         let Some(session) = cx.snapshot().bank_session().map(|s| s.value) else {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                            return Poll::Ready(Ok(self.receipt(true)));
                         };
                         if ops::close_begin(session.open).is_some() {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                            return Poll::Ready(Ok(self.receipt(true)));
                         }
                         let run = cx.evidence().run;
                         cx.emit(InteractReq::Close)?;
@@ -852,9 +850,9 @@ impl NativeMachine for BankMachine {
                     continue;
                 }
                 Phase::Act => match &self.request.action {
-                    BankAction::Scan => return Poll::Ready(Ok(self.receipt(cx, true))),
+                    BankAction::Scan => return Poll::Ready(Ok(self.receipt(true))),
                     BankAction::OpenStand { .. } => {
-                        return Poll::Ready(Ok(self.receipt(cx, true)));
+                        return Poll::Ready(Ok(self.receipt(true)));
                     }
                     BankAction::Withdraw { item, qty } => {
                         let Some(view) = HeldView::read(cx, item.id) else {
@@ -876,7 +874,7 @@ impl NativeMachine for BankMachine {
                             self.same_session(cx),
                         ) {
                             Progress::Complete => {
-                                return Poll::Ready(Ok(self.receipt(cx, true)));
+                                return Poll::Ready(Ok(self.receipt(true)));
                             }
                             Progress::SessionGone => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -898,21 +896,25 @@ impl NativeMachine for BankMachine {
                         // `partial_ok` takes the incomplete receipt; an unmet
                         // exact target is never reported complete.
                         return if self.request.partial_ok {
-                            Poll::Ready(Ok(self.receipt(cx, false)))
+                            Poll::Ready(Ok(self.receipt(false)))
                         } else {
                             Poll::Ready(Err(ActionError::Failed(Arc::from(reason))))
                         };
                     }
                     BankAction::WithdrawAny { items, qty } => {
                         let snapshot = cx.snapshot();
-                        let Some(inv) = snapshot.inventory() else {
+                        // A legal tier already carried — worn or held — is
+                        // the loadout satisfied; never withdraw a second one
+                        // (design-bank-snapshot §6 bug 15).
+                        let stock = snapshot.stock();
+                        if stock.pack.is_none() {
                             return Poll::Pending;
-                        };
-                        if items
-                            .iter()
-                            .any(|item| ops::count_id(inv.value, item.id) >= *qty)
-                        {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        }
+                        if items.iter().any(|item| {
+                            stock.holds(item.id, *qty) == Truth::True
+                                || stock.has(item.id, *qty) == Truth::True
+                        }) {
+                            return Poll::Ready(Ok(self.receipt(true)));
                         }
                         let Some(bank) = snapshot.bank() else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -967,7 +969,7 @@ impl NativeMachine for BankMachine {
                     }
                     BankAction::WithdrawTo { withdrawals } => {
                         let Some(withdrawal) = withdrawals.get(self.withdraw_index) else {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                            return Poll::Ready(Ok(self.receipt(true)));
                         };
                         let Some(view) = HeldView::read(cx, withdrawal.id) else {
                             return Poll::Pending;
@@ -992,7 +994,7 @@ impl NativeMachine for BankMachine {
                                 continue;
                             }
                             Progress::OverTarget => {
-                                return Poll::Ready(Ok(self.receipt(cx, false)));
+                                return Poll::Ready(Ok(self.receipt(false)));
                             }
                             Progress::SessionGone => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1009,7 +1011,7 @@ impl NativeMachine for BankMachine {
                                 ))));
                             }
                             Clicked::NoStock | Clicked::NoOp => {
-                                return Poll::Ready(Ok(self.receipt(cx, false)));
+                                return Poll::Ready(Ok(self.receipt(false)));
                             }
                         }
                     }
@@ -1037,7 +1039,7 @@ impl NativeMachine for BankMachine {
                         let side = snapshot.bank_side().map(|rows| rows.value);
                         if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
                             if self.capacity_freed >= *slots {
-                                return Poll::Ready(Ok(self.receipt(cx, true)));
+                                return Poll::Ready(Ok(self.receipt(true)));
                             }
                         }
                         let wait_done = self.view_armed && now >= self.deadline;
@@ -1074,7 +1076,7 @@ impl NativeMachine for BankMachine {
                                     }
                                     _ => true,
                                 };
-                                return Poll::Ready(Ok(self.receipt(cx, complete)));
+                                return Poll::Ready(Ok(self.receipt(complete)));
                             }
                             DepositScan::SessionGone => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1211,7 +1213,7 @@ impl NativeMachine for BankMachine {
                         cx.active_now() >= self.deadline,
                     ) {
                         CloseScan::Complete | CloseScan::AlreadyShut => {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                            return Poll::Ready(Ok(self.receipt(true)));
                         }
                         CloseScan::Waiting | CloseScan::SideHeld => return Poll::Pending,
                         CloseScan::SessionReplaced => {
@@ -1486,19 +1488,8 @@ impl BankMachine {
         )
     }
 
-    fn receipt(&self, cx: &ActionContext<'_>, complete: bool) -> BankReceipt {
-        let snapshot = cx.snapshot();
-        let bank = snapshot.bank();
-        let counts = self
-            .request
-            .memo_ids
-            .iter()
-            .map(|id| BankCount {
-                id: *id,
-                count: bank.map_or(0, |rows| ops::count_id(rows.value, *id)),
-            })
-            .collect();
-        BankReceipt { counts, complete }
+    fn receipt(&self, complete: bool) -> BankReceipt {
+        BankReceipt { complete }
     }
 }
 
@@ -1586,7 +1577,6 @@ impl NativeMachine for Open {
                 action: BankAction::OpenStand {
                     access: args.access,
                 },
-                memo_ids: Arc::from([]),
                 partial_ok: false,
             },
             cx,
@@ -1623,7 +1613,6 @@ impl NativeMachine for Deposit {
                     products: Arc::clone(&args.products),
                     keep: args.keep,
                 },
-                memo_ids: args.products,
                 partial_ok: false,
             },
             cx,
@@ -1659,7 +1648,6 @@ impl NativeMachine for Withdraw {
                 action: BankAction::WithdrawTo {
                     withdrawals: args.withdrawals,
                 },
-                memo_ids: Arc::from([]),
                 partial_ok: false,
             },
             cx,
@@ -1693,7 +1681,6 @@ impl NativeMachine for Close {
             BankRequest {
                 bank: None,
                 action: BankAction::Close,
-                memo_ids: Arc::from([]),
                 partial_ok: false,
             },
             cx,
@@ -1816,7 +1803,6 @@ mod tests {
         BankRequest {
             bank: Some(access.bank),
             action: BankAction::OpenStand { access },
-            memo_ids: Arc::from([]),
             partial_ok: false,
         }
     }
@@ -2525,7 +2511,6 @@ mod tests {
                             products: Arc::from([item_id]),
                             keep: Arc::from([]),
                         },
-                        memo_ids: Arc::from([]),
                         partial_ok: false,
                     },
                     &mut tick.cx,
@@ -2561,7 +2546,6 @@ mod tests {
                             products: Arc::from([item_id]),
                             keep: Arc::from([]),
                         },
-                        memo_ids: Arc::from([item_id]),
                         partial_ok: false,
                     },
                     &mut tick.cx,
@@ -2603,7 +2587,6 @@ mod tests {
                                 target: 2,
                             }]),
                         },
-                        memo_ids: Arc::from([item_id]),
                         partial_ok: false,
                     },
                     &mut tick.cx,
@@ -2652,13 +2635,6 @@ mod tests {
             }
         });
         assert!(receipt.complete);
-        assert_eq!(
-            receipt.counts,
-            vec![BankCount {
-                id: item_id,
-                count: 3,
-            }]
-        );
     }
 
     fn row_with(item: ItemView, actions: &[&str], slot: i32) -> ItemView {
@@ -2673,7 +2649,6 @@ mod tests {
         BankRequest {
             bank: None,
             action,
-            memo_ids: Arc::from([]),
             partial_ok,
         }
     }
