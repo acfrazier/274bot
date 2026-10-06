@@ -287,8 +287,8 @@ impl FollowRun {
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), recover an
     /// NPC reach failure within its attempt/leg bounds, retry a web only on
-    /// its content failure message, or lapse the budget. Ordinary doors still
-    /// escalate a lapsed cheap hop to the automatic troll; webs do not.
+    /// its content failure message, or lapse the budget. Swing doors recover
+    /// while the hop still has time to observe and retry the crossing.
     pub(super) fn poll_transport<D: Driver>(
         &mut self,
         d: &mut D,
@@ -346,6 +346,19 @@ impl FollowRun {
                     self.transport = Some(hop);
                 }
                 return poll;
+            }
+        }
+        if hop.approach.is_none() {
+            if let Leg::Transport { edge } = &hop.leg {
+                // A leaf can close after an already-open walk armed, or
+                // before our Open takes effect. Recover now, not after the
+                // entire crossing budget has already been spent. Scripted
+                // doors without a packed open leaf, dialogue and webs keep
+                // their own settle/proof behavior.
+                hop.troll |= edge.kind == TransportKind::Door
+                    && edge.open_loc_id.is_some()
+                    && !edge.is_slashable_web()
+                    && !drives_hop_dialogs(edge);
             }
         }
         if hop.troll {
@@ -582,6 +595,9 @@ impl FollowRun {
                             hop.approach = None;
                             if edge.kind == TransportKind::Door {
                                 hop.open_sent_tick = Some(snapshot.tick());
+                                if !edge.is_slashable_web() {
+                                    hop.tries = hop.tries.saturating_add(1);
+                                }
                             }
                             if edge.open_loc_id.is_some()
                                 && edge.kind != TransportKind::Door
@@ -975,37 +991,18 @@ impl FollowRun {
                     return Poll::Terminal(self.npc_expired(snapshot, &hop));
                 }
                 if hop.ticks_waited > self.budget {
-                    // An ordinary wall door that the closer keeps slamming
-                    // can never cross the cheap way, so escalate to the
-                    // automatic troll: re-open while closed, probe the
-                    // adjacent crossing after Open, and walk when open.
-                    // Slashable webs never enter this timer-based path; they
-                    // retry only on an observed failure line.
-                    let door_leg = matches!(
-                        &hop.leg,
-                        Leg::Transport { edge }
-                            if edge.kind == TransportKind::Door && !edge.is_slashable_web()
-                    );
-                    if door_leg && !hop.troll {
-                        hop.troll = true;
-                        // The troll arms its own probe when it sends Open.
-                        hop.open_sent_tick = None;
-                        self.transport = Some(hop);
-                        Poll::Watching
+                    let why = if hop.sent_tile == Some(here) {
+                        HopFailure::Dropped
                     } else {
-                        let why = if hop.sent_tile == Some(here) {
-                            HopFailure::Dropped
-                        } else {
-                            HopFailure::Expired
-                        };
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        Poll::Terminal(TravelOutcome::Stalled {
-                            at: here,
-                            aiming: hop.to,
-                            why,
-                            tries: hop.tries.max(1),
-                        })
-                    }
+                        HopFailure::Expired
+                    };
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    Poll::Terminal(TravelOutcome::Stalled {
+                        at: here,
+                        aiming: hop.to,
+                        why,
+                        tries: hop.tries.max(1),
+                    })
                 } else {
                     self.transport = Some(hop);
                     Poll::Watching
@@ -1015,7 +1012,6 @@ impl FollowRun {
     }
 
     /// Loc-backed approach settle: adjacency or per-arm budget expiry.
-    /// A door lapse escalates to the automatic troll.
     pub(super) fn poll_approach<D: Driver>(
         &mut self,
         d: &mut D,
@@ -1099,32 +1095,18 @@ impl FollowRun {
             None => {
                 approach.ticks_waited += 1;
                 if approach.ticks_waited > self.budget {
-                    // Preserve the existing loc/door approach behavior;
-                    // slashable webs still require their observed fail line.
-                    let door_leg = matches!(
-                        &hop.leg,
-                        Leg::Transport { edge }
-                            if edge.kind == TransportKind::Door && !edge.is_slashable_web()
-                    );
-                    if door_leg && !hop.troll {
-                        hop.troll = true;
-                        hop.approach = None;
-                        hop.ticks_waited = approach.ticks_waited;
-                        Poll::Watching
+                    let why = if hop.sent_tile == Some(here) {
+                        HopFailure::Dropped
                     } else {
-                        let why = if hop.sent_tile == Some(here) {
-                            HopFailure::Dropped
-                        } else {
-                            HopFailure::Expired
-                        };
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        Poll::Terminal(TravelOutcome::Stalled {
-                            at: here,
-                            aiming: approach.tile,
-                            why,
-                            tries: hop.tries.max(1),
-                        })
-                    }
+                        HopFailure::Expired
+                    };
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    Poll::Terminal(TravelOutcome::Stalled {
+                        at: here,
+                        aiming: approach.tile,
+                        why,
+                        tries: hop.tries.max(1),
+                    })
                 } else {
                     hop.approach = Some(approach);
                     Poll::Watching
@@ -1146,11 +1128,16 @@ impl FollowRun {
         options: &mut TravelOptions<'_>,
     ) -> Option<TravelOutcome> {
         let edge = match &hop.leg {
-            Leg::Transport { edge } => edge.clone(),
+            Leg::Transport { edge } => edge,
             Leg::Walk { .. } => unreachable!("troll hop holds a transport leg"),
         };
         let here = here(snapshot);
-        let tile = door_tile(&edge);
+        // Arrival is still polled below, but a lapsed hop must not send an
+        // Open that has no remaining observation window.
+        if hop.ticks_waited >= self.budget {
+            return None;
+        }
+        let tile = door_tile(edge);
         if crate::debug_enabled() {
             api::host_log!(
                 Category::NavTrace,
@@ -1164,8 +1151,7 @@ impl FollowRun {
         // Once on the destination side, a closer behind us must not pull
         // us back. Use the same directional/level evidence as arrival;
         // directionless edges cannot establish crossing from position.
-        let crossed =
-            edge.dir.is_some() && here.level == edge.to.level && door_crossed(&edge, here);
+        let crossed = edge.dir.is_some() && here.level == edge.to.level && door_crossed(edge, here);
         if crossed {
             self.loc_wait = 0;
             if cheb(here, hop.to) <= self.close_enough {
@@ -1187,7 +1173,7 @@ impl FollowRun {
                 hop.open_sent_tick = Some(sent_tick);
                 return None;
             }
-            if door_step_pending(&edge, here) {
+            if door_step_pending(edge, here) {
                 let mut ix = Interactions::new(snapshot, d);
                 let result = ix.pending_door_step(edge.to);
                 report_walk(options, snapshot, here, edge.to, &result);
@@ -1203,7 +1189,7 @@ impl FollowRun {
         // Adjacency is needed to Open a closed door, not to walk through
         // an open one. Re-approaching an open door countermanded the exit
         // walk whenever its destination was several tiles beyond the door.
-        if cheb(here, edge.at) > 1 && !edge_loc_open(snapshot, &edge) {
+        if cheb(here, edge.at) > 1 && !edge_loc_open(snapshot, edge) {
             let Some(approach) = approach_tile(snapshot, edge.at, here) else {
                 // No standable tile adjacent to the door in the loaded
                 // scene: keep waiting, bounded by the hop budget.
@@ -1240,19 +1226,7 @@ impl FollowRun {
         // `at` instead — the edge's closed `loc_id`, or the open leaf's
         // `open_loc_id` when the door reads open — nearest first, same
         // shape as `find_transport_loc`.
-        let Some(loc) = snapshot
-            .locs()
-            .iter()
-            .filter(|loc| {
-                loc.tile.level == tile.level
-                    && (loc.id == edge.loc_id
-                        || edge.open_loc_id.is_some_and(|open_id| loc.id == open_id))
-            })
-            .map(|loc| (loc, cheb(loc.tile, tile)))
-            .filter(|(_, gap)| *gap <= 3)
-            .min_by_key(|(_, gap)| *gap)
-            .map(|(loc, _)| loc)
-        else {
+        let Some(loc) = find_door_loc(snapshot, edge) else {
             // The door's loc is not in the loaded scene yet (the loc
             // family is stale, or the door is out of view): keep waiting,
             // bounded by the hop budget.
@@ -1292,11 +1266,12 @@ impl FollowRun {
                 snapshot,
                 &mut ix,
                 TransportTarget::Loc(loc),
-                &edge,
+                edge,
                 &mut options.on_event,
             ) {
                 SendResult::Sent { .. } => {
                     hop.open_sent_tick = Some(snapshot.tick());
+                    hop.tries = hop.tries.saturating_add(1);
                     api::host_log!(Category::NavEvent, Level::Info, "door open sent");
                 }
                 SendResult::Refused { reason, .. } => {

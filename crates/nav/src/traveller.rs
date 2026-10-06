@@ -369,8 +369,8 @@ impl Traveller {
     /// on every poll. The snapshot is the host's per-tick `GameSnapshot`;
     /// `Interactions` and `Settle` are built fresh from it each call, so
     /// each call performs at most one driver send (walk or transport op)
-    /// plus one settle poll — except the door-troll fallback, which sends
-    /// Open followed by a bounded adjacent crossing probe, or a walk when open.
+    /// plus one settle poll. Swing doors re-read the leaf within the original
+    /// hop budget, opening while closed and walking through while open.
     pub fn follow<D: Driver>(
         &mut self,
         d: &mut D,
@@ -899,6 +899,8 @@ impl FollowRun {
                                     // Climb-down. Mark tries so poll_transport
                                     // does not send it a second time.
                                     let tries = if npc_backed(edge)
+                                        || (edge.kind == TransportKind::Door
+                                            && !edge.is_slashable_web())
                                         || (edge.open_loc_id.is_some()
                                             && edge.kind != TransportKind::Door
                                             && edge_loc_open(snapshot, edge))
@@ -1089,10 +1091,9 @@ impl WalkHop {
 }
 
 /// One transport-leg hop: the edge (for the phase callback) plus the
-/// arrival target and the stall clock. `troll` marks the automatic
-/// door-troll fallback: the hop re-reads the door's state and re-sends
-/// while closed, probes after Open, and walks when open after
-/// the cheap one-interact hop lapsed its budget. `chat_seq` is the watermark
+/// arrival target and the stall clock. `troll` marks state-aware swing-door
+/// recovery within the original hop budget: re-read the leaf, Open while
+/// closed, probe after Open, and walk when open. `chat_seq` is the watermark
 /// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
 /// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {

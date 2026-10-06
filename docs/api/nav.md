@@ -722,7 +722,7 @@ call it once per delivered server tick; it returns `None` while in
 progress and `Some(TravelOutcome)` at a terminal state
 (`Arrived`/`Stalled`/`Refused`/`Blocked`/`EvidenceUnproven`/`GaveUp`). One driver send per
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
-on_leg, troll_doors }`.
+on_leg, on_event }`.
 
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.
@@ -757,18 +757,20 @@ on_leg, troll_doors }`.
   explanatory terminal `Blocked` receipt; attempt exhaustion names its
   actual attempt count. Duplicate snapshot polls do not spend this budget.
 
-- **Default door leg:** interact the door transport's menu option, then
-  settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
-  Escalating a slammed door to the troll strategy retains the elapsed hop
-  budget; an approach escalation retains its elapsed wait too. Losing the
-  connection reports `Dropped` only if the attempt made no tile progress;
-  otherwise the exhausted hop is `Expired`.
-- **`troll_doors = true` (non-default, expensive):** per tick, read the
-  door's open/closed state from the snapshot's `locs()`; when the door
-  reads open, `op_loc` (re-open) and `walk` through in the **same tick**
-  so a tick-perfect closer cannot slam it (the `2026-08-22-bot-nav.md`
-  same-tick rule). Use only for the live door-troll fixture; ordinary
-  routes pay the cheap default.
+- **Swing-door legs:** Open a closed leaf promptly and walk through an open
+  one. Re-read the packed closed/open loc family within three tiles of the
+  door's anchor, including shifted double-door leaves; never click an open
+  leaf's Close operation. If another player closes the door before crossing,
+  retry Open while the original hop budget still has time to observe the
+  result. Retries and open-state walks do not reset that budget, and the
+  terminal receipt counts actual interaction attempts. Once the player has
+  crossed, a closer behind them cannot draw them back to the door.
+- **Other door legs:** scripted doors without a packed open leaf retain the
+  one-interaction settle and wall-clear post-Open step; dialogue doors retain
+  their dialogue proof, and slashable webs retry only on an observed cut
+  failure. An exhausted crossing or approach ends without a last hopeless
+  Open or a second full wait budget. Losing the connection reports `Dropped`
+  only if the attempt made no tile progress; otherwise the hop is `Expired`.
 
 ## Route inspect (preview)
 
@@ -968,8 +970,8 @@ LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 
 `nav_full`: `find` + `follow` (Lumbridge courtyard → (3220,3264,0)).
 `nav_door` is the gold fixture if something regresses: two slots — the
-walker crosses Catherby door 1530 to (2817,3443,0) with `troll_doors:
-true` while a tick-perfect closer keeps the door closed; PASS on
+walker crosses Catherby door 1530 to (2817,3443,0) while a tick-perfect
+closer keeps the door closed; PASS on
 `Arrived`. Additional live tests under `crates/e2e/tests`: `nav_gates`,
 `nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
 `nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed

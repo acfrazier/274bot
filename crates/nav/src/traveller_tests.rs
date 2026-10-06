@@ -25,6 +25,9 @@ mod npc_hop_tests;
 #[path = "traveller/n1_tests.rs"]
 mod n1_tests;
 
+#[path = "traveller/door_expire_tests.rs"]
+mod door_expire_tests;
+
 #[test]
 fn no_route_ticks_idle() {
     let mut t = Traveller::new();
@@ -6036,10 +6039,9 @@ fn follow_pinned_takeoff_rejects_a_nearby_operable_stand() {
 }
 
 #[test]
-fn follow_auto_troll_keeps_the_spent_cheap_hop_budget() {
-    // A tick-perfect closer can outlast the cheap hop. The automatic
-    // fallback may attempt recovery, but cannot spend a second wait budget
-    // before reporting that the unchanged position's send was dropped.
+fn follow_auto_troll_recovers_a_slammed_door_inside_the_original_budget() {
+    // The first Open may be undone before the crossing. Recovery must
+    // already be active when the next open snapshot offers a way through.
     let mut c = scene_client();
     plant_door(&mut c, false, 1);
     let mut snap = snap_at(&mut c, 0, 0);
@@ -6062,7 +6064,7 @@ fn follow_auto_troll_keeps_the_spent_cheap_hop_budget() {
         },
         ticks: 1.0,
     };
-    // Default options: the fallback must engage automatically.
+    // Default options: state-aware recovery must engage automatically.
     let mut options = TravelOptions {
         budget_ticks_per_hop: 3,
         close_enough: 1,
@@ -6073,23 +6075,15 @@ fn follow_auto_troll_keeps_the_spent_cheap_hop_budget() {
     let mut crossed = false;
     loop {
         match t.follow(&mut rec, &snap, route.clone(), &mut options) {
-            Some(TravelOutcome::Stalled { at, why, .. }) => {
-                assert_eq!(
-                    at,
-                    WorldTile {
-                        x: 3200,
-                        z: 3200,
-                        level: 0
-                    }
-                );
-                assert_eq!(why, HopFailure::Dropped);
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, route.dest);
                 break;
             }
-            Some(other) => panic!("expected bounded Stalled, got {other:?}"),
+            Some(other) => panic!("expected crossing inside one budget, got {other:?}"),
             None => {}
         }
         tick += 1;
-        assert!(tick <= 5, "the fallback extended the spent hop budget");
+        assert!(tick <= 3, "recovery must use the original hop budget");
         // The closer slams the door shut each tick: alternate the
         // door's open/closed state, and only move the player once a
         // walk was actually sent (the troll's same-tick walk).
@@ -6101,7 +6095,10 @@ fn follow_auto_troll_keeps_the_spent_cheap_hop_budget() {
         }
         bump_rebuild(&mut c, &mut snap);
     }
-    assert!(!crossed, "the expired hop cannot wait for another crossing");
+    assert!(
+        crossed,
+        "recover before the crossing's observation window expires"
+    );
 }
 
 #[test]
