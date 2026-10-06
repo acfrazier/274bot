@@ -10,6 +10,8 @@
     { "id": "doric", "file": "doric.json" },
     { "id": "gobdip", "file": "gobdip.json" },
     { "id": "hetty", "file": "hetty.json" },
+    { "id": "prince", "file": "prince.json" },
+    { "id": "hunt", "file": "hunt.json" },
     {
       "id": "hauntedmine",
       "name": "Haunted Mine",

@@ -1707,6 +1707,8 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "doric" => Some(include_str!("../../paths/289/doric.json").as_bytes()),
         "gobdip" => Some(include_str!("../../paths/289/gobdip.json").as_bytes()),
         "hetty" => Some(include_str!("../../paths/289/hetty.json").as_bytes()),
+        "prince" => Some(include_str!("../../paths/289/prince.json").as_bytes()),
+        "hunt" => Some(include_str!("../../paths/289/hunt.json").as_bytes()),
         _ => None,
     }
 }
