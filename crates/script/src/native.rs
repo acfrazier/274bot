@@ -463,15 +463,20 @@ pub struct QuietReadLease {
 }
 
 /// Owner allowances for a followed walk. Prayer must be allowed or
-/// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`.
+/// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`;
+/// food defaults to allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkAllow {
     pub prayer: bool,
+    pub food: bool,
 }
 
 impl Default for WalkAllow {
     fn default() -> Self {
-        Self { prayer: true }
+        Self {
+            prayer: true,
+            food: true,
+        }
     }
 }
 

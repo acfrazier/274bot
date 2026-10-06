@@ -88,6 +88,7 @@ impl Script for WalkerScript {
                 protect: shared.protect,
                 allow: script::native::WalkAllow {
                     prayer: !shared.disallow_prayer,
+                    ..Default::default()
                 },
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
