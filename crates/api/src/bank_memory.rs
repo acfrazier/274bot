@@ -128,10 +128,15 @@ impl BankMemory {
         self.dirty
     }
 
-    /// The hint owner saved the rows: nothing is pending until the next
-    /// observe.
-    pub fn mark_saved(&mut self) {
-        self.dirty = false;
+    /// The hint owner published the rows of `generation`, which it took
+    /// under a guard it has since released: nothing is pending unless the
+    /// memory moved meanwhile (a later observe, load or relog bumps the
+    /// generation and keeps `dirty`, so the newer rows reach the next save
+    /// point).
+    pub fn mark_saved(&mut self, generation: u64) {
+        if self.generation == generation {
+            self.dirty = false;
+        }
     }
 
     /// The reserved row capacity (the FLOOR pin: it grows once, on the
@@ -545,10 +550,24 @@ mod tests {
 
         let mut saved = BankMemory::default();
         saved.observe(&[bank_row(COINS, 50, 0)], 64, at(1));
-        saved.mark_saved();
+        saved.mark_saved(saved.generation());
         saved.relogged();
         assert!(!saved.dirty());
         assert_eq!(saved.origin(), Origin::Hint);
+    }
+
+    #[test]
+    fn mark_saved_clears_only_the_generation_that_was_published() {
+        let mut memory = BankMemory::default();
+        memory.observe(&[bank_row(COINS, 50, 0)], 64, at(1));
+        let published = memory.generation();
+        // The save point took `published`; the bank moved before the
+        // publication was acknowledged.
+        memory.observe(&[bank_row(COINS, 43, 0)], 64, at(2));
+        memory.mark_saved(published);
+        assert!(memory.dirty(), "the later observation is still pending");
+        memory.mark_saved(memory.generation());
+        assert!(!memory.dirty());
     }
 
     #[test]
