@@ -1186,7 +1186,12 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
     let compiled =
         compile_uncached_for_test(&document, &selected, &quests).expect("drunkmonk compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "drunkmonk:50", &[])];
+    let progress = [progress_for_stage(
+        &compiled,
+        &selected,
+        "drunkmonk:50",
+        &[],
+    )];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
