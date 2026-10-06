@@ -11,6 +11,7 @@ use client::client::Client;
 use host::Pump;
 use host_play::walk_map::{ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
+use nav::bank_fetch::BankRows;
 use nav::map::identity::Digest;
 use nav::router::{FindOptions, Leg};
 use nav::tile::Tile;
@@ -164,7 +165,15 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
             host_play::WalkGlobals::default(),
         );
         let route = command
-            .walk_on(&world, &context, &name, &state, &[], admission, &arms)
+            .walk_on(
+                &world,
+                &context,
+                &name,
+                &state,
+                &BankRows::default(),
+                admission,
+                &arms,
+            )
             .expect("WalkTo route")
             .route;
         assert!(route

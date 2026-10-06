@@ -519,6 +519,7 @@ fn bank_pick_walk_reuses_the_winning_route_and_hold_keeps_it_without_sends() {
         world.as_ref(),
         true,
         false,
+        None,
         || panic!("a held slot must not enter the reach/follow path"),
     );
     assert_eq!(
@@ -819,6 +820,7 @@ export async function tick(api) {{
             &navs,
             &Some(world(false)),
             Some(state),
+            None,
             "test",
             iso.drain_interacts(),
             None,

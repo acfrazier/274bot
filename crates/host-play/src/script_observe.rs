@@ -945,6 +945,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             navs,
                             world,
                             state.clone(),
+                            bank_memory,
                             name,
                         ),
                     }
@@ -986,6 +987,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     navs,
                     world,
                     state.clone(),
+                    bank_memory,
                     name,
                 ),
             }
@@ -1228,6 +1230,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         navs,
                                         world,
                                         state.clone(),
+                                        bank_memory,
                                         name,
                                         [request],
                                         cache.clone(),
@@ -1329,11 +1332,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     navs: Arc::clone(navs),
                                     name: name.to_owned(),
                                     state: state.clone(),
-                                    bank: snapshot
-                                        .bank()
-                                        .iter()
-                                        .map(|item| (item.def.id, item.count))
-                                        .collect(),
+                                    bank: super::slot_bank_memory::planner_rows(bank_memory),
                                 };
                                 // A refusal reaches the owner as a typed
                                 // `Refused` receipt on the next observation.
@@ -1346,11 +1345,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     navs: Arc::clone(navs),
                                     name: name.to_owned(),
                                     state: state.clone(),
-                                    bank: snapshot
-                                        .bank()
-                                        .iter()
-                                        .map(|item| (item.def.id, item.count))
-                                        .collect(),
+                                    bank: super::slot_bank_memory::planner_rows(bank_memory),
                                 };
                                 arm.queue_native_assess(
                                     snapshot,
@@ -1517,6 +1512,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         navs,
                         world,
                         state.clone(),
+                        bank_memory,
                         name,
                         dispatchable,
                         cache.clone(),

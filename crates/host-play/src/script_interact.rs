@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use api::bank_memory::BankMemory;
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::interact::Driver;
@@ -9,6 +10,7 @@ use client::config::Cache;
 use nav::router::FindOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
+use parking_lot::RwLock;
 
 use super::{
     abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptRouteExclusions,
@@ -154,7 +156,9 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// wire default off). `walk-to` (scene `DirectNavigator`) is the
 /// [`Interactions::walk_nearest`] packet, matching frozen
 /// `ClientAdapter.walkTo(... tryNearest=true)`. Returns whether the driver's
-/// out buffer was written.
+/// out buffer was written. The test seam: the account's bank memory is what
+/// the slot's observer leaves this frame (the loaded open bank, else an
+/// unobserved `Unknown` bank).
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_script_interact(
@@ -168,8 +172,21 @@ pub(crate) fn dispatch_script_interact(
     name: &str,
     reqs: Vec<script::shim::InteractReq>,
 ) -> bool {
+    let bank = RwLock::new(BankMemory::default());
+    bank.write().track(snapshot, 0);
     dispatch_script_interact_cached(
-        driver, snapshot, obj_names, here, navs, world, state, name, reqs, None, None,
+        driver,
+        snapshot,
+        obj_names,
+        here,
+        navs,
+        world,
+        state,
+        Some(&bank),
+        name,
+        reqs,
+        None,
+        None,
     )
 }
 
@@ -182,6 +199,7 @@ pub(crate) fn dispatch_script_interact_cached<R>(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
+    bank: Option<&RwLock<BankMemory>>,
     name: &str,
     reqs: R,
     cache: Option<Arc<Cache>>,
@@ -361,18 +379,13 @@ where
                 if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
-                let bank_rows: Vec<(i32, i32)> = snapshot
-                    .bank()
-                    .iter()
-                    .map(|it| (it.def.id, it.count))
-                    .collect();
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
                     navs: Arc::clone(navs),
                     name: name.to_string(),
                     state: state.clone(),
-                    bank: bank_rows,
+                    bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_fixed_route_in_snapshot_avoiding(
                     snapshot, x, z, level, opts, request_id, exclusions,
@@ -436,11 +449,7 @@ where
                     navs: Arc::clone(navs),
                     name: name.to_string(),
                     state: state.clone(),
-                    bank: snapshot
-                        .bank()
-                        .iter()
-                        .map(|it| (it.def.id, it.count))
-                        .collect(),
+                    bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_route_in_snapshot_avoiding(
                     snapshot, x, z, level, opts, radius, request_id, exclusions,
@@ -592,17 +601,12 @@ where
                     }
                     None => (nav::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
-                let bank_rows: Vec<(i32, i32)> = snapshot
-                    .bank()
-                    .iter()
-                    .map(|it| (it.def.id, it.count))
-                    .collect();
                 route_inspect::queue_inspect(
                     navs,
                     name,
                     world,
                     state.clone(),
-                    bank_rows,
+                    super::slot_bank_memory::planner_rows(bank),
                     cache.clone(),
                     obj_names_arc.clone(),
                     route_inspect::InspectRequest {

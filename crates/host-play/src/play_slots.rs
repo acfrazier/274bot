@@ -1668,6 +1668,7 @@ fn spawn_slot_thread(
                                     slot_world.as_ref(),
                                     hold,
                                     map_members,
+                                    Some(slot_bank.memory()),
                                     || {
                                         slot_arrival_reach(
                                             &slot_scripts,

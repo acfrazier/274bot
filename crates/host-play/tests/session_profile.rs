@@ -2138,7 +2138,7 @@ fn public_profile_routes_lumbridge_to_ardougne() {
                 },
                 FindOptions::default(),
                 &state,
-                &[],
+                &nav::bank_fetch::BankRows::default(),
                 admission,
                 &host_play::WalkArms::default(),
                 None,
