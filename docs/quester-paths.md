@@ -61,6 +61,11 @@ selected-data compilation. Every folder document within the 256-file cap is
 decoded and compiled on every Reload and Start, including overrides to bundled
 ids. JSON Schema validation alone cannot resolve content aliases or validate
 runtime handler semantics.
+For a paired document, validation compiles each declared gang role before making
+the Path available. Every role must compile; a failing role rejects the whole
+document, and its gang is named alongside the original per-file compile error.
+Reload applies the same validation to edited roles. Runtime activation still
+chooses only the account's effective gang after owned membership admission.
 Validation and content-family preparation run on the existing preparation worker.
 Folder gather steps, acquisition recipes, and typed progress readers use the same
 selected gathering catalog as bundled Paths.

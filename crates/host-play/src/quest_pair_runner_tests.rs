@@ -168,12 +168,10 @@ fn rewrite_progress_path(value: &mut serde_json::Value, path_id: &str) {
 }
 /// Reuse Vampire's runnable content, rebinding authored progress predicates to
 /// the requested Path identity before compiling its paired roles.
-fn paired_path(
+fn paired_document(
     path_id: &str,
-    gang: Gang,
-    selected: &Arc<api::game_data::SelectedGameData>,
-    quests: &Arc<api::quest_facts::QuestCatalog>,
-) -> Arc<CompiledPath> {
+    quests: &api::quest_facts::QuestCatalog,
+) -> script::quester::path::PathDocument {
     let mut source: serde_json::Value =
         serde_json::from_str(include_str!("../../script/paths/289/vampire.json")).unwrap();
     rewrite_progress_path(&mut source, path_id);
@@ -191,6 +189,7 @@ fn paired_path(
         })
         .unwrap_or_else(|| document.roles[0].progress_binding.clone());
     document.id = FactKey::new(path_id);
+    document.display_name = quests.quest(path_id).unwrap().display.to_string();
     document.partner = Some(PartnerDeclaration {
         protocol: FactKey::new("arrav"),
         roles: [
@@ -211,6 +210,16 @@ fn paired_path(
     blackarm.role = Some(FactKey::new("blackarm"));
     blackarm.progress_binding = binding;
     document.roles = vec![phoenix, blackarm];
+    document
+}
+
+fn paired_path(
+    path_id: &str,
+    gang: Gang,
+    selected: &Arc<api::game_data::SelectedGameData>,
+    quests: &Arc<api::quest_facts::QuestCatalog>,
+) -> Arc<CompiledPath> {
+    let document = paired_document(path_id, quests);
     let bytes = serde_json::to_vec(&document).unwrap();
     script::quester::compile::prepare_for_test({
         let selected = Arc::clone(selected);
@@ -358,6 +367,15 @@ fn run_tick(
     snapshot: &GameSnapshot,
     tick: u64,
 ) {
+    run_slot_tick(&mut runner.slot, selected, snapshot, tick);
+}
+
+fn run_slot_tick(
+    slot: &mut SlotScript,
+    selected: &api::game_data::SelectedGameData,
+    snapshot: &GameSnapshot,
+    tick: u64,
+) {
     let mut driver = NoopDriver::default();
     let compiled = CompiledTick {
         selected: Some(selected),
@@ -374,7 +392,7 @@ fn run_tick(
         obj_names: None,
         compiled,
     };
-    runner.slot.on_game_tick(&mut ctx);
+    slot.on_game_tick(&mut ctx);
 }
 
 fn assert_admission_watchdog_waits(runner: &mut Runner) {
@@ -545,7 +563,7 @@ fn runner_admission_waits_for_stopped_peer_to_restart() {
 }
 
 #[test]
-fn runner_fails_fast_when_peer_is_bound_to_hero() {
+fn runner_waits_without_reservation_when_peer_is_bound_to_hero() {
     let (selected, quests) = selected_and_quests();
     let arrav = paired_path("blackarmgang", Gang::Phoenix, &selected, &quests);
     let hero = paired_path("hero", Gang::BlackArm, &selected, &quests);
@@ -573,22 +591,18 @@ fn runner_fails_fast_when_peer_is_bound_to_hero() {
     prime_runner(&bob, false);
 
     run_tick(&mut alice, &selected, &snapshot, 4);
-    let status = alice.slot.native_status().expect("Quester status");
-    let failure = status
-        .failure
-        .as_ref()
-        .expect("different Path parks promptly");
-    assert_eq!(
-        failure.message.as_ref(),
-        "partner is running a different Path; select the same paired Path on both accounts"
+    assert!(
+        waiting_for_admission(&alice),
+        "a different queue row waits for the matching Path"
     );
     assert!(
         !seats[0].busy() && !seats[1].busy(),
         "different Paths reserve no phase"
     );
+    assert_admission_watchdog_waits(&mut alice);
     assert!(
-        !seats[0].waiting(alice.run),
-        "different Paths do not leave an admission waiter"
+        !seats[1].waiting(bob.run),
+        "the different-Path peer remains independent"
     );
 }
 
@@ -679,4 +693,338 @@ fn runner_keeps_pending_pair_admission_through_hold_and_random_until_pause() {
         "explicit Pause still cancels the reservation"
     );
     assert_eq!(alice.slot.state(), RunState::Paused);
+}
+
+#[test]
+fn quest_pair_r2_runner_mismatched_queue_waits_for_solo_row_without_reserving_peer() {
+    use script::quester::queue::{Queue, QueueSettings};
+    use script::quester::registry::{FolderSource, PathRegistry};
+    use script::quester::runner::QueuedQuester;
+
+    let (selected, quests) = selected_and_quests();
+    let folder = std::env::temp_dir().join(format!("quest-pair-queue-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("blackarmgang.json"),
+        serde_json::to_vec(&paired_document("blackarmgang", &quests)).unwrap(),
+    )
+    .unwrap();
+    let registry = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&quests);
+        let folder = folder.clone();
+        move |worker| {
+            PathRegistry::load(
+                &FolderSource {
+                    enabled: true,
+                    folder,
+                },
+                &selected,
+                &quests,
+                worker,
+            )
+            .unwrap()
+        }
+    });
+    std::fs::remove_dir_all(folder).unwrap();
+    let queue = Queue::from_registry(
+        registry,
+        QueueSettings {
+            quests: vec!["cook".into(), "blackarmgang".into()],
+            order_override: vec!["cook".into(), "blackarmgang".into()],
+            partner_account: Some(AccountKey(Arc::from("alice"))),
+            gang: Some(Gang::BlackArm),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let seats = broker_seats();
+    let mut alice = start_runner(
+        Arc::clone(&seats[0]),
+        1,
+        paired_path("blackarmgang", Gang::Phoenix, &selected, &quests),
+        "bob",
+        Gang::Phoenix,
+        &selected,
+        &quests,
+    );
+    prime_runner(&alice, true);
+    let mut bob = SlotScript::new();
+    bob.bind_incarnation(2);
+    bob.bind_quest_pairs(Arc::clone(&seats[1]));
+    bob.start_test_script(
+        Box::new(QueuedQuester::new(
+            RunKey {
+                slot: 0,
+                run: 0,
+                session: 0,
+            },
+            Arc::clone(&selected),
+            Arc::clone(&quests),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            queue,
+        )),
+        Some(Arc::clone(&selected)),
+    )
+    .unwrap();
+    let bob_run = bob.native_run().unwrap();
+    let mut snapshot = not_started_snapshot("blackarmgang", &quests);
+    snapshot.seed_quest_statuses(
+        vec![
+            QuestStatusView {
+                name: quests.quest("cook").unwrap().display.to_string(),
+                component_id: 2,
+                colour: 0x00f800,
+            },
+            QuestStatusView {
+                name: quests.quest("blackarmgang").unwrap().display.to_string(),
+                component_id: 1,
+                colour: 0xf80000,
+            },
+        ],
+        true,
+    );
+    snapshot.seed_inventory(vec![], 28);
+    snapshot.seed_main_modal(-1, vec![]);
+    snapshot.seed_chat_modal(-1, vec![]);
+    // Bob prepares the earlier solo row. His run exists without a pair binding.
+    run_slot_tick(&mut bob, &selected, &snapshot, 3);
+    run_tick(&mut alice, &selected, &snapshot, 4);
+    assert!(waiting_for_admission(&alice));
+    assert!(
+        !seats[0].busy() && !seats[1].busy(),
+        "an earlier solo queue row must not be reserved by the waiting pair"
+    );
+    assert_admission_watchdog_waits(&mut alice);
+    assert!(
+        !seats[1].waiting(bob_run),
+        "the solo peer's watchdog stays live"
+    );
+    // The completed solo row advances through the real queue into Arrav.
+    for tick in 5u64..20_000 {
+        run_slot_tick(&mut bob, &selected, &snapshot, tick);
+        while let Some(action) = bob.take_native_action() {
+            let authority = action.authority();
+            match action.effect {
+                script::native::HostEffect::Interaction(script::shim::InteractReq::IfButton {
+                    component_id: 1,
+                }) => snapshot.seed_main_modal(
+                    8134,
+                    vec![
+                        journal_widget(
+                            8144,
+                            quests
+                                .quest("blackarmgang")
+                                .unwrap()
+                                .journal_title
+                                .as_ref()
+                                .unwrap(),
+                        ),
+                        journal_widget(8145, &read(bob_run).lines[0]),
+                    ],
+                ),
+                script::native::HostEffect::Interaction(script::shim::InteractReq::CloseModal) => {
+                    snapshot.seed_main_modal(-1, vec![]);
+                }
+                _ => panic!("unexpected solo-to-pair journal input"),
+            }
+            bob.complete_native_interaction(
+                &authority,
+                script::native::InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: stamp(bob_run, tick),
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+        }
+        run_tick(&mut alice, &selected, &snapshot, tick);
+        if no_admission_wait(&alice)
+            && bob.native_status().is_some_and(|status| {
+                status.fields.iter().any(|field| {
+                    field.key == "quest_id"
+                        && matches!(&field.value, script::native::StatusValue::Text(id) if id.as_ref() == "blackarmgang")
+                })
+            })
+            && !seats[0].busy()
+            && !seats[1].busy()
+        {
+            assert_eq!(bob.native_run(), Some(bob_run), "queue advance is not Stop/Start");
+            assert!(seats[1].settings(bob_run).is_ok(), "the unjoined peer run stays usable");
+            run_slot_tick(&mut bob, &selected, &snapshot, tick + 1);
+            assert!(bob.native_status().unwrap().fields.iter().all(|field| {
+                field.key != "waiting_for" || field.label != "Partner admission"
+            }));
+            return;
+        }
+        std::thread::yield_now();
+    }
+    panic!(
+        "the mismatched real queue did not reach reciprocal admission: {:?}",
+        bob.native_status()
+    );
+}
+
+fn journal_widget(component_id: i32, text: &str) -> api::snapshot::WidgetView {
+    use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
+    WidgetView {
+        kind: WidgetKind::Widget,
+        component_id,
+        layer_id: 0,
+        parent_id: 0,
+        root_component_id: 8134,
+        root: WidgetRoot::Main,
+        type_: 4,
+        button_type: 0,
+        client_code: 0,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        scroll_height: 0,
+        scroll_position: 0,
+        hidden: false,
+        text: Some(text.into()),
+        alternate_text: None,
+        button_text: None,
+        target_verb: None,
+        target_base: None,
+        target_mask: 0,
+        model_type: 0,
+        model_id: 0,
+        alternate_model_type: 0,
+        alternate_model_id: 0,
+        scripts: None,
+        script_comparators: None,
+        script_operands: None,
+        varp_bindings: Vec::new(),
+        colour: 0,
+        actions: Vec::new(),
+        items: Vec::new(),
+    }
+}
+
+fn phase_path(
+    gang: Gang,
+    selected: &Arc<api::game_data::SelectedGameData>,
+    quests: &Arc<api::quest_facts::QuestCatalog>,
+) -> Arc<CompiledPath> {
+    let mut document = paired_document("blackarmgang", quests);
+    document.quest.as_mut().unwrap().owns_inventory = true;
+    for (side, role) in document.roles.iter_mut().enumerate() {
+        role.prelude.clear();
+        let step = &mut role.sequences[0].steps[0];
+        step.kind = "partner".into();
+        step.args = serde_json::json!({
+            "phase": "arrav:test",
+            "give": [{"obj": if side == 0 { "egg" } else { "pot_flour" }, "qty": 1}],
+            "take": [{"obj": if side == 0 { "pot_flour" } else { "egg" }, "qty": 1}],
+            "rendezvous": {"tile": [3208, 3216, 0], "source": "test rendezvous"}
+        });
+        step.advances = Some(false);
+        step.skip_if = script::quester::path::PredicateDocument::Any(vec![]);
+        step.settle = script::quester::path::PredicateDocument::All(vec![]);
+        let mut wait = step.clone();
+        wait.id = FactKey::new("wait-before-pair");
+        wait.kind = "wait".into();
+        let has_egg = script::quester::path::PredicateDocument::Fact {
+            kind: "has_item".into(),
+            version: 1,
+            args: serde_json::json!({"obj": "egg"}),
+        };
+        wait.args = serde_json::json!({"until": has_egg, "max_ticks": 100});
+        wait.skip_if = has_egg;
+        role.sequences[0].steps.insert(0, wait);
+    }
+    let bytes = serde_json::to_vec(&document).unwrap();
+    script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(selected);
+        let quests = Arc::clone(quests);
+        move |worker| compile_path_for_gang(&bytes, &selected, &quests, worker, Some(gang))
+    })
+    .unwrap()
+}
+
+fn observe_runner_ready(runner: &Runner, ready: bool, tick: u64) {
+    runner.port.observe(
+        PairRegistration {
+            run: runner.run,
+            pin: pin(),
+            settings: Some(runner.settings.clone()),
+            ready,
+            evidence: stamp(runner.run, tick),
+        },
+        PairFrame {
+            binding: Some(PairBinding {
+                path: &runner.path.id,
+                protocol: &runner.path.partner.as_ref().unwrap().protocol,
+                digest: &runner.path.digest,
+                role: runner.path.role.as_ref().unwrap(),
+            }),
+            inventory: None,
+        },
+    );
+}
+
+#[test]
+fn quest_pair_r2_runner_phase_begin_waits_through_partner_hold() {
+    let (selected, quests) = selected_and_quests();
+    let seats = broker_seats();
+    let mut alice = start_runner(
+        Arc::clone(&seats[0]),
+        1,
+        phase_path(Gang::Phoenix, &selected, &quests),
+        "bob",
+        Gang::Phoenix,
+        &selected,
+        &quests,
+    );
+    let mut bob = start_runner(
+        Arc::clone(&seats[1]),
+        2,
+        phase_path(Gang::BlackArm, &selected, &quests),
+        "alice",
+        Gang::BlackArm,
+        &selected,
+        &quests,
+    );
+    prime_runner(&alice, true);
+    prime_runner(&bob, true);
+    let mut snapshot = not_started_snapshot("blackarmgang", &quests);
+    snapshot.seed_inventory(vec![], 28);
+    run_tick(&mut alice, &selected, &snapshot, 4);
+    run_tick(&mut bob, &selected, &snapshot, 4);
+    run_tick(&mut alice, &selected, &snapshot, 5);
+    assert!(no_admission_wait(&alice));
+    assert!(!seats[0].busy() && !seats[1].busy());
+    observe_runner_ready(&bob, false, 5);
+    snapshot.seed_inventory(
+        vec![held(selected.item_by_alias("egg").unwrap().id, 1, 0)],
+        28,
+    );
+    for tick in 6..=14 {
+        run_tick(&mut alice, &selected, &snapshot, tick);
+        assert!(
+            alice.slot.native_status().unwrap().failure.is_none(),
+            "phase-begin holds must wait instead of consuming five failed attempts"
+        );
+    }
+    assert!(!seats[0].busy() && !seats[1].busy());
+    assert_admission_watchdog_waits(&mut alice);
+    observe_runner_ready(&bob, true, 15);
+    observe_runner_ready(&bob, true, 16);
+    let mut journal = read(bob.run);
+    journal.acquired = stamp(bob.run, 15);
+    journal.closed = stamp(bob.run, 16);
+    seats[1].observe_gang(&journal).unwrap();
+    run_tick(&mut alice, &selected, &snapshot, 15);
+    assert!(
+        seats[0].busy() && seats[1].busy(),
+        "the actor begins the real phase when the peer becomes ready"
+    );
+    for tick in 16..=19 {
+        run_tick(&mut bob, &selected, &snapshot, tick);
+    }
+    assert!(alice.slot.native_status().unwrap().failure.is_none());
+    assert!(bob.slot.native_status().unwrap().failure.is_none());
 }
