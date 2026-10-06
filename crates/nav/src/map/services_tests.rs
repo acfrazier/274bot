@@ -453,7 +453,8 @@ fn hunter_tether_defaults_to_wander_plus_two_and_never_below_wander() {
         );
         let mut hunter = npc(1, "Hunter", &["Attack"]);
         hunter.vislevel = 54;
-        let inputs = collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new()).unwrap();
+        let inputs =
+            collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new(), &HashSet::new()).unwrap();
         assert_eq!(inputs.definitions[0].maxrange, expected);
     }
 }

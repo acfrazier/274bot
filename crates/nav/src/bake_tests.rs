@@ -313,22 +313,32 @@ fn derive_synthetic_hunter_zones(
     content: &SyntheticHunterContent,
     collision: &WorldCollision,
 ) -> DerivedZones {
-    let npc_types = [
-        synthetic_hunter_npc(96),
-        synthetic_hunter_npc(917),
-        synthetic_hunter_npc(1101),
-    ];
     let door_ids = if content.has_door {
         HashSet::from([200])
     } else {
         HashSet::new()
     };
+    derive_synthetic_hunter_zones_with(content, collision, &door_ids, &HashSet::new())
+}
+
+fn derive_synthetic_hunter_zones_with(
+    content: &SyntheticHunterContent,
+    collision: &WorldCollision,
+    door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
+) -> DerivedZones {
+    let npc_types = [
+        synthetic_hunter_npc(96),
+        synthetic_hunter_npc(917),
+        synthetic_hunter_npc(1101),
+    ];
     derive_zone_table(
         &content.root,
         collision,
         &crate::transport::TransportGraph::default(),
         &npc_types,
-        &door_ids,
+        door_ids,
+        opened_door_ids,
     )
     .unwrap()
 }
@@ -360,7 +370,7 @@ fn derive_zone_table_keeps_full_rectangle_for_wandering_los_hunter() {
             .carves()
             .iter()
             .all(|(index, _)| usize::from(*index) != zone_index),
-        "positive-wander LOS hunter must not be carved"
+        "a wandering LOS hunter walks past a sight-only ridge, so nothing is carved"
     );
     assert_eq!(
         derived
@@ -372,7 +382,7 @@ fn derive_zone_table_keeps_full_rectangle_for_wandering_los_hunter() {
             })
             .count(),
         1,
-        "the opaque ridge does not remove any tile from the wandering hunter zone"
+        "the sight-only ridge does not remove any tile from the wandering hunter zone"
     );
 }
 
@@ -496,4 +506,126 @@ fn fixed_ranged_hunter_carves_occluded_tiles_but_retains_visible_range() {
     assert_eq!(table.at(WorldTile { x: 21, ..spawn }).count(), 0);
     collision.drop_flags();
     assert!(append_ranged_visibility_carves(&collision, &zone, 0, &mut Vec::new()).is_err());
+}
+
+/// A walk- and sight-blocking scenery ridge along x=2847, covering the whole
+/// grid so a hunter cannot walk around either end of it.
+fn collision_with_scenery_ridge() -> WorldCollision {
+    let mut collision = collision_with_flags(128, 128, &[]);
+    collision.origin = WorldTile {
+        x: 2800,
+        z: 3550,
+        level: 0,
+    };
+    let ridge_x = usize::try_from(2847 - collision.origin.x).unwrap();
+    let mut flags = vec![0u32; 4 * 128 * 128];
+    for z in 0..128 {
+        flags[z * 128 + ridge_x] =
+            CollisionFlag::WALK_SCENERY as u32 | CollisionFlag::VIS_SCENERY as u32;
+    }
+    collision.attach_flags(flags);
+    collision
+}
+
+fn thrower_tile_count(table: &ZoneTable, x: i32) -> usize {
+    table
+        .at(WorldTile {
+            x,
+            z: 3598,
+            level: 0,
+        })
+        .count()
+}
+
+#[test]
+fn derive_zone_table_carves_mobile_hunter_tiles_it_cannot_reach_or_see() {
+    let content = SyntheticHunterContent::new(4, false, false);
+    let collision = collision_with_scenery_ridge();
+    let derived = derive_synthetic_hunter_zones(&content, &collision);
+    let zone_index = synthetic_thrower_zone_index(&derived.table);
+    let zone = &derived.table.zones()[zone_index];
+    assert_eq!(
+        (zone.min_x, zone.min_z, zone.max_x, zone.max_z),
+        (2839, 3586, 2863, 3610),
+        "the range-derived rectangle is unchanged; only membership narrows"
+    );
+    assert!(derived
+        .table
+        .carves()
+        .iter()
+        .any(|(index, _)| usize::from(*index) == zone_index));
+    for x in 2839..=2847 {
+        assert_eq!(
+            thrower_tile_count(&derived.table, x),
+            0,
+            "x={x} lies behind a ridge the hunter can neither cross nor see through"
+        );
+    }
+    for x in 2848..=2863 {
+        assert_eq!(thrower_tile_count(&derived.table, x), 1, "x={x}");
+    }
+}
+
+#[test]
+fn derive_zone_table_keeps_mobile_rectangle_near_any_door_state() {
+    let collision = collision_with_scenery_ridge();
+    let closed = SyntheticHunterContent::new(4, false, true);
+    let opened = SyntheticHunterContent::new(4, false, true);
+    for derived in [
+        derive_synthetic_hunter_zones_with(
+            &closed,
+            &collision,
+            &HashSet::from([200]),
+            &HashSet::new(),
+        ),
+        derive_synthetic_hunter_zones_with(
+            &opened,
+            &collision,
+            &HashSet::new(),
+            &HashSet::from([200]),
+        ),
+    ] {
+        let zone_index = synthetic_thrower_zone_index(&derived.table);
+        assert!(
+            derived
+                .table
+                .carves()
+                .iter()
+                .all(|(index, _)| usize::from(*index) != zone_index),
+            "a door a player can open or close keeps the whole rectangle"
+        );
+        assert_eq!(thrower_tile_count(&derived.table, 2846), 1);
+    }
+}
+
+#[test]
+fn npc_steps_follow_engine_take_step_for_large_npcs() {
+    // A scenery column at x=6 with a one-tile gap at z=5.
+    let mut flags = vec![0u32; 4 * 12 * 12];
+    for z in (0..12).filter(|z| *z != 5) {
+        flags[z * 12 + 6] = CollisionFlag::WALK_SCENERY as u32;
+    }
+    let flag = |x: i32, z: i32| {
+        if (0..12).contains(&x) && (0..12).contains(&z) {
+            flags[(z * 12 + x) as usize]
+        } else {
+            0
+        }
+    };
+    assert!(
+        npc_step_ok(&flag, 5, 5, (1, 0), 1),
+        "a size-1 NPC fits the gap"
+    );
+    for z in 3..=6 {
+        assert!(
+            !npc_step_ok(&flag, 4, z, (1, 0), 2),
+            "a size-2 NPC never fits a one-tile gap (south-west z={z})"
+        );
+    }
+    assert!(npc_step_ok(&flag, 1, 1, (1, 1), 1));
+    assert!(
+        !npc_step_ok(&flag, 1, 1, (1, 1), 2),
+        "takeStep moves only width-1 NPCs diagonally"
+    );
+    assert!(npc_step_ok(&flag, 1, 1, (1, 0), 2) && npc_step_ok(&flag, 1, 1, (0, 1), 2));
 }
