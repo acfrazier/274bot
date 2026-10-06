@@ -1902,6 +1902,10 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     .unwrap();
     let selected = options.resolve_with_env(None, &env).unwrap();
     assert!(selected.map_members());
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::True
+    );
     assert!(matches!(
         selected.world_members(),
         host_play::WorldMembersFact::Known {
@@ -1913,6 +1917,10 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     write_world_json(&engine, 274, 43594, "false");
     let selected = options.resolve_with_env(None, &env).unwrap();
     assert!(!selected.map_members());
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::False
+    );
     assert!(matches!(
         selected.world_members(),
         host_play::WorldMembersFact::Known { members: false, .. }
@@ -1924,6 +1932,11 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     assert_eq!(
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
+    );
+    // A bound profile that declares nothing is free-to-play for scripts.
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::False
     );
 
     // Engine ports are independent from forwarded connect ports.
@@ -2359,6 +2372,10 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
             members: true,
             source: host_play::WorldMembersSource::Rs2b2tWorlds,
         }
+    );
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::True
     );
 }
 

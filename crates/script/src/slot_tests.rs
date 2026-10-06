@@ -1371,6 +1371,7 @@ fn compiled_ctx<'a>(
             selected,
             reach: None,
             hold: false,
+            world_members: api::selected::Truth::Unknown,
             interacts: None,
         },
     }

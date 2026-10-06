@@ -154,6 +154,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             compile_modal_open
         ),
         super::compile::fact!(
+            "members_world",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_members_world
+        ),
+        super::compile::fact!(
             "item_count_at_least",
             1,
             super::compile::ProgressRead::None,
@@ -776,6 +783,22 @@ impl PredicatePlan for ModalOpen {
             None => Truth::Unknown,
             Some(modal) => truth(modal.value.root >= 0),
         }
+    }
+}
+
+fn compile_members_world(
+    _args: NoArgs,
+    _cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    Ok(Arc::new(MembersWorld))
+}
+/// True on a members world, False on a free-to-play world, Unknown with no
+/// bound server profile. Reads the host-attached profile fact; the account's
+/// own membership flag does not decide it.
+struct MembersWorld;
+impl PredicatePlan for MembersWorld {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        cx.cx.snapshot().world_members()
     }
 }
 
