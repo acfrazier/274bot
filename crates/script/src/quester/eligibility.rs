@@ -535,6 +535,7 @@ mod tests {
             qty: 1,
             kind: QuestItemKindDocument::MustHave,
             acquire: None,
+            from_stage: None,
         }];
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
         assert!(!BankMemo::default().known());
@@ -568,6 +569,7 @@ mod tests {
             qty: 1,
             kind: QuestItemKindDocument::MustHave,
             acquire: None,
+            from_stage: None,
         }];
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
         let mut known_empty = BankMemo::default();

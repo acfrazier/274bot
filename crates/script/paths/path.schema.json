@@ -360,6 +360,18 @@
             "null"
           ],
           "default": null
+        },
+        "from_stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stage key (e.g. `\"cook:1\"`) from which this item becomes due.\nEarlier stages skip its need entirely, including the Unknown-bank scan.",
+          "default": null
         }
       },
       "required": [
@@ -1911,7 +1923,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional approach anchor; locs are selected nearest this authored tile."
+          "description": "Optional approach anchor. A target without an exact tile is chosen inside\nthe anchor's area (anchor ± max(radius, 10)): a reachable match nearest by\nwalking distance, anchor distance breaking ties. When none is reachable\nfrom the player, the step walks to the area first."
         },
         "radius": {
           "type": "integer",
@@ -1956,7 +1968,7 @@
         },
         "reachable_only": {
           "type": "boolean",
-          "description": "Filter loc candidates through the current known reach view.",
+          "description": "Only choose a loc candidate the live reach view proves reachable.",
           "default": false
         }
       },
@@ -2019,7 +2031,7 @@
           },
           "minItems": 3,
           "maxItems": 3,
-          "description": "Exact loc tile. The source field is required with this tile.",
+          "description": "Exact loc tile: this specific loc. Without it, any matching loc in the\nanchor's area may be chosen. The source field is required with this tile.",
           "default": null
         },
         "source": {
@@ -2179,7 +2191,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional approach anchor; locs are selected nearest this authored tile."
+          "description": "Optional approach anchor. NPC and ground targets are chosen inside the\nanchor's area (anchor ± max(radius, 10)): a reachable match nearest by\nwalking distance, anchor distance breaking ties. An NPC must be beside its\nfootprint across no wall before the use is sent; a chased NPC is re-read\nevery tick, and \"I can't reach that!\" re-picks at once."
         },
         "radius": {
           "type": "integer",

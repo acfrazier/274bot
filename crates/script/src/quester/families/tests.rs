@@ -1357,6 +1357,8 @@ fn interact_false_is_failure_not_success() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        round_pick: None,
+        retargets_left: reach::RETARGET_LIMIT,
         round_before: None,
         round_deadline: None,
         round_accepted: false,
@@ -3982,12 +3984,14 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(-1, vec![]);
-    for tick in 5..13 {
+    // The second gap starts at tick 5, so the quiet close completes at tick
+    // 9 with the four-tick gap (tick 13 with the old eight-tick gap).
+    for tick in 5..9 {
         with_tick(&snapshot, &mut ledger, tick, |t| {
             assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
         });
     }
-    with_tick(&snapshot, &mut ledger, 13, |t| {
+    with_tick(&snapshot, &mut ledger, 9, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
             Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4060,14 +4064,16 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 24..33 {
+    // The second gap starts at tick 25, so the quiet close completes at
+    // tick 29 with the four-tick gap (tick 33 with the old eight-tick gap).
+    for tick in 24..29 {
         assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 33, |tick| {
+        with_tick(&snapshot, &mut ledger, 29, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4115,7 +4121,9 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     .is_pending());
     // One starting unit plus four slack updates may re-arm; later unrelated
     // updates keep happening but must not postpone the fifth quiet deadline.
-    for game_tick in 3..15 {
+    // The gap starts at tick 2 and re-arms at 3, 4, 5, 6, 7, so it completes
+    // at tick 11 with the four-tick gap (tick 15 with the old eight-tick gap).
+    for game_tick in 3..11 {
         snapshot.seed_inventory(
             vec![ItemView {
                 slot: (game_tick % 2) as i32,
@@ -4130,7 +4138,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     }
     snapshot.seed_inventory(vec![ItemView { slot: 1, ..item }], 28);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 15, |tick| {
+        with_tick(&snapshot, &mut ledger, 11, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4887,6 +4895,12 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         accepted_tick: None,
         scene_activity_observed: false,
         scene_in_range_at_acceptance: false,
+        avoid: reach::Avoid::default(),
+        chase: None,
+        chase_rewalks: CHASE_REWALKS,
+        anchor_walk: false,
+        retargets_left: reach::RETARGET_LIMIT,
+        dispatched: None,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))
@@ -5099,6 +5113,8 @@ fn talk_expected_combat_rejects_unknown_npc_config() {
     });
 }
 
+#[path = "chooser_tests.rs"]
+mod chooser_tests;
 #[path = "extension_tests.rs"]
 mod extension_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
@@ -5715,15 +5731,18 @@ fn anchored_use_on_retries_share_the_first_stand_arrival_settle_window() {
     });
 }
 
+/// "This specific loc" is an explicit `target.tile` (the cog ladder's
+/// contract): same-id locs nearer the player never replace it, before or
+/// after the stand approach. Without a tile the target is fungible.
 #[test]
-fn anchored_interact_loc_ignores_the_nearer_player_relative_decoy() {
+fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         let (mut snapshot, target, _) = use_on_footprint_fixture(cx, tile(3163, 3308));
         let mut decoy = target.clone();
         decoy.tile.x = 3162;
         decoy.distance = 1;
-        snapshot.seed_locs(vec![decoy, target.clone()]);
+        snapshot.seed_locs(vec![decoy.clone(), target.clone()]);
         let plan = InteractPlan {
             kind: reach::ReachKind::Loc {
                 id: Some(target.id),
@@ -5738,7 +5757,7 @@ fn anchored_interact_loc_ignores_the_nearer_player_relative_decoy() {
             default_dialogue: false,
             dialogue_options: None,
             until: None,
-            target_tile: None,
+            target_tile: Some(origin),
             reachable_only: false,
         };
         let mut ledger = None;
@@ -5755,10 +5774,11 @@ fn anchored_interact_loc_ignores_the_nearer_player_relative_decoy() {
                 Some(HostEffect::Walk(request))
                     if request.target == origin && request.loc_id == Some(target.id)
             ),
-            "a same-id loc near the player must not bypass the authored loc and its stand"
+            "a same-id loc near the player must not bypass the exact loc and its stand"
         );
         snapshot.seed_local_player(local_player(tile(3170, 3308)));
-        snapshot.seed_locs(vec![target.clone()]);
+        decoy.tile.x = 3171;
+        snapshot.seed_locs(vec![decoy, target.clone()]);
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })

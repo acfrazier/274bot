@@ -1979,13 +1979,13 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
 
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 8..17 {
+    for tick in 8..13 {
         assert!(
             with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
-            "finish must wait for the shared eight-tick dialogue gap"
+            "finish must wait for the shared four-tick dialogue gap"
         );
     }
-    let completed = with_step_context(&snapshot, &mut ledger, 17, |cx| run.poll(cx));
+    let completed = with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx));
     let Poll::Ready(Ok(outcome)) = completed else {
         panic!("only a completed shared continuation may settle finish");
     };

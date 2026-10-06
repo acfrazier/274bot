@@ -96,6 +96,10 @@ pub struct QuestItemDocument {
     pub kind: QuestItemKindDocument,
     #[serde(default)]
     pub acquire: Option<String>,
+    /// Stage key (e.g. `"cook:1"`) from which this item becomes due.
+    /// Earlier stages skip its need entirely, including the Unknown-bank scan.
+    #[serde(default)]
+    pub from_stage: Option<FactKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

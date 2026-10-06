@@ -31,12 +31,13 @@ fn door_wall_reachable(
 pub struct ReachArgs {
     pub kind: ReachKind,
     pub op: Arc<str>,
+    /// Owns the chooser's area (see [`Area`]); `None` searches around the player.
     pub anchor: Option<WorldTile>,
     pub radius: i32,
     pub wait_if_missing: bool,
-    /// Select this exact loc tile instead of the nearest same-definition loc.
+    /// Select this exact loc tile instead of any matching loc in the area.
     pub target_tile: Option<WorldTile>,
-    /// Require a known reachable loc candidate for inventory-count repetition.
+    /// Only click a candidate the live reach flood proves reachable.
     pub reachable_only: bool,
 }
 
@@ -79,8 +80,20 @@ pub struct Reach {
     deadline_ms: u64,
     before_count: i32,
     clicked_loc: Option<(i32, WorldTile)>,
+    /// The fungible target last clicked; avoided after "I can't reach that!".
+    clicked: Option<AvoidKey>,
+    avoid: Avoid,
     walk: Option<Walk>,
     request_id: u64,
+}
+
+/// What the chooser asks the reach loop to do next.
+enum Choice {
+    Click(InteractReq, Option<AvoidKey>, i32),
+    /// No NPC or ground match in the area is reachable from here: nav-walk
+    /// to the best in-area match instead of a raw click.
+    Approach(WorldTile),
+    Missing,
 }
 
 impl NativeMachine for Reach {
@@ -96,6 +109,8 @@ impl NativeMachine for Reach {
             deadline_ms: cx.active_now().as_millis() as u64 + DOOR_WAIT_MS,
             before_count: 0,
             clicked_loc: None,
+            clicked: None,
+            avoid: Avoid::default(),
             walk: None,
             request_id: 0,
         };
@@ -130,6 +145,20 @@ impl NativeMachine for Reach {
                     };
                 }
                 if saw_cant_reach(cx, self.chat_mark) {
+                    // A fungible target that answered "I can't reach that!" is
+                    // a failed attempt: click another reachable match at once
+                    // and avoid the bumped one briefly. With no alternative,
+                    // the door fallback still serves the same target.
+                    if let Some(key) = self.clicked.filter(|_| self.args.target_tile.is_none()) {
+                        let previous = self.avoid;
+                        self.avoid.add(key, cx.evidence().tick);
+                        let choice = self.choice(cx, self.args.reachable_only, false)?;
+                        if matches!(choice, Choice::Click(..)) {
+                            self.act(choice, cx)?;
+                            return Poll::Pending;
+                        }
+                        self.avoid = previous;
+                    }
                     if self.clear_door(cx).is_ok() {
                         return Poll::Pending;
                     }
@@ -198,109 +227,166 @@ impl Reach {
         (self.request_id != 0).then_some(self.request_id)
     }
     fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
-        let request = match &self.args.kind {
-            ReachKind::Npc { id, name } => {
-                let Some(npc) = nearest_npc(cx, *id, &self.args.op, self.args.radius) else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
-                };
-                InteractReq::Npc {
-                    name: name.to_string(),
-                    action: self.args.op.to_string(),
-                    index: Some(npc.index as i32),
-                }
+        let choice = self.choice(cx, self.args.reachable_only, true)?;
+        self.act(choice, cx)
+    }
+
+    /// Pick the next target with the shared chooser. A reachable match (or,
+    /// unless `strict`, an unverified one) is clicked. With `approach`, an
+    /// unreachable best NPC or ground item is nav-walked to instead of
+    /// clicked; an unreachable loc keeps the click and its door recovery
+    /// (anchored quest locs already walk to their stand before this).
+    fn choice(
+        &self,
+        cx: &ActionContext<'_>,
+        strict: bool,
+        approach: bool,
+    ) -> Result<Choice, ActionError> {
+        /// `Some(true)` clicks, `Some(false)` approaches.
+        fn decide<T>(pick: Pick<T>, strict: bool, approach: bool) -> Option<(T, bool)> {
+            match pick {
+                Pick::Reachable(value) => Some((value, true)),
+                Pick::Unverified(value) if !strict => Some((value, true)),
+                Pick::Unreachable(value) if !strict && approach => Some((value, false)),
+                _ => None,
             }
-            ReachKind::Loc { id, name } => {
-                let Some(loc) = nearest_loc(
-                    cx,
-                    *id,
-                    name.as_deref(),
-                    Some(&self.args.op),
-                    self.args.anchor,
-                    PROBE_RADIUS,
-                    self.args.target_tile,
-                    self.args.reachable_only,
-                ) else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
-                };
+        }
+        let avoid = self.avoid.at(cx.evidence().tick);
+        let op = self.args.op.as_ref();
+        let loc_choice = |pick: Pick<&api::snapshot::LocView>| match decide(pick, strict, approach)
+        {
+            Some((loc, _)) => Choice::Click(
                 InteractReq::Loc {
                     x: loc.tile.x,
                     z: loc.tile.z,
                     level: loc.tile.level,
-                    action: self.args.op.to_string(),
+                    action: op.to_string(),
                     id: Some(loc.id),
+                },
+                Some(AvoidKey::Tile(loc.tile)),
+                0,
+            ),
+            None => Choice::Missing,
+        };
+        Ok(match &self.args.kind {
+            ReachKind::Npc { id, name } => {
+                let pick = choose_npc(
+                    cx,
+                    *id,
+                    Some(op),
+                    Area::new(self.args.anchor, self.args.radius),
+                    &avoid,
+                );
+                match decide(pick, strict, approach) {
+                    Some((npc, true)) => Choice::Click(
+                        InteractReq::Npc {
+                            name: name.to_string(),
+                            action: op.to_string(),
+                            index: Some(npc.index as i32),
+                        },
+                        Some(AvoidKey::Npc(npc.index)),
+                        0,
+                    ),
+                    Some((npc, false)) => Choice::Approach(npc.tile),
+                    None => Choice::Missing,
                 }
             }
+            ReachKind::Loc { id, name } => loc_choice(choose_loc(
+                cx,
+                *id,
+                name.as_deref(),
+                Some(op),
+                Area::new(self.args.anchor, PROBE_RADIUS),
+                self.args.target_tile,
+                &avoid,
+            )),
+            ReachKind::Name { name } => loc_choice(choose_loc(
+                cx,
+                None,
+                Some(name),
+                Some(op),
+                Area::new(self.args.anchor, self.args.radius),
+                self.args.target_tile,
+                &avoid,
+            )),
             ReachKind::Ground { id, obj } => {
-                let Some(item) = nearest_ground(cx, *id, None, 12) else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
-                };
-                let tile = item.tile;
-                let Some(before) = held_count(cx, *id) else {
-                    return Ok(false);
-                };
-                self.before_count = before;
-                InteractReq::Obj {
-                    x: tile.x,
-                    z: tile.z,
-                    level: tile.level,
-                    name: Some(obj.to_string()),
-                    action: self.args.op.to_string(),
+                let pick = choose_ground(
+                    cx,
+                    *id,
+                    None,
+                    ground_area(self.args.anchor, self.args.radius),
+                    &avoid,
+                );
+                match decide(pick, strict, approach) {
+                    Some((item, true)) => {
+                        let Some(before) = held_count(cx, *id) else {
+                            return Ok(Choice::Missing);
+                        };
+                        Choice::Click(
+                            InteractReq::Obj {
+                                x: item.tile.x,
+                                z: item.tile.z,
+                                level: item.tile.level,
+                                name: Some(obj.to_string()),
+                                action: op.to_string(),
+                            },
+                            Some(AvoidKey::Tile(item.tile)),
+                            before,
+                        )
+                    }
+                    Some((item, false)) => Choice::Approach(item.tile),
+                    None => Choice::Missing,
                 }
             }
             ReachKind::Held { id, obj } => {
                 let Some(inventory) = cx.snapshot().inventory() else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
+                    return Ok(Choice::Missing);
                 };
                 let Some(item) = inventory
                     .value
                     .iter()
                     .find(|item| item.def.id == *id && item.count > 0)
                 else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
+                    return Ok(Choice::Missing);
                 };
                 if !item
                     .actions
                     .iter()
                     .flatten()
-                    .any(|op| op.eq_ignore_ascii_case(&self.args.op))
+                    .any(|action| action.eq_ignore_ascii_case(op))
                 {
                     return Err(ActionError::Unavailable(Arc::from(
                         "held item does not offer the authored operation",
                     )));
                 }
-                InteractReq::Held {
-                    name: obj.to_string(),
-                    action: self.args.op.to_string(),
-                    slot: Some(item.slot),
-                    target_item_id: Some(item.def.id),
-                }
-            }
-            ReachKind::Name { name } => {
-                let Some(loc) = nearest_loc(
-                    cx,
+                Choice::Click(
+                    InteractReq::Held {
+                        name: obj.to_string(),
+                        action: op.to_string(),
+                        slot: Some(item.slot),
+                        target_item_id: Some(item.def.id),
+                    },
                     None,
-                    Some(name),
-                    Some(&self.args.op),
-                    self.args.anchor,
-                    self.args.radius,
-                    self.args.target_tile,
-                    self.args.reachable_only,
-                ) else {
-                    self.phase = Phase::Seek;
-                    return Ok(false);
-                };
-                InteractReq::Loc {
-                    x: loc.tile.x,
-                    z: loc.tile.z,
-                    level: loc.tile.level,
-                    action: self.args.op.to_string(),
-                    id: Some(loc.id),
-                }
+                    0,
+                )
+            }
+        })
+    }
+
+    fn act(&mut self, choice: Choice, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
+        let (request, key, before) = match choice {
+            Choice::Click(request, key, before) => (request, key, before),
+            Choice::Approach(tile) => {
+                // Each approach is a bounded attempt, like a click.
+                self.attempts += 1;
+                self.clicked_loc = None;
+                self.clicked = None;
+                self.walk_to(tile, None, None, cx)?;
+                return Ok(true);
+            }
+            Choice::Missing => {
+                self.phase = Phase::Seek;
+                return Ok(false);
             }
         };
         let clicked_loc = match &request {
@@ -321,7 +407,9 @@ impl Reach {
             _ => None,
         };
         self.request_id = cx.emit(request)?;
+        self.before_count = before;
         self.clicked_loc = clicked_loc;
+        self.clicked = key;
         self.phase = Phase::Click;
         self.attempts += 1;
         self.chat_mark = last_chat_seq(cx);
@@ -416,17 +504,30 @@ impl Reach {
 
     fn walk_to_target(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         let clicked = self.clicked_loc;
-        let target = clicked
-            .map(|(_, tile)| tile)
-            .or_else(|| match &self.args.kind {
-                ReachKind::Npc { id, .. } => {
-                    nearest_npc(cx, *id, &self.args.op, self.args.radius).map(|npc| npc.tile)
-                }
-                ReachKind::Ground { id, .. } => {
-                    nearest_ground(cx, *id, None, 12).map(|item| item.tile)
-                }
+        let target = clicked.map(|(_, tile)| tile).or_else(|| {
+            let avoid = self.avoid.at(cx.evidence().tick);
+            match &self.args.kind {
+                ReachKind::Npc { id, .. } => choose_npc(
+                    cx,
+                    *id,
+                    Some(&self.args.op),
+                    Area::new(self.args.anchor, self.args.radius),
+                    &avoid,
+                )
+                .any()
+                .map(|npc| npc.tile),
+                ReachKind::Ground { id, .. } => choose_ground(
+                    cx,
+                    *id,
+                    None,
+                    ground_area(self.args.anchor, self.args.radius),
+                    &avoid,
+                )
+                .any()
+                .map(|item| item.tile),
                 _ => self.args.anchor,
-            });
+            }
+        });
         let target = target.ok_or_else(|| ActionError::Failed(Arc::from("no reach target")))?;
         // A clicked loc only gets footprint intent when the shared approach
         // model recognizes it. Doors and other non-footprint locs retain the
@@ -458,6 +559,8 @@ impl Reach {
     }
 }
 
+/// Whether a scene target has a reachable candidate in its area. Held items
+/// are available while the pack offers the authored operation.
 pub fn target_available(
     cx: &ActionContext<'_>,
     kind: &ReachKind,
@@ -465,10 +568,14 @@ pub fn target_available(
     radius: i32,
     anchor: Option<WorldTile>,
     target_tile: Option<WorldTile>,
-    reachable_only: bool,
 ) -> bool {
+    let none = Avoid::default();
     match kind {
-        ReachKind::Ground { id, .. } => nearest_ground(cx, *id, None, 12).is_some(),
+        ReachKind::Ground { id, .. } => {
+            choose_ground(cx, *id, None, ground_area(anchor, radius), &none)
+                .usable()
+                .is_some()
+        }
         ReachKind::Held { id, .. } => cx.snapshot().inventory().is_some_and(|inventory| {
             inventory.value.iter().any(|item| {
                 item.def.id == *id
@@ -480,102 +587,322 @@ pub fn target_available(
                         .any(|action| action.eq_ignore_ascii_case(op))
             })
         }),
-        ReachKind::Loc { id, name } => nearest_loc(
+        ReachKind::Loc { id, name } => choose_loc(
             cx,
             *id,
             name.as_deref(),
             Some(op),
-            anchor,
-            PROBE_RADIUS,
+            Area::new(anchor, PROBE_RADIUS),
             target_tile,
-            reachable_only,
+            &none,
         )
+        .usable()
         .is_some(),
-        ReachKind::Name { name } => nearest_loc(
+        ReachKind::Name { name } => choose_loc(
             cx,
             None,
             Some(name),
             Some(op),
-            anchor,
-            radius,
+            Area::new(anchor, radius),
             target_tile,
-            reachable_only,
+            &none,
         )
+        .usable()
         .is_some(),
-        ReachKind::Npc { id, .. } => nearest_npc(cx, *id, op, radius).is_some(),
+        ReachKind::Npc { id, .. } => {
+            choose_npc(cx, *id, Some(op), Area::new(anchor, radius), &none)
+                .usable()
+                .is_some()
+        }
     }
 }
 
-pub fn nearest_npc<'a>(
-    cx: &'a ActionContext<'_>,
-    id: i32,
-    op: &str,
-    radius: i32,
-) -> Option<&'a api::snapshot::NpcView> {
-    cx.snapshot()
-        .npcs()?
-        .value
-        .iter()
-        .filter(|npc| {
-            npc.r#type == Some(id as usize)
-                && npc.distance <= radius
-                && npc
-                    .actions
-                    .iter()
-                    .flatten()
-                    .any(|action| action.eq_ignore_ascii_case(op))
-        })
-        .min_by_key(|npc| npc.distance)
+/// Ground items keep their historical twelve-tile player probe without an
+/// anchor; an anchor owns the area otherwise.
+pub fn ground_area(anchor: Option<WorldTile>, radius: i32) -> Area {
+    Area::new(anchor, if anchor.is_some() { radius } else { 12 })
 }
 
-pub(super) fn nearest_ground<'a>(
-    cx: &'a ActionContext<'_>,
-    id: i32,
-    tile: Option<WorldTile>,
-    radius: i32,
-) -> Option<&'a api::snapshot::GroundItemView> {
-    cx.snapshot()
-        .ground_items()?
-        .value
-        .iter()
-        .filter(|item| {
-            item.def.id == id
-                && item.distance <= radius
-                && tile.is_none_or(|tile| item.tile == tile)
-        })
-        .min_by_key(|item| item.distance)
+/// Ticks a target that answered "I can't reach that!" stays out of the chooser.
+pub const AVOID_TICKS: u64 = 10;
+/// Opportunistic retargets allowed for one approach walk.
+pub const RETARGET_LIMIT: u8 = 3;
+/// A match found while walking replaces the walk only within this many route steps.
+pub const RETARGET_STEPS: u32 = 12;
+
+/// The chooser's search area: the authored anchor's area, or the player's
+/// radius when no anchor was authored (`radius <= 0` means the whole scene).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Area {
+    pub anchor: Option<WorldTile>,
+    pub radius: i32,
 }
 
-fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
-    Some(
-        cx.snapshot()
-            .inventory()?
-            .value
+impl Area {
+    pub fn new(anchor: Option<WorldTile>, radius: i32) -> Self {
+        Self { anchor, radius }
+    }
+
+    /// Whether a target at `tile` (`player_distance` from the player) is in the area.
+    pub fn contains(&self, tile: WorldTile, player_distance: i32) -> bool {
+        match self.anchor {
+            Some(anchor) => chebyshev(anchor, tile) <= self.radius.max(PROBE_RADIUS),
+            None => self.radius <= 0 || player_distance <= self.radius,
+        }
+    }
+
+    fn tie_break(&self, tile: WorldTile, player_distance: i32) -> i32 {
+        self.anchor
+            .map_or(player_distance, |anchor| chebyshev(anchor, tile))
+    }
+}
+
+/// One chooser result. `Unreachable` is the best in-area match by anchor
+/// distance when no match is route-reachable from the live player tile.
+/// `Unverified` is the nearest straight-line match when no live reach flood
+/// is posted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick<T> {
+    Reachable(T),
+    Unverified(T),
+    Unreachable(T),
+    None,
+}
+
+impl<T> Pick<T> {
+    /// A match proven reachable by the live flood.
+    pub fn reachable(self) -> Option<T> {
+        match self {
+            Pick::Reachable(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// A match not known to be unreachable.
+    pub fn usable(self) -> Option<T> {
+        match self {
+            Pick::Reachable(value) | Pick::Unverified(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn any(self) -> Option<T> {
+        match self {
+            Pick::Reachable(value) | Pick::Unverified(value) | Pick::Unreachable(value) => {
+                Some(value)
+            }
+            Pick::None => None,
+        }
+    }
+
+    /// Strict selection only accepts a proven reachable match.
+    pub fn select(self, strict: bool) -> Option<T> {
+        if strict {
+            self.reachable()
+        } else {
+            self.any()
+        }
+    }
+}
+
+/// Target identity the chooser can briefly avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvoidKey {
+    Npc(usize),
+    Tile(WorldTile),
+}
+
+/// A small, fixed set of recently unreachable targets, expiring by game tick.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Avoid {
+    entries: [Option<(AvoidKey, u64)>; 4],
+    next: usize,
+    now: u64,
+}
+
+impl Avoid {
+    /// Avoid `key` for [`AVOID_TICKS`] after `tick`.
+    pub fn add(&mut self, key: AvoidKey, tick: u64) {
+        self.entries[self.next] = Some((key, tick.saturating_add(AVOID_TICKS)));
+        self.next = (self.next + 1) % self.entries.len();
+    }
+
+    /// Evaluate expiry against the current game tick.
+    pub fn at(mut self, tick: u64) -> Self {
+        self.now = tick;
+        self
+    }
+
+    fn contains(&self, key: AvoidKey) -> bool {
+        self.entries
             .iter()
-            .filter(|item| item.def.id == id)
-            .map(|item| item.count)
-            .sum(),
+            .flatten()
+            .any(|(entry, until)| *entry == key && self.now < *until)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Footprint {
+    tile: WorldTile,
+    width: i32,
+    length: i32,
+    distance: i32,
+}
+
+fn npc_footprint(npc: &api::snapshot::NpcView) -> Footprint {
+    Footprint {
+        tile: npc.tile,
+        width: npc.size.max(1),
+        length: npc.size.max(1),
+        distance: npc.distance,
+    }
+}
+
+fn loc_footprint(loc: &api::snapshot::LocView) -> Footprint {
+    Footprint {
+        tile: loc.tile,
+        width: loc.footprint_width.max(1),
+        length: loc.footprint_length.max(1),
+        distance: loc.distance,
+    }
+}
+
+/// The posted reach view when its flood starts on the live player tile.
+/// A missing or stale flood leaves reachability unknown.
+fn live_reach(
+    view: Option<&api::query::ReachQueryView>,
+    here: Option<WorldTile>,
+) -> Option<&api::query::ReachQueryView> {
+    let view = view?;
+    (exact_rank_at(view, here?) == Some(0)).then_some(view)
+}
+
+/// Shared Quester target chooser. In-area matches that the player can reach
+/// (footprint adjacency through wall-valid edges) rank by walking distance,
+/// then by anchor distance (player distance without an anchor). Unknown
+/// reachability keeps straight-line player distance as the walking estimate.
+fn choose<'a, T>(
+    cx: &ActionContext<'_>,
+    area: Area,
+    rows: impl IntoIterator<Item = &'a T>,
+    footprint: impl Fn(&T) -> Footprint,
+) -> Pick<&'a T> {
+    let snapshot = cx.snapshot();
+    let view = live_reach(
+        snapshot.reach().map(|reach| reach.value),
+        snapshot.here().map(|here| here.value),
+    );
+    let mut reachable: Option<((u32, i32, u16), &'a T)> = None;
+    let mut unreachable: Option<((i32, i32), &'a T)> = None;
+    for row in rows {
+        let fp = footprint(row);
+        if !area.contains(fp.tile, fp.distance) {
+            continue;
+        }
+        let tie = area.tie_break(fp.tile, fp.distance);
+        let steps = match view {
+            Some(view) => route_steps(view, fp),
+            None => Some((u32::try_from(fp.distance).unwrap_or(u32::MAX), 0)),
+        };
+        match steps {
+            Some((walk, rank)) => {
+                let key = (walk, tie, rank);
+                if reachable.is_none_or(|(best, _)| key < best) {
+                    reachable = Some((key, row));
+                }
+            }
+            None => {
+                let key = (tie, fp.distance);
+                if unreachable.is_none_or(|(best, _)| key < best) {
+                    unreachable = Some((key, row));
+                }
+            }
+        }
+    }
+    match (reachable, unreachable) {
+        (Some((_, row)), _) if view.is_some() => Pick::Reachable(row),
+        (Some((_, row)), _) => Pick::Unverified(row),
+        (None, Some((_, row))) => Pick::Unreachable(row),
+        (None, None) => Pick::None,
+    }
+}
+
+pub fn choose_npc<'a>(
+    cx: &'a ActionContext<'_>,
+    id: i32,
+    op: Option<&str>,
+    area: Area,
+    avoid: &Avoid,
+) -> Pick<&'a api::snapshot::NpcView> {
+    let Some(npcs) = cx.snapshot().npcs() else {
+        return Pick::None;
+    };
+    choose(
+        cx,
+        area,
+        npcs.value.iter().filter(|npc| {
+            npc.r#type == Some(id as usize)
+                && !avoid.contains(AvoidKey::Npc(npc.index))
+                && op.is_none_or(|op| {
+                    npc.actions
+                        .iter()
+                        .flatten()
+                        .any(|action| action.eq_ignore_ascii_case(op))
+                })
+        }),
+        npc_footprint,
     )
 }
 
-/// An authored anchor owns the search origin; live player distance is only
-/// used when no anchor was supplied. Exact target tiles remain pinned.
-#[allow(clippy::too_many_arguments)]
-pub fn nearest_loc<'a>(
+pub fn choose_ground<'a>(
+    cx: &'a ActionContext<'_>,
+    id: i32,
+    tile: Option<WorldTile>,
+    area: Area,
+    avoid: &Avoid,
+) -> Pick<&'a api::snapshot::GroundItemView> {
+    let Some(items) = cx.snapshot().ground_items() else {
+        return Pick::None;
+    };
+    choose(
+        cx,
+        area,
+        items.value.iter().filter(|item| {
+            item.def.id == id
+                && tile.is_none_or(|tile| item.tile == tile)
+                && !avoid.contains(AvoidKey::Tile(item.tile))
+        }),
+        ground_footprint,
+    )
+}
+
+fn ground_footprint(item: &api::snapshot::GroundItemView) -> Footprint {
+    Footprint {
+        tile: item.tile,
+        width: 1,
+        length: 1,
+        distance: item.distance,
+    }
+}
+
+/// An explicit `target_tile` selects that exact loc; without one any matching
+/// loc in the area is fungible.
+pub fn choose_loc<'a>(
     cx: &'a ActionContext<'_>,
     id: Option<i32>,
     name: Option<&str>,
     op: Option<&str>,
-    anchor: Option<WorldTile>,
-    radius: i32,
+    area: Area,
     target_tile: Option<WorldTile>,
-    reachable_only: bool,
-) -> Option<&'a api::snapshot::LocView> {
-    cx.snapshot()
-        .locs()?
-        .value
-        .iter()
-        .filter(|loc| {
+    avoid: &Avoid,
+) -> Pick<&'a api::snapshot::LocView> {
+    let Some(locs) = cx.snapshot().locs() else {
+        return Pick::None;
+    };
+    choose(
+        cx,
+        area,
+        locs.value.iter().filter(|loc| {
             id.map_or_else(
                 || {
                     name.is_some_and(|want| {
@@ -590,21 +917,180 @@ pub fn nearest_loc<'a>(
                     .iter()
                     .flatten()
                     .any(|a| a.eq_ignore_ascii_case(op))
-            }) && (radius <= 0
-                || anchor.map_or(loc.distance, |anchor| chebyshev(anchor, loc.tile)) <= radius)
-                && target_tile.is_none_or(|tile| loc.tile == tile)
-                && (!reachable_only
-                    || cx.snapshot().reach().is_some_and(|reach| {
-                        reach.value.can_reach(
-                            loc.tile,
-                            &api::query::SceneReachOptions {
-                                max_steps: None,
-                                adjacent_ok: true,
-                            },
-                        )
-                    }))
+            }) && target_tile.is_none_or(|tile| loc.tile == tile)
+                && !avoid.contains(AvoidKey::Tile(loc.tile))
+        }),
+        loc_footprint,
+    )
+}
+
+/// Route steps from the player to a loc's best footprint stand, when known.
+pub fn loc_route_steps(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> Option<u32> {
+    footprint_route_steps(cx, loc_footprint(loc))
+}
+
+/// Route steps from the player to an NPC's best footprint stand, when known.
+pub fn npc_route_steps(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> Option<u32> {
+    footprint_route_steps(cx, npc_footprint(npc))
+}
+
+/// Route steps to a ground item, when known.
+pub fn ground_route_steps(
+    cx: &ActionContext<'_>,
+    item: &api::snapshot::GroundItemView,
+) -> Option<u32> {
+    footprint_route_steps(cx, ground_footprint(item))
+}
+
+/// Whether a live reach flood from the player's tile is posted.
+pub fn reach_known(cx: &ActionContext<'_>) -> bool {
+    let snapshot = cx.snapshot();
+    live_reach(
+        snapshot.reach().map(|reach| reach.value),
+        snapshot.here().map(|here| here.value),
+    )
+    .is_some()
+}
+
+fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
+    let snapshot = cx.snapshot();
+    let view = live_reach(
+        snapshot.reach().map(|reach| reach.value),
+        snapshot.here().map(|here| here.value),
+    )?;
+    route_steps(view, fp).map(|(steps, _)| steps)
+}
+
+/// Whether the player can operate on an NPC now: orthogonally beside its
+/// whole footprint across a wall-valid edge, not inside it. Without a live
+/// reach view this keeps the straight-line one-tile check.
+pub fn npc_adjacent(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> bool {
+    let snapshot = cx.snapshot();
+    let here = snapshot.here().map(|here| here.value);
+    let (Some(here), Some(view)) = (here, live_reach(snapshot.reach().map(|r| r.value), here))
+    else {
+        return npc.distance <= 1;
+    };
+    let fp = npc_footprint(npc);
+    if footprint_tiles(fp).any(|tile| tile == here) {
+        return false;
+    }
+    footprint_tiles(fp).any(|tile| {
+        reach_bit(view, &view.reachable_adj, tile)
+            && local_index(view, tile).and_then(|i| view.adjacent_rank.get(i)) == Some(&0)
+    })
+}
+
+fn footprint_tiles(fp: Footprint) -> impl Iterator<Item = WorldTile> {
+    (0..fp.width).flat_map(move |dx| {
+        (0..fp.length).map(move |dz| WorldTile {
+            x: fp.tile.x + dx,
+            z: fp.tile.z + dz,
+            level: fp.tile.level,
         })
-        .min_by_key(|loc| anchor.map_or(loc.distance, |anchor| chebyshev(anchor, loc.tile)))
+    })
+}
+
+fn local_index(view: &api::query::ReachQueryView, tile: WorldTile) -> Option<usize> {
+    let lx = tile.x - view.base_x;
+    let lz = tile.z - view.base_z;
+    (tile.level == view.level && lx >= 0 && lz >= 0 && lx < view.width && lz < view.height)
+        .then(|| (lx as usize) * (view.height as usize) + (lz as usize))
+}
+
+fn reach_bit(view: &api::query::ReachQueryView, words: &[u32], tile: WorldTile) -> bool {
+    api::query::ReachQueryView::bit_at(
+        words,
+        view.width,
+        view.height,
+        view.base_x,
+        view.base_z,
+        view.level,
+        tile,
+    )
+}
+
+fn exact_rank_at(view: &api::query::ReachQueryView, tile: WorldTile) -> Option<u16> {
+    if !reach_bit(view, &view.reachable, tile) {
+        return None;
+    }
+    let rank = *view.exact_rank.get(local_index(view, tile)?)?;
+    (rank != u16::MAX).then_some(rank)
+}
+
+/// Best stand for a footprint: the earliest flood rank that is exact on, or
+/// wall-valid orthogonally beside, a footprint tile. Returns its walking
+/// depth and rank.
+fn route_steps(view: &api::query::ReachQueryView, fp: Footprint) -> Option<(u32, u16)> {
+    let (rank, stand) = footprint_tiles(fp)
+        .filter_map(|tile| {
+            if !reach_bit(view, &view.reachable_adj, tile) {
+                return None;
+            }
+            let rank = *view.adjacent_rank.get(local_index(view, tile)?)?;
+            (rank != u16::MAX).then(|| (rank, stand_for(view, tile, rank)))
+        })
+        .min_by_key(|(rank, _)| *rank)?;
+    Some((
+        flood_depth(view, stand, rank).unwrap_or(u32::from(rank)),
+        rank,
+    ))
+}
+
+/// The tile whose exact rank produced `rank`: the tile itself or one of its
+/// orthogonal neighbours.
+fn stand_for(view: &api::query::ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
+    [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
+        .into_iter()
+        .map(|(dx, dz)| WorldTile {
+            x: tile.x + dx,
+            z: tile.z + dz,
+            level: tile.level,
+        })
+        .find(|stand| exact_rank_at(view, *stand) == Some(rank))
+        .unwrap_or(tile)
+}
+
+/// Walking depth of a flooded tile, recovered from dequeue ranks: each BFS
+/// tile was discovered by its lowest-ranked neighbour able to step into it.
+/// `None` when the posted step masks cannot reproduce the chain.
+fn flood_depth(
+    view: &api::query::ReachQueryView,
+    mut tile: WorldTile,
+    mut rank: u16,
+) -> Option<u32> {
+    let mut depth = 0u32;
+    while rank != 0 {
+        let (parent_rank, parent) = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+            .filter(|&(dx, dz)| dx != 0 || dz != 0)
+            .filter_map(|(dx, dz)| {
+                let from = WorldTile {
+                    x: tile.x + dx,
+                    z: tile.z + dz,
+                    level: tile.level,
+                };
+                let from_rank = exact_rank_at(view, from)?;
+                (from_rank < rank && view.can_step(from, tile)).then_some((from_rank, from))
+            })
+            .min_by_key(|(from_rank, _)| *from_rank)?;
+        tile = parent;
+        rank = parent_rank;
+        depth += 1;
+    }
+    Some(depth)
+}
+
+fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
+    Some(
+        cx.snapshot()
+            .inventory()?
+            .value
+            .iter()
+            .filter(|item| item.def.id == id)
+            .map(|item| item.count)
+            .sum(),
+    )
 }
 
 /// The same live stand predicate used by native walks, including footprint
