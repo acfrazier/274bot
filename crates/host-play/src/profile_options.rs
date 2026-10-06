@@ -60,6 +60,19 @@ impl WorldMembersFact {
     pub fn map_members(&self) -> bool {
         matches!(self, Self::Known { members: true, .. })
     }
+
+    /// World type for scripts attached to a bound profile. Members only when
+    /// the profile declares or resolves a members world; every other bound
+    /// profile, including one whose fact is [`WorldMembersFact::Unknown`],
+    /// is free-to-play (the same default routing uses). Never `Unknown`:
+    /// that belongs to a connection with no profile at all.
+    pub fn world_truth(&self) -> api::selected::Truth {
+        if self.map_members() {
+            api::selected::Truth::True
+        } else {
+            api::selected::Truth::False
+        }
+    }
 }
 
 /// Explicit launch overrides. No process state changes occur while parsing.

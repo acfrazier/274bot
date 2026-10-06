@@ -93,10 +93,11 @@ impl<T> Knowledge<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Truth {
     True,
     False,
+    #[default]
     Unknown,
 }
 

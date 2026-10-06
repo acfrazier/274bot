@@ -311,6 +311,14 @@ impl PlayConnection {
         }
     }
 
+    /// World type for scripts: the bound profile's, `Unknown` with no profile.
+    pub(super) fn world_members(&self) -> api::selected::Truth {
+        self.profile()
+            .map_or(api::selected::Truth::Unknown, |profile| {
+                profile.world_members_truth()
+            })
+    }
+
     pub(super) fn require_bot_operation(&self) -> Result<(), String> {
         self.profile()
             .map_or(Ok(()), |profile| profile.require_bot_operation())

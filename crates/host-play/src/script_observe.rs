@@ -838,6 +838,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             } else {
                 let selected = slot.compiled_game_data();
+                let world_members = slot.world_members();
                 let packed = selected.as_ref().map(|_| {
                     pack_cached_reach(
                         slot.reach_pack_cache(),
@@ -866,6 +867,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         bank_memory: bank_memory.as_deref(),
                         hold: hold || ours,
+                        world_members,
                         ..Default::default()
                     },
                 });
