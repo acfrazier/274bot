@@ -344,6 +344,16 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
                 avoided: &self.avoid,
+                collision: {
+                    #[cfg(feature = "load")]
+                    {
+                        tick.frame.compiled.collision
+                    }
+                    #[cfg(not(feature = "load"))]
+                    {
+                        None
+                    }
+                },
             },
         ) else {
             self.fail(

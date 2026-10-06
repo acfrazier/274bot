@@ -36,6 +36,9 @@ pub struct CompiledTick<'a> {
     /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
     /// the host has no memory for the slot.
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
+    /// Packed world collision for off-scene Area arrival (resource return
+    /// stands). `None` in a bare ctx or when the host has no nav pack.
+    pub collision: Option<&'a nav::collision::WorldCollision>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.

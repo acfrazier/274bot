@@ -1469,6 +1469,7 @@ mod tests {
                     selected,
                     reach: None,
                     bank_memory: None,
+                    collision: None,
                     hold: self.hold,
                     interacts: Some(Vec::new()),
                 },
