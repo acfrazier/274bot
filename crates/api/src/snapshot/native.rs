@@ -4,7 +4,9 @@ use super::{
     ItemView, LocView, LocalPlayerView, NpcView, PlayerView, ProjectileView, QuestStatusView,
     SideTabView, StatView, VarpView, WorldStateView,
 };
+use crate::bank_memory::BankMemory;
 use crate::quest_progress::EvidenceStamp;
+use crate::stock::Stock;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +61,7 @@ pub struct SnapshotView<'a> {
     snapshot: Option<&'a GameSnapshot>,
     stamp: EvidenceStamp,
     reach: Option<&'a crate::query::ReachQueryView>,
+    bank_memory: Option<&'a BankMemory>,
 }
 
 impl<'a> SnapshotView<'a> {
@@ -69,6 +72,7 @@ impl<'a> SnapshotView<'a> {
             snapshot,
             stamp,
             reach: None,
+            bank_memory: None,
         }
     }
 
@@ -171,6 +175,26 @@ impl<'a> SnapshotView<'a> {
     pub fn with_reach(mut self, reach: Option<&'a crate::query::ReachQueryView>) -> Self {
         self.reach = reach;
         self
+    }
+
+    /// Attach the account's bank memory belonging to this frame.
+    pub fn with_bank_memory(mut self, bank_memory: Option<&'a BankMemory>) -> Self {
+        self.bank_memory = bank_memory;
+        self
+    }
+
+    /// The account's last-seen bank, whatever the frame's state: the memory
+    /// outlives a login.
+    pub fn bank_memory(&self) -> Option<&'a BankMemory> {
+        self.bank_memory
+    }
+
+    /// The frame's item facts for planning: the pack and worn pages under
+    /// the same gates as `inventory()` / `equipment()`, plus the bank memory.
+    pub fn stock(&self) -> Stock<'a> {
+        let mut stock = self.ingame().map(Stock::pages).unwrap_or_default();
+        stock.bank = self.bank_memory;
+        stock
     }
 
     pub fn reach(&self) -> Option<Observed<&crate::query::ReachQueryView>> {

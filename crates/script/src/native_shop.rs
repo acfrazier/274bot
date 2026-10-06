@@ -3,7 +3,6 @@
 //! item count grows.
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
-use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -117,10 +116,9 @@ impl NativeMachine for BuyMachine {
                 }
                 Phase::Buy => {
                     let snapshot = cx.snapshot();
-                    let Some(inventory) = snapshot.inventory() else {
+                    let Some(held) = snapshot.stock().held(self.request.item_id) else {
                         return Poll::Pending;
                     };
-                    let held = count(inventory.value, self.request.item_id);
                     if held >= self.request.qty {
                         self.phase = Phase::Close;
                         continue;
@@ -165,10 +163,7 @@ impl NativeMachine for BuyMachine {
                     return Poll::Pending;
                 }
                 Phase::AwaitBatch { before } => {
-                    let held = cx
-                        .snapshot()
-                        .inventory()
-                        .map(|inventory| count(inventory.value, self.request.item_id));
+                    let held = cx.snapshot().stock().held(self.request.item_id);
                     if held.is_some_and(|held| held > before) {
                         self.phase = Phase::Buy;
                         continue;
@@ -212,15 +207,9 @@ impl BuyMachine {
         BuyReceipt {
             held: cx
                 .snapshot()
-                .inventory()
-                .map_or(0, |rows| count(rows.value, self.request.item_id)),
+                .stock()
+                .held(self.request.item_id)
+                .unwrap_or(0),
         }
     }
-}
-
-fn count(rows: &[ItemView], id: i32) -> i32 {
-    rows.iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count)
-        .sum()
 }

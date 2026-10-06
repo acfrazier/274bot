@@ -4,12 +4,14 @@ use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
 use super::families::{self, AcquirePlan};
+use crate::bank::ops;
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
 use api::snapshot::{ItemView, WorldTile};
+use api::stock::Stock;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -321,12 +323,12 @@ impl Provisioner {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
             if !self.coin_drawn {
-                if count_item(inventory, coin.item.id) >= coin.qty {
+                if ops::count_id(inventory, coin.item.id) >= coin.qty {
                     self.set_coin_drawn(true);
                 } else {
                     let fits = !cx.bank.known() || {
-                        let incoming = incoming_slots(
-                            count_item(inventory, coin.item.id),
+                        let incoming = Stock::incoming_slots(
+                            ops::count_id(inventory, coin.item.id),
                             coin.qty,
                             coin.stackable,
                             cx.bank.count(coin.item.id).unwrap_or(0),
@@ -364,12 +366,12 @@ impl Provisioner {
                 if self.carry_drawn & bit != 0 {
                     continue;
                 }
-                if row.qty <= 0 || count_item(inventory, row.item.id) >= row.qty {
+                if row.qty <= 0 || ops::count_id(inventory, row.item.id) >= row.qty {
                     self.set_carry_latch(row.latch_index);
                 } else {
                     let fits = !cx.bank.known() || {
-                        let incoming = incoming_slots(
-                            count_item(inventory, row.item.id),
+                        let incoming = Stock::incoming_slots(
+                            ops::count_id(inventory, row.item.id),
                             row.qty,
                             row.stackable,
                             cx.bank.count(row.item.id).unwrap_or(0),
@@ -421,8 +423,8 @@ impl Provisioner {
                 ActionError::Unavailable(Arc::from("compiled item quantity overflow"))
             })?;
             if cx.bank.known() {
-                let pack = count_item(inventory, item.id);
-                let incoming = incoming_slots(
+                let pack = ops::count_id(inventory, item.id);
+                let incoming = Stock::incoming_slots(
                     pack,
                     target,
                     item.stackable,
@@ -512,7 +514,7 @@ impl Provisioner {
                 ProvisionPhase::Spillover,
                 status.map(|need| Arc::clone(&need.item)),
                 status.map_or(deficit, |need| need.need),
-                status.map_or(occupied_slots(inventory), |need| need.pack),
+                status.map_or(ops::occupied(inventory), |need| need.pack),
                 status.and_then(|need| need.bank),
             );
             return Poll::Pending;
@@ -737,7 +739,7 @@ impl Needs {
         if target <= 0 {
             return Ok(());
         }
-        let pack = count_item(inventory, item.id);
+        let pack = ops::count_id(inventory, item.id);
         if pack >= target {
             return Ok(());
         }
@@ -1077,38 +1079,11 @@ fn walk_evidence(receipt: crate::native::WalkReceipt) -> Result<(), ActionError>
     receipt.into_arrival().map(|_| ())
 }
 
-fn count_item(inventory: &[ItemView], id: i32) -> i32 {
-    inventory
-        .iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count.max(0))
-        .sum()
-}
-
-fn occupied_slots(inventory: &[ItemView]) -> i32 {
-    i32::try_from(inventory.iter().filter(|row| row.count > 0).count()).unwrap_or(i32::MAX)
-}
-
 fn safe_deposit_rows(inventory: &[ItemView], keep: &[i32]) -> usize {
     inventory
         .iter()
         .filter(|row| row.count > 0 && !keep.contains(&row.def.id))
         .count()
-}
-
-fn slots_for_count(count: i32, stackable: bool) -> i32 {
-    let count = count.max(0);
-    if stackable {
-        i32::from(count > 0)
-    } else {
-        count
-    }
-}
-
-fn incoming_slots(pack: i32, target: i32, stackable: bool, bank_count: i32) -> i32 {
-    let take = target.saturating_sub(pack).min(bank_count.max(0));
-    slots_for_count(pack.saturating_add(take), stackable)
-        .saturating_sub(slots_for_count(pack, stackable))
 }
 
 fn has_withdrawal(needs: &Needs, id: i32) -> bool {
@@ -1194,7 +1169,7 @@ fn planned_slots(
     include_recipe_inputs: bool,
     include_final_outputs: bool,
 ) -> i32 {
-    let mut slots = occupied_slots(inventory);
+    let mut slots = ops::occupied(inventory);
     if let Some(recipe) = recipe {
         if include_recipe_inputs {
             for id in recipe.consumed_ids.iter().copied() {
@@ -1203,8 +1178,8 @@ fn planned_slots(
                 {
                     continue;
                 }
-                let absent = slots_for_count(
-                    count_item(inventory, id),
+                let absent = Stock::slots_for(
+                    ops::count_id(inventory, id),
                     item_stackable(plan, Some(recipe), inventory, id),
                 );
                 slots = slots.saturating_sub(absent).max(0);
@@ -1215,8 +1190,8 @@ fn planned_slots(
                 if has_other_recipe_state_need(plan, active_need, id) {
                     continue;
                 }
-                let absent = slots_for_count(
-                    count_item(inventory, id),
+                let absent = Stock::slots_for(
+                    ops::count_id(inventory, id),
                     item_stackable(plan, Some(recipe), inventory, id),
                 );
                 slots = slots.saturating_sub(absent).max(0);
@@ -1248,10 +1223,10 @@ fn planned_slots(
                     .map_or(0, |need| need.need.need),
             );
         }
-        let pack = count_item(inventory, withdrawal.id);
+        let pack = ops::count_id(inventory, withdrawal.id);
         let stackable = item_stackable(plan, recipe, inventory, withdrawal.id);
         slots = slots.saturating_add(
-            slots_for_count(target, stackable).saturating_sub(slots_for_count(pack, stackable)),
+            Stock::slots_for(target, stackable).saturating_sub(Stock::slots_for(pack, stackable)),
         );
     }
     if include_recipe_inputs {
@@ -1260,10 +1235,10 @@ fn planned_slots(
                 if has_withdrawal(needs, input.item.id) {
                     continue;
                 }
-                let pack = count_item(inventory, input.item.id);
+                let pack = ops::count_id(inventory, input.item.id);
                 slots = slots.saturating_add(
-                    slots_for_count(input.qty, input.stackable)
-                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                    Stock::slots_for(input.qty, input.stackable)
+                        .saturating_sub(Stock::slots_for(pack, input.stackable)),
                 );
             }
         }
@@ -1278,10 +1253,10 @@ fn planned_slots(
                 {
                     continue;
                 }
-                let pack = count_item(inventory, input.item.id);
+                let pack = ops::count_id(inventory, input.item.id);
                 slots = slots.saturating_add(
-                    slots_for_count(input.qty, input.stackable)
-                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                    Stock::slots_for(input.qty, input.stackable)
+                        .saturating_sub(Stock::slots_for(pack, input.stackable)),
                 );
             }
         }
@@ -1293,10 +1268,10 @@ fn planned_slots(
                 let recipe_target =
                     recipe.map_or(0, |recipe| recipe_peak_target(recipe, need.need.id));
                 let target = recipe_target.max(need.need.need);
-                let pack = count_item(inventory, need.need.id);
+                let pack = ops::count_id(inventory, need.need.id);
                 slots = slots.saturating_add(
-                    slots_for_count(target, stackable)
-                        .saturating_sub(slots_for_count(pack, stackable)),
+                    Stock::slots_for(target, stackable)
+                        .saturating_sub(Stock::slots_for(pack, stackable)),
                 );
             }
         }

@@ -186,8 +186,9 @@ impl NativeMachine for Thieve {
         let skills = snapshot.stats();
         let skill = skills.and_then(|stats| thieving_stat(stats.value));
         let inventory = snapshot.inventory();
-        let target_count = inventory.map(|items| item_count(items.value, self.args.item_id));
-        let inventory_used = inventory.map(|items| items.value.len() as i32);
+        let stock = snapshot.stock();
+        let target_count = stock.held(self.args.item_id);
+        let inventory_used = stock.occupied();
         let here = snapshot.here().map(|tile| tile.value);
         if self.area_anchor.is_none() {
             self.area_anchor = here;
@@ -555,13 +556,6 @@ fn chat_dialog(snapshot: SnapshotView<'_>) -> (bool, Option<u64>) {
             .map(|option| (option.component_id, option.text.as_str())),
     );
     (true, Some(fingerprint))
-}
-
-fn item_count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
-    items
-        .iter()
-        .filter(|item| item.def.id == id)
-        .fold(0i32, |count, item| count.saturating_add(item.count.max(0)))
 }
 
 fn nearer(a: Candidate<'_>, b: Candidate<'_>) -> bool {

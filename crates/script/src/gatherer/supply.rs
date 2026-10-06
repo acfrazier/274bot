@@ -6,6 +6,7 @@
 
 use super::card::Prepared;
 use super::settings::{GathererSettings, Skill};
+use crate::bank::ops;
 use crate::native::ConfigError;
 use api::game_data::{SelectedGameData, TeleportSpell};
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod};
@@ -747,12 +748,12 @@ fn supplies_due(
     supply
         .bait
         .as_ref()
-        .is_some_and(|bait| item_count(inventory, bait.id) == 0)
+        .is_some_and(|bait| ops::count_id(inventory, bait.id) == 0)
         || (settings.food_target > 0
             && supply
                 .food
                 .as_ref()
-                .is_some_and(|food| item_count(inventory, food.id) == 0))
+                .is_some_and(|food| ops::count_id(inventory, food.id) == 0))
         || (settings.reserve_casts > 0
             && supply
                 .reserve
@@ -764,7 +765,7 @@ fn can_afford_cast(reserve: &ReserveSpell, inventory: &[ItemView]) -> bool {
     let mut has_cost = false;
     for rune in reserve.runes() {
         has_cost = true;
-        if item_count(inventory, rune.id) < rune.per_cast {
+        if ops::count_id(inventory, rune.id) < rune.per_cast {
             return false;
         }
     }
@@ -779,11 +780,11 @@ fn top_up(
     inventory: &[ItemView],
     bank: &[ItemView],
 ) {
-    let current = item_count(inventory, item.id);
+    let current = ops::count_id(inventory, item.id);
     if current >= target && current >= minimum_usable {
         return;
     }
-    let available = current.saturating_add(item_count(bank, item.id));
+    let available = current.saturating_add(ops::count_id(bank, item.id));
     let target = target.min(available);
     if target > current {
         plan.push(SupplyItem {
@@ -795,13 +796,6 @@ fn top_up(
     if available < minimum_usable {
         plan.note_missing(Arc::clone(&item.name));
     }
-}
-
-fn item_count(items: &[ItemView], id: i32) -> i32 {
-    items
-        .iter()
-        .filter(|item| item.def.id == id)
-        .fold(0_i32, |total, item| total.saturating_add(item.count.max(0)))
 }
 
 fn tool_name(prepared: &Prepared, id: i32) -> Option<Arc<str>> {

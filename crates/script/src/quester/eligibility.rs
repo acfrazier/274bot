@@ -234,7 +234,7 @@ fn check_item(
     reasons: &mut Vec<BlockReason>,
 ) {
     let bank_count = bank.count(item_id);
-    let Some(inventory) = view.inventory().map(|observed| observed.value) else {
+    let Some(in_pack) = view.stock().held(item_id) else {
         if bank_count
             .is_some_and(|count| u64::try_from(count.max(0)).unwrap_or(0) >= u64::from(required))
         {
@@ -251,11 +251,7 @@ fn check_item(
         ));
         return;
     };
-    let in_pack: u64 = inventory
-        .iter()
-        .filter(|row| row.def.id == item_id)
-        .map(|row| u64::try_from(row.count.max(0)).unwrap_or(0))
-        .sum();
+    let in_pack = u64::try_from(in_pack).unwrap_or(0);
     let Some(bank_count) = bank_count else {
         // An unread bank is unknown, never an empty bank. The pack observation
         // alone cannot prove that a `mustHave` requirement is missing.

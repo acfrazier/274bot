@@ -254,7 +254,11 @@ fn anchor(tile: [i32; 3]) -> WorldTile {
 struct ItemQty {
     /// Symbolic item config name.
     obj: String,
-    /// Requested quantity; omitted uses 1 and values below 1 are rejected.
+    /// Held target for `withdraw`: the final backpack count, not a count to
+    /// take, so items already held are not withdrawn again and a backpack at
+    /// or above it completes without a withdrawal. Ignored by `deposit`, which
+    /// deposits every held row of the item. Omitted uses 1 and values below 1
+    /// are rejected.
     #[serde(default = "one")]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
@@ -637,7 +641,8 @@ pub(super) struct BuyArgs {
     shop: ShopArg,
     /// Symbolic item config name to buy.
     obj: String,
-    /// Number of items to buy; must be at least 1.
+    /// Held target: the final backpack count, not a count to buy, so items
+    /// already held are not bought again; must be at least 1.
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
     /// Estimated coin budget; currently informational.
@@ -1205,15 +1210,7 @@ impl LoadoutPlan {
             for carry in &self.row.carry {
                 let item = resolve(&carry.item)?;
                 let qty = i32::try_from(carry.qty).unwrap_or(i32::MAX);
-                if !snapshot.inventory().is_some_and(|inventory| {
-                    inventory
-                        .value
-                        .iter()
-                        .filter(|row| row.def.id == item.id)
-                        .map(|row| i64::from(row.count.max(0)))
-                        .sum::<i64>()
-                        >= i64::from(qty)
-                }) {
+                if snapshot.stock().holds(item.id, qty) != Truth::True {
                     bank_actions.push(BankAction::Withdraw { item, qty });
                 }
             }
@@ -1243,17 +1240,9 @@ impl LoadoutPlan {
                         items: Arc::from(items.clone()),
                         qty: 1,
                     });
-                } else if !snapshot.equipment().is_some_and(|equipment| {
-                    equipment
-                        .value
-                        .iter()
-                        .any(|row| row.count > 0 && row.def.id == items[0].id)
-                }) && !snapshot.inventory().is_some_and(|inventory| {
-                    inventory
-                        .value
-                        .iter()
-                        .any(|row| row.count > 0 && row.def.id == items[0].id)
-                }) {
+                } else if snapshot.stock().wears_any(&[items[0].id]) != Truth::True
+                    && snapshot.stock().holds(items[0].id, 1) != Truth::True
+                {
                     bank_actions.push(BankAction::Withdraw {
                         item: items[0].clone(),
                         qty: 1,
@@ -1392,28 +1381,15 @@ impl StepRun for LoadoutRun {
                         .iter()
                         .any(|items| items.iter().any(|wanted| wanted.id == row.def.id))
             }) {
-                let (Some(inventory), Some(capacity)) =
-                    (snapshot.inventory(), snapshot.inventory_capacity())
+                let stock = snapshot.stock();
+                let (Some(held), Some(free)) = (stock.held(extra.def.id), stock.free_slots())
                 else {
                     return Poll::Pending;
                 };
-                let held_stack = inventory
-                    .value
-                    .iter()
-                    .find(|row| row.count > 0 && row.def.id == extra.def.id);
-                let space = if extra.def.stackable {
-                    held_stack.map_or_else(
-                        || {
-                            inventory.value.iter().filter(|row| row.count > 0).count()
-                                < usize::from(capacity.value)
-                        },
-                        |held| {
-                            i64::from(held.count) + i64::from(extra.count) <= i64::from(i32::MAX)
-                        },
-                    )
+                let space = if extra.def.stackable && held > 0 {
+                    i64::from(held) + i64::from(extra.count) <= i64::from(i32::MAX)
                 } else {
-                    inventory.value.iter().filter(|row| row.count > 0).count()
-                        < usize::from(capacity.value)
+                    free > 0
                 };
                 if !space {
                     return Poll::Ready(Err(ActionError::Blocked(Arc::from(
@@ -1643,33 +1619,26 @@ struct LoadoutReady {
 impl PredicatePlan for LoadoutReady {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         let snapshot = cx.cx.snapshot();
-        let Some(inventory) = snapshot.inventory() else {
+        if snapshot.inventory().is_none() {
             return Truth::Unknown;
-        };
+        }
         let Some(equipment) = snapshot.equipment() else {
             return Truth::Unknown;
         };
-        let carry_ready = self.carry.iter().all(|(id, qty)| {
-            inventory
-                .value
-                .iter()
-                .filter(|item| item.def.id == *id)
-                .map(|item| item.count)
-                .sum::<i32>()
-                >= *qty
-        });
+        let stock = snapshot.stock();
+        let carry_ready = self
+            .carry
+            .iter()
+            .all(|(id, qty)| stock.holds(*id, *qty) == Truth::True);
         let worn_ready = if self.strip {
             equipment
                 .value
                 .iter()
                 .all(|row| row.count <= 0 || self.keep_ids.contains(&row.def.id))
         } else {
-            self.worn.iter().all(|ids| {
-                equipment
-                    .value
-                    .iter()
-                    .any(|item| item.count > 0 && ids.contains(&item.def.id))
-            })
+            self.worn
+                .iter()
+                .all(|ids| stock.wears_any(ids) == Truth::True)
         };
         let no_extra_equipment = !self.exclusive
             || equipment.value.iter().all(|item| {

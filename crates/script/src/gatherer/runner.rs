@@ -1014,16 +1014,7 @@ impl Gatherer {
 
     fn handle_drop(&mut self, result: DropResult, tick: &mut NativeTick<'_>) {
         match result.end {
-            DropEnd::Cleared
-                if tick.cx.snapshot().inventory().is_some_and(|inventory| {
-                    tick.cx
-                        .snapshot()
-                        .inventory_capacity()
-                        .is_some_and(|capacity| {
-                            inventory.value.len() >= usize::from(capacity.value)
-                        })
-                }) =>
-            {
+            DropEnd::Cleared if tick.cx.snapshot().stock().pack_full() == Some(true) => {
                 self.fail(
                     "inventory-blocked",
                     "full inventory has nothing left to drop",
@@ -1364,11 +1355,7 @@ impl Gatherer {
             return;
         };
         let snapshot = tick.cx.snapshot();
-        if snapshot
-            .inventory()
-            .zip(snapshot.inventory_capacity())
-            .is_some_and(|(rows, capacity)| rows.value.len() >= usize::from(capacity.value))
-        {
+        if snapshot.stock().pack_full() == Some(true) {
             self.start_dispose(tick);
             return;
         }
@@ -1750,12 +1737,7 @@ impl Script for Gatherer {
             self.poll_active(tick);
         }
         if self.active_matches_none() && !self.fence.sealed && self.failure.is_none() {
-            let disposal_due = tick
-                .cx
-                .snapshot()
-                .inventory()
-                .zip(tick.cx.snapshot().inventory_capacity())
-                .is_some_and(|(rows, capacity)| rows.value.len() >= usize::from(capacity.value));
+            let disposal_due = tick.cx.snapshot().stock().pack_full() == Some(true);
             if let Some(revision) = self.apply_pending(disposal_due) {
                 tick.output.settings_applied(revision);
             }
