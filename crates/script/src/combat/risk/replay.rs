@@ -3,7 +3,8 @@ use super::*;
 use crate::combat::frame::Frame;
 use crate::combat::policy;
 use crate::combat::schedule::{InputEffect, OpKind, Schedule};
-use crate::combat::tables::{CombatTables, FoodFact, PrayerRole};
+use crate::combat::select;
+use crate::combat::tables::{CombatTables, FoodFact};
 use crate::native::WalkAllow;
 use api::obj_names::ItemDefView;
 use api::snapshot::{
@@ -88,8 +89,7 @@ fn protect(
     {
         return false;
     }
-    let tier = if first.style == Style::Melee { 2 } else { 1 };
-    let Some(prayer) = tables.prayer(PrayerRole::Protect, tier) else {
+    let Some(prayer) = select::protect_fact(tables, first.style.into()) else {
         return false;
     };
     let Some(needed) = prayer_points_needed(path, c) else {
@@ -264,11 +264,8 @@ fn exposure(path: RoutePath<'_>, row: &ZoneInterval) -> Result<(i32, i32), Unkno
 }
 fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, UnknownWhy> {
     let npc = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-    let r = npc
-        .maxrange
-        .checked_add(npc.attackrange.max(1))
-        .ok_or(UnknownWhy::Overflow)?;
-    add(mul(r, 2)?, LAG)
+    let r = super::facts::npc_envelope_radius(npc).ok_or(UnknownWhy::Overflow)?;
+    add(mul(i32::from(r), 2)?, LAG)
 }
 
 fn hits(
@@ -466,12 +463,14 @@ pub fn replay(
         {
             i += 1;
         }
+        let point = path.point(i);
+        let input_held = point.is_some_and(|point| point.input_held(tick));
         // Entry is checked before its first hit, including transport-entered endpoints.
         let floor = estimated_floor(path, plan, i, input, tables, allow)?;
         if plan
             .crossings
             .iter()
-            .any(|c| c.first == i && path.point(i).is_some_and(|p| p.tick == tick))
+            .any(|c| c.first == i && point.is_some_and(|point| point.tick == tick))
             && floor.is_none_or(|floor| hp <= floor)
         {
             return Ok(ReplayResult {
@@ -493,14 +492,18 @@ pub fn replay(
             });
         }
         if let Some((due, heal)) = pending {
-            if tick == due {
+            if tick >= due && !input_held {
                 hp = add(hp, heal)?.min(cap);
                 pending = None;
                 schedule.settle(OpKind::Eat);
             }
         }
         let mut bite = None;
-        if allow.food && pending.is_none() && schedule.ready(OpKind::Eat, tick as u16) {
+        if allow.food
+            && !input_held
+            && pending.is_none()
+            && schedule.ready(OpKind::Eat, tick as u16)
+        {
             let line = eat_line(path, plan, i, input, tables, allow)?;
             let topup = crossing_at(plan, i).is_none()
                 && plan.crossings.iter().any(|c| {
@@ -834,8 +837,7 @@ fn assess_inner(
         need_count += 1;
     }
     for style in [Style::Melee, Style::Ranged] {
-        let tier = if style == Style::Melee { 2 } else { 1 };
-        let Some(prayer) = context.combat.prayer(PrayerRole::Protect, tier) else {
+        let Some(prayer) = select::protect_fact(context.combat, style.into()) else {
             continue;
         };
         let relevant = plan.crossings.iter().filter(|c| {

@@ -202,15 +202,10 @@ pub struct RouteAssessment {
     pub reason: Arc<str>,
 }
 
-/// Count only with positive coverage evidence, never with scene readiness.
-/// Without that evidence the identity-uncertain live/estimated union is summed.
-pub fn attacker_count(
-    live: u16,
-    estimated: u16,
-    complete_scene: Option<u16>,
-) -> Result<u16, UnknownWhy> {
-    let sum = live.checked_add(estimated).ok_or(UnknownWhy::Overflow)?;
-    Ok(complete_scene.map_or(sum, |count| sum.min(count)))
+/// S2a has no scene-coverage certificate: the identity-uncertain live/estimated
+/// union is always summed, even with a built or count-limited nearby scene.
+pub fn attacker_count(live: u16, estimated: u16) -> Result<u16, UnknownWhy> {
+    live.checked_add(estimated).ok_or(UnknownWhy::Overflow)
 }
 
 #[cfg(test)]
