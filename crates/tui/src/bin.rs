@@ -1423,14 +1423,7 @@ impl TuiSession {
             let play = self.core.play().ok_or(ActionError::NoFocus)?;
             let bank = name
                 .as_deref()
-                .and_then(|n| {
-                    self.snapshots.lock().unwrap().get(n).map(|snap| {
-                        snap.bank()
-                            .iter()
-                            .map(|it| (it.def.id, it.count))
-                            .collect::<Vec<_>>()
-                    })
-                })
+                .map(|n| play.bank_rows(n))
                 .unwrap_or_default();
             let destination = command.destination();
             let route = play.map_walk(command, &context, &state, &bank, &self.travellers)?;
@@ -1457,14 +1450,16 @@ impl TuiSession {
             return;
         };
         let state = self.focused_walk_state(&name);
+        // No host owns a bank memory here: the test's memory is what the
+        // slot's observer would leave from its last published snapshot (the
+        // loaded open bank, else an unobserved `Unknown` bank).
         let bank = name
             .as_deref()
             .and_then(|n| {
                 self.snapshots.lock().unwrap().get(n).map(|snap| {
-                    snap.bank()
-                        .iter()
-                        .map(|it| (it.def.id, it.count))
-                        .collect::<Vec<_>>()
+                    let mut memory = api::bank_memory::BankMemory::default();
+                    memory.track(snap, 0);
+                    nav::bank_fetch::BankRows::of(&memory)
                 })
             })
             .unwrap_or_default();
@@ -1553,16 +1548,9 @@ impl TuiSession {
             |name| frontend_core::WalkInputs {
                 state: self.focused_walk_state(&Some(name.to_string())),
                 bank: self
-                    .snapshots
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .map(|snap| {
-                        snap.bank()
-                            .iter()
-                            .map(|it| (it.def.id, it.count))
-                            .collect::<Vec<_>>()
-                    })
+                    .core
+                    .play()
+                    .map(|play| play.bank_rows(name))
                     .unwrap_or_default(),
             },
         );

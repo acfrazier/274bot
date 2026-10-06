@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use api::bank_memory::BankMemory;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -13,6 +14,7 @@ use nav::router::{
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
+use parking_lot::RwLock;
 use script::combat::guard::GUARD_PRAYER_WINDOW_TICKS;
 use script::combat::schedule::elapsed;
 use script::combat::{GuardFailure, GuardOp, GuardProtect};
@@ -580,10 +582,11 @@ pub(crate) fn take_manual_walk_ownership(
 /// route it is following and carries it ([`hold_script_nav`], as a
 /// reconnect does); the first dispatch after Resume re-sends it once
 /// ([`resumed_walk`]). A BankBudget session latched on the route ends with
-/// the follow and is re-planned by the re-sent walk: its deposits and
-/// withdrawals were planned from the pack and bank at arm time, which the
-/// operator may change while paused. A watchdog recovery walk is not the
-/// script's: the watchdog re-arms it on Resume itself.
+/// the follow and is re-planned by the re-sent walk: its withdrawals and
+/// wears were planned from the pack and bank memory at arm time, which the
+/// operator may change while paused (a session never deposits). A watchdog
+/// recovery walk is not the script's: the watchdog re-arms it on Resume
+/// itself.
 pub(crate) fn pause_script(
     slot: &mut script::SlotScript,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
@@ -670,6 +673,7 @@ pub(crate) fn apply_watchdog_nav_action(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
+    bank: Option<&RwLock<BankMemory>>,
     name: &str,
 ) {
     match action {
@@ -685,11 +689,7 @@ pub(crate) fn apply_watchdog_nav_action(
                 navs: Arc::clone(navs),
                 name: name.to_string(),
                 state,
-                bank: snapshot
-                    .bank()
-                    .iter()
-                    .map(|item| (item.def.id, item.count))
-                    .collect(),
+                bank: super::slot_bank_memory::planner_rows(bank),
             };
             let armed = arm.queue_route_in_snapshot(
                 snapshot,
@@ -820,7 +820,8 @@ pub(crate) fn apply_nav_follow_outcome(
 /// early settlement and route-end receipts; an estimated endpoint is
 /// refreshed off-pump when the target enters scene. `reach` yields the slot's
 /// cached reach view for ordinary destinations and is asked only when that
-/// rule needs a probe (`0 < dist <= radius` on the dest's level).
+/// rule needs a probe (`0 < dist <= radius` on the dest's level). `bank` is
+/// the account's bank memory, read only when a refresh re-arms the walk.
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step_nav_bot<D: Driver>(
@@ -833,6 +834,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     world: Option<&Arc<NavWorld>>,
     hold: bool,
     map_members: bool,
+    bank: Option<&RwLock<BankMemory>>,
     reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
 ) {
     {
@@ -1022,18 +1024,13 @@ pub(crate) fn step_nav_bot<D: Driver>(
     if let Some(refresh) = refresh {
         let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
         state.quest_evidence = refresh.quest_evidence;
-        let bank = snapshot
-            .bank()
-            .iter()
-            .map(|item| (item.def.id, item.count))
-            .collect();
         ScriptWalkArm {
             here,
             world: world.cloned(),
             navs: Arc::clone(navs),
             name: name.to_string(),
             state: Some(state),
-            bank,
+            bank: super::slot_bank_memory::planner_rows(bank),
         }
         .refresh_route_in_snapshot(
             snapshot,
@@ -1208,16 +1205,79 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             }
         }
     }
-    if let Some(pending) = bot.bank_fetch.as_ref() {
-        if pending.steps.is_empty() {
-            let session_dest = pending.dest;
-            log_walk_arm_bot(|| {
-                format!("bank_fetch session cleared complete session_dest={session_dest:?}")
-            });
-            bot.bank_fetch = None;
-        }
+    if let Some(pending) = bot.bank_fetch.take_if(|pending| pending.steps.is_empty()) {
+        let session_dest = pending.dest;
+        log_walk_arm_bot(|| {
+            format!("bank_fetch session cleared complete session_dest={session_dest:?}")
+        });
+        resume_final_route(snapshot, bot, world, here, map_members, &pending);
     }
     wrote
+}
+
+/// The post-session route was found at arm time from where the player stood
+/// then. A bank trip leaves the player at the bank, which the memory-fed
+/// planner may have picked well away from that origin (the bank need not be
+/// open, design-bank-snapshot §4 F6), so a route that does not start where
+/// the player now stands is found again from here under the live,
+/// post-session state. With none, the walk ends truthfully.
+fn resume_final_route(
+    snapshot: &GameSnapshot,
+    bot: &mut NavBot,
+    world: Option<&NavWorld>,
+    here: Option<(i32, i32, i32)>,
+    map_members: bool,
+    pending: &PendingBankFetch,
+) {
+    let (Some((x, z, level)), Some(world)) = (here, world) else {
+        return;
+    };
+    let from = WorldTile { x, z, level };
+    let start = bot
+        .route
+        .as_ref()
+        .and_then(|route| match route.legs.first() {
+            Some(nav::router::Leg::Walk { tiles }) => tiles.first().copied(),
+            Some(nav::router::Leg::Transport { edge }) => Some(edge.at),
+            None => None,
+        });
+    if start == Some(from) {
+        return;
+    }
+    let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    let opts = FindOptions {
+        allow_bank_fetch: false,
+        ..pending.opts
+    };
+    match find_with_avoid(
+        &world.collision,
+        &world.graph,
+        from,
+        pending.dest,
+        opts,
+        &state,
+        &pending.avoid,
+    ) {
+        Ok(route) => {
+            log_walk_arm_bot(|| {
+                format!(
+                    "bank_fetch final route re-found from={from:?} dest={:?}",
+                    pending.dest
+                )
+            });
+            bot.route = Some(route);
+        }
+        Err(_) => {
+            log_walk_arm_bot(|| {
+                format!(
+                    "bank_fetch abort front=None why=no route from the bank to the destination session_dest={:?}",
+                    pending.dest
+                )
+            });
+            bot.route = None;
+        }
+    }
+    bot.map_route_generation = crate::walk_map::next_map_route_generation();
 }
 
 /// How a pump left the front step.
@@ -1398,6 +1458,24 @@ fn step_bank_action<D: Driver>(
     if let Some(why) = refused {
         return (false, StepEnd::Abort(why));
     }
+    // A Withdraw planned as the whole stack is settled by the live stack
+    // (design-bank-snapshot D3): when the open bank holds another count
+    // than the planner's rows (a `Hint` overlay, another client), only the
+    // Withdraw-X amount dialog takes exactly `count`, so the step becomes
+    // that pair before anything is sent.
+    if let BankStep::Withdraw { id, count } = *step {
+        if !sent && withdraw_needs_amount_dialog(snapshot, id, count) {
+            pending.steps.pop_front();
+            pending
+                .steps
+                .push_front(BankStep::WithdrawXAmount { id, count });
+            pending.steps.push_front(BankStep::WithdrawX { id });
+            log_walk_arm_bot(|| {
+                format!("bank_fetch Withdraw id={id} count={count} settles through Withdraw-X")
+            });
+            return (false, StepEnd::Waiting);
+        }
+    }
     // Open also waits while a bank component is up but not yet loaded.
     // Once Withdraw-X answered, keep it latched until its inventory delta
     // arrives; never submit the same count twice.
@@ -1443,6 +1521,18 @@ fn step_bank_action<D: Driver>(
         );
     }
     (wrote, StepEnd::Waiting)
+}
+
+/// Whether the open bank's `id` stack gives exactly `count` only through the
+/// Withdraw-X amount dialog: no `Withdraw {count}` op and not the whole
+/// stack ([`super::fill_withdraw_action`]).
+fn withdraw_needs_amount_dialog(snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
+    snapshot
+        .bank()
+        .iter()
+        .find(|item| item.def.id == id)
+        .and_then(|item| super::fill_withdraw_action(&item.actions, count, item.count))
+        .is_some_and(|(_, needs_amount_dialog)| needs_amount_dialog)
 }
 
 fn withdraw_fixed_count<D: Driver>(

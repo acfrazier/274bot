@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{fetchable_state, plan_bank_fetch, BankFetch, BankStep};
+use nav::bank_fetch::{fetchable_state, plan_bank_fetch, BankFetch, BankRows, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     find_with_avoid, missing_item_reqs, AvoidRect, FallbackRoute, FindOptions, Route,
@@ -84,15 +84,16 @@ pub(super) enum RouteOutcome {
 
 /// Strict `find_with`, then — only when `allow_bank_fetch` is on and the
 /// failure is solely missing item/worn reqs — plan a BankBudget session
-/// and re-find against the session's post state. Never inserts a virtual
-/// bank edge into Dijkstra. Every search keeps out of `avoid`.
+/// over [`BankRows::planning_rows`] and re-find against the session's post
+/// state. Never inserts a virtual bank edge into Dijkstra. Every search
+/// keeps out of `avoid`.
 pub(super) fn route_or_bank_fetch(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
     opts: FindOptions,
     state: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &BankRows,
     avoid: &[AvoidRect],
 ) -> RouteOutcome {
     match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
@@ -107,7 +108,14 @@ pub(super) fn route_or_bank_fetch(
             avoid,
         )
         .and_then(|missing| {
-            plan_bank_fetch(&missing, state, bank, world.banks(), from, &world.collision)
+            plan_bank_fetch(
+                &missing,
+                state,
+                &bank.planning_rows(&missing),
+                world.banks(),
+                from,
+                &world.collision,
+            )
         })
         .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
         .unwrap_or(RouteOutcome::NoPath),
@@ -122,12 +130,12 @@ pub(super) fn fetchable_facts(
     world: &NavWorld,
     opts: FindOptions,
     state: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &BankRows,
 ) -> Option<WorldState> {
     if !opts.allow_bank_fetch {
         return None;
     }
-    let fetchable = fetchable_state(state, bank, world.banks());
+    let fetchable = fetchable_state(state, &bank.rows, world.banks());
     let opens_gate = |edge: &TransportEdge| fetchable.allows(edge) && !state.allows(edge);
     (world.graph.edges.iter().any(opens_gate)
         || opts.allow_teleports && world.graph.teleports.iter().any(opens_gate))
@@ -147,9 +155,10 @@ pub(super) enum StandFetch {
 /// finds the cheapest stand whose item and worn gates the bank and backpack
 /// can meet, so a stand behind an obj the session cannot get never hides
 /// one it can, recording `tiles` on the way as the strict search did. When a
-/// session's post-state re-find refuses its stand (the trip deposits carried
-/// objs the route relied on), only that stand is dropped and the rest
-/// searched again, so every round shrinks the stands.
+/// session's post-state re-find refuses its stand (no session for its
+/// missing facts, or the post state still misses a gate), only that stand
+/// is dropped and the rest searched again, so every round shrinks the
+/// stands. A session never deposits (design-bank-snapshot D7).
 #[allow(clippy::too_many_arguments)] // search surface plus the session's facts
 pub(super) fn fetch_stand(
     world: &NavWorld,
@@ -159,7 +168,7 @@ pub(super) fn fetch_stand(
     opts: FindOptions,
     state: &WorldState,
     fetchable: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &BankRows,
     avoid: &[AvoidRect],
 ) -> StandFetch {
     let mut stands = stands.to_vec();
@@ -202,7 +211,7 @@ pub(super) fn fetch_tile(
     opts: FindOptions,
     state: &WorldState,
     fetchable: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &BankRows,
     avoid: &[AvoidRect],
 ) -> RouteOutcome {
     let mut tiles = tiles.to_vec();
@@ -248,14 +257,21 @@ fn session_for(
     route: Route,
     opts: FindOptions,
     state: &WorldState,
-    bank: &[(i32, i32)],
+    bank: &BankRows,
     avoid: &[AvoidRect],
 ) -> Option<RouteOutcome> {
     let missing = missing_item_reqs(&route, state);
     if missing.is_empty() {
         return Some(RouteOutcome::Routed(route));
     }
-    let fetch = plan_bank_fetch(&missing, state, bank, world.banks(), from, &world.collision)?;
+    let fetch = plan_bank_fetch(
+        &missing,
+        state,
+        &bank.planning_rows(&missing),
+        world.banks(),
+        from,
+        &world.collision,
+    )?;
     session_route(world, from, route.dest, fetch, opts, avoid)
 }
 

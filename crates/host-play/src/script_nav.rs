@@ -6,7 +6,7 @@ use std::time::Instant;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
 use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
@@ -215,8 +215,10 @@ pub(crate) struct ScriptWalkArm {
     /// `None` when no player is decoded — the worker then routes with
     /// the fail-closed empty [`WorldState`].
     pub(crate) state: Option<WorldState>,
-    /// Open bank rows (obj id, count) at arm time — empty when closed.
-    pub(crate) bank: Vec<(i32, i32)>,
+    /// The account's bank memory rows at arm time
+    /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
+    /// session is planned over ([`BankRows::planning_rows`]).
+    pub(crate) bank: BankRows,
 }
 
 fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
@@ -1343,7 +1345,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
-    pub(crate) bank: Vec<(i32, i32)>,
+    pub(crate) bank: BankRows,
     /// Explicit live-loc footprint goals; otherwise use the request's tile-area rule.
     pub(crate) live_candidates: Option<Vec<WorldTile>>,
     /// Frozen request exclusions: every search keeps out of rects and carries
@@ -1444,7 +1446,7 @@ impl ScriptRouteRequest {
             let Some(plan) = plan_bank_fetch(
                 &missing,
                 state,
-                &self.bank,
+                &self.bank.planning_rows(&missing),
                 self.world.banks(),
                 self.from,
                 &self.world.collision,
@@ -1572,8 +1574,9 @@ impl ScriptRouteRequest {
     /// stand search left them undecided. Of each such pair at most one stops
     /// at the unproven budget, so the arm spends at most two budget-limited
     /// searches, one strict and one fetchable, plus one fetchable search for
-    /// each planned session whose post-state re-find refuses its goal (the
-    /// trip deposits a carried obj the route still needs).
+    /// each stand or tile whose session is refused (no session covers its
+    /// missing facts, or the post-state re-find still misses a gate; a
+    /// session never deposits).
     fn calculate_solid(
         &self,
         stands: &[WorldTile],
@@ -2447,7 +2450,7 @@ mod diagnostic_tests {
                 ..FindOptions::default()
             },
             state: None,
-            bank: Vec::new(),
+            bank: BankRows::default(),
             live_candidates: None,
             exclusions: None,
             completion: Default::default(),

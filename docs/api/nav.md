@@ -888,11 +888,30 @@ if it never lands, and a send already in flight is not repeated. The
 script walk and the panel/TUI WalkTo share one step machine, one wait
 budget and one in-flight latch.
 
-**Closed bank:** the session is planned from the **open** bank's rows
-(`snap.bank()`). A closed bank contributes `[]`, so BankBudget cannot prove
-that a banked item exists and reports `NoPath`. That is intentional — there
-is no closed-bank inventory cache. Open the bank (or keep it open) before
-confirming a fetch walk if the needed item is only in the bank.
+**Closed bank:** the session is planned from the account's host bank
+memory (`nav::bank_fetch::BankRows`: `Play::bank_rows(name)` for WalkTo, the
+slot's memory for script walks and route inspects), not from the open
+bank, so a closed bank still plans a trip. While the bank is open the
+memory mirrors it. What a shortage means depends on where the rows came
+from (`BankRows::planning_rows`, design-bank-snapshot §2.4):
+
+- `Session` (seen in an open bank since login): the rows as they are; a
+  missing item is `NoPath` in place.
+- `Unknown` (never seen, no hint file): no rows; `NoPath`, as before.
+- `Hint` (loaded from the persisted hint at login): each item the route
+  needs is assumed banked at the needed count, so the session makes one
+  verifying trip. If the open bank does not hold the item, the Withdraw
+  aborts the session (`the open bank does not hold the obj`), the memory is
+  then `Session`, and the next WalkTo is `NoPath`. A whole-stack Withdraw
+  that the live stack does not match goes through Withdraw-X for the
+  planned amount.
+
+The bank a closed-bank plan walks to can be far from where the walk was
+armed. When the session ends, a post-session route that does not start
+where the player stands is found again from the bank under the live state;
+if none exists, the walk ends with a logged reason.
+
+Compat `Bank.*` and `Inventory.count` reads still see only the open bank.
 
 ## WalkTo picker
 

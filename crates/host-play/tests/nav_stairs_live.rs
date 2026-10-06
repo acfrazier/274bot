@@ -12,6 +12,7 @@ use client::client::Client;
 use host::Pump;
 use host_play::walk_map::{ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
+use nav::bank_fetch::BankRows;
 use nav::map::identity::Digest;
 use nav::router::FindOptions;
 use nav::tile::Tile;
@@ -218,10 +219,11 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         });
         let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
         let arms = WalkArms::default();
-        let route = match command.walk_on(&world, &context, &name, &state, &[], &arms) {
-            Ok(route) => route,
-            Err(error) => return Err(format!("walk_on: {error:?}")),
-        };
+        let route =
+            match command.walk_on(&world, &context, &name, &state, &BankRows::default(), &arms) {
+                Ok(route) => route,
+                Err(error) => return Err(format!("walk_on: {error:?}")),
+            };
         receipt["route_legs"] = json!(format!("{:?}", route.legs));
         receipt["route_ticks"] = json!(route.ticks);
         let arm = Arc::clone(&arms.lock().expect("walk arms")[&name]);
