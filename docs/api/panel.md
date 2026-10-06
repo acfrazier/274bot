@@ -27,7 +27,7 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 A passphrase is required and an empty or whitespace-only one is rejected. A
 new vault accepts any non-empty passphrase; strength is the user's choice. An
 existing vault opens with whatever passphrase it was created with. First run **Create
-vault** writes `~/.274bot/vault` **empty** — panel-play does **not**
+vault** writes the bound profile's vault (`~/.274bot/vault-289` for `local-289`; see [vault.md](vault.md#which-vault-file)) **empty** — panel-play does **not**
 auto-create `test`/`test` (that is host-play CLI: `--user test` defaults,
 `password = username`). A wrong passphrase never replaces the file;
 **Reset vault** (confirm + I understand) is the forgotten-password wipe.
@@ -104,7 +104,7 @@ panel is **330 px** wide and the MultiBox rail is **264 px**; both keep that
 logical width as the window grows vertically. The rail's tile body is
 **236×155 px** at 100% scale. Splitters, undock, the tab-bar corner menu,
 and imgui.ini restore are off.
-Only grid mode fits the 274 blit to the resizable pane; single-bot and rail
+Only grid mode fits the game blit to the resizable pane; single-bot and rail
 keep the native **765×503 logical** applet centered in the leftover pane,
 scaled by display DPI in physical framebuffer coordinates. The window loop
 uses `HiDpiMode::Locked(1.0)` so ImGui's layout coordinates are physical
@@ -253,19 +253,18 @@ Log out issued meanwhile.
 
 ### Resource honesty
 
-The resource card is the operator measurement surface: **bots**, **CPU**,
-**RAM**, **traffic**, and **draw**, sampled once a second. These are live
+The resource card is the operator measurement surface: **bots**,
+**background**, **CPU**, **RAM**, and **traffic**, sampled once a second. These are live
 samples for the current process, not published performance guarantees or
 historical benchmark claims. The first CPU and traffic samples read
 "measuring…". Traffic is the sum of each live slot’s `ClientStream`
 payload `bytes_in + bytes_out` over that second — never a fake `0 B/s`
-before two samples, and never `0 B/s` when there are no slots (still
-measuring…). If a slot drops (or the byte sum shrinks), traffic
+before two samples, and `no live slots` when there are no slots. If a slot drops (or the byte sum shrinks), traffic
 **re-baselines** instead of inventing a wrap spike. A failed process sampler
-shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
-the whole host; on macOS the
-RAM row is **peak** (`ru_maxrss`). Draw is the focused slot’s `game_draw`
-enters plus paint/skip counts. `BOT_DEBUG=1` also prints 1 Hz loop vs raster
+shows "process sample failed" for CPU/RAM; it does not invent traffic. Process RSS is
+the whole host; the RAM row reads the current resident size plus the lifetime peak
+(`<now> process, peak <peak>`, falling back to peak-only when resident is unavailable).
+`BOT_DEBUG=1` also prints 1 Hz loop vs raster
 timings per slot and the RSS sample. Draw-off **detaches** the head, so
 unheaded slots hold only their mutable sim + the shared decode pile;
 the RSS ladder is the measurement surface and it prints `rss=…` — it
@@ -353,7 +352,8 @@ green `#04A800`. Panel background `#111`.
 Right strip is **330px**-class. Section headings are collapsible (persisted
 per profile in `panel-ui.json`; **script** / **parameters** default closed)
 and **drag-reorderable** (order in `panel-ui.json`). Default order:
-**status**, **profile**, **script**, **parameters**, **debug**, **log**.
+**status**, **resource**, **profile**, **script**, **debug**, **log**; **parameters**
+is drawn after them and is not reorderable.
 Login / WalkTo / config stay at the top.
 
 **Log in** / **Logout** sit above WalkTo (always shown; disabled while
@@ -422,10 +422,11 @@ settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
 Start persists the per-profile script assignment. **Nav config** is live
-as its own non-blocking window (Routing, Display, Path paint and Debug
-groups): the durable walk permissions (teleports, wilderness, bank fetch,
+as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map,
+and Quest Paths groups): the durable walk permissions (teleports, wilderness, bank fetch,
 danger zones — all default off), **Pause script on manual movement**
-(default on), and debug paints / labels. **General config** (under
+(default on), and debug paints / labels. WalkTo map holds **ask before baking terrain**;
+Quest Paths holds the Quester folder-paths loader (folder, reload). **General config** (under
 WalkTo, above profile) is
 **slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**
@@ -474,7 +475,8 @@ guarded by `host_play::walk_map`). Walk needs a snapped walkable target. The
 zone checkbox starts unchecked and resets every time WalkTo opens; its hover
 text is `Allows routes past monsters that may kill your bot.` It applies only
 to that WalkTo's focused or group Walk confirmation and is not saved in Nav
-config. On a legacy grid pack the toggle cannot enable zone checks, and the
+config. While the global danger-zones permission is on, the per-walk checkbox is superseded.
+On a legacy grid pack the toggle cannot enable zone checks, and the
 report says `zones: unavailable (legacy grid pack)`.
 The map selection is a destination (tile/POI, plane, nav identity), not a bot.
 **Send** chooses **Focused bot** (default) or **Group** — a checklist of

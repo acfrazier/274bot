@@ -36,6 +36,7 @@ tested nor claimed.
 | `script` | Compiled `Script` trait + Load isolate; catalog/file cards; content-addressed JS cache |
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`) + `e2e-suite` ordered runner |
+| `frontend-core` | Shared panel/TUI scripts, nav prefs, resource meter |
 | `panel` | Native UI (`panel-play`): profiles, Log in/Logout, WalkTo, scripts, MultiBox |
 | `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 

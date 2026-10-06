@@ -84,7 +84,7 @@ nothing is rewritten until the next ordinary save, and that save keeps the
 header it found.
 
 The passphrase is used exactly as typed, spaces included, in every frontend.
-The panel's 0.1.9.1 unlock window stored and matched the trimmed text, so when
+Earlier panel unlock windows stored and matched the trimmed text, so when
 a typed passphrase with surrounding spaces is wrong the panel tries the trimmed
 text once before reporting a wrong passphrase.
 
@@ -126,10 +126,10 @@ that does not repeat the value.
 
 ## Which vault file
 
-The vault path comes from the bound server profile in `~/.274bot/servers.json`,
-not from a flag. The built-ins use `vault` (`local-274`), `vault-289`
-(`local-289`) and `vault-prod` (`rs2b2t`), all under `~/.274bot/`. A new
-custom profile gets its own `vault-<name>` file so profiles never share
+The vault file is the `vault` field of the bound profile in `~/.274bot/servers.json`,
+under `~/.274bot/`; `--vault PATH` overrides it. The built-ins use `vault`
+(`local-274`), `vault-289` (`local-289`) and `vault-prod` (`rs2b2t`).
+Profiles must name distinct vault files, so profiles never share
 storage implicitly.
 
 ## Secrets in memory
