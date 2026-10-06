@@ -277,9 +277,11 @@ impl StepPlan for PartnerPlan {
                 declared_gang: settings.gang,
                 evidence: cx.tick.cx.evidence(),
             })
-            .map_err(|error| match (self.plan.actions.is_none(), error) {
-                (true, PairError::PartnerNotInPlay | PairError::NotReady) => ActionError::Busy,
-                (_, error) => error.action(),
+            .map_err(|error| match error {
+                PairError::PartnerNotInPlay | PairError::NotReady | PairError::Busy => {
+                    ActionError::Busy
+                }
+                error => error.action(),
             })?;
         Ok(Box::new(PartnerRun {
             port: port.shared(),
