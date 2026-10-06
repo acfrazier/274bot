@@ -544,7 +544,7 @@ fn live_quester_families_expected_combat() {
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut dialogue_seen = Vec::new();
     let mut saw_wait_step = false;
-    let observe: ObserveFamily = Box::new(move |snapshot, status| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
         if let Some(status) = status {
             saw_wait_step |= status_text(status, "step_id") == Some("safe-combat-wait");
         }
@@ -676,7 +676,7 @@ fn live_quester_families_loc_dialogue() {
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut dialogue_seen = Vec::new();
-    let observe: ObserveFamily = Box::new(move |snapshot, status| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
         remember_dialogue_texts(snapshot, &mut dialogue_seen);
         let value = varp_value(snapshot, quest_varp_id);
         if value != Some(2)
@@ -779,7 +779,7 @@ fn live_quester_families_held() {
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut saw_retaliate_off = false;
-    let observe: ObserveFamily = Box::new(move |snapshot, status| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
         let retaliate = varp_value(snapshot, script::combat::OPTION_NODEF);
         saw_retaliate_off |= retaliate == Some(1);
         let source_count = item_count(snapshot, iou_id);
@@ -913,7 +913,7 @@ fn live_quester_families_ground_use_on() {
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut saw_take_step = false;
-    let observe: ObserveFamily = Box::new(move |snapshot, status| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
         if let Some(status) = status {
             saw_take_step |= status_text(status, "step_id") == Some("take-blackcog");
         }
@@ -1010,7 +1010,7 @@ fn live_quester_families_main_documents() {
         let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
         let mut pages_seen = vec![false; fragments.len()];
         let mut saw_root = false;
-        let observe: ObserveFamily = Box::new(move |snapshot, status| {
+        let observe: ObserveFamily = Box::new(move |snapshot, status, _lifecycle| {
             let main = snapshot.modals().main;
             if main == root {
                 saw_root = true;

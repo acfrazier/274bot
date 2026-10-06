@@ -166,6 +166,7 @@ pub struct CompiledQuestItem {
     pub qty: u32,
     pub kind: CompiledItemKind,
     pub acquire: Option<Arc<str>>,
+    pub stackable: bool,
 }
 
 pub struct CompiledRequirement {
@@ -185,8 +186,25 @@ pub struct CompiledEligibility {
 pub struct CompiledCarry {
     pub item: BankItem,
     pub qty: i32,
+    pub stackable: bool,
     /// Unique per-Path bit in `Provisioner::carry_drawn`.
     pub latch_index: u8,
+}
+
+#[derive(Clone)]
+pub struct CompiledRecipeItem {
+    pub item: BankItem,
+    pub qty: i32,
+    pub stackable: bool,
+}
+
+pub struct CompiledAcquireRecipe {
+    pub steps: Arc<[CompiledAcquireStep]>,
+    /// The largest simultaneous recipe-input inventory observed by the compiler.
+    /// The final quest output is planned separately.
+    pub peak_items: Arc<[CompiledRecipeItem]>,
+    /// Items explicitly proven absent by an authored recipe settle predicate.
+    pub consumed_ids: Arc<[i32]>,
 }
 
 pub struct CompiledProvisioning {
@@ -201,7 +219,7 @@ pub struct CompiledProvisioning {
     pub coin: Option<CompiledCarry>,
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
-    pub recipes: HashMap<Arc<str>, Arc<[CompiledAcquireStep]>>,
+    pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
     pub memo_ids: Arc<[i32]>,
 }
 
@@ -685,6 +703,17 @@ pub(super) fn compile_uncached(
             .map(|item| compile_quest_item(selected, item))
             .collect::<Result<Vec<_>, _>>()?,
     );
+    let mut recipe_peaks = HashMap::with_capacity(header.acquire.len());
+    for (name, steps) in &header.acquire {
+        let output_ids: Vec<_> = compiled_items
+            .iter()
+            .filter(|item| item.acquire.as_deref() == Some(name.as_str()))
+            .map(|item| item.id)
+            .collect();
+        let (peak_items, consumed_ids) = recipe_inventory_peak(selected, steps, &output_ids)
+            .map_err(|error| error.with_path(document.id.clone()))?;
+        recipe_peaks.insert(name.clone(), (peak_items, consumed_ids));
+    }
     let mut tools = Vec::with_capacity(header.tools.len());
     for tool in &header.tools {
         let alias = tool
@@ -702,7 +731,7 @@ pub(super) fn compile_uncached(
             .row();
         let mut carry = Vec::with_capacity(row.carry.len());
         for entry in &row.carry {
-            let item = resolve_bank_item(selected, &entry.item)?;
+            let (item, stackable) = resolve_bank_item_with_stackable(selected, &entry.item)?;
             let qty =
                 i32::try_from(entry.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
             if carry_row_count >= u64::BITS as usize {
@@ -713,6 +742,7 @@ pub(super) fn compile_uncached(
             carry.push(CompiledCarry {
                 item,
                 qty,
+                stackable,
                 latch_index,
             });
         }
@@ -721,11 +751,12 @@ pub(super) fn compile_uncached(
     let coin_float =
         i32::try_from(header.coin_float).map_err(|_| CompileError::code("invalid-coin-float"))?;
     let coin = (coin_float > 0)
-        .then(|| resolve_bank_item(selected, "coins"))
+        .then(|| resolve_bank_item_with_stackable(selected, "coins"))
         .transpose()?
-        .map(|item| CompiledCarry {
+        .map(|(item, stackable)| CompiledCarry {
             item,
             qty: coin_float,
+            stackable,
             latch_index: u8::MAX,
         });
     let keep_ids = protected_item_ids(selected, &tools, &loadouts);
@@ -734,6 +765,15 @@ pub(super) fn compile_uncached(
     for item in compiled_items.iter() {
         push_unique_id(&mut bank_items, item.id);
         push_unique_id(&mut base_spillover_keep, item.id);
+    }
+    for (peak_items, consumed_ids) in recipe_peaks.values() {
+        for item in peak_items.iter() {
+            push_unique_id(&mut bank_items, item.item.id);
+            push_unique_id(&mut base_spillover_keep, item.item.id);
+        }
+        for id in consumed_ids.iter().copied() {
+            push_unique_id(&mut base_spillover_keep, id);
+        }
     }
     for item in &tools {
         push_unique_id(&mut bank_items, item.id);
@@ -884,6 +924,22 @@ pub(super) fn compile_uncached(
             }
         }
     }
+    let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
+        .into_iter()
+        .map(|(name, steps)| {
+            let (peak_items, consumed_ids) = recipe_peaks
+                .remove(&name)
+                .expect("compiled recipe peak came from the validated header");
+            Ok((
+                Arc::from(name.as_str()),
+                CompiledAcquireRecipe {
+                    steps,
+                    peak_items,
+                    consumed_ids,
+                },
+            ))
+        })
+        .collect::<Result<_, CompileError>>()?;
     let provisioning = CompiledProvisioning {
         path: document.id.clone(),
         owns_inventory: header.owns_inventory,
@@ -896,10 +952,7 @@ pub(super) fn compile_uncached(
         coin,
         loadout_carry,
         base_spillover_keep,
-        recipes: recipes
-            .into_iter()
-            .map(|(name, steps)| (Arc::from(name.as_str()), steps))
-            .collect(),
+        recipes: provisioning_recipes,
         memo_ids: Arc::from(bank_items),
     };
     Ok(CompiledPath {
@@ -971,17 +1024,25 @@ fn compile_quest_item(
         super::path::QuestItemKindDocument::Acquirable => CompiledItemKind::Acquirable,
     };
     i32::try_from(item.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
-    let resolved = resolve_bank_item(selected, &item.obj)?;
+    let (resolved, stackable) = resolve_bank_item_with_stackable(selected, &item.obj)?;
     Ok(CompiledQuestItem {
         id: resolved.id,
         name: resolved.name,
         qty: item.qty,
         kind,
         acquire: item.acquire.as_deref().map(Arc::from),
+        stackable,
     })
 }
 
 fn resolve_bank_item(selected: &SelectedGameData, name: &str) -> Result<BankItem, CompileError> {
+    resolve_bank_item_with_stackable(selected, name).map(|(item, _)| item)
+}
+
+fn resolve_bank_item_with_stackable(
+    selected: &SelectedGameData,
+    name: &str,
+) -> Result<(BankItem, bool), CompileError> {
     let item = selected
         .resolve_item_name(name)
         .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(name))?;
@@ -989,10 +1050,13 @@ fn resolve_bank_item(selected: &SelectedGameData, name: &str) -> Result<BankItem
         .name
         .as_deref()
         .ok_or_else(|| CompileError::code("unresolved-obj-name"))?;
-    Ok(BankItem {
-        id: item.id,
-        name: Arc::from(display),
-    })
+    Ok((
+        BankItem {
+            id: item.id,
+            name: Arc::from(display),
+        },
+        item.stackable,
+    ))
 }
 
 fn compile_steps(
@@ -1150,6 +1214,181 @@ fn predicate_summary(predicate: &PredicateDocument) -> String {
     }
 }
 
+type RecipeInventoryPeak = (Arc<[CompiledRecipeItem]>, Arc<[i32]>);
+
+fn recipe_inventory_peak(
+    selected: &SelectedGameData,
+    steps: &[StepDocument],
+    output_ids: &[i32],
+) -> Result<RecipeInventoryPeak, CompileError> {
+    let mut current = Vec::<CompiledRecipeItem>::new();
+    let mut peak = Vec::<CompiledRecipeItem>::new();
+    let mut consumed = Vec::new();
+    let mut peak_slots = 0usize;
+    for step in steps {
+        let used_item = if step.kind == "use_on" {
+            step.args
+                .get("item")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|alias| {
+                    selected
+                        .item_by_alias(alias)
+                        .map(|item| CompiledRecipeItem {
+                            item: BankItem {
+                                id: item.id,
+                                name: Arc::from(item.name.as_deref().unwrap_or(alias)),
+                            },
+                            qty: 1,
+                            stackable: item.stackable,
+                        })
+                })
+        } else {
+            None
+        };
+        if let Some(source) = used_item {
+            let id = source.item.id;
+            consumed.retain(|consumed_id| *consumed_id != id);
+            if let Some(existing) = current.iter_mut().find(|item| item.item.id == id) {
+                existing.qty = existing.qty.max(source.qty);
+            } else {
+                current.push(source);
+            }
+            current.sort_unstable_by_key(|item| item.item.id);
+            record_recipe_peak(&current, &mut peak, &mut peak_slots);
+        }
+
+        let mut absent = Vec::new();
+        collect_proven_absent_ids(selected, &step.settle, &mut absent);
+        for id in absent {
+            current.retain(|item| item.item.id != id);
+            push_unique_id(&mut consumed, id);
+        }
+
+        let mut settled = Vec::new();
+        collect_settled_items(selected, &step.settle, &mut settled)?;
+        for item in settled {
+            consumed.retain(|id| *id != item.item.id);
+            if output_ids.contains(&item.item.id) {
+                continue;
+            }
+            if let Some(existing) = current
+                .iter_mut()
+                .find(|existing| existing.item.id == item.item.id)
+            {
+                existing.qty = existing.qty.max(item.qty);
+            } else {
+                current.push(item);
+            }
+        }
+        current.sort_unstable_by_key(|item| item.item.id);
+        record_recipe_peak(&current, &mut peak, &mut peak_slots);
+    }
+    Ok((Arc::from(peak), Arc::from(consumed)))
+}
+
+fn record_recipe_peak(
+    current: &[CompiledRecipeItem],
+    peak: &mut Vec<CompiledRecipeItem>,
+    peak_slots: &mut usize,
+) {
+    let slots = current.iter().fold(0usize, |slots, item| {
+        let item_slots = if item.stackable {
+            usize::from(item.qty > 0)
+        } else {
+            usize::try_from(item.qty.max(0)).unwrap_or(usize::MAX)
+        };
+        slots.saturating_add(item_slots)
+    });
+    if slots > *peak_slots {
+        *peak_slots = slots;
+        peak.clear();
+        peak.extend_from_slice(current);
+    }
+}
+
+fn collect_proven_absent_ids(
+    selected: &SelectedGameData,
+    predicate: &PredicateDocument,
+    out: &mut Vec<i32>,
+) {
+    match predicate {
+        PredicateDocument::All(items) => {
+            for item in items {
+                collect_proven_absent_ids(selected, item, out);
+            }
+        }
+        PredicateDocument::Any(items) => {
+            let Some((first, remaining)) = items.split_first() else {
+                return;
+            };
+            let mut common = Vec::new();
+            collect_proven_absent_ids(selected, first, &mut common);
+            for item in remaining {
+                let mut branch = Vec::new();
+                collect_proven_absent_ids(selected, item, &mut branch);
+                common.retain(|id| branch.contains(id));
+            }
+            for id in common {
+                push_unique_id(out, id);
+            }
+        }
+        PredicateDocument::Not(inner) => {
+            let id = match inner.as_ref() {
+                PredicateDocument::Fact { kind, args, .. } if kind == "has_item" => args
+                    .get("obj")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|alias| selected.item_by_alias(alias))
+                    .map(|item| item.id),
+                _ => None,
+            };
+            if let Some(id) = id {
+                push_unique_id(out, id);
+            }
+        }
+        PredicateDocument::Fact { .. } => {}
+    }
+}
+
+fn collect_settled_items(
+    selected: &SelectedGameData,
+    predicate: &PredicateDocument,
+    out: &mut Vec<CompiledRecipeItem>,
+) -> Result<(), CompileError> {
+    match predicate {
+        PredicateDocument::All(items) => {
+            for item in items {
+                collect_settled_items(selected, item, out)?;
+            }
+        }
+        PredicateDocument::Fact { kind, args, .. } if kind == "has_item" => {
+            let alias = args
+                .get("obj")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| CompileError::code("invalid-args"))?;
+            let item = selected
+                .item_by_alias(alias)
+                .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))?;
+            let name = item
+                .name
+                .as_deref()
+                .ok_or_else(|| CompileError::code("unresolved-obj-name"))?;
+            if let Some(existing) = out.iter_mut().find(|entry| entry.item.id == item.id) {
+                existing.qty = existing.qty.max(1);
+            } else {
+                out.push(CompiledRecipeItem {
+                    item: BankItem {
+                        id: item.id,
+                        name: Arc::from(name),
+                    },
+                    qty: 1,
+                    stackable: item.stackable,
+                });
+            }
+        }
+        PredicateDocument::Any(_) | PredicateDocument::Not(_) | PredicateDocument::Fact { .. } => {}
+    }
+    Ok(())
+}
 const MAX_RECIPE_NESTING_DEPTH: usize = 32;
 
 enum RecipeBinding {
@@ -1585,6 +1824,43 @@ mod tests {
     }
 
     #[test]
+    fn recipe_peak_retains_use_on_source_without_explicit_absence() {
+        let document = decode_cook().unwrap();
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let grain_id = data.item_by_alias("grain").unwrap().id;
+        let flour = &compiled.provisioning.recipes["acquire:flour"];
+        assert!(flour.peak_items.iter().any(|item| item.item.id == grain_id));
+        assert!(!flour.consumed_ids.contains(&grain_id));
+
+        let absent: PredicateDocument = serde_json::from_value(serde_json::json!({
+            "Not": {
+                "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": { "obj": "grain" }
+                }
+            }
+        }))
+        .unwrap();
+        let mut absent_ids = Vec::new();
+        collect_proven_absent_ids(&data, &absent, &mut absent_ids);
+        assert_eq!(absent_ids, vec![grain_id]);
+        let uncertain = PredicateDocument::Any(vec![
+            absent,
+            PredicateDocument::Fact {
+                kind: "message".into(),
+                version: 1,
+                args: serde_json::json!({"any": ["grain moved"]}),
+            },
+        ]);
+        let mut uncertain_ids = Vec::new();
+        collect_proven_absent_ids(&data, &uncertain, &mut uncertain_ids);
+        assert!(uncertain_ids.is_empty());
+    }
+
+    #[test]
     fn acquire_recipe_forward_and_shared_dependencies_resolve() {
         let _home = crate::IsolatedEnv::enter("quester-recipe-forward");
         let mut document = decode_cook().unwrap();
@@ -1603,10 +1879,16 @@ mod tests {
         let quests = quests(&data);
         let compiled = compile_uncached_for_test(&document, &data, &quests)
             .unwrap_or_else(|error| panic!("nested recipe: {} {:?}", error.code, error.detail));
-        assert_eq!(compiled.provisioning.recipes["acquire:a-root"].len(), 2);
-        assert_eq!(compiled.provisioning.recipes["acquire:z-leaf"].len(), 1);
         assert_eq!(
-            compiled.provisioning.recipes["acquire:a-root"][0]
+            compiled.provisioning.recipes["acquire:a-root"].steps.len(),
+            2
+        );
+        assert_eq!(
+            compiled.provisioning.recipes["acquire:z-leaf"].steps.len(),
+            1
+        );
+        assert_eq!(
+            compiled.provisioning.recipes["acquire:a-root"].steps[0]
                 .id
                 .0
                 .as_ref(),

@@ -227,6 +227,11 @@ pub enum BankAction {
         products: Arc<[i32]>,
         keep: Arc<[i32]>,
     },
+    /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
+    DepositCapacity {
+        keep: Arc<[i32]>,
+        slots: u8,
+    },
     Close,
 }
 
@@ -263,6 +268,7 @@ enum Phase {
     Act,
     AwaitTransfer {
         before: i32,
+        before_slots: Option<usize>,
         item_id: i32,
         evidence: EvidenceStamp,
     },
@@ -283,6 +289,7 @@ pub struct BankMachine {
     withdraw_index: usize,
     protected_before: Vec<BankCount>,
     deposited: u32,
+    capacity_freed: u8,
     item_mode_ensured: bool,
     open_stage: u8,
     /// The until-empty side-view bound is armed in `deadline`.
@@ -300,7 +307,9 @@ impl NativeMachine for BankMachine {
             )));
         }
         let protected_capacity = match &request.action {
-            BankAction::DepositProducts { keep, .. } => keep.len(),
+            BankAction::DepositProducts { keep, .. } | BankAction::DepositCapacity { keep, .. } => {
+                keep.len()
+            }
             _ => 0,
         };
         let mut protected_before = Vec::with_capacity(protected_capacity);
@@ -311,8 +320,28 @@ impl NativeMachine for BankMachine {
                         "bank product/keep set exceeds 64 items",
                     )));
                 }
-                let snapshot = cx.snapshot();
-                let inventory = snapshot
+                let inventory = cx
+                    .snapshot()
+                    .inventory()
+                    .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
+                for id in keep.iter().copied() {
+                    if protected_before.iter().any(|row: &BankCount| row.id == id) {
+                        continue;
+                    }
+                    protected_before.push(BankCount {
+                        id,
+                        count: ops::count_id(inventory.value, id),
+                    });
+                }
+            }
+            BankAction::DepositCapacity { keep, slots } => {
+                if keep.len() > MAX_MEMO || *slots == 0 || *slots > MAX_DEPOSITS {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "invalid exact bank capacity deposit plan",
+                    )));
+                }
+                let inventory = cx
+                    .snapshot()
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
                 for id in keep.iter().copied() {
@@ -361,6 +390,7 @@ impl NativeMachine for BankMachine {
             withdraw_index: 0,
             protected_before,
             deposited: 0,
+            capacity_freed: 0,
             item_mode_ensured: false,
             open_stage: 0,
             view_armed: false,
@@ -834,8 +864,12 @@ impl NativeMachine for BankMachine {
                     }
                     BankAction::Deposit { .. }
                     | BankAction::DepositAll { .. }
-                    | BankAction::DepositProducts { .. } => {
-                        if matches!(self.request.action, BankAction::DepositProducts { .. }) {
+                    | BankAction::DepositProducts { .. }
+                    | BankAction::DepositCapacity { .. } => {
+                        if matches!(
+                            self.request.action,
+                            BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
+                        ) {
                             match self.protected_unchanged(cx) {
                                 Some(true) => {}
                                 Some(false) => {
@@ -850,13 +884,26 @@ impl NativeMachine for BankMachine {
                         let snapshot = cx.snapshot();
                         let pack = snapshot.inventory().map(|rows| rows.value);
                         let side = snapshot.bank_side().map(|rows| rows.value);
-                        let spec = deposit_spec(&self.request.action)
-                            .expect("deposit actions have a deposit spec");
+                        if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
+                            if self.capacity_freed >= *slots {
+                                return Poll::Ready(Ok(self.receipt(cx, true)));
+                            }
+                        }
                         let wait_done = self.view_armed && now >= self.deadline;
-                        match ops::deposit_next(&spec, side, pack, wait_done, self.same_session(cx))
+                        let scan = if let BankAction::DepositCapacity { keep, .. } =
+                            &self.request.action
                         {
+                            ops::deposit_capacity_next(keep, side, pack, self.same_session(cx))
+                        } else {
+                            let spec = deposit_spec(&self.request.action)
+                                .expect("deposit actions have a deposit spec");
+                            ops::deposit_next(&spec, side, pack, wait_done, self.same_session(cx))
+                        };
+                        match scan {
                             DepositScan::WaitView => {
-                                if pack.is_some() && spec.kind == DepositKind::UntilEmpty {
+                                if pack.is_some()
+                                    && matches!(self.request.action, BankAction::DepositAll { .. })
+                                {
                                     if !self.view_armed {
                                         self.view_armed = true;
                                         self.deadline = now
@@ -869,7 +916,15 @@ impl NativeMachine for BankMachine {
                                 }
                                 return Poll::Pending;
                             }
-                            DepositScan::Done => return Poll::Ready(Ok(self.receipt(cx, true))),
+                            DepositScan::Done => {
+                                let complete = match &self.request.action {
+                                    BankAction::DepositCapacity { slots, .. } => {
+                                        self.capacity_freed >= *slots
+                                    }
+                                    _ => true,
+                                };
+                                return Poll::Ready(Ok(self.receipt(cx, complete)));
+                            }
                             DepositScan::SessionGone => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                     "bank closed during deposit",
@@ -887,12 +942,22 @@ impl NativeMachine for BankMachine {
                                     ))));
                                 }
                                 let before = pack.map_or(0, |rows| ops::count_id(rows, click.id));
+                                let before_slots = matches!(
+                                    self.request.action,
+                                    BankAction::DepositCapacity { .. }
+                                )
+                                .then(|| {
+                                    pack.map_or(0, |rows| {
+                                        rows.iter().filter(|row| row.count > 0).count()
+                                    })
+                                });
                                 cx.emit(ops::deposit_req(click, self.session))?;
                                 self.deposits += 1;
                                 self.view_armed = false;
                                 self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
                                 self.phase = Phase::AwaitTransfer {
                                     before,
+                                    before_slots,
                                     item_id: click.id,
                                     evidence: cx.evidence(),
                                 };
@@ -904,6 +969,7 @@ impl NativeMachine for BankMachine {
                 },
                 Phase::AwaitTransfer {
                     before,
+                    before_slots,
                     item_id,
                     evidence,
                 } => {
@@ -912,7 +978,10 @@ impl NativeMachine for BankMachine {
                     {
                         return Poll::Pending;
                     }
-                    if matches!(self.request.action, BankAction::DepositProducts { .. }) {
+                    if matches!(
+                        self.request.action,
+                        BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
+                    ) {
                         match self.protected_unchanged(cx) {
                             Some(true) => {}
                             Some(false) => {
@@ -954,6 +1023,18 @@ impl NativeMachine for BankMachine {
                             self.deposited = self
                                 .deposited
                                 .saturating_add(before.saturating_sub(after).max(0) as u32);
+                        }
+                        if let Some(before_slots) = before_slots {
+                            if let Some(after_slots) = cx
+                                .snapshot()
+                                .inventory()
+                                .map(|rows| rows.value.iter().filter(|row| row.count > 0).count())
+                            {
+                                let freed = before_slots.saturating_sub(after_slots);
+                                self.capacity_freed = self
+                                    .capacity_freed
+                                    .saturating_add(u8::try_from(freed).unwrap_or(u8::MAX));
+                            }
                         }
                         self.phase = Phase::Act;
                         continue;
@@ -1237,6 +1318,7 @@ impl BankMachine {
         self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
         self.phase = Phase::AwaitTransfer {
             before: held,
+            before_slots: None,
             item_id: goal.lands_as_id,
             evidence: cx.evidence(),
         };

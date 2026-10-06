@@ -25,7 +25,6 @@ pub const MAX_MEMO: usize = 64;
 
 // --- borrowed row ----------------------------------------------------------
 
-/// Facts a transfer scan needs from one row. No policy.
 pub trait BankRow {
     fn id(&self) -> i32;
     fn count(&self) -> i32;
@@ -39,6 +38,10 @@ pub trait BankRow {
     /// The non-empty label at 1-based op slot `one_based`. `None` for a hole
     /// and for any slot outside `1..=op_len()` (op 0 is never valid).
     fn op_label(&self, one_based: i32) -> Option<&str>;
+    /// `None` when a row representation omits item stackability.
+    fn stackable(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// The 0-based index of 1-based op slot `one_based`, if it is one.
@@ -76,6 +79,9 @@ impl BankRow for ItemView {
             .get(op_index(one_based)?)?
             .as_deref()
             .filter(|label| !label.is_empty())
+    }
+    fn stackable(&self) -> Option<bool> {
+        Some(self.def.stackable)
     }
 }
 
@@ -609,6 +615,49 @@ pub fn deposit_next<R: BankRow>(
             None => DepositScan::WaitView,
             Some(side) => clickable(side).map_or(DepositScan::Done, DepositScan::Click),
         },
+    }
+}
+
+/// The next safe row deposit for an exact capacity release. Stackables must
+/// use Deposit-All; unstackables use Deposit-1 so one inventory row is freed.
+pub fn deposit_capacity_next<R: BankRow>(
+    keep: &[i32],
+    side: Option<&[R]>,
+    pack: Option<&[R]>,
+    same_session: bool,
+) -> DepositScan {
+    if !same_session {
+        return DepositScan::SessionGone;
+    }
+    let Some(pack) = pack else {
+        return DepositScan::WaitView;
+    };
+    let Some(side) = side else {
+        return DepositScan::WaitView;
+    };
+    let mut candidate = false;
+    for item in pack
+        .iter()
+        .filter(|item| item.count() > 0 && !keep.contains(&item.id()))
+    {
+        candidate = true;
+        let operation = match item.stackable() {
+            Some(true) => "Deposit-All",
+            Some(false) => "Deposit-1",
+            None => continue,
+        };
+        if let Some(click) = side
+            .iter()
+            .filter(|row| row.count() > 0 && row.id() == item.id())
+            .find_map(|row| deposit_click(row, DepositRequest::Label(operation)))
+        {
+            return DepositScan::Click(click);
+        }
+    }
+    if candidate {
+        DepositScan::MissingRequired
+    } else {
+        DepositScan::Done
     }
 }
 

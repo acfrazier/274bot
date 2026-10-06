@@ -6,7 +6,7 @@ use super::compile::{
 };
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
+use super::provision::{ProvisionEvent, Provisioner};
 use super::queue::QueueStatus;
 use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
@@ -301,7 +301,6 @@ pub struct Quester {
     anchor: Option<api::WorldTile>,
     provisioner: Provisioner,
     active_loadout: Option<Arc<str>>,
-    retreat_completed: bool,
     queue_fields: Arc<[StatusField]>,
     required_vs_live: Arc<[StatusField]>,
     tested_stats_warning: Arc<str>,
@@ -622,7 +621,6 @@ impl Quester {
             anchor: None,
             provisioner: Provisioner::new(),
             active_loadout: None,
-            retreat_completed: false,
             queue_fields: Arc::from([]),
             required_vs_live: Arc::from([]),
             tested_stats_warning: Arc::from(""),
@@ -733,9 +731,8 @@ impl Quester {
         self.trace.terminal_logged = true;
     }
 
-    fn poll_provision(&mut self, tick: &mut NativeTick<'_>, mode: ProvisionMode) -> bool {
+    fn poll_provision(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let required_after = tick.cx.evidence();
-        let not_started = self.stage.as_ref() == Some(&self.path.colour_not_started);
         let revision = self.provisioner.status_revision();
         let mut cx = StepContext {
             tick,
@@ -753,10 +750,11 @@ impl Quester {
         let result = self.provisioner.poll(
             &mut cx,
             &self.path.provisioning,
-            mode,
             self.active_loadout.as_deref(),
-            not_started,
         );
+        while let Some(event) = self.provisioner.take_trace_event() {
+            self.trace_step_event(tick.output, event);
+        }
         self.dirty |= self.provisioner.status_revision() != revision;
         match result {
             Poll::Pending => {
@@ -780,9 +778,10 @@ impl Quester {
                 self.dirty = true;
                 false
             }
-            Poll::Ready(Ok(ProvisionEvent::BankMemoUnknown)) => {
+            Poll::Ready(Ok(ProvisionEvent::Acquired)) => {
                 self.published_bank_receipt = None;
-                self.bank.clear();
+                // Inventory changes outside the bank do not change its stock.
+                // Recipe bank operations already publish their own receipts.
                 self.dirty = true;
                 false
             }
@@ -813,11 +812,6 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
-        if !self.poll_provision(tick, ProvisionMode::Retreat) {
-            self.publish(tick.output);
-            return ScriptFlow::Continue;
-        }
-        self.retreat_completed = self.provisioner.retreat_performed();
         self.published_bank_receipt = None;
         self.trace.flush_repeats(tick.output);
         self.trace.record(
@@ -1059,11 +1053,7 @@ impl Quester {
             "blocked"
         } else if matches!(
             provision.phase,
-            ProvisionPhase::Scanning
-                | ProvisionPhase::Freshening
-                | ProvisionPhase::Spillover
-                | ProvisionPhase::Withdrawing
-                | ProvisionPhase::Retreating
+            ProvisionPhase::Scanning | ProvisionPhase::Spillover | ProvisionPhase::Withdrawing
         ) {
             "banking"
         } else if self.waiting.is_some() || self.needs_read || self.settling {
@@ -1985,7 +1975,6 @@ impl Script for Quester {
             tick.cx.retained().quester().deaths = self.prior_deaths.saturating_add(self.deaths);
             self.provisioner.reset(tick.actions);
             self.active_loadout = None;
-            self.retreat_completed = false;
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
@@ -2230,7 +2219,7 @@ impl Script for Quester {
             return Ok(ScriptFlow::Continue);
         }
         if self.step.is_none() {
-            if !self.poll_provision(tick, ProvisionMode::Prepare) {
+            if !self.poll_provision(tick) {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
@@ -2789,8 +2778,6 @@ pub struct QueuedQuester {
     deaths: u16,
     max_deaths: u8,
     anchor: Option<api::WorldTile>,
-    retreats: u16,
-    last_retreat: Option<Arc<str>>,
     fields: Arc<[StatusField]>,
     gate_fields: Arc<[StatusField]>,
     quest_status_since: Option<Duration>,
@@ -2832,8 +2819,6 @@ impl QueuedQuester {
             deaths: 0,
             max_deaths,
             anchor: None,
-            retreats: 0,
-            last_retreat: None,
             fields: Arc::from([]),
             gate_fields: Arc::from([]),
             quest_status_since: None,
@@ -2854,8 +2839,6 @@ impl QueuedQuester {
         self.anchor = retained.anchor;
         self.deaths = retained.deaths;
         self.completed = retained.completed;
-        self.retreats = retained.retreats;
-        self.last_retreat = retained.last_retreat.clone();
         self.refresh_fields();
     }
 
@@ -2864,8 +2847,6 @@ impl QueuedQuester {
         retained.anchor = self.anchor;
         retained.deaths = self.deaths;
         retained.completed = self.completed;
-        retained.retreats = self.retreats;
-        retained.last_retreat.clone_from(&self.last_retreat);
     }
 
     fn refresh_fields(&mut self) {
@@ -2879,11 +2860,6 @@ impl QueuedQuester {
                 key: "completed",
                 label: "Completed this session",
                 value: StatusValue::Integer(i64::from(self.completed)),
-            },
-            StatusField {
-                key: "retreat_count",
-                label: "Completed bank retreats",
-                value: StatusValue::Integer(i64::from(self.retreats)),
             },
             StatusField {
                 key: "session_deaths",
@@ -2913,13 +2889,6 @@ impl QueuedQuester {
                     value: StatusValue::Text(Arc::clone(&SOURCES[source as usize])),
                 });
             }
-        }
-        if let Some(quest) = &self.last_retreat {
-            fields.push(StatusField {
-                key: "last_retreat",
-                label: "Last bank retreat",
-                value: StatusValue::Text(Arc::clone(quest)),
-            });
         }
         if let Some(reason) = self
             .active_index
@@ -3214,10 +3183,6 @@ impl Script for QueuedQuester {
                             self.queue.mark_done(index);
                             self.completed = self.completed.saturating_add(1);
                             self.anchor = None;
-                            if active.retreat_completed {
-                                self.retreats = self.retreats.saturating_add(1);
-                                self.last_retreat = Some(Arc::clone(&active.path.id.0));
-                            }
                             self.queue.refresh_blocked();
                         }
                         ScriptFlow::Blocked(failure) => {
@@ -3308,6 +3273,10 @@ impl Script for QueuedQuester {
                 None
             };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
+            tick.output.log(
+                api::hostlog::Level::Info,
+                &format!("quester queue: preparing next Path {id}"),
+            );
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
@@ -5321,3 +5290,11 @@ mod queue_tests;
 #[cfg(test)]
 #[path = "recovery_runner_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "cook_bank_runner_tests.rs"]
+mod cook_bank_tests;
+
+#[cfg(test)]
+#[path = "cook_dialogue_runner_tests.rs"]
+mod cook_dialogue_tests;

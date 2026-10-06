@@ -103,7 +103,7 @@ fn live_quester_folder_override_start() {
                 serde_json::from_value(json!({"quests":["cook"]})).unwrap(),
             )
         }),
-        Box::new(move |_, status| {
+        Box::new(move |_, status, _lifecycle| {
             let Some(status) = status else {
                 return Ok(None);
             };

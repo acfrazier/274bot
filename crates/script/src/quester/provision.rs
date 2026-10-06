@@ -1,6 +1,8 @@
-//! Pack-first preparation, bank spillover, and completion retreat for one Path.
+//! Inventory-first preparation and selective capacity deposits for one Path.
 use super::bank_memo::{BankMemo, MAX_BANK_MEMO};
-use super::compile::{CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun};
+use super::compile::{
+    CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
+};
 use super::families::{self, AcquirePlan};
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
@@ -13,20 +15,12 @@ use std::task::Poll;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProvisionMode {
-    Prepare,
-    Retreat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvisionPhase {
     Idle,
     Scanning,
-    Freshening,
     Spillover,
     Withdrawing,
     Acquiring,
-    Retreating,
     Ready,
     Blocked,
 }
@@ -70,30 +64,17 @@ pub struct ProvisionStatus<'a> {
 pub enum ProvisionEvent {
     Ready,
     BankReceipt(BankReceipt),
-    BankMemoUnknown,
+    Acquired,
     Blocked { item: Arc<str> },
-}
-
-#[derive(Clone, Copy)]
-enum BankPurpose {
-    Freshen,
-    Spillover,
-    Scan,
-    Withdraw,
-    Retreat,
 }
 
 pub struct Provisioner {
     path: Option<api::selected::FactKey>,
     bank_run: Option<BankRun>,
-    bank_purpose: Option<BankPurpose>,
     acquire_run: Option<Box<dyn StepRun>>,
-    freshened: bool,
-    freshen_attempts: u8,
-    spillover_done: bool,
+    acquire_finished: bool,
     coin_drawn: bool,
     carry_drawn: u64,
-    retreated: bool,
     attempts: u32,
     status: Status,
     revision: u64,
@@ -110,14 +91,10 @@ impl Provisioner {
         Self {
             path: None,
             bank_run: None,
-            bank_purpose: None,
             acquire_run: None,
-            freshened: false,
-            freshen_attempts: 0,
-            spillover_done: false,
+            acquire_finished: false,
             coin_drawn: false,
             carry_drawn: 0,
-            retreated: false,
             attempts: 0,
             status: Status::default(),
             revision: 0,
@@ -128,10 +105,12 @@ impl Provisioner {
         &mut self,
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
-        mode: ProvisionMode,
         active_loadout: Option<&str>,
-        not_started: bool,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        if self.acquire_finished {
+            self.acquire_run = None;
+            self.acquire_finished = false;
+        }
         if self.path.as_ref().is_some_and(|path| path != &plan.path) {
             self.reset(cx.tick.actions);
         }
@@ -141,7 +120,7 @@ impl Provisioner {
         }
 
         if self.bank_run.is_some() {
-            return self.poll_bank(cx, plan);
+            return self.poll_bank(cx);
         }
         if self.acquire_run.is_some() {
             return self.poll_acquire(cx);
@@ -151,16 +130,13 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
-        match mode {
-            ProvisionMode::Retreat => self.poll_retreat(cx, plan),
-            ProvisionMode::Prepare => self.poll_prepare(cx, plan, active_loadout, not_started),
-        }
+        self.poll_prepare(cx, plan, active_loadout)
     }
 
     pub fn cancel(&mut self) {
         self.bank_run = None;
-        self.bank_purpose = None;
         self.acquire_run = None;
+        self.acquire_finished = false;
         self.set_status(
             ProvisionPhase::Idle,
             None,
@@ -178,14 +154,10 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
-        self.bank_purpose = None;
+        self.acquire_finished = false;
         self.path = None;
-        self.freshened = false;
-        self.freshen_attempts = 0;
-        self.spillover_done = false;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
-        self.retreated = false;
         self.attempts = 0;
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
@@ -208,6 +180,10 @@ impl Provisioner {
             .and_then(|run| run.in_flight_outcome())
     }
 
+    pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
+        self.acquire_run.as_mut()?.take_trace_event()
+    }
+
     pub fn status_revision(&self) -> u64 {
         self.revision
     }
@@ -218,10 +194,6 @@ impl Provisioner {
 
     pub fn carry_drawn(&self) -> u64 {
         self.carry_drawn
-    }
-
-    pub fn retreat_performed(&self) -> bool {
-        self.retreated
     }
 
     pub fn needs_progress_read(&self) -> bool {
@@ -236,90 +208,25 @@ impl Provisioner {
         }
     }
 
-    fn poll_retreat(
-        &mut self,
-        cx: &mut StepContext<'_, '_>,
-        plan: &CompiledProvisioning,
-    ) -> Poll<Result<ProvisionEvent, ActionError>> {
-        if self.retreated || (plan.bank.is_none() && cx.banks.banks().is_empty()) {
-            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, cx.bank.known());
-            return Poll::Ready(Ok(ProvisionEvent::Ready));
-        }
-        let keep = Arc::clone(&plan.keep_ids);
-        self.start_bank(
-            cx,
-            plan,
-            BankAction::DepositAll { keep },
-            BankPurpose::Retreat,
-            ProvisionPhase::Retreating,
-            None,
-            0,
-            0,
-            None,
-        );
-        Poll::Pending
-    }
-
     fn poll_prepare(
         &mut self,
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
-        not_started: bool,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
-        let Some(inventory) = cx.tick.cx.snapshot().inventory() else {
+        let snapshot = cx.tick.cx.snapshot();
+        let Some(inventory) = snapshot.inventory() else {
+            self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, cx.bank.known());
+            return Poll::Pending;
+        };
+        let Some(capacity) = snapshot.inventory_capacity() else {
             self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, cx.bank.known());
             return Poll::Pending;
         };
         let inventory = inventory.value;
-
-        if not_started && !self.freshened {
-            if !has_unkept_item(inventory, &plan.keep_ids) {
-                self.freshened = true;
-            } else if self.freshen_attempts < 3 {
-                self.freshen_attempts += 1;
-                self.start_bank(
-                    cx,
-                    plan,
-                    BankAction::DepositAll {
-                        keep: Arc::clone(&plan.keep_ids),
-                    },
-                    BankPurpose::Freshen,
-                    ProvisionPhase::Freshening,
-                    None,
-                    0,
-                    0,
-                    None,
-                );
-                return Poll::Pending;
-            } else {
-                self.freshened = true;
-            }
-        }
-
-        if !self.spillover_done {
-            let keep = &plan.base_spillover_keep;
-            if !has_spillover(inventory, keep) {
-                self.spillover_done = true;
-            } else {
-                self.start_bank(
-                    cx,
-                    plan,
-                    BankAction::DepositAll {
-                        keep: Arc::clone(keep),
-                    },
-                    BankPurpose::Spillover,
-                    ProvisionPhase::Spillover,
-                    None,
-                    0,
-                    0,
-                    None,
-                );
-                return Poll::Pending;
-            }
-        }
-
+        let capacity = i32::from(capacity.value);
         let mut needs = Needs::new();
+
         for item in plan.items.iter() {
             let bank_item = crate::native_bank::BankItem {
                 id: item.id,
@@ -334,16 +241,9 @@ impl Provisioner {
                     .acquire
                     .clone()
                     .map(MissingKind::Acquire)
-                    // Paths may acquire through their authored sequence
-                    // (Sheep), rather than a synthetic recipe.
                     .unwrap_or(MissingKind::Optional),
             };
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
-        }
-        for tool in plan.tools.iter() {
-            // Tools are preservation/withdrawal hints, not extra mustHave rows:
-            // acquire recipes may obtain or consume them (e.g. pot and grain).
-            needs.require(tool, 1, MissingKind::Optional, inventory, cx.bank)?;
         }
 
         if plan.coin_float <= 0 {
@@ -384,20 +284,104 @@ impl Provisioner {
             }
         }
 
-        if let Some(unknown) = needs.unknown {
+        if let Some(unknown) = needs.unknown.as_ref() {
             self.start_bank(
                 cx,
                 plan,
                 BankAction::Scan,
-                BankPurpose::Scan,
                 ProvisionPhase::Scanning,
-                Some(unknown.item),
+                Some(Arc::clone(&unknown.item)),
                 unknown.need,
                 unknown.pack,
                 None,
             );
             return Poll::Pending;
         }
+
+        let active_recipe =
+            if let Some(need) = needs.acquire.as_ref().filter(|_| needs.blocked.is_none()) {
+                Some(plan.recipes.get(need.recipe.as_ref()).ok_or_else(|| {
+                    ActionError::Unavailable(Arc::from("compiled acquisition recipe missing"))
+                })?)
+            } else {
+                None
+            };
+        if let Some(recipe) = active_recipe {
+            for input in recipe.peak_items.iter() {
+                needs.require(
+                    &input.item,
+                    input.qty,
+                    MissingKind::Optional,
+                    inventory,
+                    cx.bank,
+                )?;
+            }
+        }
+        let active_need = needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
+
+        let required_slots = if let (Some(need), Some(recipe)) = (active_need, active_recipe) {
+            planned_slots(
+                plan,
+                &needs,
+                inventory,
+                Some(need),
+                Some(recipe),
+                true,
+                false,
+            )
+            .max(planned_slots(
+                plan,
+                &needs,
+                inventory,
+                Some(need),
+                Some(recipe),
+                false,
+                true,
+            ))
+        } else {
+            planned_slots(plan, &needs, inventory, None, None, false, false)
+        };
+        let deficit = required_slots.saturating_sub(capacity);
+        if deficit > 0 {
+            let keep = &plan.base_spillover_keep;
+            let available = safe_deposit_rows(inventory, keep);
+            if available < deficit as usize {
+                let item = Arc::from(format!(
+                    "inventory capacity needs {deficit} additional safe slots"
+                ));
+                self.set_status(
+                    ProvisionPhase::Blocked,
+                    Some(Arc::clone(&item)),
+                    deficit,
+                    available as i32,
+                    None,
+                    cx.bank.known(),
+                );
+                return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
+            }
+            let slots = u8::try_from(deficit).map_err(|_| {
+                ActionError::Unavailable(Arc::from("inventory capacity deficit overflow"))
+            })?;
+            let status = needs
+                .first_withdrawal
+                .as_ref()
+                .or_else(|| active_need.map(|need| &need.need));
+            self.start_bank(
+                cx,
+                plan,
+                BankAction::DepositCapacity {
+                    keep: Arc::clone(&plan.base_spillover_keep),
+                    slots,
+                },
+                ProvisionPhase::Spillover,
+                status.map(|need| Arc::clone(&need.item)),
+                status.map_or(deficit, |need| need.need),
+                status.map_or(occupied_slots(inventory), |need| need.pack),
+                status.and_then(|need| need.bank),
+            );
+            return Poll::Pending;
+        }
+
         if needs.withdrawal_count > 0 {
             let first = needs
                 .first_withdrawal
@@ -415,7 +399,6 @@ impl Provisioner {
                 BankAction::WithdrawTo {
                     withdrawals: Arc::from(withdrawals),
                 },
-                BankPurpose::Withdraw,
                 ProvisionPhase::Withdrawing,
                 Some(Arc::clone(&first.item)),
                 first.need,
@@ -436,25 +419,20 @@ impl Provisioner {
             );
             return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
         }
-        if let Some(recipe) = needs.acquire {
-            let Some(steps) = plan.recipes.get(recipe.recipe.as_ref()) else {
-                return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                    "compiled acquisition recipe missing",
-                ))));
-            };
+        if let (Some(recipe_need), Some(recipe)) = (needs.acquire, active_recipe) {
             let acquire = AcquirePlan {
-                recipe: Arc::clone(&recipe.recipe),
-                steps: Arc::clone(steps),
+                recipe: Arc::clone(&recipe_need.recipe),
+                steps: Arc::clone(&recipe.steps),
             };
             match acquire.begin(cx) {
                 Ok(run) => {
                     self.acquire_run = Some(run);
                     self.set_status(
                         ProvisionPhase::Acquiring,
-                        Some(recipe.need.item),
-                        recipe.need.need,
-                        recipe.need.pack,
-                        recipe.need.bank,
+                        Some(recipe_need.need.item),
+                        recipe_need.need.need,
+                        recipe_need.need.pack,
+                        recipe_need.need.bank,
                         true,
                     );
                     return Poll::Pending;
@@ -470,7 +448,6 @@ impl Provisioner {
     fn poll_bank(
         &mut self,
         cx: &mut StepContext<'_, '_>,
-        plan: &CompiledProvisioning,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let result = self
             .bank_run
@@ -480,42 +457,11 @@ impl Provisioner {
         match result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => {
-                let purpose = self.bank_purpose.take();
                 self.bank_run = None;
-                if matches!(purpose, Some(BankPurpose::Freshen)) {
-                    if self.freshen_attempts >= 3 {
-                        self.freshened = true;
-                    }
-                    self.set_status(
-                        ProvisionPhase::Freshening,
-                        None,
-                        0,
-                        0,
-                        None,
-                        cx.bank.known(),
-                    );
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Err(error))
-                }
+                Poll::Ready(Err(error))
             }
             Poll::Ready(Ok(receipt)) => {
-                let purpose = self.bank_purpose.take();
                 self.bank_run = None;
-                match purpose {
-                    Some(BankPurpose::Freshen) => {
-                        let inventory = cx.tick.cx.snapshot().inventory();
-                        if inventory.is_some_and(|inventory| {
-                            !has_unkept_item(inventory.value, &plan.keep_ids)
-                        }) || self.freshen_attempts >= 3
-                        {
-                            self.freshened = true;
-                        }
-                    }
-                    Some(BankPurpose::Spillover) => self.spillover_done = true,
-                    Some(BankPurpose::Retreat) => self.retreated = true,
-                    Some(BankPurpose::Scan | BankPurpose::Withdraw) | None => {}
-                }
                 Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt)))
             }
         }
@@ -530,16 +476,13 @@ impl Provisioner {
             .as_mut()
             .expect("acquire poll has a run")
             .poll(cx);
+        // Keep the finished run until the caller drains its final trace events.
+        // The next poll drops it before starting any other preparation work.
+        self.acquire_finished = result.is_ready();
         match result {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => {
-                self.acquire_run = None;
-                Poll::Ready(Err(error))
-            }
-            Poll::Ready(Ok(_)) => {
-                self.acquire_run = None;
-                Poll::Ready(Ok(ProvisionEvent::BankMemoUnknown))
-            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(ProvisionEvent::Acquired)),
         }
     }
 
@@ -549,7 +492,6 @@ impl Provisioner {
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         action: BankAction,
-        purpose: BankPurpose,
         phase: ProvisionPhase,
         item: Option<Arc<str>>,
         need: i32,
@@ -562,7 +504,6 @@ impl Provisioner {
         } else {
             BankRun::new(plan.bank, action, memo_ids, cx)
         });
-        self.bank_purpose = Some(purpose);
         self.attempts = self.attempts.saturating_add(1);
         self.set_status(phase, item, need, pack, bank, cx.bank.known());
     }
@@ -611,12 +552,12 @@ impl Provisioner {
 }
 
 struct Need {
+    id: i32,
     item: Arc<str>,
     need: i32,
     pack: i32,
     bank: Option<i32>,
 }
-
 struct RecipeNeed {
     need: Need,
     recipe: Arc<str>,
@@ -665,13 +606,16 @@ impl Needs {
             return Ok(());
         }
         let need = Need {
+            id: item.id,
             item: Arc::clone(&item.name),
             need: target,
             pack,
             bank: None,
         };
         if !memo.known() {
-            if self.unknown.is_none() {
+            if matches!(kind, MissingKind::Required | MissingKind::Acquire(_))
+                && self.unknown.is_none()
+            {
                 self.unknown = Some(need);
             }
             return Ok(());
@@ -684,6 +628,7 @@ impl Needs {
             self.add_withdrawal(item, pack.saturating_add(take))?;
             if self.first_withdrawal.is_none() {
                 self.first_withdrawal = Some(Need {
+                    id: item.id,
                     item: Arc::clone(&item.name),
                     need: target,
                     pack,
@@ -695,6 +640,7 @@ impl Needs {
             return Ok(());
         }
         let missing = Need {
+            id: item.id,
             item: Arc::clone(&item.name),
             need: target,
             pack,
@@ -1005,16 +951,249 @@ fn count_item(inventory: &[ItemView], id: i32) -> i32 {
         .sum()
 }
 
-fn has_unkept_item(inventory: &[ItemView], keep: &[i32]) -> bool {
-    inventory
-        .iter()
-        .any(|row| row.count > 0 && !keep.contains(&row.def.id))
+fn occupied_slots(inventory: &[ItemView]) -> i32 {
+    i32::try_from(inventory.iter().filter(|row| row.count > 0).count()).unwrap_or(i32::MAX)
 }
 
-fn has_spillover(inventory: &[ItemView], keep: &[i32]) -> bool {
+fn safe_deposit_rows(inventory: &[ItemView], keep: &[i32]) -> usize {
     inventory
         .iter()
-        .any(|row| row.count > 0 && !keep.contains(&row.def.id))
+        .filter(|row| row.count > 0 && !keep.contains(&row.def.id))
+        .count()
+}
+
+fn slots_for_count(count: i32, stackable: bool) -> i32 {
+    let count = count.max(0);
+    if stackable {
+        i32::from(count > 0)
+    } else {
+        count
+    }
+}
+
+fn has_withdrawal(needs: &Needs, id: i32) -> bool {
+    needs
+        .withdrawals
+        .iter()
+        .take(needs.withdrawal_count)
+        .flatten()
+        .any(|withdrawal| withdrawal.id == id)
+}
+
+fn authored_target(plan: &CompiledProvisioning, id: i32) -> i32 {
+    plan.items
+        .iter()
+        .filter(|item| {
+            item.id == id && item.kind == CompiledItemKind::Acquirable && item.acquire.is_none()
+        })
+        .map(|item| i32::try_from(item.qty).unwrap_or(i32::MAX))
+        .max()
+        .unwrap_or(0)
+}
+
+fn recipe_peak_target(recipe: &CompiledAcquireRecipe, id: i32) -> i32 {
+    recipe
+        .peak_items
+        .iter()
+        .find(|item| item.item.id == id)
+        .map_or(0, |item| item.qty)
+}
+
+fn item_stackable(
+    plan: &CompiledProvisioning,
+    recipe: Option<&CompiledAcquireRecipe>,
+    inventory: &[ItemView],
+    id: i32,
+) -> bool {
+    inventory
+        .iter()
+        .find(|row| row.count > 0 && row.def.id == id)
+        .map(|row| row.def.stackable)
+        .or_else(|| {
+            plan.items
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.stackable)
+        })
+        .or_else(|| {
+            plan.coin
+                .as_ref()
+                .filter(|item| item.item.id == id)
+                .map(|item| item.stackable)
+        })
+        .or_else(|| {
+            plan.loadout_carry
+                .values()
+                .flat_map(|rows| rows.iter())
+                .find(|item| item.item.id == id)
+                .map(|item| item.stackable)
+        })
+        .or_else(|| {
+            recipe.and_then(|recipe| {
+                recipe
+                    .peak_items
+                    .iter()
+                    .find(|item| item.item.id == id)
+                    .map(|item| item.stackable)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn has_other_recipe_state_need(
+    plan: &CompiledProvisioning,
+    active_need: Option<&RecipeNeed>,
+    id: i32,
+) -> bool {
+    authored_target(plan, id) > 0
+        || active_need.is_some_and(|need| need.need.id == id)
+        || plan.items.iter().any(|item| item.id == id)
+        || plan.coin.as_ref().is_some_and(|coin| coin.item.id == id)
+        || plan.tools.iter().any(|tool| tool.id == id)
+        || plan
+            .loadout_carry
+            .values()
+            .flat_map(|rows| rows.iter())
+            .any(|row| row.item.id == id)
+}
+
+fn planned_slots(
+    plan: &CompiledProvisioning,
+    needs: &Needs,
+    inventory: &[ItemView],
+    active_need: Option<&RecipeNeed>,
+    recipe: Option<&CompiledAcquireRecipe>,
+    include_recipe_inputs: bool,
+    include_final_outputs: bool,
+) -> i32 {
+    let mut slots = occupied_slots(inventory);
+    if let Some(recipe) = recipe {
+        if include_recipe_inputs {
+            for id in recipe.consumed_ids.iter().copied() {
+                if recipe_peak_target(recipe, id) > 0
+                    || has_other_recipe_state_need(plan, active_need, id)
+                {
+                    continue;
+                }
+                let absent = slots_for_count(
+                    count_item(inventory, id),
+                    item_stackable(plan, Some(recipe), inventory, id),
+                );
+                slots = slots.saturating_sub(absent).max(0);
+            }
+        }
+        if include_final_outputs {
+            for id in recipe.consumed_ids.iter().copied() {
+                if has_other_recipe_state_need(plan, active_need, id) {
+                    continue;
+                }
+                let absent = slots_for_count(
+                    count_item(inventory, id),
+                    item_stackable(plan, Some(recipe), inventory, id),
+                );
+                slots = slots.saturating_sub(absent).max(0);
+            }
+        }
+    }
+    for withdrawal in needs
+        .withdrawals
+        .iter()
+        .take(needs.withdrawal_count)
+        .flatten()
+    {
+        if !include_recipe_inputs
+            && include_final_outputs
+            && recipe.is_some_and(|recipe| recipe.consumed_ids.contains(&withdrawal.id))
+            && !has_other_recipe_state_need(plan, active_need, withdrawal.id)
+        {
+            continue;
+        }
+        let mut target = withdrawal.target;
+        if include_recipe_inputs {
+            target =
+                target.max(recipe.map_or(0, |recipe| recipe_peak_target(recipe, withdrawal.id)));
+        }
+        if include_final_outputs || recipe.is_none() {
+            target = target.max(authored_target(plan, withdrawal.id));
+        }
+        if include_final_outputs {
+            target = target.max(
+                active_need
+                    .filter(|need| need.need.id == withdrawal.id)
+                    .map_or(0, |need| need.need.need),
+            );
+        }
+        let pack = count_item(inventory, withdrawal.id);
+        let stackable = item_stackable(plan, recipe, inventory, withdrawal.id);
+        slots = slots.saturating_add(
+            slots_for_count(target, stackable).saturating_sub(slots_for_count(pack, stackable)),
+        );
+    }
+    if include_recipe_inputs {
+        if let Some(recipe) = recipe {
+            for input in recipe.peak_items.iter() {
+                if has_withdrawal(needs, input.item.id) {
+                    continue;
+                }
+                let pack = count_item(inventory, input.item.id);
+                slots = slots.saturating_add(
+                    slots_for_count(input.qty, input.stackable)
+                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                );
+            }
+        }
+    }
+    if include_final_outputs {
+        if let Some(recipe) = recipe {
+            for input in recipe.peak_items.iter() {
+                if has_withdrawal(needs, input.item.id)
+                    || (recipe.consumed_ids.contains(&input.item.id)
+                        && !has_other_recipe_state_need(plan, active_need, input.item.id))
+                    || active_need.is_some_and(|need| need.need.id == input.item.id)
+                {
+                    continue;
+                }
+                let pack = count_item(inventory, input.item.id);
+                slots = slots.saturating_add(
+                    slots_for_count(input.qty, input.stackable)
+                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                );
+            }
+        }
+    }
+    if include_final_outputs || recipe.is_none() {
+        for (index, item) in plan.items.iter().enumerate() {
+            if item.kind != CompiledItemKind::Acquirable
+                || item.acquire.is_some()
+                || plan.items[..index].iter().any(|prior| prior.id == item.id)
+                || has_withdrawal(needs, item.id)
+            {
+                continue;
+            }
+            let target = authored_target(plan, item.id);
+            let pack = count_item(inventory, item.id);
+            slots = slots.saturating_add(
+                slots_for_count(target, item.stackable)
+                    .saturating_sub(slots_for_count(pack, item.stackable)),
+            );
+        }
+    }
+    if include_final_outputs {
+        if let Some(need) = active_need {
+            if !has_withdrawal(needs, need.need.id) {
+                let stackable = item_stackable(plan, recipe, inventory, need.need.id);
+                let recipe_target =
+                    recipe.map_or(0, |recipe| recipe_peak_target(recipe, need.need.id));
+                let target = recipe_target.max(need.need.need);
+                let pack = count_item(inventory, need.need.id);
+                slots = slots.saturating_add(
+                    slots_for_count(target, stackable)
+                        .saturating_sub(slots_for_count(pack, stackable)),
+                );
+            }
+        }
+    }
+    slots
 }
 #[cfg(test)]
 mod tests {
@@ -1119,6 +1298,7 @@ mod tests {
             qty,
             kind,
             acquire: acquire.map(Arc::from),
+            stackable: false,
         }
     }
 
@@ -1152,9 +1332,7 @@ mod tests {
         ledger: &mut Option<Box<ledger::Ledger>>,
         tick: u64,
         plan: &CompiledProvisioning,
-        mode: ProvisionMode,
         active_loadout: Option<&str>,
-        not_started: bool,
         memo: &BankMemo,
         banks: &Arc<api::named_banks::NamedBankFacts>,
         quests: &QuestCatalog,
@@ -1170,7 +1348,7 @@ mod tests {
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            provisioner.poll(&mut cx, plan, mode, active_loadout, not_started)
+            provisioner.poll(&mut cx, plan, active_loadout)
         })
     }
 
@@ -1179,6 +1357,208 @@ mod tests {
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(items, 28);
         snapshot
+    }
+
+    #[test]
+    fn recipe_capacity_uses_simultaneous_inputs_and_stackability() {
+        let mut flour = compiled_item(
+            100,
+            "Flour",
+            1,
+            CompiledItemKind::Acquirable,
+            Some("acquire:flour"),
+        );
+        flour.stackable = true;
+        let plan = provisioning(vec![flour], vec![100, 101, 102], None);
+        let recipe = CompiledAcquireRecipe {
+            steps: Arc::from(Vec::new()),
+            peak_items: Arc::from([
+                crate::quester::compile::CompiledRecipeItem {
+                    item: crate::native_bank::BankItem {
+                        id: 101,
+                        name: Arc::from("Pot"),
+                    },
+                    qty: 1,
+                    stackable: false,
+                },
+                crate::quester::compile::CompiledRecipeItem {
+                    item: crate::native_bank::BankItem {
+                        id: 102,
+                        name: Arc::from("Grain"),
+                    },
+                    qty: 20,
+                    stackable: true,
+                },
+            ]),
+            consumed_ids: Arc::from([]),
+        };
+        let need = RecipeNeed {
+            need: Need {
+                id: 100,
+                item: Arc::from("Flour"),
+                need: 1,
+                pack: 0,
+                bank: Some(0),
+            },
+            recipe: Arc::from("acquire:flour"),
+        };
+        let inventory = [
+            item_view(201, "Egg", 1, ItemContainer::Inventory),
+            item_view(202, "Milk", 1, ItemContainer::Inventory),
+        ];
+        let needs = Needs::new();
+        let inputs = planned_slots(
+            &plan,
+            &needs,
+            &inventory,
+            Some(&need),
+            Some(&recipe),
+            true,
+            false,
+        );
+        let output = planned_slots(
+            &plan,
+            &needs,
+            &inventory,
+            Some(&need),
+            Some(&recipe),
+            false,
+            true,
+        );
+        assert_eq!(
+            inputs, 4,
+            "pot and stackable grain add two rows to egg and milk"
+        );
+        assert_eq!(
+            output, 5,
+            "without explicit absence facts, retain both recipe inputs alongside flour"
+        );
+        assert_eq!(inputs.max(output), 5);
+
+        let milk_plan = provisioning(
+            vec![compiled_item(
+                301,
+                "Milk",
+                1,
+                CompiledItemKind::Acquirable,
+                Some("acquire:milk"),
+            )],
+            vec![301, 302, 303],
+            None,
+        );
+        let bucket_input = crate::quester::compile::CompiledRecipeItem {
+            item: crate::native_bank::BankItem {
+                id: 302,
+                name: Arc::from("Empty bucket"),
+            },
+            qty: 1,
+            stackable: false,
+        };
+        let milk_recipe = CompiledAcquireRecipe {
+            steps: Arc::from(Vec::new()),
+            peak_items: Arc::from([bucket_input.clone()]),
+            consumed_ids: Arc::from([]),
+        };
+        let milk_need = RecipeNeed {
+            need: Need {
+                id: 301,
+                item: Arc::from("Milk"),
+                need: 1,
+                pack: 0,
+                bank: Some(0),
+            },
+            recipe: Arc::from("acquire:milk"),
+        };
+        let bucket = [item_view(302, "Empty bucket", 1, ItemContainer::Inventory)];
+        assert_eq!(
+            planned_slots(
+                &milk_plan,
+                &needs,
+                &bucket,
+                Some(&milk_need),
+                Some(&milk_recipe),
+                true,
+                false,
+            ),
+            1
+        );
+        assert_eq!(
+            planned_slots(
+                &milk_plan,
+                &needs,
+                &bucket,
+                Some(&milk_need),
+                Some(&milk_recipe),
+                false,
+                true,
+            ),
+            2,
+            "an omitted source from settle is retained beside the final output"
+        );
+        let bucket_proven_absent = CompiledAcquireRecipe {
+            steps: Arc::from(Vec::new()),
+            peak_items: Arc::from([bucket_input]),
+            consumed_ids: Arc::from([302]),
+        };
+        assert_eq!(
+            planned_slots(
+                &milk_plan,
+                &needs,
+                &bucket,
+                Some(&milk_need),
+                Some(&bucket_proven_absent),
+                false,
+                true,
+            ),
+            1,
+            "an explicit absence predicate proves the bucket row is released"
+        );
+
+        let mut partial_grain = item_view(303, "Grain", 5, ItemContainer::Inventory);
+        partial_grain.def.stackable = true;
+        let partial_grain = [partial_grain];
+        let partial_recipe = CompiledAcquireRecipe {
+            steps: Arc::from(Vec::new()),
+            peak_items: Arc::from([crate::quester::compile::CompiledRecipeItem {
+                item: crate::native_bank::BankItem {
+                    id: 303,
+                    name: Arc::from("Grain"),
+                },
+                qty: 1,
+                stackable: true,
+            }]),
+            consumed_ids: Arc::from([]),
+        };
+        assert_eq!(
+            planned_slots(
+                &milk_plan,
+                &needs,
+                &partial_grain,
+                Some(&milk_need),
+                Some(&partial_recipe),
+                false,
+                true,
+            ),
+            2,
+            "a partial source stack retains one row beside a new unstackable output"
+        );
+
+        let authored = provisioning(
+            vec![compiled_item(
+                401,
+                "Wool",
+                20,
+                CompiledItemKind::Acquirable,
+                None,
+            )],
+            vec![401],
+            None,
+        );
+        assert_eq!(
+            planned_slots(&authored, &needs, &[], None, None, false, false),
+            20,
+            "authored acquisition goals still reserve their final slots"
+        );
     }
 
     fn known_empty(id: i32) -> BankMemo {
@@ -1407,9 +1787,7 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1430,7 +1808,7 @@ mod tests {
         let snapshot = ready_snapshot(Vec::new());
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let memo = known_empty(42);
+        let memo = BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let quests = quest_catalog();
         assert!(matches!(
@@ -1440,9 +1818,7 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1478,9 +1854,7 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1530,9 +1904,7 @@ mod tests {
             &mut ledger,
             1,
             &plan,
-            ProvisionMode::Prepare,
             None,
-            false,
             &memo,
             &banks,
             &quests,
@@ -1545,9 +1917,7 @@ mod tests {
                 &mut ledger,
                 2,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1585,9 +1955,7 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1599,7 +1967,7 @@ mod tests {
     }
 
     #[test]
-    fn acquirable_shortfall_runs_its_recipe_and_invalidates_bank_memo() {
+    fn acquirable_shortfall_runs_its_recipe_without_invalidating_bank_memo() {
         let mut plan = provisioning(
             vec![compiled_item(
                 42,
@@ -1611,8 +1979,14 @@ mod tests {
             vec![42],
             None,
         );
-        plan.recipes
-            .insert(Arc::from("acquire:token"), Arc::from(Vec::new()));
+        plan.recipes.insert(
+            Arc::from("acquire:token"),
+            CompiledAcquireRecipe {
+                steps: Arc::from(Vec::new()),
+                peak_items: Arc::from([]),
+                consumed_ids: Arc::from([]),
+            },
+        );
         let snapshot = ready_snapshot(Vec::new());
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
@@ -1626,9 +2000,7 @@ mod tests {
             &mut ledger,
             1,
             &plan,
-            ProvisionMode::Prepare,
             None,
-            false,
             &memo,
             &banks,
             &quests,
@@ -1642,14 +2014,12 @@ mod tests {
                 &mut ledger,
                 2,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
             ),
-            Poll::Ready(Ok(ProvisionEvent::BankMemoUnknown))
+            Poll::Ready(Ok(ProvisionEvent::Acquired))
         ));
     }
 
@@ -1668,6 +2038,7 @@ mod tests {
         plan.coin = Some(super::super::compile::CompiledCarry {
             item: coin,
             qty: 100,
+            stackable: true,
             latch_index: u8::MAX,
         });
         plan.base_spillover_keep = Arc::from(vec![10, 42]);
@@ -1676,6 +2047,7 @@ mod tests {
             Arc::from(vec![super::super::compile::CompiledCarry {
                 item: food,
                 qty: 3,
+                stackable: false,
                 latch_index: 0,
             }]),
         );
@@ -1697,9 +2069,7 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 Some("provision-test/food"),
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1715,9 +2085,7 @@ mod tests {
                 &mut ledger,
                 2,
                 &plan,
-                ProvisionMode::Prepare,
                 Some("provision-test/food"),
-                false,
                 &memo,
                 &banks,
                 &quests,
@@ -1733,165 +2101,7 @@ mod tests {
     }
 
     #[test]
-    fn retreat_deposits_extras_and_keeps_every_protected_id() {
-        let path_bank = NamedBank::new(
-            "Test path bank",
-            WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-        );
-        let mut plan = provisioning(Vec::new(), vec![7, 42], Some(path_bank));
-        plan.tools = Arc::from(vec![crate::native_bank::BankItem {
-            id: 7,
-            name: Arc::from("Tool"),
-        }]);
-        plan.keep_ids = Arc::from(vec![7, 8]);
-        plan.base_spillover_keep = Arc::from(vec![7, 8]);
-        let junk_inventory = item_view(42, "Junk", 1, ItemContainer::Inventory);
-        let tool_inventory = item_view(7, "Tool", 1, ItemContainer::Inventory);
-        let protected_inventory = item_view(8, "Protected kit", 1, ItemContainer::Inventory);
-        let mut snapshot = ready_snapshot(vec![
-            protected_inventory.clone(),
-            junk_inventory.clone(),
-            tool_inventory.clone(),
-        ]);
-        let side_row = |id, name, slot| ItemView {
-            slot,
-            component_id: 2006,
-            actions: vec![Some("Deposit-1".to_owned()), Some("Deposit-All".to_owned())],
-            ..item_view(id, name, 1, ItemContainer::BankSide)
-        };
-        snapshot.seed_bank_observation(
-            1,
-            1,
-            Some(Vec::new()),
-            vec![
-                side_row(42, "Junk", 0),
-                side_row(7, "Tool", 1),
-                side_row(8, "Protected kit", 2),
-            ],
-        );
-        let mut provisioner = Provisioner::new();
-        let mut ledger = None;
-        let memo = BankMemo::default();
-        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
-        let quests = quest_catalog();
-
-        assert!(poll_once(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            1,
-            &plan,
-            ProvisionMode::Retreat,
-            None,
-            false,
-            &memo,
-            &banks,
-            &quests,
-        )
-        .is_pending());
-        assert!(poll_once(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            2,
-            &plan,
-            ProvisionMode::Retreat,
-            None,
-            false,
-            &memo,
-            &banks,
-            &quests,
-        )
-        .is_pending());
-        assert!(poll_once(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            3,
-            &plan,
-            ProvisionMode::Retreat,
-            None,
-            false,
-            &memo,
-            &banks,
-            &quests,
-        )
-        .is_pending());
-        assert!(ledger.as_ref().is_some_and(|ledger| {
-            ledger.outbox.iter().any(|action| {
-                matches!(
-                    &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::InvButton {
-                        id: 42,
-                        slot: 0,
-                        component: 2006,
-                        operation: 2,
-                        ..
-                    })
-                )
-            })
-        }));
-        assert!(!ledger.as_ref().is_some_and(|ledger| {
-            ledger.outbox.iter().any(|action| {
-                matches!(
-                    &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: 8, .. })
-                )
-            })
-        }));
-
-        snapshot.seed_inventory(vec![tool_inventory.clone(), protected_inventory], 28);
-        snapshot.seed_bank_observation(
-            1,
-            2,
-            Some(vec![item_view(42, "Junk", 1, ItemContainer::Bank)]),
-            vec![side_row(7, "Tool", 1), side_row(8, "Protected kit", 2)],
-        );
-        assert!(matches!(
-            poll_once(
-                &mut provisioner,
-                &snapshot,
-                &mut ledger,
-                4,
-                &plan,
-                ProvisionMode::Retreat,
-                None,
-                false,
-                &memo,
-                &banks,
-                &quests,
-            ),
-            Poll::Ready(Ok(ProvisionEvent::BankReceipt(BankReceipt {
-                complete: true,
-                ..
-            })))
-        ));
-        assert!(provisioner.retreat_performed());
-        assert!(matches!(
-            poll_once(
-                &mut provisioner,
-                &snapshot,
-                &mut ledger,
-                5,
-                &plan,
-                ProvisionMode::Retreat,
-                None,
-                false,
-                &memo,
-                &banks,
-                &quests,
-            ),
-            Poll::Ready(Ok(ProvisionEvent::Ready))
-        ));
-        assert_eq!(provisioner.status().phase, ProvisionPhase::Ready);
-    }
-
-    #[test]
-    fn owns_inventory_skips_prepare_and_retreat() {
+    fn owns_inventory_skips_prepare() {
         let mut plan = provisioning(Vec::new(), Vec::new(), None);
         plan.owns_inventory = true;
         let snapshot = ready_snapshot(vec![item_view(
@@ -1913,32 +2123,13 @@ mod tests {
                 &mut ledger,
                 1,
                 &plan,
-                ProvisionMode::Prepare,
                 None,
-                false,
                 &memo,
                 &banks,
                 &quests,
             ),
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
-        assert!(matches!(
-            poll_once(
-                &mut provisioner,
-                &snapshot,
-                &mut ledger,
-                2,
-                &plan,
-                ProvisionMode::Retreat,
-                None,
-                false,
-                &memo,
-                &banks,
-                &quests,
-            ),
-            Poll::Ready(Ok(ProvisionEvent::Ready))
-        ));
-        assert!(!provisioner.retreat_performed());
         assert!(ledger.is_none());
     }
 }
