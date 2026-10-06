@@ -757,14 +757,24 @@ on_leg, on_event }`.
   explanatory terminal `Blocked` receipt; attempt exhaustion names its
   actual attempt count. Duplicate snapshot polls do not spend this budget.
 
-- **Swing-door legs:** Open a closed leaf promptly and walk through an open
-  one. Re-read the packed closed/open loc family within three tiles of the
-  door's anchor, including shifted double-door leaves; never click an open
-  leaf's Close operation. If another player closes the door before crossing,
-  retry Open while the original hop budget still has time to observe the
-  result. Retries and open-state walks do not reset that budget, and the
-  terminal receipt counts actual interaction attempts. Once the player has
-  crossed, a closer behind them cannot draw them back to the door.
+- **Door legs with a packed open leaf:** every Door-kind edge whose closed
+  loc packs an open leaf takes state-aware recovery from the first poll:
+  swing doors, gates (1551→1552, 1553→1556), held-item doors (brass key) and
+  scripted `open_and_close_door` doors with a `next_loc_stage`. Open a closed
+  leaf promptly and walk through an open one. Re-read the packed closed/open
+  loc family within three tiles of the door's anchor, including shifted
+  double-door leaves; never click an open leaf's Close operation, also when
+  the leaf opens while the approach walk is finishing. If another player
+  closes the door before crossing, re-Open at once when the leaf was seen
+  open since the last Open; a leaf that never opened is re-Opened only after
+  it has read closed for 2 ticks, a window that doubles per unanswered Open
+  (Opens at ticks 0, 2, 6, 14 and 30 of the default 60-tick budget). All of
+  this stays inside the original hop budget: retries and open-state walks do
+  not reset it, and the terminal receipt counts actual interaction attempts.
+  A post-Open step from the door tile goes out only once the leaf reads open
+  or the wall step is clear; earlier, it would cancel the queued Open. Once
+  the player has crossed, a closer behind them cannot draw them back to the
+  door.
 - **Other door legs:** scripted doors without a packed open leaf retain the
   one-interaction settle and wall-clear post-Open step; dialogue doors retain
   their dialogue proof, and slashable webs retry only on an observed cut
