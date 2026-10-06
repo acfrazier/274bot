@@ -167,6 +167,10 @@ pub struct CompiledQuestItem {
     pub kind: CompiledItemKind,
     pub acquire: Option<Arc<str>>,
     pub stackable: bool,
+    /// Authored gate key, if any.
+    pub from_stage: Option<FactKey>,
+    /// Index into the compiled sequence list from which the item is due.
+    pub from_stage_index: Option<usize>,
 }
 
 pub struct CompiledRequirement {
@@ -220,6 +224,8 @@ pub struct CompiledProvisioning {
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
+    /// Stage keys in compiled sequence order; item gates resolve against this.
+    pub stages: Arc<[FactKey]>,
     pub tools: Arc<[BankItem]>,
     pub gather_tool_needs: Arc<[CompiledGatherToolNeed]>,
     pub keep_ids: Arc<[i32]>,
@@ -281,6 +287,10 @@ pub struct StepOutcome {
 }
 pub trait PredicatePlan: Send + Sync {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth;
+    fn requires_bank(&self) -> bool {
+        false
+    }
+    fn bank_item_ids(&self, _ids: &mut Vec<i32>) {}
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
@@ -330,6 +340,10 @@ pub trait StepRun: Send {
         false
     }
     fn progress_read_completed(&mut self, _now: std::time::Duration) {}
+    fn needs_bank_scan(&self) -> bool {
+        false
+    }
+    fn bank_scan_completed(&mut self) {}
     /// Borrowed wait detail; machines do not allocate on pending polls.
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         None
@@ -704,13 +718,28 @@ pub(super) fn compile_uncached(
         .map_err(|error| error.with_path(document.id.clone()))?;
     let loadouts =
         super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
-    let compiled_items: Arc<[CompiledQuestItem]> = Arc::from(
-        header
-            .items
+    let mut compiled_items: Vec<CompiledQuestItem> = header
+        .items
+        .iter()
+        .map(|item| compile_quest_item(selected, item))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Stage order is the compiled sequence order, so gates resolve here
+    // against the authored role sequences before either consumer clones them.
+    for item in compiled_items.iter_mut() {
+        let Some(gate) = item.from_stage.as_ref() else {
+            continue;
+        };
+        let index = role
+            .sequences
             .iter()
-            .map(|item| compile_quest_item(selected, item))
-            .collect::<Result<Vec<_>, _>>()?,
-    );
+            .position(|sequence| sequence.stage == *gate)
+            .ok_or_else(|| {
+                CompileError::code("unknown-from-stage")
+                    .with_path(document.id.clone())
+                    .with_detail(gate.0.as_ref())
+            })?;
+        item.from_stage_index = Some(index);
+    }
     let mut recipe_peaks = HashMap::with_capacity(header.acquire.len());
     for (name, steps) in &header.acquire {
         let output_ids: Vec<_> = compiled_items
@@ -838,7 +867,7 @@ pub(super) fn compile_uncached(
     let eligibility = CompiledEligibility {
         members: header.members,
         requirements: Arc::from(requirements),
-        items: Arc::clone(&compiled_items),
+        items: Arc::from(compiled_items.clone()),
     };
     let mut recipe_ctx = CompileContext {
         path: &document.id,
@@ -946,6 +975,26 @@ pub(super) fn compile_uncached(
             steps,
         });
     }
+    let mut predicate_bank_ids = Vec::new();
+    for predicate in recipes
+        .values()
+        .flat_map(|steps| steps.iter().map(|step| &step.skip_if))
+        .chain(prelude.iter().map(|step| &step.skip_if))
+        .chain(
+            sequences
+                .iter()
+                .flat_map(|sequence| sequence.steps.iter().map(|step| &step.skip_if)),
+        )
+        .chain(progress_reader.iter().map(|step| &step.skip_if))
+    {
+        predicate.bank_item_ids(&mut predicate_bank_ids);
+    }
+    for id in predicate_bank_ids {
+        push_unique_id(&mut bank_items, id);
+    }
+    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
+        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
+    }
     for plan in recipes
         .values()
         .flat_map(|steps| steps.iter())
@@ -984,7 +1033,11 @@ pub(super) fn compile_uncached(
         owns_inventory: header.owns_inventory,
         bank,
         bank_required,
-        items: compiled_items,
+        items: Arc::from(compiled_items),
+        stages: sequences
+            .iter()
+            .map(|sequence| sequence.stage.clone())
+            .collect(),
         tools: Arc::from(tools),
         gather_tool_needs: Arc::from(gather_tool_needs),
         keep_ids,
@@ -1072,6 +1125,8 @@ fn compile_quest_item(
         kind,
         acquire: item.acquire.as_deref().map(Arc::from),
         stackable,
+        from_stage: item.from_stage.clone(),
+        from_stage_index: None,
     })
 }
 
@@ -1837,6 +1892,34 @@ mod tests {
             Ok(_) => panic!("always-skipped must fail compile"),
         };
         assert_eq!(err.code.as_ref(), "always-skipped");
+    }
+
+    #[test]
+    fn unknown_from_stage_is_rejected() {
+        let err = compile_err(|document| {
+            document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:99"));
+        });
+        assert_eq!(err.code.as_ref(), "unknown-from-stage");
+    }
+
+    #[test]
+    fn from_stage_resolves_to_the_compiled_sequence_index() {
+        let mut document = decode_cook().unwrap();
+        document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:1"));
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let gated = &compiled.provisioning.items[0];
+        assert_eq!(gated.from_stage_index, Some(1));
+        assert_eq!(
+            compiled
+                .provisioning
+                .stages
+                .iter()
+                .map(|stage| stage.0.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["cook:0", "cook:1", "cook:2"]
+        );
     }
 
     fn compile_err(mut edit: impl FnMut(&mut PathDocument)) -> CompileError {

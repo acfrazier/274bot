@@ -148,7 +148,110 @@ fn continuation_waits_boundedly_without_talking_or_walking() {
 }
 
 #[test]
-fn dialogue_drains_a_page_after_six_closed_game_ticks() {
+fn oddenstein_handin_mes_lines_rearm_the_shorter_closed_chat_gap() {
+    // Sourced from content
+    // (area_draynor/scripts/professor_oddenstein.rs2 hand-in): `if_close`
+    // at T, then four `mes` lines at T, T+2, T+5, T+8 (`p_delay` 1/2/2/1)
+    // before the next chat page opens at T+10, with no inventory, position
+    // or animation change in between. Each `mes` line is a game chat
+    // message (`type_ == 0`, `username == None`), observed here with a
+    // one-tick lag. This replaces the unsourced
+    // `dialogue_drains_a_page_after_six_closed_game_ticks` fixture, whose
+    // six-quiet-tick timings match no content case: the real hand-in needs
+    // ten ticks of gap, which only the chat-message re-arm covers. The gap
+    // must survive on those lines alone: it fails at both 8 and 4 ticks
+    // without a chat-message re-arm, and passes at 4 with one.
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(100, vec!["Have you found anything yet?".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<dialogue::Dialogue>(continuation(Default::default()), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    // T = 3 is `if_close`. Engine `mes` ticks are 3, 5, 8, 11; each line is
+    // first observable one tick later.
+    let line = |sequence| ChatLineView {
+        type_: 0,
+        username: None,
+        text: "The machine hums and shakes.".into(),
+        sequence,
+    };
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    snapshot.seed_chat_lines(vec![line(1)]);
+    for game_tick in [3, 4, 5] {
+        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+    }
+    snapshot.seed_chat_lines(vec![line(1), line(2)]);
+    for game_tick in [6, 7, 8] {
+        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+    }
+    snapshot.seed_chat_lines(vec![line(1), line(2), line(3)]);
+    for game_tick in [9, 10, 11] {
+        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+    }
+    snapshot.seed_chat_lines(vec![line(1), line(2), line(3), line(4)]);
+    assert!(with_tick(&snapshot, &mut ledger, 12, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    // T+10 = 13 is the next chat page. It must be drained, not left open.
+    snapshot.seed_chat_modal(100, vec!["Ernest thanks you.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    assert!(with_tick(&snapshot, &mut ledger, 13, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|request| matches!(
+                &request.effect,
+                HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+            ))
+            .count(),
+        2,
+        "the reward page after the mes lines must be continued"
+    );
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for game_tick in [14, 15, 16, 17, 18] {
+        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+    }
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 19, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx)),
+        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn plain_conversation_end_completes_four_quiet_ticks_after_close() {
+    // A quiet conversation end completes DIALOG_GAP_TICKS after the gap
+    // starts (tick 4 here, so tick 8). Before the fix it waited eight ticks
+    // and completed at tick 12 instead.
     let mut snapshot = ready();
     snapshot.seed_chat_modal(100, vec!["First page".into()]);
     snapshot.seed_chat_options(vec![], 101);
@@ -164,22 +267,17 @@ fn dialogue_drains_a_page_after_six_closed_game_ticks() {
     .is_pending());
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in 3..=8 {
+    for game_tick in 3..8 {
         assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
             .actions
             .poll(&handle, &mut tick.cx))
         .is_pending());
     }
-    snapshot.seed_chat_modal(100, vec!["Final reward page".into()]);
-    snapshot.seed_chat_options(vec![], 101);
-    ledger.as_mut().unwrap().outbox.clear();
-    assert!(with_tick(&snapshot, &mut ledger, 9, |tick| tick
-        .actions
-        .poll(&handle, &mut tick.cx))
-    .is_pending());
     assert!(matches!(
-        emitted(&ledger),
-        InteractReq::ContinueDialog { component_id: None }
+        with_tick(&snapshot, &mut ledger, 8, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx)),
+        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
     ));
 }
 
@@ -361,6 +459,8 @@ fn loc_interaction_drains_shared_strict_dialogue_before_success() {
 #[test]
 fn exact_loc_selection_skips_unreachable_same_id_decoys() {
     let mut snapshot = ready();
+    // The posted flood starts on the live player tile.
+    snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut wanted = loc(1000, "Roots", "Search");
     wanted.tile = tile(5, 5);
     wanted.distance = 2;
@@ -370,27 +470,49 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
     snapshot.seed_locs(vec![decoy, wanted]);
     let reach_view = wall_door_reach_view();
     let mut ledger = None;
+    let none = reach::Avoid::default();
+    let area = reach::Area::new(None, 6);
     with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
         assert_eq!(
-            reach::nearest_loc(&tick.cx, Some(1000), None, Some("Search"), 6, None, true)
-                .unwrap()
-                .tile,
+            reach::choose_loc(
+                &tick.cx,
+                Some(1000),
+                None,
+                Some("Search"),
+                area,
+                None,
+                &none
+            )
+            .select(true)
+            .unwrap()
+            .tile,
             tile(5, 5)
         );
-        assert!(reach::nearest_loc(
+        assert!(reach::choose_loc(
             &tick.cx,
             Some(1000),
             None,
             Some("Search"),
-            6,
+            area,
             Some(tile(6, 5)),
-            true
+            &none
         )
+        .select(true)
         .is_none());
     });
     with_tick(&snapshot, &mut ledger, 2, |tick| {
         assert!(
-            reach::nearest_loc(&tick.cx, Some(1000), None, Some("Search"), 6, None, true).is_none(),
+            reach::choose_loc(
+                &tick.cx,
+                Some(1000),
+                None,
+                Some("Search"),
+                area,
+                None,
+                &none
+            )
+            .select(true)
+            .is_none(),
             "unknown reach must not select a resource candidate"
         );
     });
@@ -2227,6 +2349,17 @@ fn interact_until_leaves_a_later_page_during_the_dialogue_gap() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         for tick in 7..=12 {
+            // A scripted `mes` line lands mid-gap and spends one finite
+            // chat re-arm (Oddenstein's hand-in keeps the four-tick gap
+            // alive the same way), so the later page still opens inside it.
+            if tick == 11 {
+                snapshot.seed_chat_lines(vec![ChatLineView {
+                    type_: 0,
+                    username: None,
+                    text: "The machine hums and shakes.".into(),
+                    sequence: 1,
+                }]);
+            }
             assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             })
@@ -2439,5 +2572,141 @@ fn use_on_settle_deadline_bounds_an_active_dialogue_drain() {
             Poll::Ready(Err(ActionError::Failed(reason)))
                 if reason.as_ref() == "use_on timeout"
         ));
+    });
+}
+
+#[test]
+fn authored_interact_dialogue_progress_outlives_the_default_settle_window() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!({"choose": 1})),
+            false,
+            20_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        for tick in 3..=93 {
+            let page = (tick - 3) / 3;
+            snapshot.seed_chat_modal(100, vec![format!("Drezel story page {page}")]);
+            if page == 14 {
+                snapshot.seed_chat_options(
+                    vec![api::snapshot::ChatOptionView {
+                        component_id: 101,
+                        text: "Yes.".into(),
+                    }],
+                    -1,
+                );
+            } else {
+                snapshot.seed_chat_options(vec![], 105);
+            }
+            let result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            assert!(result.is_pending(), "advancing page {page} at tick {tick}");
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                accept_last(&mut ledger, tick, true);
+            }
+        }
+        assert!(ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            entry.effect,
+            HostEffect::Interaction(InteractReq::Answer { option: 1 })
+        )));
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        let mut result = Poll::Pending;
+        for tick in 94..=108 {
+            result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if result.is_ready() {
+                break;
+            }
+        }
+        assert!(matches!(result, Poll::Ready(Ok(_))));
+    });
+}
+
+#[test]
+fn authored_interact_dialogue_progress_has_a_total_cap() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!("continue")),
+            false,
+            20_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        let mut result = Poll::Pending;
+        let mut ended = 0;
+        for tick in 3..=210 {
+            snapshot.seed_chat_modal(100, vec![format!("Endless page {}", (tick - 3) / 3)]);
+            snapshot.seed_chat_options(vec![], 105);
+            result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if result.is_ready() {
+                ended = tick;
+                break;
+            }
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                accept_last(&mut ledger, tick, true);
+            }
+        }
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "interact settle timeout")
+        );
+        assert_eq!(
+            ended, 202,
+            "progress extends inactivity, never the 120-second total cap"
+        );
+    });
+}
+
+#[test]
+fn authored_interact_settle_override_still_bounds_missing_dialogue() {
+    compile_context_test(|compile| {
+        let (snapshot, plan, _) = operation_fixture_with_settle(
+            compile,
+            "interact",
+            Some(serde_json::json!("continue")),
+            false,
+            6_000,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(with_tick(&snapshot, &mut ledger, 12, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }), Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "interact settle timeout"));
     });
 }

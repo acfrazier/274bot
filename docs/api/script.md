@@ -433,10 +433,13 @@ pirate scrolls from `quest_scroll_root`, which the authored quest-completion
 script opens. These are packed identities, not a general mapping for custom
 scroll variants.
 
-Closed chat completes after eight quiet game ticks. Observed inventory changes,
-server-driven player movement and active scripted animation can extend that
-gap using the same finite per-dialogue budget. An unchanged player position is
-not activity and does not delay completion.
+Closed chat completes after four quiet game ticks. Observed inventory changes,
+server-driven player movement, new game messages (scripted `mes` output) and
+active scripted animation can extend that gap using the same finite
+per-dialogue budget. An unchanged player position is not activity and does not
+delay completion. A chat page that opens after the driver closed its own quest
+scroll (a level-up page after a hand-in) is drained as part of the same
+dialogue.
 
 Native continuation treats a visible Continue-only page as active dialogue,
 even when no chat root is posted. A health-bar window does not interrupt that
@@ -508,8 +511,19 @@ item id and slot; substitution never falls back to a same-name row. A declared
 approach `anchor` still applies to held operations such as Dig.
 
 Loc/name interaction targets may add `tile: [x,z,level]` and `source` inside
-`target` to select an exact loc rather than the nearest same-definition loc.
-`reachable_only: true` requires a known reachable candidate. `interact.until`
+`target` to select that exact loc. Without a tile the target is fungible: one
+shared chooser serves interact, use_on, combat loot, the production loc trigger
+and native thieving. It takes matching NPCs, locs or ground items inside the
+anchor's area (anchor ± max(radius, 10); without an anchor, the player's
+radius). Among those the live reach flood proves reachable, footprint and
+wall-aware, it ranks by walking distance, with anchor distance breaking ties.
+When nothing in the area is reachable, the step walks to the anchor area, or
+nav-walks to the best match, instead of sending a click that cannot land.
+Approach walks re-pick when a nearer reachable match comes into range (at most
+three times per round, within 12 route steps). "I can't reach that!" fails the
+attempt at once: the target is skipped for 10 ticks and another is chosen.
+Without a posted flood, straight-line distance ranks the candidates.
+`reachable_only: true` requires a candidate the flood proves reachable. `interact.until`
 uses the same `{obj,qty}` inventory-count goal as `use_on.until`; while the
 count is short, it waits for active work and re-arms after progress and idle.
 With omitted dialogue, reaching the count completes immediately even if a page
@@ -538,6 +552,8 @@ rules. Being inside the authored anchor radius alone is not interaction proof.
 The selected tile stays fixed while approaching, and dispatch retains the exact
 loc id as well as its display name; a nearer or co-located same-name loc cannot
 replace it.
+For an anchored loc, the settle deadline starts on arrival at the first legal
+stand and is shared by all repeated `until` attempts; retries do not restart it.
 
 The `ground_item_near` fact may declare `at: [x,z,level]`. It then requires the
 selected item id at that exact tile and within the declared radius; a nearby

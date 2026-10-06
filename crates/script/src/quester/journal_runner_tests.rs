@@ -1361,12 +1361,17 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         snapshot.seed_inventory(held(output), 28);
-        for tick in 8..=17 {
+        // The handoff dialogue completes at tick 13 with the four-tick gap
+        // (tick 17 with the old eight-tick gap), so the drain ends there and
+        // every later drive shifts by the same four ticks. Relative timing
+        // is unchanged: post-dialogue drive, journal re-read, next-step
+        // assert.
+        for tick in 8..=13 {
             drive(&mut script, &snapshot, &mut ledger, tick);
         }
-        drive(&mut script, &snapshot, &mut ledger, 18);
-        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 19, after);
-        drive(&mut script, &snapshot, &mut ledger, 23);
+        drive(&mut script, &snapshot, &mut ledger, 14);
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 15, after);
+        drive(&mut script, &snapshot, &mut ledger, 19);
         assert_eq!(
             script.current_step().unwrap().id.0.as_ref(),
             next,
@@ -1749,9 +1754,9 @@ fn bank_receipt_tick(outcome: Option<&crate::quester::compile::StepOutcome>) -> 
 }
 
 fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
-    use crate::quester::families::tests::local_player;
+    use crate::quester::families::tests::{def, local_player};
     use crate::quester::path::StepDocument;
-    use api::snapshot::{LocLayer, LocView, WorldTile};
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, WorldTile};
 
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
@@ -1857,7 +1862,24 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_local_player(local_player(bank_tile));
-    snapshot.seed_inventory(vec![], 28);
+    // Flour leads the bundled acquisition order, so hold it and the milk:
+    // these tests exercise the egg leg that follows.
+    snapshot.seed_inventory(
+        ["pot_flour", "bucket_milk"]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, alias)| ItemView {
+                def: def(data.item_by_alias(alias).unwrap().id, alias),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: slot as i32,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            })
+            .collect(),
+        28,
+    );
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
             name: "Cook's Assistant".into(),
