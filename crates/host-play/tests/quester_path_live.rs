@@ -53,8 +53,9 @@ use std::time::Duration;
 
 /// Fixed whole-cell deadline (fixture seed plus quest). Not env-configurable:
 /// a smoke that cannot Start and settle inside it fails instead of burning
-/// the shared engine.
-const DEADLINE: Duration = Duration::from_secs(1500);
+/// the shared engine. 45 minutes covers the long Paths (Prince Ali Rescue
+/// ran about 31 minutes overnight).
+const DEADLINE: Duration = Duration::from_secs(2700);
 
 /// The harness row for an env-driven quest: static id, display and profile,
 /// so the cell needs no allocation to satisfy fixture lifetimes. Refuses
