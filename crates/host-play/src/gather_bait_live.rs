@@ -15,11 +15,8 @@
 //!   (`bank trip due` once) that withdraws exactly 3 bait, then — when the
 //!   bait runs out — `supply-missing` in place, with no second `bank trip
 //!   due` and the account still at the fishing area; the memory ends
-//!   `Session` without bait. After the trip settles the cell `::tele`s the
-//!   account once from the bank interior to the shore beside the spots: the
-//!   Gatherer's own return from inside the Draynor bank loops on `target
-//!   gone` (a pre-existing selection defect, see [`SHORE`]), which is not
-//!   what this cell measures.
+//!   `Session` without bait. After the trip the Gatherer walks the real
+//!   route back from the booth to the spots (no shore teleport).
 //! - **stale hint** (D4 stale positive): before login the account's hint
 //!   file claims 20 bait the bank does not hold; the rod is in the pack.
 //!   The first login loads the file (`Unknown` → `Hint`, a new process),
@@ -62,16 +59,6 @@ const SPOTS: WorldTile = WorldTile {
     level: 0,
 };
 const RADIUS: i32 = 8;
-/// A land tile beside both spots (`m48_50` local 15,29: no overlay, no loc).
-/// The Gatherer's return stand from inside the bank is clamped to the bank
-/// interior, the client route to the spot leaves by the north door, the spot
-/// leaves the view and the run re-approaches the same interior stand, so the
-/// banked cell moves the account here once after its one trip.
-const SHORE: WorldTile = WorldTile {
-    x: 3087,
-    z: 3229,
-    level: 0,
-};
 const BANKED_BAIT: i64 = 3;
 const HINTED_BAIT: i32 = 20;
 const BANKED_SEED: &[&str] = &[
@@ -194,8 +181,6 @@ struct BaitTrace {
     final_origin: Option<String>,
     final_rows: Option<Vec<(i32, i32)>>,
     start_to_block_ms: Option<u128>,
-    /// When the banked cell moved the account to [`SHORE`] after its trip.
-    shore_teleport_ms: Option<u128>,
     verdict_failure: Option<String>,
 }
 
@@ -533,35 +518,6 @@ fn run_cell(variant: Variant) {
                             guard.trips = integer(&status, "trips");
                             guard.yielded = integer(&status, "yielded");
                             guard.final_phase = Some(format!("{:?}", status.phase));
-                        }
-                        // Pre-existing Gatherer defect (try 1): from the Draynor
-                        // bank interior the return stand stays inside the bank,
-                        // the client NPC route leaves through the north door,
-                        // the spot drops out of view and the run loops on
-                        // `target gone`. One per-account `::tele` to the shore
-                        // beside the spots, after the trip settled, sidesteps it;
-                        // it is not a bank trip and the trip witness is unchanged.
-                        let shore_due = variant == Variant::Banked && {
-                            let guard = trace.lock();
-                            guard.shore_teleport_ms.is_none()
-                                && guard
-                                    .polled_events
-                                    .iter()
-                                    .any(|(_, event)| event == "withdrawal confirmed")
-                                && text(&status, "last_event") == Some("gathering")
-                        };
-                        if shore_due {
-                            match play.cheat(&account, &super::tele_args(SHORE)) {
-                                Ok(()) => {
-                                    trace.lock().shore_teleport_ms =
-                                        Some(since.elapsed().as_millis())
-                                }
-                                Err(refusal) => fail(
-                                    &cell,
-                                    &trace,
-                                    format!("the shore teleport was refused: {refusal}"),
-                                ),
-                            }
                         }
                         if blocked {
                             let tile = play
