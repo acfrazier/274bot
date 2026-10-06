@@ -32,8 +32,8 @@ the first one.
 
 ## Navigation packs
 
-The pack format is now v16. Packs you baked yourself with an earlier version,
-including earlier 0.2.0 builds, are refused with a message to rebake them with
+The pack format is now v16. Packs you baked yourself with 0.1.9.1 or earlier
+are refused with a message to rebake them with
 `nav-pack`. The bundled pack is rebuilt for you.
 
 ## Local engines

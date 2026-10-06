@@ -1,6 +1,6 @@
 # 274bot
 
-Rust bot host for the 274/289 client. Catalog scripts written for another runtime should still run here so that writing effort is not wasted. This host keeps its own verbs; it does not become that runtime.
+Rust bot host for the 289 client (274 best-effort). Catalog scripts written for another runtime should still run here so that writing effort is not wasted. This host keeps its own verbs; it does not become that runtime.
 
 ## Language
 
@@ -74,7 +74,7 @@ Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Tra
 _Avoid_: calling a coordinate table a world-port; calling `lightFire` (tinderbox use-on logs) a world-port
 
 **Unloadable**:
-A catalog card the picker will not Start: missing remap, or a locked dim name (GatheringBot rows Woodcutter/Miner/Fisher, AIOQuester, ClueSolver, ArravSupplier, Barcrawl, RoguesPurse). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
+A catalog card the picker will not Start: missing remap, or a locked dim name (GatheringBot rows Woodcutter/Miner/Fisher, AIOQuester, ArravSupplier, Barcrawl, RoguesPurse, MarketMaker). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
 _Avoid_: dimming because a mapped member throws `not impl`; keeping CookBot dim for lack of a `Firemaking.js` URL
 
 **`not impl`**:
@@ -82,7 +82,7 @@ The honest miss prefix: `not impl: <throw reason>`. Unmapped: `not impl: Game.te
 _Avoid_: stub that returns success, schema default as live state, Chebyshev-as-nav; using `not v1` for a missing host verb
 
 **`not v1`**:
-Reserved for a catalog script not written against the v1 rs2b0t API (JS API v2 is that later surface). Not a missing-verb throw.
+Reserved for a catalog script not written against the v1 rs2b0t API (JS API v2 is the native surface). Not a missing-verb throw.
 _Avoid_: unmapped name, mapped close, missing host verb
 
 **Predicate**:
@@ -104,8 +104,7 @@ The one step machine that solves a held clue. Sherlock, the embedded SolveClue c
 _Avoid_: a JS solver, thickening SolveClue in JS, a second clue implementation
 
 **Sherlock**:
-The Rust-native script that runs clue trails on the clue machine. It replaces catalog ClueSolver, which stays dim.
-_Avoid_: ClueSolver, lighting ClueSolver
+The Rust-native script that runs clue trails on the clue machine, like the catalog ClueSolver card, which also stays loadable.
 
 **Quester**:
 The Rust-native script that drives a Path on host verbs. Not the whale catalog card `AIOQuester`, which stays dim as replaced by this card.

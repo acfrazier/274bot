@@ -160,18 +160,19 @@ GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
 feature-gated test lanes (script `load` and V8-free `--no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
-`memory-profile-no-alloc`, panel `render-diagnostics`, api/script
-`path-schema` for the generated Path schema, host-play `live-harness` for the
-`LIVE=1` ignored tests, and `test-support` fixture seams that frontend
-dev-dependencies enable — never production builds) and the architecture checker
-(no Rust toolchain). Independent test commands run as parallel matrix lanes;
+`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture checker
+(no Rust toolchain). `path-schema`, `live-harness` and `test-support` are
+exercised through the workspace test lane's feature unification; no CI lane
+runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:
 `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
 not a headed or engine pass.
 
 ## Live-test rules
 
-Live harnesses need the local engine for the profile under test. Failures
+Live harnesses need a local engine. `-p e2e`, `null_raster` and `rss_ladder`
+connect to a **local-274** engine on `127.0.0.1:43594`; the panel/TUI `--live`
+runs and the 289-gated host-play tests use the selected profile. Failures
 print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
 `BOT_DEBUG=1`.
 
@@ -182,8 +183,10 @@ print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
   operator vault, profiles or cache.
 - Live twins mint per-run usernames on disposable local-engine profiles (the
   engine auto-registers unknown accounts). Never substitute public accounts.
-- Live runs target local profiles only (`local-289` for the production
-  revision). Unit tests do not verify public login.
+- Live runs target local profiles only: `-p e2e`, `null_raster` and
+  `rss_ladder` need `local-274`; the panel/TUI `--live` runs and the
+  289-gated host-play tests use the selected profile (`local-289` for the
+  production revision). Unit tests do not verify public login.
 
 ```bash
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
@@ -271,8 +274,7 @@ without bot-host hooks; `r274-bothost` is the pre-modular fork.
 No dummy tick-end opcode. No deep-copy of the world every read. No extra
 JSON JS↔Rust host wire (FlatBuffers only). Nav, the MultiBox wall, the
 random-event guardian, revision profiles, and `tui-play` are in-tree.
-Do not claim unfinished canvas/mouse/boost surfaces or full catalog
-parity in product docs or PR descriptions.
+Do not claim full catalog parity in product docs or PR descriptions.
 
 ## License
 
