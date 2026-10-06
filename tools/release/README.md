@@ -17,6 +17,12 @@ Dry runs only inspect the requested commit and print the complete plan. They do
 not create a work directory, connect to a builder, build, sign, notarize, tag,
 push, or publish.
 
+Before packaging, sweep every tracked doc against the release commit:
+`README`, `FIRST-START`, `CONTRIBUTING`, `CONTEXT`, `NOTICE`, `docs/**`
+and the tools READMEs. Fix status and version words, removed or renamed
+features, and new features, so the packaged public docs describe the
+candidate. `package.py` ships those docs as staged.
+
 For a real candidate, give the controller a local work directory and the three
 canonical revision-289 input roots:
 
