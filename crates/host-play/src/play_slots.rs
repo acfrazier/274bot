@@ -440,11 +440,17 @@ impl Play {
             bot.walk_globals = Some(Arc::clone(&self.walk_globals));
             bot.walk_globals_store = self.walk_globals_store.clone();
         }
-        // The account's bank memory and its hint file, both resolved here on
-        // the spawning thread (design-bank-snapshot §1.2, §1.4): the slot
-        // thread never resolves `HOME`, so a test's thread-local
-        // `IsolatedEnv` pin covers every save.
-        let bank_memory = Arc::clone(self.bank_memories.entry(username.clone()).or_default());
+        // The account's bank memory, keyed by the login identity every
+        // spelling of the name shares (its hint path's identity), and its
+        // hint file, both resolved here on the spawning thread
+        // (design-bank-snapshot §1.2, §1.4): the slot thread never resolves
+        // `HOME`, so a test's thread-local `IsolatedEnv` pin covers every
+        // save.
+        let bank_memory = Arc::clone(
+            self.bank_memories
+                .entry(super::slot_bank_memory::memory_key(&username).into_owned())
+                .or_default(),
+        );
         let bank_hint = match self.connection.profile() {
             Some(profile) => {
                 match script::bank_hints::HintFile::for_account(profile.name(), &username) {
