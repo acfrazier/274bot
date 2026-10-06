@@ -45,6 +45,10 @@ const QUEUE_SETTINGS: &[ScriptSettingInject] = &[
 const QUEUE_DEADLINE: Duration = Duration::from_secs(7200);
 const QUEUE_WATCH_TICKS: u32 = 24_000;
 
+pub(crate) fn quester_path_scenario() -> Result<Scenario, String> {
+    crate::quester::quester_path_scenario_from_env()
+}
+
 fn queue_start_stage_step(name: &'static str, varp: &'static str, witness: &'static str) -> Step {
     Step {
         name,

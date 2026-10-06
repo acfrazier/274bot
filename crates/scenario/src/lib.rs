@@ -38,7 +38,7 @@ use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
 
-pub use catalog::{get, names};
+pub use catalog::{get, is_registered, names, try_get};
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use fixture::{
     apply_fixture_mode, as_run_prepared, default_fixture_path, default_fixture_sav_dir,
@@ -121,6 +121,9 @@ pub struct ScenarioSettings {
     /// Scenario-only parameter overrides merged last at script Start (never
     /// written to operator `script-settings.json`).
     pub script_settings_inject: Option<&'static [ScriptSettingInject]>,
+    /// Owned script values for scenarios selected from runtime input. These
+    /// merge after the static catalog defaults above.
+    pub script_settings_overrides: Option<Map<String, Value>>,
     /// When set (e.g. `"partner"`), live_prepare inserts the minted
     /// companion username (`names[1]`) into the script settings bag under
     /// this key after [`script_settings_inject`].
@@ -372,6 +375,7 @@ impl Default for ScenarioSettings {
             start_file: None,
             wait_script_stop: None,
             script_settings_inject: None,
+            script_settings_overrides: None,
             inject_companion_as: None,
             fixture_prereqs: None,
             fixture_loadouts: None,

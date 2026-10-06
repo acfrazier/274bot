@@ -1,12 +1,11 @@
 //! Generic Path live smoke: one Base40 cell for a content quest id.
 //!
 //! This is the permanent form of the PATHS-OVERNIGHT throwaway runner. It
-//! runs the Path id in `QUESTER_PATH_QUEST` from the embedded release index,
-//! or from a folder through the existing `FolderSource` registry when
-//! `QUESTER_PATH_FOLDER` names one, with the Base40 qualification profile.
-//! Account seeds come from the small JSON file in `QUESTER_PATH_SEEDS` and
-//! the cell runs under a fixed deadline; completing the quest is optional,
-//! settling into an expected stage (or the terminal) after Start passes.
+//! runs the Path id in `QUESTER_PATH` from the embedded release index, or
+//! from `QUESTER_PATH_DIR` through the existing `FolderSource` registry.
+//! Optional account seeds come from the `QUESTER_SEEDS` JSON file. The cell
+//! runs under a fixed deadline; expected stage settling or terminal completion
+//! passes after Start.
 //!
 //! Run from the repository root against Engine A (the parent prepares the
 //! owned writable APFS cache clone first), with a throwaway HOME:
@@ -16,7 +15,7 @@
 //!   WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<274bot.navpack> \
 //!   WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> \
 //!   BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> LIVE_EVIDENCE_DIR=<evidence-root> \
-//!   QUESTER_PATH_QUEST=cook QUESTER_PATH_SEEDS=<evidence-root>/seeds/cook.json \
+//!   QUESTER_PATH=cook QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
 //!   cargo test -p host-play --test quester_path_live --features "live-harness test-support" \
 //!     live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 //! ```
@@ -45,13 +44,11 @@
 #[path = "common/quester_live.rs"]
 mod quester_live;
 
-use api::selected::{ClientRevision, FamilyPreparation};
 use api::snapshot::WorldTile;
 use quester_live::{Cell, Mode, PathCell};
-use scenario::quester::{FixtureLoadout, QuestFixtureProfile, StandardKit, TestProfile};
-use script::quester::registry::{self, FolderSource};
+use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, TestProfile};
+use script::quester::registry;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Fixed whole-cell deadline (fixture seed plus quest). Not env-configurable:
@@ -59,75 +56,9 @@ use std::time::Duration;
 /// the shared engine.
 const DEADLINE: Duration = Duration::from_secs(1500);
 
-/// Seeds for one smoke cell, read from the `QUESTER_PATH_SEEDS` JSON file.
-#[derive(Debug, serde::Deserialize)]
-struct Seeds {
-    stage: String,
-    stand: [i32; 3],
-    #[serde(default)]
-    loadout: Option<SeedsLoadout>,
-    #[serde(default)]
-    extra_items: Vec<(String, i32)>,
-    /// Explicit operator seeds for hint-less stages (released Cook: the
-    /// stage varp and value). Recorded like every other cheat.
-    #[serde(default)]
-    seed_vars: Vec<(String, i32)>,
-    /// Raw fixture cheats (`givebank` stock, prerequisite quest flags),
-    /// inserted before the fixture's final relog. Never gameplay.
-    #[serde(default)]
-    before_relog: Vec<String>,
-    /// Stages that pass the cell once observed after Start (a terminal
-    /// completion also passes). Empty means completion only.
-    #[serde(default)]
-    expect: Vec<String>,
-    /// `stage` (default) or `clean`.
-    #[serde(default)]
-    mode: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-enum SeedsLoadout {
-    #[serde(rename = "path")]
-    Path(String),
-    #[serde(rename = "standard")]
-    Standard(String),
-}
-
-fn parse_seeds(text: &str) -> Result<Seeds, String> {
-    serde_json::from_str(text).map_err(|error| format!("parse QUESTER_PATH_SEEDS: {error}"))
-}
-
-fn seeds_loadout(loadout: Option<&SeedsLoadout>) -> Result<Option<FixtureLoadout<'_>>, String> {
-    loadout
-        .map(|loadout| match loadout {
-            SeedsLoadout::Path(key) => Ok(FixtureLoadout::Path(key.as_str())),
-            SeedsLoadout::Standard(style) => match style.as_str() {
-                "melee" => Ok(FixtureLoadout::Standard(StandardKit::Melee)),
-                "magic" => Ok(FixtureLoadout::Standard(StandardKit::Magic)),
-                "ranged" => Ok(FixtureLoadout::Standard(StandardKit::Ranged)),
-                other => Err(format!("unknown standard kit {other:?}")),
-            },
-        })
-        .transpose()
-}
-
-fn seed_command(command: String) -> scenario::Step {
-    scenario::Step {
-        name: "smoke seed before final relog",
-        kind: scenario::StepKind::Perform {
-            send: Box::new(move |client, _| api::interact::cheat(client, &command).is_sent()),
-        },
-        wait: scenario::Wait {
-            arm: scenario::Proof::SideTabAvailable { index: 3 },
-            budget_ticks: 100,
-        },
-    }
-}
-
 /// The harness row for an env-driven quest: static id, display and profile,
 /// so the cell needs no allocation to satisfy fixture lifetimes. Refuses
-/// quests the profile table moved off Base40: the smoke is defined as a
-/// Base40 qualification cell.
+/// quests the profile table moved off Base40.
 fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
     let row = scenario::quester::fixture_row(quest)?;
     if row.profile != TestProfile::Base40 {
@@ -136,65 +67,15 @@ fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
     Ok(row)
 }
 
-/// Path bytes plus where they came from. Loading a folder also publishes it
-/// to the registry snapshot `path_cell` reads, shadowing the embedded index;
-/// without a folder the bundled snapshot answers for the embedded index.
-/// Every failure after publishing the folder restores the previous source,
-/// so a failed reload never leaks `FolderSource` into later cells.
+/// Select the same embedded or folder-backed source the headed entry uses.
 fn resolve_source(quest: &str) -> Result<&'static str, String> {
-    if let Some(folder) = std::env::var_os("QUESTER_PATH_FOLDER") {
-        let folder = PathBuf::from(folder);
-        if !folder.is_absolute() || !folder.is_dir() {
-            return Err(format!(
-                "QUESTER_PATH_FOLDER must be an absolute directory: {}",
-                folder.display()
-            ));
-        }
-        let before = registry::source();
-        registry::set_source(FolderSource {
-            enabled: true,
-            folder,
-        });
-        let loaded = (|| {
-            let selected = FamilyPreparation::run(|_| {
-                api::game_data::for_revision(ClientRevision::R289).expect("selected 289 data")
-            })
-            .map_err(|error| format!("selected data worker: {error:?}"))?
-            .join()
-            .map_err(|error| format!("selected data worker: {error:?}"))?;
-            let data = Arc::clone(&selected);
-            FamilyPreparation::run(move |worker| registry::reload(&data, worker))
-                .map_err(|error| format!("folder reload worker: {error:?}"))?
-                .join()
-                .map_err(|error| format!("folder reload worker: {error:?}"))?
-                .map_err(|error| format!("folder reload: {error:?}"))
-        })();
-        let loaded = match loaded {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                registry::set_source(before.clone());
-                return Err(error);
-            }
-        };
-        for diagnostic in loaded.diagnostics() {
-            println!("PATH-DIAG {diagnostic}");
-        }
-        if loaded.bytes(quest).is_none() {
-            registry::set_source(before);
-            return Err(format!("{quest} is not served by the folder registry"));
-        }
-        // Keep the folder published for the run below; the caller restores
-        // the previous source afterwards.
-        return Ok(loaded.path_source(quest).label());
-    }
-    script::quester::compile::path_bytes(quest)
-        .map(|_| "embedded")
-        .ok_or_else(|| format!("{quest} is not an embedded release Path"))
+    let folder = std::env::var_os("QUESTER_PATH_DIR").map(PathBuf::from);
+    scenario::quester::reload_quester_path_source(quest, folder.as_deref())
 }
 
 fn smoke_cell(
     row: QuestFixtureProfile,
-    seeds: &Seeds,
+    seeds: &QuesterPathSeeds,
     loadout: Option<FixtureLoadout<'_>>,
     extra_items: &[(&str, i32)],
     seed_vars: &[(&str, i32)],
@@ -220,12 +101,7 @@ fn smoke_cell(
             level: seeds.stand[2],
         },
         mode,
-        before_relog: seeds
-            .before_relog
-            .iter()
-            .cloned()
-            .map(seed_command)
-            .collect(),
+        before_relog: seeds.before_relog_steps(),
     })?;
     cell.scenario.settings.deadline = DEADLINE;
     Ok(cell)
@@ -235,26 +111,20 @@ fn smoke_cell(
 #[ignore = "requires LIVE=1 and the shared local 289 engine; see common/quester_live.rs"]
 fn live_quester_path_smoke() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let quest = std::env::var("QUESTER_PATH_QUEST").expect("QUESTER_PATH_QUEST names the Path");
-    let seeds_path =
-        PathBuf::from(std::env::var_os("QUESTER_PATH_SEEDS").expect("QUESTER_PATH_SEEDS"));
+    let quest = std::env::var("QUESTER_PATH").expect("QUESTER_PATH names the Path");
+    let seeds_path = PathBuf::from(std::env::var_os("QUESTER_SEEDS").expect("QUESTER_SEEDS"));
     let text = std::fs::read_to_string(&seeds_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", seeds_path.display()));
-    let seeds = parse_seeds(&text).unwrap_or_else(|error| panic!("{error}"));
+    let seeds = scenario::quester::parse_quester_path_seeds(&text, "QUESTER_SEEDS")
+        .unwrap_or_else(|error| panic!("{error}"));
     let row = smoke_row(&quest).unwrap_or_else(|error| panic!("{error}"));
     let before = registry::source();
     let source = resolve_source(&quest).unwrap_or_else(|error| panic!("{error}"));
-    let loadout = seeds_loadout(seeds.loadout.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-    let extra_items: Vec<(&str, i32)> = seeds
-        .extra_items
-        .iter()
-        .map(|(item, qty)| (item.as_str(), *qty))
-        .collect();
-    let seed_vars: Vec<(&str, i32)> = seeds
-        .seed_vars
-        .iter()
-        .map(|(varp, value)| (varp.as_str(), *value))
-        .collect();
+    let loadout = seeds
+        .fixture_loadout()
+        .unwrap_or_else(|error| panic!("{error}"));
+    let extra_items = seeds.extra_item_refs();
+    let seed_vars = seeds.seed_var_refs();
     let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
         .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
     let result = quester_live::run(cell);
@@ -266,6 +136,9 @@ fn live_quester_path_smoke() {
 #[cfg(test)]
 mod smoke_tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static PATH_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
     const COOK_SEEDS: &str = r#"{
         "stage": "cook:0",
@@ -278,26 +151,22 @@ mod smoke_tests {
         "mode": "stage"
     }"#;
 
-    fn cook_cell(seeds: &Seeds) -> Cell {
+    fn parse_seeds(text: &str) -> Result<QuesterPathSeeds, String> {
+        scenario::quester::parse_quester_path_seeds(text, "QUESTER_SEEDS")
+    }
+
+    fn cook_cell(seeds: &QuesterPathSeeds) -> Cell {
         let row = smoke_row("cook").unwrap();
         assert_eq!(row.display, "Cook's Assistant");
-        let loadout = seeds_loadout(seeds.loadout.as_ref()).unwrap();
-        assert!(loadout.is_none());
-        let extra_items: Vec<(&str, i32)> = seeds
-            .extra_items
-            .iter()
-            .map(|(item, qty)| (item.as_str(), *qty))
-            .collect();
-        let seed_vars: Vec<(&str, i32)> = seeds
-            .seed_vars
-            .iter()
-            .map(|(varp, value)| (varp.as_str(), *value))
-            .collect();
+        let loadout = seeds.fixture_loadout().unwrap();
+        let extra_items = seeds.extra_item_refs();
+        let seed_vars = seeds.seed_var_refs();
         smoke_cell(row, seeds, loadout, &extra_items, &seed_vars).unwrap()
     }
 
     #[test]
     fn smoke_seeds_parse_and_build_the_embedded_cook_cell() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COOK_SEEDS).unwrap();
         assert_eq!(seeds.stage, "cook:0");
         let cell = cook_cell(&seeds);
@@ -332,10 +201,11 @@ mod smoke_tests {
 
     #[test]
     fn smoke_seeds_reject_an_unknown_mode_kit_or_shape() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         assert!(parse_seeds(r#"{"stage": "cook:0", "stand": [0, 0]}"#).is_err());
         let mut seeds = parse_seeds(COOK_SEEDS).unwrap();
         seeds.mode = Some("speedrun".into());
-        assert!(seeds_loadout(seeds.loadout.as_ref()).is_ok());
+        assert!(seeds.fixture_loadout().is_ok());
         let row = smoke_row("cook").unwrap();
         let empty: Vec<(&str, i32)> = Vec::new();
         assert!(smoke_cell(row, &seeds, None, &empty, &empty).is_err());
@@ -343,11 +213,12 @@ mod smoke_tests {
             &COOK_SEEDS.replace(r#""loadout": null"#, r#""loadout": {"standard": "plate"}"#),
         )
         .unwrap();
-        assert!(seeds_loadout(seeds.loadout.as_ref()).is_err());
+        assert!(seeds.fixture_loadout().is_err());
     }
 
     #[test]
     fn smoke_cell_serves_a_folder_cook_through_the_registry() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COOK_SEEDS).unwrap();
         // Baseline from the embedded index, before any folder is published.
         let embedded_stats = cook_cell(&seeds)
@@ -384,10 +255,9 @@ mod smoke_tests {
         )
         .unwrap();
         let before = registry::source();
-        // Restore the previous source on every exit: `set_source` resets the
-        // snapshot to Bundled, so a leaked FolderSource would shadow the
-        // embedded index for later tests.
-        struct SourceGuard(Option<FolderSource>);
+        // Restore the previous source on every exit; the shared registry is
+        // process-global and another test may read its bundled snapshot.
+        struct SourceGuard(Option<registry::FolderSource>);
         impl Drop for SourceGuard {
             fn drop(&mut self) {
                 if let Some(source) = self.0.take() {
@@ -396,26 +266,12 @@ mod smoke_tests {
             }
         }
         let _guard = SourceGuard(Some(before));
-        registry::set_source(FolderSource {
-            enabled: true,
-            folder: root.clone(),
-        });
-        let selected = FamilyPreparation::run(|_| {
-            api::game_data::for_revision(ClientRevision::R289).expect("selected 289 data")
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-        let data = Arc::clone(&selected);
-        let loaded = FamilyPreparation::run(move |worker| registry::reload(&data, worker))
-            .unwrap()
-            .join()
-            .unwrap()
-            .unwrap();
-        let bytes = loaded.bytes("cook").expect("folder serves cook");
-        assert_eq!(loaded.path_source("cook").label(), "folder");
-        let path: script::quester::path::PathDocument =
-            serde_json::from_slice(bytes.as_ref()).unwrap();
+        assert_eq!(
+            scenario::quester::reload_quester_path_source("cook", Some(&root)).unwrap(),
+            "folder"
+        );
+        let (path, source) = scenario::quester::load_quester_path_document("cook").unwrap();
+        assert_eq!(source, "folder");
         assert_eq!(path.id.0.as_ref(), "cook");
         // Build the cell while the folder source is still the snapshot
         // `path_cell` reads; restoring first would test the embedded cell.

@@ -98,7 +98,29 @@ export RS2B0T=/absolute/path/to/rs2b0t
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
+
+# Run an embedded Path (repeat with any id from the bundled Path index).
+QUESTER_PATH=cook cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+
+# Run a Path supplied by a folder of Path documents.
+QUESTER_PATH=cook QUESTER_PATH_DIR=/absolute/path/to/paths \
+  cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+
 ```
+
+`script_quester_path` requires `QUESTER_PATH` (for example `cook`) and refuses
+to choose a default quest. It reads embedded Paths by default. Set
+`QUESTER_PATH_DIR` to an absolute folder to use the existing folder registry;
+the requested Path must be served from that folder. `QUESTER_SEEDS` optionally
+names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
+`loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
+`expect` and `mode` control the headless cell's settling; the headed scenario
+always watches native quest completion.
+Its `stand` must match the Path's authored not-started anchor. Without seeds,
+the fixture starts from a clean account and teleports to that anchor after
+relog. `QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
+zero and non-integer values are rejected. A terminal window shot is captured
+when the scenario completes.
 
 Live runs mint fresh accounts named `live<token>_<i>` (at most 12
 characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace

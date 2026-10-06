@@ -34,12 +34,12 @@
 //! prefixes are 1–4 bytes, and both names retain the same invocation token.
 //!
 //! The generic Path smoke (`tests/quester_path_live.rs`) additionally takes
-//! `QUESTER_PATH_QUEST` (content quest id), `QUESTER_PATH_SEEDS` (small JSON
-//! file with the stage, stand, loadout, extra items, explicit stage seeds,
-//! pre-relog cheats and expected stages) and optional `QUESTER_PATH_FOLDER`
-//! (a folder-source dir served through the existing `FolderSource` registry,
-//! shadowing the embedded release index). It runs with the Base40
-//! qualification profile under a fixed deadline.
+//! `QUESTER_PATH` (content quest id), `QUESTER_SEEDS` (small JSON file with
+//! the stage, stand, loadout, extra items, explicit stage seeds, pre-relog
+//! cheats and expected stages) and optional `QUESTER_PATH_DIR` (an absolute
+//! folder served through the existing `FolderSource` registry, shadowing the
+//! embedded release index). It runs with the Base40 qualification profile
+//! under a fixed deadline.
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -2637,67 +2637,27 @@ pub struct PathCell<'a> {
 }
 
 pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
-    // Folder first so a folder override shadows the release index through
-    // the existing registry; the bundled snapshot answers when no folder is
-    // loaded. Both are release content, never test-authored Paths.
-    let bytes = script::quester::registry::snapshot()
-        .bytes(spec.quest)
-        .map(|owned| owned.as_ref().to_vec())
-        .or_else(|| {
-            script::quester::compile::path_bytes(spec.quest).map(|static_bytes| {
-                // `snapshot()` already serves bundled bytes, so this is only a
-                // belt-and-braces fallback for the embedded release index.
-                static_bytes.to_vec()
-            })
-        })
-        .ok_or_else(|| {
-            format!(
-                "{} is not an embedded release Path; load its folder through the FolderSource registry first",
-                spec.quest
-            )
-        })?;
-    let path: script::quester::path::PathDocument =
-        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", spec.quest))?;
+    let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
-    let identity = selected
-        .quest_identity()
-        .and_then(|table| table.rows.iter().find(|row| row.id == spec.quest))
-        .ok_or_else(|| format!("no quest identity row for {}", spec.quest))?;
-    if identity.display != spec.display {
-        return Err(format!(
-            "{} displays as {:?}, not {:?}",
-            spec.quest, identity.display, spec.display
-        ));
-    }
-    let fixture = scenario::quester::quester_stage_with_seeds(
-        scenario::quester::QuesterStage {
+    let fixture =
+        scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
             name: spec.quest,
             quest_display: spec.display,
             path: &path,
-            identity,
             selected: &selected,
-            stage: spec.stage,
+            stage: Some(spec.stage),
             loadout: spec.loadout,
             extra_items: spec.extra_items,
+            seed_vars: spec.seed_vars,
             stand: spec.stand,
-        },
-        spec.seed_vars,
-    )?;
-    let mut scenario = fixture.scenario;
-    if !spec.before_relog.is_empty() {
-        let relog = scenario
-            .steps
-            .iter()
-            .rposition(|step| matches!(step.kind, scenario::StepKind::Relog))
-            .ok_or("fixture has no relog")?;
-        scenario.steps.splice(relog..relog, spec.before_relog);
-    }
+            before_relog: spec.before_relog,
+        })?;
     let seed = fixture.seed;
     Ok(Cell {
         quest: spec.quest,
         display: spec.display,
         label: spec.label,
-        scenario,
+        scenario: fixture.scenario,
         start_settings: fixture.start_settings,
         mode: spec.mode,
         observe_start: Some(Box::new(move |snapshot| seed.observe_start(snapshot))),
