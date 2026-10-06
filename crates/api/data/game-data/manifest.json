@@ -131,6 +131,7 @@
       },
       "autocast": {
         "staff_tab_root": 328,
+        "spell_text_component": 352,
         "spell_panel_root": 1829,
         "choose_com": 353,
         "toggle_com": 349,
@@ -194,8 +195,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5027853,
-      "sha256": "c7ff81c9be85ca617c57ecec161d2852e008e6f16c24adfcfcda04d673656a5c",
+      "bytes": 5027886,
+      "sha256": "8e58b28e739c8f9e2061f439973021317fde77af07cb71a3371ccd5d71ee36f6",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -8508,6 +8509,7 @@
       },
       "autocast": {
         "staff_tab_root": 328,
+        "spell_text_component": 352,
         "spell_panel_root": 1829,
         "choose_com": 353,
         "toggle_com": 349,
@@ -8571,8 +8573,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5467907,
-      "sha256": "53b77c66ac64268fe3e20a10625531589572e69d19846064ed2f6b62ac9ea08f",
+      "bytes": 5467940,
+      "sha256": "519ce8027478d4d6cccf81534c2c02ce67b0f7ebc60ac7f0d0a8fbf4d0e09568",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

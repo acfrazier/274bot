@@ -519,7 +519,7 @@ fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,
 assert.throws(() => extractNpcNamesFacts(content, 289, combatScripts), /attackrate is out of range/);
 fs.writeFileSync(npcSource, npcSourceBytes);
 // combat_axe is intentionally absent so a recognized but unresolved root must stay null.
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n352=combat_staff_2:auto_spell\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
 const interfacePackPath = path.join(content, 'pack/interface.pack');
 fs.appendFileSync(interfacePackPath, [
     '20001=combat_heavysword:heavy0',
@@ -612,6 +612,7 @@ fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
 fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n286=dueloptions\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
+assert.equal(autocast.spell_text_component, 352);
 assert.equal(autocast.choose_com, 353);
 assert.equal(autocast.spell_panel_root, 1829);
 assert.equal(autocast.spell_grid_base, 1830);

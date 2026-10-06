@@ -4,43 +4,12 @@
 //! with the caller's spell name and maps the settled outcome to the frozen
 //! boolean (or the frozen `not impl` throw).
 
+use crate::combat::arm::{Arm, ArmFailure, ArmObservation, ArmStep};
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, Scene};
-use crate::shim::InteractReq;
+use crate::observed;
 use api::game_data::{AutocastControls, SelectedGameData};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-
-/// The frozen side-tab index and windows.
-const COMBAT_TAB: i32 = 0;
-const TAB_WAIT_MS: u64 = 2_000;
-const STEP_MS: u64 = 3_000;
-
-/// The posted facts one arm decides from, read from the isolate scene.
-#[derive(Clone, Copy)]
-struct ArmObservation {
-    ingame: bool,
-    active_side_tab: i32,
-    combat_tab_root: i32,
-    magic_varp_value: i32,
-}
-
-impl ArmObservation {
-    /// A logout forgets the session: only pages posted since login count.
-    fn from_scene(scene: &Scene, magic_varp: i32) -> Self {
-        let session = scene.since_login();
-        Self {
-            ingame: session.ingame().unwrap_or(false),
-            active_side_tab: session.side_tab().unwrap_or(-1),
-            combat_tab_root: session.combat_tab_root().unwrap_or(-1),
-            magic_varp_value: session.varps().map_or(0, |rows| {
-                rows.iter()
-                    .find(|row| row.index == magic_varp)
-                    .map_or(0, |row| row.value)
-            }),
-        }
-    }
-}
 
 #[derive(Deserialize)]
 pub(crate) struct ArmArgs {
@@ -117,6 +86,19 @@ impl ArmOutcome {
             not_impl: reason.not_impl(),
         }
     }
+
+    fn from_arm(result: Result<(), ArmFailure>, spell: &str) -> Self {
+        let reason = match result {
+            Ok(()) => Reason::Armed,
+            Err(ArmFailure::Aborted) => Reason::Aborted,
+            Err(ArmFailure::StaffMissing) => Reason::StaffMissing,
+            Err(ArmFailure::TabTimeout) => Reason::OpenTab,
+            Err(ArmFailure::ChooserTimeout) => Reason::Chooser,
+            Err(ArmFailure::SelectTimeout) => Reason::Select,
+            Err(ArmFailure::ToggleTimeout) => Reason::Toggle,
+        };
+        Self::of(reason, spell)
+    }
 }
 
 impl From<ArmOutcome> for Value {
@@ -125,41 +107,10 @@ impl From<ArmOutcome> for Value {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
-enum Phase {
-    WaitTab,
-    WaitPanel,
-    WaitSelected,
-    WaitArmed,
-}
-
-impl Phase {
-    /// The frozen reason for a press that never showed its effect.
-    fn timeout(self) -> Reason {
-        match self {
-            Self::WaitTab => Reason::OpenTab,
-            Self::WaitPanel => Reason::Chooser,
-            Self::WaitSelected => Reason::Select,
-            Self::WaitArmed => Reason::Toggle,
-        }
-    }
-}
-
-/// One arm: the caller's spell, its grid component and the live phase.
+/// One isolate family arm keeps the caller's spell name for the frozen log.
 pub(crate) struct Autocast {
     spell: String,
-    spell_com: i32,
-    phase: Phase,
-}
-
-impl Autocast {
-    fn press(&mut self, phase: Phase, component_id: i32, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
-        self.phase = phase;
-        cx.clock().arm(STEP_MS);
-        cx.emit(InteractReq::IfButton { component_id });
-        Step::Wait
-    }
+    arm: Arm,
 }
 
 impl Family for Autocast {
@@ -191,22 +142,21 @@ impl Family for Autocast {
         if !obs.ingame {
             return Begin::Done(ArmOutcome::of(Reason::MissingFacts, &args.spell));
         }
-        if obs.combat_tab_root != controls.staff_tab_root {
-            return Begin::Done(ArmOutcome::of(Reason::StaffMissing, &args.spell));
-        }
+
         let mut arm = Self {
             spell: args.spell,
-            spell_com,
-            phase: Phase::WaitPanel,
+            arm: Arm::new(spell_com),
         };
-        if obs.active_side_tab != COMBAT_TAB {
-            arm.phase = Phase::WaitTab;
-            cx.clock().arm(TAB_WAIT_MS);
-            cx.emit(InteractReq::SideTab { tab: COMBAT_TAB });
-            return Begin::Run(arm);
+        match arm.arm.poll(obs, controls, false) {
+            ArmStep::Emit(request, wait_ms) => {
+                cx.clock().arm(wait_ms);
+                cx.emit(request);
+                arm.arm.emitted();
+                Begin::Run(arm)
+            }
+            ArmStep::Wait => Begin::Run(arm),
+            ArmStep::Done(result) => Begin::Done(ArmOutcome::from_arm(result, &arm.spell)),
         }
-        arm.press(Phase::WaitPanel, controls.choose_com, cx);
-        Begin::Run(arm)
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
@@ -221,26 +171,15 @@ impl Family for Autocast {
             return Step::Done(ArmOutcome::of(Reason::MissingControls, &self.spell));
         };
         let obs = observed::with(|scene| ArmObservation::from_scene(scene, controls.magic_varp));
-        if !obs.ingame {
-            return Step::Done(ArmOutcome::of(Reason::Aborted, &self.spell));
-        }
-        match self.phase {
-            Phase::WaitTab if obs.active_side_tab == COMBAT_TAB => {
-                self.press(Phase::WaitPanel, controls.choose_com, cx)
+        match self.arm.poll(obs, controls, cx.clock().bound_reached()) {
+            ArmStep::Emit(request, wait_ms) => {
+                cx.clock().arm(wait_ms);
+                cx.emit(request);
+                self.arm.emitted();
+                Step::Wait
             }
-            Phase::WaitPanel if obs.combat_tab_root == controls.spell_panel_root => {
-                self.press(Phase::WaitSelected, self.spell_com, cx)
-            }
-            Phase::WaitSelected if obs.magic_varp_value == controls.selected_value => {
-                self.press(Phase::WaitArmed, controls.toggle_com, cx)
-            }
-            Phase::WaitArmed if obs.magic_varp_value == controls.armed_value => {
-                Step::Done(ArmOutcome::of(Reason::Armed, &self.spell))
-            }
-            phase if cx.clock().bound_reached() => {
-                Step::Done(ArmOutcome::of(phase.timeout(), &self.spell))
-            }
-            _ => Step::Wait,
+            ArmStep::Wait => Step::Wait,
+            ArmStep::Done(result) => Step::Done(ArmOutcome::from_arm(result, &self.spell)),
         }
     }
 }
@@ -251,6 +190,7 @@ pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
         None => json_controls(
             &AutocastControls {
                 staff_tab_root: -1,
+                spell_text_component: -1,
                 spell_panel_root: -1,
                 choose_com: -1,
                 toggle_com: -1,
@@ -268,6 +208,7 @@ fn json_controls(controls: &AutocastControls, available: bool) -> Value {
     json!({
         "available": available && controls.available(),
         "staff_tab_root": controls.staff_tab_root,
+        "spell_text_component": controls.spell_text_component,
         "spell_panel_root": controls.spell_panel_root,
         "choose_com": controls.choose_com,
         "toggle_com": controls.toggle_com,
@@ -328,7 +269,9 @@ pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::arm::STEP_MS;
     use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
+    use crate::shim::InteractReq;
     use client::io::ClientRevision;
     use std::sync::Arc;
     use std::thread;
@@ -424,6 +367,7 @@ mod tests {
                 .autocast_controls()
                 .expect("generated autocast controls");
             assert_eq!(controls.staff_tab_root, 328);
+            assert_eq!(controls.spell_text_component, 352);
             assert_eq!(controls.choose_com, 353);
             assert_eq!(controls.spell_panel_root, 1829);
             assert_eq!(controls.spell_grid_base, 1830);
@@ -520,18 +464,18 @@ mod tests {
     }
 
     #[test]
-    fn the_four_presses_own_their_order_and_each_deadline() {
+    fn the_arm_always_selects_and_toggles_even_when_initially_armed() {
         let selected = prepare(ClientRevision::R274);
         assert_eq!(selected.spell_button_com("Wind Strike"), 1830);
-        set_observation(1, 328, 0);
+        set_observation(1, 328, 3);
         let handle = running(start("Wind Strike"));
-        assert_eq!(drain(), vec![InteractReq::SideTab { tab: COMBAT_TAB }]);
+        assert_eq!(drain(), vec![InteractReq::SideTab { tab: 0 }]);
 
-        set_observation(0, 328, 0);
+        set_observation(0, 328, 3);
         tick();
         assert_eq!(drain(), vec![press(353)], "choose is the first press");
 
-        set_observation(0, 1829, 0);
+        set_observation(0, 1829, 3);
         tick();
         assert_eq!(drain(), vec![press(1830)]);
 

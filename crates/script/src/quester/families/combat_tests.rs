@@ -73,6 +73,100 @@ fn open_tactic_defaults_auto_retaliate_on() {
 }
 
 #[test]
+fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:mage_mapper"),
+        role: None,
+        colour_not_started: FactKey::new("mage_mapper:0"),
+        colour_in_progress: FactKey::new("mage_mapper:1"),
+        colour_complete: FactKey::new("mage_mapper:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("mage_mapper");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let mut args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "mage", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "spells": ["fire_bolt", "Wind Strike"],
+        "fallback_spells": true,
+        "cross": ["draynor-jail-guards"],
+        "guard": "protect",
+        "finish": {"npc": "delrith_weakened", "prefer": ["Gabindo"], "max_ticks": 100},
+        "loot": [{"obj": "bones", "qty": 25}],
+        "until": {"Any": []},
+        "win": {"All": []}
+    });
+    compile(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    let plan = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert_eq!(plan.request.style, Style::Mage);
+    assert!(plan.request.fallback_spells);
+    let order = plan.request.spells.as_ref().unwrap();
+    assert_eq!(order.len(), 2);
+    assert_eq!(order[0].alias.as_ref(), "magic_spell_fire_bolt");
+    assert_eq!(order[1].alias.as_ref(), "magic_spell_wind_strike");
+    assert_eq!(plan.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+    assert!(plan.protect);
+    assert!(plan.until.is_some());
+    assert!(plan.win.is_some());
+    let finish = plan.finish.as_ref().unwrap();
+    assert_eq!(
+        finish.npc_type,
+        data.npc_by_config("delrith_weakened").unwrap().id
+    );
+    assert_eq!(finish.options.prefer[0].as_ref(), "Gabindo");
+    assert_eq!(finish.max_ticks, 100);
+    assert_eq!(plan.loot.len(), 1);
+    assert_eq!(plan.loot[0].id, data.item_by_alias("bones").unwrap().id);
+    assert_eq!(plan.loot[0].qty, 25);
+
+    args["spells"] = serde_json::Value::Null;
+    args.as_object_mut().unwrap().remove("fallback_spells");
+    let automatic = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert!(automatic.request.spells.is_none());
+    assert!(!automatic.request.fallback_spells);
+    args["spells"] = serde_json::json!([]);
+    assert_eq!(
+        compile(serde_json::from_value(args.clone()).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "invalid-combat-spells"
+    );
+    args["spells"] = serde_json::json!(["not_a_selected_spell"]);
+    assert_eq!(
+        compile(serde_json::from_value(args.clone()).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "unresolved-combat-spell"
+    );
+    args["spells"] = serde_json::json!(["fire_bolt"]);
+    args["tactic"]["style"] = serde_json::json!("melee");
+    assert_eq!(
+        compile(serde_json::from_value(args).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "unsupported-combat-spells"
+    );
+}
+
+#[test]
 fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
@@ -376,7 +470,6 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
     invalid["finish"]["max_ticks"] = serde_json::json!(0);
     assert!(compile_json(&invalid, &cx).is_err());
 }
-
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,

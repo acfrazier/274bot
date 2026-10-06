@@ -475,6 +475,39 @@ deadline. The `retaliate` fact takes the same args and remains unknown when the
 varp is absent or invalid. Paths author explicit off/on steps when needed;
 the family does not restore a prior state automatically.
 
+### Quester magic combat arguments
+
+The combat family accepts `tactic.style: "mage"`. Root `spells: null` (or
+omission) keeps native strongest-castable selection; an explicit non-empty
+`spells: ["fire_bolt", "Wind Strike"]` list resolves against the selected
+spell facts and preserves its order for manual casting. Empty, unknown or
+over-255-entry orders fail compilation. `fallback_spells: false` is the default;
+`true` permits the native strongest-castable fallback when the fixed order is
+exhausted. Spell-specific refusal and rune evidence still belong to the native
+combat core.
+
+Magic and ranged combat use protection prayers, not melee offensive prayers.
+Manual casts are acknowledged by observed rune consumption; a silent settle
+timeout is retried rather than treated as an autocast-arm failure. Open PvM
+sends the targeted interaction and lets the server approach the target; it
+does not perform a client-side magic range or line-of-sight check.
+A fresh combat step can reuse an already-armed autocast spell only when the
+current visible staff tab's selected-spell label exactly matches the chosen
+spell and the armed-mode varp agrees. Missing, hidden, stale, or different spell
+evidence retains the serial arming sequence.
+
+The retained-receipt oracle gates every available magic cell on the absence of
+melee offensive prayers; native ranged cells are not yet available in this slice.
+Magic protection timing is conditional on an observed enemy
+melee onset: a continuously observed engagement with the same NPC always outside
+melee distance and no player HP drop may record `not_applicable_no_onset`.
+Missing frames or NPC observations cannot establish that exemption. Restoration
+after each protection plan and the Killed/corpse/WindDown checks remain required;
+the exemption is not evidence of timely protection against a melee attack.
+Offline magic replay stops at the same first full readiness predicate as the live
+harness and also reports the verdict over the entire retained capture. Later
+timeout-tail activity is not erased or relabelled as a fresh live pass.
+
 ### Exact loc use-on targets
 
 Item/widget use-on dispatch keeps the exact loc tile and applies every supplied

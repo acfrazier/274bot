@@ -22,6 +22,8 @@ pub(crate) struct CombatCapture {
     pub(crate) random_events: Vec<Value>,
     pub(crate) observations: Vec<Value>,
     pub(crate) prayer_facts: Vec<Value>,
+    pub(crate) magic_setup: Option<Value>,
+    pub(crate) magic_npc_events: Vec<Value>,
     pub(crate) start_baseline: Option<Value>,
     pub(crate) invalid_reason: Option<String>,
     pub(crate) inject_maze_after_imp_attack: bool,
@@ -512,6 +514,25 @@ fn interaction_value(request: &InteractReq) -> Value {
         InteractReq::IfButton { component_id } => {
             json!({"op": "if-button", "component_id": component_id})
         }
+        InteractReq::SideTab { tab } => json!({"op": "side-tab", "tab": tab}),
+        InteractReq::UseWidgetOn {
+            component_id,
+            kind,
+            target_name,
+            x,
+            z,
+            level,
+            index,
+        } => json!({
+            "op": "use-widget-on",
+            "component_id": component_id,
+            "kind": kind,
+            "target_name": target_name,
+            "x": x,
+            "z": z,
+            "level": level,
+            "index": index,
+        }),
         InteractReq::Wear { name } => json!({"op": "wear", "name": name}),
         InteractReq::SetRetaliate { on } => json!({"op": "set-retaliate", "on": on}),
         _ => json!({"debug": format!("{request:?}")}),
@@ -581,6 +602,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
                 "in_combat": npc.in_combat,
                 "animation": npc.animation,
                 "spot_animation": npc.spot_animation,
+                "spot_animation_stamp": npc.spot_animation_stamp,
                 "actions": npc.actions,
             })
         })
@@ -626,6 +648,25 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
     let prayer_varps = (83..=97)
         .map(|index| json!({"index": index, "value": snapshot.varps().iter().find(|row| row.index == index).map(|row| row.value)}))
         .collect::<Vec<_>>();
+    let modals = snapshot.modals();
+    let roots = json!({
+        "main": modals.main,
+        "side": modals.side,
+        "chat": modals.chat,
+        "tutorial": modals.tutorial,
+        "side_tabs": snapshot.side_tabs().iter().map(|tab| json!({
+            "index": tab.index,
+            "root": tab.root_component_id,
+            "available": tab.available,
+            "active": tab.active,
+            "visible": tab.visible,
+        })).collect::<Vec<_>>(),
+    });
+    let magicvarp = snapshot
+        .varps()
+        .iter()
+        .find(|row| row.index == 108)
+        .map(|row| row.value);
     let local = snapshot.local_player().map(|player| {
         json!({
             "name": player.player.actor.name,
@@ -643,6 +684,8 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "tick": host_tick.unwrap_or_else(|| u64::from(snapshot.tick())),
         "host_tick": host_tick,
         "snapshot_tick": snapshot.tick(),
+        "player_generation": snapshot.gens().player,
+        "npc_generation": snapshot.gens().npc,
         "ingame": snapshot.ingame(),
         "scene_state": snapshot.scene_state(),
         "tile": snapshot.tile(),
@@ -650,6 +693,9 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "local_player": local,
         "stats": stats,
         "prayer_varps": prayer_varps,
+        "active_side_tab": snapshot.active_side_tab(),
+        "magicvarp": magicvarp,
+        "roots": roots,
         "inventory": inventory,
         "equipment": equipment,
         "nearby_npcs": nearby_npcs,

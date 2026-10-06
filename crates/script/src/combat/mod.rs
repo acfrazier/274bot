@@ -1,6 +1,7 @@
-//! Shared observed-state combat machine. S3a admits melee Open/Hold only.
-//! Style/flick/PvP slices extend this core rather than adding another planner.
+//! Shared observed-state combat machine with style mechanics on one planner.
+//! Flick and PvP slices extend this core rather than adding another planner.
 mod arbiter;
+pub(crate) mod arm;
 pub mod frame;
 pub mod guard;
 mod machine;
@@ -12,6 +13,7 @@ pub mod select;
 pub mod tables;
 pub mod threats;
 pub mod style {
+    pub mod magic;
     pub mod melee;
 }
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
