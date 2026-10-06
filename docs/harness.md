@@ -75,15 +75,16 @@ blank `HOME` remains explicit.
 
 ## Live-cell rules
 
-- **Real content.** Shared world entities stay real: no spawned NPCs, locs
-  or chance-drop waits. Only the tested account is seeded, before Start.
+- **Real content.** In the Quester Path and Gatherer cells, shared world
+  entities stay real: no spawned NPCs, locs or chance-drop waits. Only the
+  tested account is seeded, before Start.
 - **Seeded incidentals are observations, never requirements.** A seeded gem
   disposal or casket deposit is verified when observed; a naturally dropped
   one is recorded as an observation (`not_exercised` when absent) and never
   required to pass.
-- **Nothing cheats after Start.** All fixture seeds, kit, stats and teleports
-  happen before Start; after Start the cell only observes completion, stops
-  and restarts.
+- **Nothing cheats after Start.** In the Quester Path and Gatherer cells, all
+  fixture seeds, kit, stats and teleports happen before Start; after Start the
+  cell only observes completion, stops and restarts.
 - **Fixed deadlines.** Every cell runs under a fixed bound: 45 minutes for
   the Quester Path smoke (`QUESTER_PATH_DEADLINE_S` overrides the headed
   scenario's deadline; zero and non-integer values are rejected), per-scenario
@@ -133,9 +134,10 @@ zero and non-integer values are rejected. A terminal window shot is captured
 when the scenario completes.
 
 Live runs mint fresh accounts named `live<token>_<i>` (at most 12
-characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace
-`live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs can be told
-apart in engine logs and player saves. An invalid value stops the run.
+characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 characters (default `live`)
+to replace `live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs
+can be told apart in engine logs and player saves. The engine rejects a name
+it cannot register.
 
 Match `--profile` and the engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`).
@@ -354,8 +356,8 @@ isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through
 `GATHERER_MINE_RESOURCES` and an explicit `GATHERER_MINE_TILE=x,z,level`.
-At Varrock East, `(3286,3365,0)` with `tin` exercises one-step switches;
-the same origin with `copper` exercises targets operable from one stand.
+Set `GATHERER_MINE_TILE` to the stand under test and `GATHERER_MINE_RESOURCES`
+to one ore (`tin` or `copper`). The cell has no built-in tile.
 The fixture requires real yield, two full disposal cycles, and renewed gathering.
 It seeds one uncut sapphire before Start and requires observed disposal of that
 gem. Naturally mined gems are reported as observations (`not_exercised` if none);
@@ -436,8 +438,10 @@ retains the ranged-projectile queue rule `floor((32 + 5d) / 30)` without
 relaxing it; at distance 1 the expected delay is one tick. The first thrower
 is staged on a standable tile three to five tiles ahead of the route start:
 the fixture teleports there, spawns the NPC, then teleports back to the route
-start before scripted movement begins. This avoids attributing a
-distance-zero launch at the start to the moving crossing.
+start before scripted movement begins. Unlike those cells, this fixture stages
+throwers with engine teleports and `npcadd` after Start and before scripted
+movement. That staging is part of the cell, not a product cheat. This avoids
+attributing a distance-zero launch at the start to the moving crossing.
 
 The live and replay gate requires exactly two accepted guard clicks, both
 component 5622. The enable click must show Missiles off before the click and

@@ -8,7 +8,8 @@ lint stack.
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
-The Cargo workspace graph is **enforced**. Runtime semantics that a manifest
+The allowed crate edges are defined in `tools/architecture/policy.toml` and
+checked by `tools/architecture/check.py`. Runtime semantics that a manifest
 cannot prove stay **review requirements**. Changing a crate edge is a
 deliberate policy edit plus documentation and review; do not sneak a reverse
 or convenience dependency through an alias, target table, or optional rename.
@@ -81,7 +82,7 @@ graph, derived from the manifests:
 launches product binaries as child processes. That is orchestration, not a
 claim that `e2e` owns those crates' production behavior.
 
-### Truthful exceptions (enforced as written)
+### Truthful exceptions
 
 - **`api` → `client`** is intentional. `api` maps host types onto the
   vendored client. It is not a reverse `client` → `api` edge.
@@ -92,8 +93,8 @@ claim that `e2e` owns those crates' production behavior.
   client-free.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
   through `frontend-core` and `host-play`.
-- **`frontend-core` → `host`** carries only the `SlotInput`/`FrameBuf`
-  handles a surface passes to `Play::try_spawn_slot`.
+- **`frontend-core` → `host`** carries `SlotInput`/`FrameBuf` for
+  `Play::try_spawn_slot`, and `host::debug_enabled()` for the catalog-registry warning.
 - **`frontend-core` → `api`** carries read-only value types (selected game
   facts, snapshot rows, random-event kinds) and the `api::hostlog` facade:
   the operator log store is its sink.
@@ -117,7 +118,7 @@ and get review. Do not add a second hidden graph.
 
 | Crate | Features |
 | --- | --- |
-| `script` | `load` (default): the V8 isolate, JS library and the load-only clue and journal machines; `path-schema`: Path JSON Schema generation; `memory-profile`; `test-hooks` |
+| `script` | `load` (default): the V8 isolate, the JS library, the clue step machine and the isolate journal machine. The native journal click machine is always compiled; `path-schema`: Path JSON Schema generation; `memory-profile`; `test-hooks` |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
 | `host-play` | `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
@@ -129,9 +130,10 @@ and get review. Do not add a second hidden graph.
 
 Paths are relative to `crates/<crate>/src`. Rows name a module or a family of
 modules; a row with a glob (`catalog_*.rs`) covers every file it matches.
-`*_tests.rs`, `tests.rs` and `*/tests.rs` files are test bodies, not
-production owners, and are not listed one by one. A directory with its own
-facade file (`foo.rs` beside `foo/`) splits that module's reasons to change.
+`*_tests.rs`, `tests.rs`, `*/tests.rs`, and `include!`d `*_roundtrip.rs` files
+are test bodies, not production owners, and are not listed one by one. A
+directory with its own facade file (`foo.rs` beside `foo/`) splits that module's
+reasons to change.
 
 ### vault
 
@@ -427,7 +429,7 @@ declarations) and `examples/`.
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
-| `map_cache.rs`, `map_cache/shipped.rs`, `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
+| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
 | `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
