@@ -77807,6 +77807,62 @@
         }
       ],
       "pocket": "Fremennik's pocket"
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_itexam/scripts/digsite_workman.rs2",
+      "target_row": "[opnpc3,digworkman1] @pickpocket_digworkman1;",
+      "source_row": "if (stat(thieving) < 25) {",
+      "npcs": [
+        {
+          "alias": "digworkman1",
+          "id": 613,
+          "name": "Digsite workman"
+        }
+      ],
+      "level": 25
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_itexam/scripts/digsite_workman.rs2",
+      "target_row": "[opnpc3,digworkman2] @pickpocket_digworkman1;",
+      "source_row": "if (stat(thieving) < 25) {",
+      "npcs": [
+        {
+          "alias": "digworkman2",
+          "id": 614,
+          "name": "Digsite workman"
+        }
+      ],
+      "level": 25
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2",
+      "target_row": "[opnpc3,troll_prison_guard1]",
+      "source_row": "if (stat(thieving) < 30) {",
+      "npcs": [
+        {
+          "alias": "troll_prison_guard1",
+          "id": 1128,
+          "name": "Twig"
+        }
+      ],
+      "level": 30
+    },
+    {
+      "kind": "level_only",
+      "source_file": "scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2",
+      "target_row": "[opnpc3,troll_prison_guard2]",
+      "source_row": "if (stat(thieving) < 30) {",
+      "npcs": [
+        {
+          "alias": "troll_prison_guard2",
+          "id": 1129,
+          "name": "Berry"
+        }
+      ],
+      "level": 30
     }
   ],
   "quest_starts": {
@@ -82391,6 +82447,24 @@
       "level": 28,
       "selectable": true,
       "gap": null
+    },
+    {
+      "skill": "fishing",
+      "method": "fishing.0_41_53_sinisterfishspot.op1",
+      "methods": [
+        "fishing.0_41_53_sinisterfishspot.op1"
+      ],
+      "aliases": [
+        "fishing.0_41_53_sinisterfishspot.op1"
+      ],
+      "key": "fishing.fish.tool_307.products_338",
+      "resources": [
+        "raw_giant_carp"
+      ],
+      "label": "Raw giant carp — Fish (Fishing rod + Red vine worm)",
+      "level": 10,
+      "selectable": false,
+      "gap": "varp-gate"
     }
   ],
   "gather_sites": [
@@ -86000,6 +86074,24 @@
         },
         {
           "key": "willow",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "fishing.hemenster.w",
+      "skill": "fishing",
+      "label": "Hemenster W18 · Fish",
+      "region": {
+        "min_x": 2637,
+        "min_z": 3444,
+        "max_x": 2637,
+        "max_z": 3444,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.fish.tool_307.products_338",
           "count": 1
         }
       ]
@@ -92762,8 +92854,8 @@
         },
         "members": false,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "The Restless Ghost",
+        "journal_script": "scripts/quests/quest_priest/scripts/priest_journal.rs2"
       },
       {
         "id": "gobdip",
@@ -93014,8 +93106,8 @@
         },
         "members": false,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Watch Tower",
+        "journal_script": "scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2"
       },
       {
         "id": "ball",
@@ -93098,8 +93190,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "The Dig Site",
+        "journal_script": "scripts/quests/quest_itexam/scripts/itexam_journal.rs2"
       },
       {
         "id": "chompybird",
@@ -93287,8 +93379,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Heroes' Quest",
+        "journal_script": "scripts/quests/quest_hero/scripts/hero_journal.rs2"
       },
       {
         "id": "junglepotion",
@@ -93497,8 +93589,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Shilo Village",
+        "journal_script": "scripts/quests/quest_zombiequeen/scripts/zombiequeen_journal.rs2"
       },
       {
         "id": "ikov",
@@ -93518,8 +93610,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Temple of Ikov",
+        "journal_script": "scripts/quests/quest_ikov/scripts/ikov_journal.rs2"
       },
       {
         "id": "desertrescue",
@@ -93539,8 +93631,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Tourist Trap",
+        "journal_script": "scripts/quests/quest_desertrescue/scripts/desertrescue_journal.rs2"
       },
       {
         "id": "tree",
@@ -93602,8 +93694,8 @@
         },
         "members": true,
         "kind": "quest",
-        "journal_title": null,
-        "journal_script": null
+        "journal_title": "Underground Pass",
+        "journal_script": "scripts/quests/quest_upass/scripts/upass_journal.rs2"
       },
       {
         "id": "dragon",

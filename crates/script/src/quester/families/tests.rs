@@ -104,6 +104,22 @@ fn with_tick_output_reach<R>(
     };
     f(&mut native)
 }
+fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted,
+            chat_since: 0,
+        },
+    );
+}
 fn ready() -> GameSnapshot {
     let mut s = GameSnapshot::new();
     s.seed_ingame(2);
@@ -846,6 +862,7 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
         let mut replacement = original;
         replacement.tile.x += 1;
         s.seed_locs(vec![replacement]);
+        accept_last(&mut ledger, 2, false);
         assert!(matches!(
             with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)),
             Poll::Ready(Ok(false))
@@ -999,6 +1016,8 @@ fn path_bank_context<'a>(
 ) -> CompileContext<'a> {
     CompileContext {
         path: base.path,
+        kind: base.kind,
+        pair: base.pair,
         progress: base.progress,
         selected: base.selected,
         quests: base.quests,
@@ -1369,6 +1388,7 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
 #[test]
 fn missing_spawn_recovers_when_the_observed_stack_respawns() {
     let mut s = ready();
+    s.seed_local_player(local_player(tile(3229, 3302)));
     let mut ledger = None;
     let plan = InteractPlan {
         kind: egg(true).kind,
@@ -1476,6 +1496,8 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let recipes = Default::default();
     let compile = CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -2227,6 +2249,8 @@ fn compile_context_test_with_keep<R>(
     let progress = test_progress();
     f(&CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -2324,6 +2348,7 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
             assert_eq!(
                 present.evaluate(&PredicateContext {
                     cx: &t.cx,
+                    pairs: t.pairs,
                     quests: cx.quests,
                     progress: &[],
                     required_after: t.cx.evidence(),
@@ -2675,6 +2700,7 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
             ..shears.clone()
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears.clone()], 28);
         // The target is held to isolate round settlement from movement. This
         // drives the same compiled UseOn machine used by the sheep Path.
@@ -2773,6 +2799,7 @@ fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears], 28);
         let plan = compile_use_on(
             test_args::<UseOnArgs>(serde_json::json!({
@@ -3224,6 +3251,7 @@ fn sheep_partial_hand_in_use_on_stops_at_only_the_missing_raw_count() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(
             vec![
                 item(1735, "Shears", 0, 1),
@@ -3326,6 +3354,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                 let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
                 let context = PredicateContext {
                     cx: &tick.cx,
+                    pairs: tick.pairs,
                     quests: cx.quests,
                     progress: &progress,
                     required_after: tick.cx.evidence(),
@@ -3447,6 +3476,7 @@ fn public_chat_cannot_settle_or_set_message_state() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -3559,6 +3589,7 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -3621,6 +3652,7 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -3659,6 +3691,7 @@ fn progress_predicates_require_known_same_run_evidence() {
         with_tick(&snapshot, &mut ledger, 1, |t| {
             let unknown = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -3689,6 +3722,7 @@ fn progress_predicates_require_known_same_run_evidence() {
             }];
             let known = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &progress,
                 required_after: EvidenceStamp {
@@ -3861,6 +3895,7 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
             }];
             let known = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &progress,
                 required_after: evidence,
@@ -4435,6 +4470,9 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             with_sheep_step(tick, 12, |cx| step.plan.begin(cx).unwrap())
         });
         for game_tick in 2..=4 {
+            if game_tick == 3 {
+                accept_last(&mut ledger, game_tick, true);
+            }
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 with_sheep_step(tick, 12, |cx| run.poll(cx))
             });
@@ -4488,6 +4526,7 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
         let settle = |cx: &mut StepContext<'_, '_>| {
             step.settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -5085,6 +5124,7 @@ fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) ->
             chat_since: 0,
             outcome: None,
             bank: &crate::quester::bank_memo::BankMemo::default(),
+            pairs: None,
         })
     })
 }

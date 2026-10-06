@@ -546,11 +546,18 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
     ] {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = super::super::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
         .unwrap();
         let mut script = Quester::new(
             RunKey {
@@ -1934,6 +1941,7 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
         with_tick(&fixture.snapshot, &mut fixture.ledger, 49, |tick| {
             let cx = PredicateContext {
                 cx: &tick.cx,
+                pairs: tick.pairs,
                 quests: &fixture.script.quests,
                 progress: &[],
                 required_after: tick.cx.evidence(),
@@ -2116,4 +2124,259 @@ fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
         return;
     }
     panic!("the native Provisioner scan must expose a cached BankReceipt");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ProgressOutcomeStamp {
+    Fresh,
+    PreviousPoll,
+    StepBegin,
+    BeforeStep,
+    Uncorrelated,
+    Future,
+    ForeignRun,
+}
+
+struct ProgressOutcomePlan {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+}
+
+impl super::super::compile::StepPlan for ProgressOutcomePlan {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let mut progress = self.progress.clone();
+        progress.evidence = cx.required_after;
+        Ok(Box::new(ProgressOutcomeRun {
+            progress,
+            stamp: self.stamp,
+            previous_poll: None,
+        }))
+    }
+}
+
+struct ProgressOutcomeRun {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+    previous_poll: Option<api::quest_progress::EvidenceStamp>,
+}
+
+impl StepRun for ProgressOutcomeRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let current = cx.tick.cx.evidence();
+        let begin = self.progress.evidence;
+        self.progress.evidence = match self.stamp {
+            ProgressOutcomeStamp::StepBegin => begin,
+            ProgressOutcomeStamp::BeforeStep => api::quest_progress::EvidenceStamp {
+                tick: begin.tick - 1,
+                sequence: begin.sequence - 1,
+                ..begin
+            },
+            ProgressOutcomeStamp::Future => api::quest_progress::EvidenceStamp {
+                tick: current.tick + 1,
+                sequence: current.sequence + 1,
+                ..current
+            },
+            ProgressOutcomeStamp::ForeignRun => api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    session: current.run.session + 1,
+                    ..current.run
+                },
+                ..current
+            },
+            ProgressOutcomeStamp::PreviousPoll => {
+                let Some(previous) = self.previous_poll.replace(current) else {
+                    return Poll::Pending;
+                };
+                previous
+            }
+            ProgressOutcomeStamp::Fresh | ProgressOutcomeStamp::Uncorrelated => current,
+        };
+        Poll::Ready(Ok(StepOutcome {
+            evidence: if matches!(self.stamp, ProgressOutcomeStamp::Uncorrelated) {
+                begin
+            } else {
+                self.progress.evidence
+            },
+            progress: Some(Arc::new(self.progress.clone())),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
+fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot, Ledger) {
+    let (mut script, snapshot) = fixture(false);
+    let mut ledger = None;
+    let progress = with_tick(&snapshot, &mut ledger, 0, |tick| {
+        resolve_colour(
+            &script.path,
+            QuestListStatus::Complete,
+            tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        )
+    });
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
+        Arc::new(ProgressOutcomePlan { progress, stamp });
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        script.step.is_some(),
+        "the runner must begin the authored step"
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    (script, snapshot, ledger)
+}
+
+#[test]
+fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
+    for stamp in [
+        ProgressOutcomeStamp::Fresh,
+        ProgressOutcomeStamp::PreviousPoll,
+    ] {
+        let (mut script, mut snapshot, mut ledger) = step_progress_fixture(stamp);
+        let poll_tick = if matches!(stamp, ProgressOutcomeStamp::PreviousPoll) {
+            drive(&mut script, &snapshot, &mut ledger, 2);
+            assert!(script.step.is_some() && !script.settling);
+            3
+        } else {
+            2
+        };
+        drive(&mut script, &snapshot, &mut ledger, poll_tick);
+        assert!(
+            script.settling,
+            "fresh progress correlated with its final outcome must settle: {stamp:?}, {:?}",
+            script.last_error
+        );
+        let outcome = script.last_outcome.as_ref().expect("accepted outcome");
+        assert_eq!(outcome.evidence, script.progress().unwrap().evidence);
+        assert_eq!(outcome.evidence.tick, 2);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:2");
+        assert_eq!(script.progress().unwrap().complete, Truth::True);
+        assert!(script.last_error.is_none());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0x00f800,
+            }],
+            true,
+        );
+        drive(&mut script, &snapshot, &mut ledger, poll_tick + 1);
+        assert!(!script.settling);
+        assert!(matches!(
+            drive(&mut script, &snapshot, &mut ledger, poll_tick + 2),
+            ScriptFlow::Complete
+        ));
+    }
+}
+
+#[test]
+fn step_outcome_progress_rejects_stale_uncorrelated_future_and_foreign_receipts() {
+    for stamp in [
+        ProgressOutcomeStamp::StepBegin,
+        ProgressOutcomeStamp::BeforeStep,
+        ProgressOutcomeStamp::Uncorrelated,
+        ProgressOutcomeStamp::Future,
+        ProgressOutcomeStamp::ForeignRun,
+    ] {
+        let (mut script, snapshot, mut ledger) = step_progress_fixture(stamp);
+        let prior = script.progress().unwrap().evidence;
+        drive(&mut script, &snapshot, &mut ledger, 2);
+        assert!(
+            !script.settling,
+            "invalid progress must not settle: {stamp:?}"
+        );
+        assert!(script.last_outcome.is_none());
+        assert_eq!(script.progress().unwrap().evidence, prior);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+        assert_eq!(script.last_error.as_deref(), Some("step error: Stale"));
+    }
+}
+
+#[test]
+fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
+    let (script, snapshot) = fixture(false);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let after = api::quest_progress::EvidenceStamp {
+            run: tick.cx.run(),
+            tick: 4,
+            sequence: 4,
+        };
+        let progress = resolve_colour(
+            &script.path,
+            QuestListStatus::NotStarted,
+            tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        );
+        assert!(script.valid_progress(tick, &progress, after));
+        let mut bad = progress.clone();
+        bad.evidence = after;
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "same-frame cached progress is not a new owned read"
+        );
+        bad.evidence = api::quest_progress::EvidenceStamp {
+            tick: 6,
+            sequence: 6,
+            ..after
+        };
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "future receipts cannot be consumed"
+        );
+        bad = progress.clone();
+        bad.evidence.run.session += 1;
+        assert!(!script.valid_progress(tick, &bad, after), "foreign session");
+        bad = progress.clone();
+        bad.binding = FactKey::new("card:other");
+        assert!(!script.valid_progress(tick, &bad, after), "foreign binding");
+        bad = progress.clone();
+        bad.role = Some(FactKey::new("other"));
+        assert!(!script.valid_progress(tick, &bad, after), "foreign role");
+        bad = progress.clone();
+        bad.stage = Knowledge::Known(FactKey::new("unbound"));
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "undeclared stage"
+        );
+        bad = progress.clone();
+        bad.complete = Truth::True;
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "completion must name the terminal stage"
+        );
+        bad = progress.clone();
+        bad.flags = Arc::from([api::quest_progress::ProgressFlag {
+            flag: FactKey::new("undeclared"),
+            truth: Truth::True,
+            count: None,
+        }]);
+        assert!(!script.valid_progress(tick, &bad, after), "undeclared flag");
+    });
+}
+
+#[test]
+fn ordinary_recovery_keeps_completed_admission_but_pause_and_new_run_do_not() {
+    let (mut script, snapshot) = fixture(false);
+    script.pair_admitted = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| script.cancel_step(tick));
+    assert!(
+        script.pair_admitted,
+        "ordinary death/prayer cleanup does not invent a second peer barrier"
+    );
+    script.interrupt(Interrupt::Hold(true));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Hold(false));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Pause);
+    assert!(!script.pair_admitted);
+    script.pair_admitted = true;
+    script.run.session += 1;
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        !script.pair_admitted,
+        "a different run/session must acquire a fresh reciprocal admission"
+    );
 }

@@ -16,17 +16,11 @@
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed;
 use crate::trade::{self, Decline, Declining};
+use crate::trade_screen::{CloseDriver, ScreenDriver, ScreenKind, WaitEnd};
+use crate::trade_screen::{TRADE_CONFIRM_WAIT_MS, TRADE_OFFER_WAIT_MS};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-
-/// Frozen wall-clock wait for the offer screen to settle.
-pub const TRADE_OFFER_WAIT_MS: u64 = 5_000;
-/// Frozen wall-clock wait for confirm / close after accept.
-pub const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
-/// Frozen `stableClosedPoll` continuous-inactive period.
-pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
 /// The caller's callbacks, by `hooks` key.
 const NAMES: usize = 0;
@@ -100,34 +94,23 @@ impl Screen {
         self.offer || self.confirm
     }
 
+    fn kind(&self) -> ScreenKind {
+        ScreenKind::observed(self.offer, self.confirm)
+    }
+
     /// Frozen `tradeScreen()`.
     fn name(&self) -> &'static str {
-        if self.offer {
-            "offer"
-        } else if self.confirm {
-            "confirm"
-        } else {
-            "closed"
-        }
+        self.kind().label()
     }
 }
 
-/// Frozen `stableClosedPoll()`: closed once the trade stayed inactive for
-/// [`TRADE_CLOSE_DEBOUNCE_MS`] across polls.
+/// Load adapter for the shared inactive-screen debounce.
 #[derive(Default)]
-struct Stable {
-    inactive_since: Option<Instant>,
-}
+struct Stable(CloseDriver);
 
 impl Stable {
     fn poll(&mut self, cx: &mut Cx<'_>) -> bool {
-        if Screen::read().active() {
-            self.inactive_since = None;
-            return false;
-        }
-        let now = cx.clock().now();
-        let since = *self.inactive_since.get_or_insert(now);
-        now.saturating_duration_since(since) >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
+        self.0.poll(Screen::read().kind(), cx.clock().now())
     }
 }
 
@@ -164,7 +147,7 @@ enum State {
     },
     ConfirmWait {
         before: f64,
-        stable: Stable,
+        driver: ScreenDriver,
     },
     ConfirmSettle {
         before: f64,
@@ -182,7 +165,7 @@ enum State {
     },
     AcceptWait {
         before: f64,
-        stable: Stable,
+        driver: ScreenDriver,
     },
     Ready,
     Names,
@@ -354,17 +337,18 @@ impl PartnerTrade {
                 cx.clock().arm(TRADE_CONFIRM_WAIT_MS);
                 self.state = State::ConfirmWait {
                     before,
-                    stable: Stable::default(),
+                    driver: ScreenDriver::after_confirm(),
                 };
                 Next::Wait
             }
-            State::ConfirmWait { before, mut stable } => {
-                let closed = stable.poll(cx);
-                if !closed && !cx.clock().bound_reached() {
-                    self.state = State::ConfirmWait { before, stable };
+            State::ConfirmWait { before, mut driver } => {
+                let screen = Screen::read();
+                let end = driver.poll(screen.kind(), cx.clock().now(), cx.clock().bound_reached());
+                if end == WaitEnd::Waiting {
+                    self.state = State::ConfirmWait { before, driver };
                     return Next::Wait;
                 }
-                let screen = Screen::read();
+                let closed = end == WaitEnd::Closed;
                 self.log(format!(
                     "trade: confirm wait {} after the last click — screen now {}",
                     if closed { "satisfied" } else { "TIMED OUT" },
@@ -437,21 +421,21 @@ impl PartnerTrade {
                 cx.clock().arm(TRADE_OFFER_WAIT_MS);
                 self.state = State::AcceptWait {
                     before,
-                    stable: Stable::default(),
+                    driver: ScreenDriver::after_offer(),
                 };
                 Next::Wait
             }
-            State::AcceptWait { before, mut stable } => {
-                let confirm = Screen::read().confirm;
-                if !confirm && !stable.poll(cx) && !cx.clock().bound_reached() {
-                    self.state = State::AcceptWait { before, stable };
+            State::AcceptWait { before, mut driver } => {
+                let screen = Screen::read();
+                let end = driver.poll(screen.kind(), cx.clock().now(), cx.clock().bound_reached());
+                if end == WaitEnd::Waiting {
+                    self.state = State::AcceptWait { before, driver };
                     return Next::Wait;
                 }
-                let screen = Screen::read();
-                if screen.confirm {
+                if end == WaitEnd::Confirm {
                     self.log("trade: offer accepted — confirm screen is up".into());
                     Next::Done
-                } else if stable.poll(cx) && !screen.active() {
+                } else if end == WaitEnd::Closed {
                     self.metric(MetricFor::AcceptAfter { before }, cx)
                 } else {
                     self.log(format!(

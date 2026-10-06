@@ -2179,11 +2179,49 @@ impl TuiSession {
             app.error = Some(format!("settings: map bake: {e}"));
         }
     }
+    /// Persist changed source settings and service the shared Path controller.
+    fn project_quester_paths(&mut self, app: &mut TuiApp) {
+        let selected = self
+            .template
+            .as_ref()
+            .and_then(|template| template.game_data());
+        self.project_quester_paths_with_game_data(app, selected);
+    }
+
+    fn project_quester_paths_with_game_data(
+        &mut self,
+        app: &mut TuiApp,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) {
+        if std::mem::take(&mut app.quester_paths_dirty) {
+            let path = app
+                .shared_preferences_path()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(host_play::panel_ui_path);
+            let _ = app.quester_paths_controller.apply_changed_at(
+                &path,
+                app.quester_paths.clone(),
+                selected.clone(),
+                self.persist_ui,
+            );
+            app.quester_paths = app.quester_paths_controller.settings().clone();
+        }
+        app.quester_paths_controller.advance(selected);
+    }
+
+    fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
+        let selected = self
+            .template
+            .as_ref()
+            .and_then(|template| template.game_data());
+        app.quester_paths_controller.request_reload(selected);
+    }
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_quester_paths(app);
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
@@ -3148,6 +3186,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MapWalkGroup => session.map_walk_group(app),
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
+        AppAction::ReloadPaths => session.start_quester_paths_reload(app),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),

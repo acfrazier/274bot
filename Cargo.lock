@@ -4676,6 +4676,7 @@ dependencies = [
  "deno_ast",
  "deno_core",
  "flatbuffers",
+ "libc",
  "nav",
  "parking_lot",
  "rustyscript",
