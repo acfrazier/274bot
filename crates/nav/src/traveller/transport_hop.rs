@@ -251,6 +251,67 @@ pub(super) fn door_step_pending(edge: &TransportEdge, here: WorldTile) -> bool {
         && door_crossed(edge, edge.to)
 }
 
+/// The first closed window after an unanswered Open; it doubles with each
+/// further unanswered Open, capped at `MIN << MAX_SHIFT` (32 ticks).
+const DOOR_REOPEN_MIN_CLOSED_TICKS: u32 = 2;
+const DOOR_REOPEN_MAX_SHIFT: u32 = 4;
+
+/// Re-Open pacing for door recovery. A leaf seen open since the last Open
+/// was really toggled, so a closer is racing us: re-Open on the next closed
+/// read. A leaf that never opened (a locked, held-item or requirement
+/// refusal, or an Open still queued behind a walk) is re-Opened only after
+/// it has read closed for a window that doubles per unanswered Open. With
+/// the default 60-tick budget, a door that never opens gets Opens at ticks
+/// 0, 2, 6, 14 and 30, not one per tick.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct DoorRetry {
+    /// The tick of the latest Open sent on this hop.
+    sent: Option<u32>,
+    /// The leaf has read open since `sent`.
+    seen_open: bool,
+    /// Consecutive earlier Opens that the leaf never answered by opening.
+    unanswered: u32,
+}
+
+impl DoorRetry {
+    /// Pacing for a hop whose arm sent the door's Open on `sent`, if any.
+    pub(super) fn opened_at(sent: Option<u32>) -> Self {
+        Self {
+            sent,
+            ..Self::default()
+        }
+    }
+
+    /// Record an Open sent on `tick`.
+    pub(super) fn sent(&mut self, tick: u32) {
+        self.unanswered = if self.sent.is_some() && !self.seen_open {
+            self.unanswered.saturating_add(1)
+        } else {
+            0
+        };
+        self.sent = Some(tick);
+        self.seen_open = false;
+    }
+
+    /// Record this poll's read of the leaf.
+    pub(super) fn observe(&mut self, open: bool) {
+        self.seen_open |= open;
+    }
+
+    /// Whether a closed leaf may be re-Opened on `tick`.
+    pub(super) fn may_reopen(&self, tick: u32) -> bool {
+        match self.sent {
+            None => true,
+            Some(_) if self.seen_open => true,
+            Some(sent) => {
+                let window =
+                    DOOR_REOPEN_MIN_CLOSED_TICKS << self.unanswered.min(DOOR_REOPEN_MAX_SHIFT);
+                tick.saturating_sub(sent) >= window
+            }
+        }
+    }
+}
+
 /// Door hops without a cardinal `dir` normally settle with
 /// `arrived(to, close_enough)`. When the origin stand sits inside that
 /// radius (`Cheb(at, to) <= close_enough` on the same level), the
@@ -287,8 +348,9 @@ impl FollowRun {
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), recover an
     /// NPC reach failure within its attempt/leg bounds, retry a web only on
-    /// its content failure message, or lapse the budget. Swing doors recover
-    /// while the hop still has time to observe and retry the crossing.
+    /// its content failure message, or lapse the budget. Door-kind edges with
+    /// a packed open leaf (swing doors, gates, held-item and scripted doors)
+    /// recover while the hop still has time to observe and retry the crossing.
     pub(super) fn poll_transport<D: Driver>(
         &mut self,
         d: &mut D,
@@ -548,9 +610,11 @@ impl FollowRun {
                 Leg::Transport { edge } => edge.clone(),
                 Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
             };
-            if edge.is_slashable_web() && edge_loc_open(snapshot, &edge) {
-                // The loc may have been slashed while the player walked to
-                // this stand. Let the open-leaf poll below walk through it.
+            if edge.kind == TransportKind::Door && edge_loc_open(snapshot, &edge) {
+                // The leaf opened (another player, or a slashed web) while
+                // the player walked to this stand. OP_LOC1 on an open leaf
+                // is Close: send nothing, and let the next poll's open-leaf
+                // walk (door recovery, or the cheap hop's) cross it.
                 self.transport = Some(hop);
                 return Poll::Watching;
             }
@@ -597,6 +661,7 @@ impl FollowRun {
                                 hop.open_sent_tick = Some(snapshot.tick());
                                 if !edge.is_slashable_web() {
                                     hop.tries = hop.tries.saturating_add(1);
+                                    hop.door_retry.sent(snapshot.tick());
                                 }
                             }
                             if edge.open_loc_id.is_some()
@@ -1168,28 +1233,45 @@ impl FollowRun {
                 }
             };
         }
+        // The live loc's tile can sit a tile or two off the derived `at`, so
+        // match the edge's closed `loc_id`, or the open leaf's `open_loc_id`
+        // when the door reads open, by footprint within chebyshev 3 of `at`,
+        // nearest first ([`find_door_loc`]); shifted double-door leaves
+        // (castle 1519 → 1520) included.
+        let leaf = find_door_loc(snapshot, edge);
+        let open = match leaf {
+            Some(loc) => loc.id != edge.loc_id,
+            None => edge_loc_open(snapshot, edge),
+        };
+        hop.door_retry.observe(open);
         if let Some(sent_tick) = hop.open_sent_tick.take() {
             if snapshot.tick() == sent_tick {
                 hop.open_sent_tick = Some(sent_tick);
                 return None;
             }
             if door_step_pending(edge, here) {
-                let mut ix = Interactions::new(snapshot, d);
-                let result = ix.pending_door_step(edge.to);
-                report_walk(options, snapshot, here, edge.to, &result);
-                return match result {
-                    SendResult::Sent { .. } => None,
-                    SendResult::Refused { reason, .. } => {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        Some(TravelOutcome::Refused { at: here, reason })
-                    }
-                };
+                if open || SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to) {
+                    let mut ix = Interactions::new(snapshot, d);
+                    let result = ix.pending_door_step(edge.to);
+                    report_walk(options, snapshot, here, edge.to, &result);
+                    return match result {
+                        SendResult::Sent { .. } => None,
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            Some(TravelOutcome::Refused { at: here, reason })
+                        }
+                    };
+                }
+                // The server walked the player onto `at` before the queued
+                // Open fired, and the wall still blocks `at` → `to`: a walk
+                // packet now would cancel that Open. Probe again next poll.
+                hop.open_sent_tick = Some(sent_tick);
             }
         }
         // Adjacency is needed to Open a closed door, not to walk through
         // an open one. Re-approaching an open door countermanded the exit
         // walk whenever its destination was several tiles beyond the door.
-        if cheb(here, edge.at) > 1 && !edge_loc_open(snapshot, edge) {
+        if cheb(here, edge.at) > 1 && !open {
             let Some(approach) = approach_tile(snapshot, edge.at, here) else {
                 // No standable tile adjacent to the door in the loaded
                 // scene: keep waiting, bounded by the hop budget.
@@ -1219,14 +1301,7 @@ impl FollowRun {
             }
             return None;
         }
-        // The live loc's tile can sit a tile or two off the derived `at`
-        // (the cheap hop's `find_transport_loc` already tolerates that),
-        // so an exact-tile lookup misses it and the troll blocks while
-        // the walker stands still. Search by id within chebyshev 3 of
-        // `at` instead — the edge's closed `loc_id`, or the open leaf's
-        // `open_loc_id` when the door reads open — nearest first, same
-        // shape as `find_transport_loc`.
-        let Some(loc) = find_door_loc(snapshot, edge) else {
+        let Some(loc) = leaf else {
             // The door's loc is not in the loaded scene yet (the loc
             // family is stale, or the door is out of view): keep waiting,
             // bounded by the hop budget.
@@ -1245,7 +1320,6 @@ impl FollowRun {
             return None;
         };
         self.loc_wait = 0;
-        let open = loc.id != edge.loc_id;
         let mut ix = Interactions::new(snapshot, d);
         if crate::debug_enabled() {
             api::host_log!(
@@ -1258,10 +1332,13 @@ impl FollowRun {
                 edge.loc_id
             );
         }
-        // OP_LOC1 on an open door is Close. Closed: Open. Open: walk
-        // through this tick (do not click — that slams it in the walker's
-        // face and they turn back to the door).
+        // OP_LOC1 on an open door is Close. Closed: Open, paced by
+        // [`DoorRetry`]. Open: walk through this tick (do not click — that
+        // slams it in the walker's face and they turn back to the door).
         if !open {
+            if !hop.door_retry.may_reopen(snapshot.tick()) {
+                return None;
+            }
             match interact_transport(
                 snapshot,
                 &mut ix,
@@ -1272,6 +1349,7 @@ impl FollowRun {
                 SendResult::Sent { .. } => {
                     hop.open_sent_tick = Some(snapshot.tick());
                     hop.tries = hop.tries.saturating_add(1);
+                    hop.door_retry.sent(snapshot.tick());
                     api::host_log!(Category::NavEvent, Level::Info, "door open sent");
                 }
                 SendResult::Refused { reason, .. } => {

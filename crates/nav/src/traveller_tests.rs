@@ -6193,6 +6193,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             npc_index: None,
             npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
+            door_retry: super::DoorRetry::default(),
             chat_seq: 0,
             dialog_page: None,
             approach: None,
@@ -6226,7 +6227,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
 }
 
 #[test]
-fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
+fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
     let mut c = scene_client();
     plant_door(&mut c, false, 1);
     let mut snap = snap_at(&mut c, 1, 0);
@@ -6257,6 +6258,7 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         npc_index: None,
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
+        door_retry: super::DoorRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
@@ -6270,7 +6272,9 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         Poll::Watching
     ));
     assert_eq!(rec.loc_ops, 1);
-    // Server has opened; the delivered snapshot still shows closed.
+    // Server has opened; the delivered snapshot still shows closed and the
+    // step is not clear. A walk packet now would cancel an Open that is
+    // still queued, so the probe waits; the closed window holds the re-Open.
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
         run.poll_transport(&mut rec, &snap, &mut options, &mut None),
@@ -6280,6 +6284,15 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
         rec.loc_ops, 1,
         "do not replace the crossing with another Open approach"
     );
+    assert!(rec.sink.steps.is_empty(), "no step through a closed wall");
+    // The snapshot catches up: the kept probe steps through the open leaf.
+    plant_door(&mut c, true, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut None),
+        Poll::Watching
+    ));
+    assert_eq!(rec.loc_ops, 1);
     assert_eq!(
         rec.sink.steps,
         vec![client::io::ClientProt::MOVE_GAMECLICK.id, 5, 0, 3202, 3200]
@@ -6452,6 +6465,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             npc_index: None,
             npc_recovery: super::NpcRecovery::default(),
             open_sent_tick: None,
+            door_retry: super::DoorRetry::default(),
             chat_seq: 0,
             dialog_page: None,
             approach: None,
@@ -8116,6 +8130,7 @@ fn level_change_transport_requires_proximity_to_to() {
         npc_index: None,
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
+        door_retry: super::DoorRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
@@ -8215,6 +8230,7 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         npc_index: None,
         npc_recovery: super::NpcRecovery::default(),
         open_sent_tick: None,
+        door_retry: super::DoorRetry::default(),
         chat_seq: 0,
         dialog_page: None,
         approach: None,
