@@ -1,0 +1,3794 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "priestperil",
+  "display_name": "Priest in Peril",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "pipkey_gold",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "pipkey_iron",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bucket_empty",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bucket_murkywater",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "bucket_blessedwater",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "blankrune",
+        "qty": 50,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "dagger_wolfbane",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {
+      "reach:crypt": [
+        {
+          "id": "crypt-exit-temple-door",
+          "kind": "interact", "version": 1, "advances": false,
+          "args": {
+            "target": {"loc": "priestperiltempledoorl"}, "op": "Open",
+            "anchor": {"tile": [3409,3489,0], "source": "C maps/m53_54.jm2:4453 east side of large door; scripts/quests/quest_priestperil/scripts/temple_doors.rs2:7-18"},
+            "radius": 1
+          },
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}},
+          "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}}
+        },
+        {
+          "id": "crypt-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3405,
+              3506,
+              0
+            ],
+            "source": "C maps/m53_54.jm2:4408 trapdoor at [3405,3507,0]; south approach",
+            "radius": 1
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "crypt"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3405,
+                  3506,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "open-mausoleum-trapdoor",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "trapdoor"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3405,
+                3506,
+                0
+              ],
+              "source": "C maps/m53_54.jm2:4408; scripts/general_use/scripts/trapdoors.rs2:2-6"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "trapdoor_open"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "trapdoor_open"
+                  }
+                }
+              }
+            ]
+          },
+          "advances": false
+        },
+        {
+          "id": "descend-mausoleum",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "trapdoor_open"
+            },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [
+                3405,
+                3506,
+                0
+              ],
+              "source": "C maps/m53_54.jm2:4408; scripts/general_use/scripts/trapdoors.rs2:9-11"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "crypt"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "crypt"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "leave:crypt": [
+        {
+          "id": "crypt-return-through-second-gate",
+          "kind": "interact", "version": 1, "advances": false,
+          "args": {
+            "target": {"loc": "pip_underground_door2"}, "op": "Open",
+            "anchor": {"tile": [3432,9897,0], "source": "C maps/m53_154.jm2:4379 east side of gate; scripts/areas/area_mausoleum/scripts/gates.rs2:4-13"},
+            "radius": 1
+          },
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mausoleum_east"}}}},
+          "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mausoleum_east"}}}}
+        },
+        {
+          "id": "crypt-return-through-first-gate",
+          "kind": "interact", "version": 1, "advances": false,
+          "args": {
+            "target": {"loc": "pip_underground_door1"}, "op": "Open",
+            "anchor": {"tile": [3405,9894,0], "source": "C maps/m53_154.jm2:4168 south side of gate; scripts/areas/area_mausoleum/scripts/gates.rs2:1-13"},
+            "radius": 1
+          },
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "monuments"}}}},
+          "settle": {"All": []}
+        },
+        {
+          "id": "crypt-return-north-of-first-gate",
+          "kind": "walk", "version": 1,
+          "args": {"tile": [3405,9897,0], "source": "C maps/m53_154.jm2:4168 two tiles north of gate", "radius": 1},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "crypt"}}}},
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "crypt_north"}}}
+          ]},
+          "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "crypt_north"}}}
+        },
+        {
+          "id": "crypt-exit-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3405,
+              9906,
+              0
+            ],
+            "source": "C maps/m53_154.jm2:4172 ladder at [3405,9907,0]; south approach",
+            "radius": 1
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3405,
+                  9906,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "climb-out-mausoleum",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ladder_from_cellar"
+            },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [
+                3405,
+                9906,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:4172; scripts/ladders+stairs/scripts/ladders.rs2:87-94"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "reach:cell": [
+        {
+          "id": "cell-exit-crypt",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:crypt"
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-temple-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3407,
+              3489,
+              0
+            ],
+            "source": "C maps/m53_54.jm2:4453 west side of large door",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_ground"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_upper"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3407,
+                  3489,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-enter-temple",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "priestperiltempledoorl"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3407,
+                3489,
+                0
+              ],
+              "source": "C maps/m53_54.jm2:4453; scripts/quests/quest_priestperil/scripts/temple_doors.rs2:7-18"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_ground"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_upper"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "temple_ground"
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "cell-south-stairs-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3416,
+              3484,
+              0
+            ],
+            "source": "C maps/m53_54.jm2:4650 south spiral stairs at [3417,3484,0]",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_upper"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3416,
+                  3484,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-climb-south-stairs",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "spiralstairs"
+            },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [
+                3416,
+                3484,
+                0
+              ],
+              "source": "C maps/m53_54.jm2:4650; scripts/ladders+stairs/scripts/stairs.rs2:233"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "temple_upper"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "temple_upper"
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "cell-upper-ladder-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3410,
+              3486,
+              1
+            ],
+            "source": "C maps/m53_54.jm2:5275 ladder at [3410,3485,1]; north approach",
+            "radius": 1
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "cell_floor"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3410,
+                  3486,
+                  1
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-climb-upper-ladder",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "ladder"
+            },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [
+                3410,
+                3486,
+                1
+              ],
+              "source": "C maps/m53_54.jm2:5275,5468; scripts/ladders+stairs/scripts/ladders.rs2:49-54"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "cell_floor"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "cell_floor"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "leave:cell": [
+        {
+          "id": "cell-leave-open-prison",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "pip_prisondoor"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3416,
+                3489,
+                2
+              ],
+              "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:32-37"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "cell_inside"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "cell_inside"
+                }
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "cell-down-ladder-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3410,
+              3486,
+              2
+            ],
+            "source": "C maps/m53_54.jm2:5468 ladder top at [3410,3485,2]",
+            "radius": 1
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "cell_floor"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3410,
+                  3486,
+                  2
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-descend-upper-ladder",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "laddertop"
+            },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [
+                3410,
+                3486,
+                2
+              ],
+              "source": "C maps/m53_54.jm2:5468; scripts/ladders+stairs/scripts/ladders.rs2:42-47"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "cell_floor"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "cell_floor"
+                }
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "cell-down-stairs-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3416,
+              3485,
+              1
+            ],
+            "source": "C maps/m53_54.jm2:5358; scripts/ladders+stairs/scripts/stairs.rs2:339",
+            "radius": 1
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "temple_upper"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3416,
+                  3485,
+                  1
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "cell-descend-south-stairs",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "spiralstairstop"
+            },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [
+                3416,
+                3485,
+                1
+              ],
+              "source": "C maps/m53_54.jm2:5358; scripts/ladders+stairs/scripts/stairs.rs2:339"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "temple_upper"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "temple_upper"
+                }
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "cell-exit-temple-ground-door",
+          "kind": "interact", "version": 1, "advances": false,
+          "args": {
+            "target": {"loc": "priestperiltempledoorl"}, "op": "Open",
+            "anchor": {"tile": [3409,3489,0], "source": "C maps/m53_54.jm2:4453 east side of large door; scripts/quests/quest_priestperil/scripts/temple_doors.rs2:7-18"},
+            "radius": 1
+          },
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}},
+          "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}}
+        }
+      ],
+      "reach:monuments": [
+        {
+          "id": "monuments-leave-cell",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:cell"
+          },
+          "skip_if": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "settle": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "monuments-enter-crypt",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "reach:crypt"
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "crypt"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "crypt"
+              }
+            }
+          }
+        },
+        {
+          "id": "monuments-cross-first-gate",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "pip_underground_door1"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3405,
+                9896,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:4168 gate at [3405,9895,0]; scripts/areas/area_mausoleum/scripts/gates.rs2:1-13"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "monuments"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "monuments"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "reach:drezel-mausoleum": [
+        {
+          "id": "mausoleum-reach-monuments",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "reach:monuments"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "monuments"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "monuments"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "mausoleum-cross-second-gate",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "pip_underground_door2"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3430,
+                9897,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:4379 gate at [3431,9897,0]; scripts/areas/area_mausoleum/scripts/gates.rs2:4-13"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "mausoleum_east"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "mausoleum_east"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "swap:key": [
+        {
+          "id": "key-reach-monuments",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "reach:monuments"
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "monuments"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "monuments"
+              }
+            }
+          }
+        },
+        {
+          "id": "key-try-monument-1",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base1"
+            },
+            "anchor": {
+              "tile": [3416, 9890, 0],
+              "source": "C maps/m53_154.jm2:4276 monument at [3416, 9890, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-2",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base2"
+            },
+            "anchor": {
+              "tile": [3423, 9895, 0],
+              "source": "C maps/m53_154.jm2:4314 monument at [3423, 9895, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-3",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base3"
+            },
+            "anchor": {
+              "tile": [3428, 9890, 0],
+              "source": "C maps/m53_154.jm2:4340 monument at [3428, 9890, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-4",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base4"
+            },
+            "anchor": {
+              "tile": [3423, 9884, 0],
+              "source": "C maps/m53_154.jm2:4310 monument at [3423, 9884, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-5",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base5"
+            },
+            "anchor": {
+              "tile": [3427, 9894, 0],
+              "source": "C maps/m53_154.jm2:4334 monument at [3427, 9894, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-6",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base6"
+            },
+            "anchor": {
+              "tile": [3427, 9885, 0],
+              "source": "C maps/m53_154.jm2:4332 monument at [3427, 9885, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        },
+        {
+          "id": "key-try-monument-7",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pipkey_gold",
+            "target": {
+              "loc": "priestperil_grave_base7"
+            },
+            "anchor": {
+              "tile": [3418, 9894, 0],
+              "source": "C maps/m53_154.jm2:4290 monument at [3418, 9894, 0]; scripts/areas/area_mausoleum/scripts/monuments.rs2:44-77"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_iron"
+              }
+            }
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": false,
+          "comment": "Try this genuine key swap; only one of the seven randomized monuments accepts it. Accepted wrong-target dispatch is not a successful swap. The enclosing acquire settles only on the iron key; no Study interface or damaging Take-from action is used."
+        }
+      ],
+      "get:gold-key": [
+        {
+          "id": "gold-key-leave-cell",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:cell"
+          },
+          "skip_if": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "settle": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "gold-key-leave-crypt",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:crypt"
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "withdraw-banked-cell-keys",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "quest_bank",
+            "items": [
+              {
+                "obj": "pipkey_iron",
+                "qty": 1
+              },
+              {
+                "obj": "pipkey_gold",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_iron"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_gold"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "gold-key-return-temple-door",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3406, 3489, 0],
+            "source": "C maps/m53_54.jm2:4453 large door [3408,3489,0]; west approach",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pipkey_iron"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pipkey_gold"}}},
+              {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3406,3489,0], "radius": 1}}}
+        },
+        {
+          "id": "gold-key-reenter-temple-ground",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"loc": "priestperiltempledoorl"},
+            "op": "Open",
+            "radius": 4
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pipkey_iron"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pipkey_gold"}}},
+              {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "temple_ground"}}}
+        },
+        {
+          "id": "gold-key-monk-approach",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3412,
+              3487,
+              0
+            ],
+            "source": "C maps/m53_54.jm2:5746,5751 level-30 monk spawns at [3411,3489,0] and [3415,3485,0]",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_iron"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_gold"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3412,
+                  3487,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "fight-key-dropping-monk",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": "priestperilevilmonk3",
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 8,
+              "auto_retaliate": true
+            },
+            "loadout": "melee",
+            "stand": {
+              "tile": [
+                3412,
+                3487,
+                0
+              ],
+              "source": "C maps/m53_54.jm2:5746,5751; scripts/quests/quest_priestperil/scripts/evil_monks.rs2:47-56"
+            },
+            "lost_radius": 14,
+            "kill_budget_ticks": 240,
+            "loot": [
+              "pipkey_gold"
+            ],
+            "until": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "pipkey_gold"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_iron"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_gold"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pipkey_gold"
+              }
+            }
+          },
+          "advances": false,
+          "comment": "Only priestperilevilmonk3 drops the golden key, guaranteed for its aggressive player before stage 6. It can zap for 8 (content calls this a guess). No ground-spawn claim or indiscriminate monk selection."
+        }
+      ],
+      "get:salve-water": [
+        {
+          "id": "water-leave-cell",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:cell"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Not": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "cell_floor"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "temple_upper"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "water-leave-crypt-for-bucket",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:crypt"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "crypt"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "withdraw-salve-bucket",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "quest_bank",
+            "items": [
+              {
+                "obj": "bucket_empty",
+                "qty": 1
+              },
+              {
+                "obj": "bucket_murkywater",
+                "qty": 1
+              },
+              {
+                "obj": "bucket_blessedwater",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "buy-salve-bucket",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper2",
+              "anchor": {
+                "tile": [
+                  3218,
+                  3415,
+                  0
+                ],
+                "source": "C maps/m50_53.jm2:12901; scripts/areas/area_varrock/configs/varrock.inv:22-36 stock4=bucket_empty,2,100 (100 restock ticks, not price)"
+              }
+            },
+            "obj": "bucket_empty",
+            "qty": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_empty"
+              }
+            }
+          }
+        },
+        {
+          "id": "water-reach-monuments",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "reach:monuments"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_murkywater"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_blessedwater"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "monuments"
+              }
+            }
+          }
+        },
+        {
+          "id": "fill-salve-bucket",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "bucket_empty",
+            "target": {
+              "loc": "priestperil_well"
+            },
+            "anchor": {
+              "tile": [3423, 9890, 0],
+              "source": "C maps/m53_154.jm2:4312 well at [3423,9890,0]; scripts/areas/area_mausoleum/scripts/well.rs2:8-16"
+            },
+            "radius": 2,
+            "product": "bucket_murkywater"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_murkywater"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_blessedwater"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_murkywater"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "get:essence-batch": [
+        {
+          "id": "essence-leave-cell",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:cell"
+          },
+          "skip_if": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "settle": {
+            "Not": {
+              "Any": [
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_floor"
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "temple_upper"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "essence-leave-crypt",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "leave:crypt"
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "crypt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "essence-clear-pack",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit_all",
+            "at": "quest_bank",
+            "keep": [
+              "lobster",
+              "coins"
+            ]
+          },
+          "skip_if": {
+            "Any": []
+          },
+          "settle": {
+            "All": []
+          },
+          "comment": "Stage-specific pack ownership. Keep food and the coin stack; deposit bucket/keys/notes so there is room for twenty unnoted essences."
+        },
+        {
+          "id": "withdraw-unnoted-essence-batch",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "quest_bank",
+            "items": [
+              {
+                "obj": "blankrune",
+                "qty": 20
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "blankrune"
+              }
+            }
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blankrune"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "blankrune"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "open:morytania": [
+        {
+          "id": "barrier-reach-mausoleum",
+          "kind": "acquire",
+          "version": 1,
+          "args": {
+            "recipe": "reach:drezel-mausoleum"
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "mausoleum_east"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "mausoleum_east"
+              }
+            }
+          }
+        },
+        {
+          "id": "barrier-reclaim-or-first-advice",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "priestperiltrappedmonk2",
+            "anchor": {
+              "tile": [
+                3440,
+                9895,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:8-19,138-157,277-294,343-347"
+            },
+            "leash": 2,
+            "prefer": [
+              "Well, I'm going to look around a bit more.",
+              "Sorry, not interested",
+              "Ok, thanks."
+            ],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": []
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": true
+        },
+        {
+          "id": "barrier-finish-advice",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "priestperiltrappedmonk2",
+            "anchor": {
+              "tile": [
+                3440,
+                9895,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:138-147,277-294,343-347"
+            },
+            "leash": 2,
+            "prefer": [
+              "Well, I'm going to look around a bit more.",
+              "Sorry, not interested",
+              "Ok, thanks."
+            ],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": []
+          },
+          "settle": {
+            "All": []
+          },
+          "advances": true
+        },
+        {
+          "id": "pass-holy-barrier",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "pip_underground_wall_side_withportal"
+            },
+            "op": "Pass-through",
+            "anchor": {
+              "tile": [
+                3440,
+                9887,
+                0
+              ],
+              "source": "C maps/m53_154.jm2:4437 barrier at [3440,9886,0]; scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:1-9"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "message_state",
+              "version": 1,
+              "args": {
+                "set": [
+                  "You pass through the holy barrier."
+                ],
+                "clear": []
+              }
+            }
+          },
+          "settle": {
+            "All": [
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3423,
+                      3485,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "You pass through the holy barrier."
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "advances": false
+        }
+      ]
+    },
+    "bank": {
+      "tile": [
+        3253,
+        3420,
+        0
+      ],
+      "source": "C maps/m50_53.jm2:9487 bank booth [3253,3419,0]; north approach"
+    },
+    "coin_float": 0,
+    "loadouts": {
+      "melee": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "rune_scimitar"
+        },
+        "carry": []
+      }
+    },
+    "areas": {
+      "temple_ground": {
+        "boxes": [
+          [
+            3409,
+            3483,
+            3418,
+            3493,
+            0
+          ]
+        ],
+        "source": "C maps/m53_54.jm2:4452-4657 temple walls, door and stairs"
+      },
+      "temple_upper": {
+        "boxes": [
+          [
+            3409,
+            3483,
+            3418,
+            3493,
+            1
+          ]
+        ],
+        "source": "C maps/m53_54.jm2:5275,5358 upper ladder and stairs"
+      },
+      "cell_floor": {
+        "boxes": [
+          [
+            3409,
+            3483,
+            3419,
+            3493,
+            2
+          ]
+        ],
+        "source": "C maps/m53_54.jm2:5468,5498,5526 cell-floor ladder/coffin/door"
+      },
+      "cell_inside": {
+        "boxes": [
+          [
+            3416,
+            3487,
+            3419,
+            3493,
+            2
+          ]
+        ],
+        "source": "C maps/m53_54.jm2:5526,5777 east side of cell door and Drezel"
+      },
+      "crypt": {
+        "boxes": [
+          [
+            3398,
+            9878,
+            3445,
+            9912,
+            0
+          ]
+        ],
+        "source": "C maps/m53_154.jm2:4168,4172,4379,6138-6139 mausoleum"
+      },
+      "crypt_north": {
+        "boxes": [
+          [
+            3398,
+            9896,
+            3412,
+            9912,
+            0
+          ]
+        ],
+        "source": "C maps/m53_154.jm2:4168,4172,6138 north side of first gate"
+      },
+      "monuments": {
+        "boxes": [
+          [
+            3405,
+            9880,
+            3430,
+            9895,
+            0
+          ]
+        ],
+        "source": "C maps/m53_154.jm2:4168,4276,4290,4310-4314,4332-4340"
+      },
+      "mausoleum_east": {
+        "boxes": [
+          [
+            3432,
+            9886,
+            3445,
+            9897,
+            0
+          ]
+        ],
+        "source": "C maps/m53_154.jm2:4379,4437,6139 east side of second gate"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:lobster"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:priestperil",
+      "progress": {
+        "colour": {
+          "not_started": "priestperil:0",
+          "in_progress": "priestperil:1",
+          "complete": "priestperil:60"
+        },
+        "rules": [
+          {
+            "stage": "priestperil:60",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": 60
+          },
+          {
+            "stage": "priestperil:10",
+            "all": [
+              "i need to bring drezel",
+              "fifty rune essences"
+            ],
+            "varp": 10
+          },
+          {
+            "stage": "priestperil:8",
+            "all": [
+              "i should head downstairs to the monument"
+            ],
+            "varp": 8
+          },
+          {
+            "stage": "priestperil:7",
+            "all": [
+              "i should speak to drezel again"
+            ],
+            "varp": 7
+          },
+          {
+            "stage": "priestperil:6",
+            "all": [
+              "but i still have to do something about that vampire"
+            ],
+            "varp": 6
+          },
+          {
+            "stage": "priestperil:5",
+            "all": [
+              "i need to find the key to his cell"
+            ],
+            "varp": 5
+          },
+          {
+            "stage": "priestperil:4",
+            "all": [
+              "i must return to the temple"
+            ],
+            "varp": 4
+          },
+          {
+            "stage": "priestperil:3",
+            "all": [
+              "i should tell king roald"
+            ],
+            "varp": 3
+          },
+          {
+            "stage": "priestperil:2",
+            "all": [
+              "has asked me to kill it"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "priestperil:1",
+            "all": [
+              "investigate",
+              "what's happened to him"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "priestperil:0",
+            "all": [
+              "i can start this quest"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "equip-priestperil-melee-kit",
+          "kind": "loadout",
+          "version": 1,
+          "args": {
+            "loadout": "melee",
+            "at": "quest_bank"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "stage_in",
+                    "version": 1,
+                    "args": {
+                      "quest": "priestperil",
+                      "any": [
+                        "priestperil:2",
+                        "priestperil:5"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "melee"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loadout_ready",
+              "version": 1,
+              "args": {
+                "loadout": "melee"
+              }
+            }
+          },
+          "comment": "Only equip before the two combat stages. Pack ownership prevents stage-consumed water, keys and essence from being globally re-provisioned. Bring eight lobsters and 100 coins; this gear loadout does not refill food."
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "priestperil:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-king-roald",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_roald",
+                "anchor": {
+                  "tile": [
+                    3222,
+                    3476,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11752; scripts/areas/area_varrock/scripts/king_roald.rs2:46-55"
+                },
+                "leash": 2,
+                "prefer": [
+                  "Sure."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:1"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "knock-temple-approach",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3407,
+                  3489,
+                  0
+                ],
+                "source": "C maps/m53_54.jm2:4453 west side of large door",
+                "radius": 1
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3407,
+                      3489,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3407,
+                      3489,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "knock-false-drezel",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "priestperiltempledoorl"
+                },
+                "op": "Knock-at",
+                "anchor": {
+                  "tile": [
+                    3407,
+                    3489,
+                    0
+                  ],
+                  "source": "C maps/m53_54.jm2:4453; scripts/quests/quest_priestperil/scripts/temple_doors.rs2:20-60,77-82"
+                },
+                "radius": 2,
+                "dialogue": {
+                  "prefer": [
+                    "Roald sent me to check on Drezel.",
+                    "Sure."
+                  ],
+                  "strict": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:2"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-guardian-crypt",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:crypt"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              }
+            },
+            {
+              "id": "defeat-temple-guardian",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "priestperilguarddog",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "loadout": "melee",
+                "stand": {
+                  "tile": [
+                    3405,
+                    9904,
+                    0
+                  ],
+                  "source": "C maps/m53_154.jm2:6138 guardian [3405,9902,0]; scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:1-22"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 300
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:3"
+                    ]
+                  }
+                }
+              },
+              "advances": true,
+              "comment": "Level 30, size 2, 45 HP, Attack/Defence/Strength 20; a real melee fight. The hero death hook changes the journal to stage 3. Walking protection is not guaranteed at Prayer 37\u201342."
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "return-from-guardian-crypt",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "leave:crypt"
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "crypt"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "crypt"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "report-guardian-to-roald",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_roald",
+                "anchor": {
+                  "tile": [
+                    3222,
+                    3476,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11752; scripts/areas/area_varrock/scripts/king_roald.rs2:69-81"
+                },
+                "leash": 2,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:4"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "find-imprisoned-drezel",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:cell"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            },
+            {
+              "id": "hear-real-drezel-story",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "pip_prisondoor"
+                },
+                "op": "Talk-through",
+                "anchor": {
+                  "tile": [
+                    3414,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:59-69,95-141"
+                },
+                "radius": 2,
+                "dialogue": {
+                  "prefer": [
+                    "Tell me anyway.",
+                    "Yes."
+                  ],
+                  "strict": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:5"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "get-cell-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "get:gold-key"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "pipkey_gold"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "pipkey_iron"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "pipkey_gold"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "pipkey_iron"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "swap-golden-for-iron-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "swap:key"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_iron"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pipkey_iron"
+                  }
+                }
+              }
+            },
+            {
+              "id": "return-iron-key-to-cell",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:cell"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            },
+            {
+              "id": "unlock-drezel-cell",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "pipkey_iron",
+                "target": {
+                  "loc": "pip_prisondoor"
+                },
+                "anchor": {
+                  "tile": [
+                    3415,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:39-51"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:6"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "get-water-from-salve",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "get:salve-water"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_murkywater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "bring-salve-water-to-drezel",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:cell"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            },
+            {
+              "id": "enter-unlocked-drezel-cell",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "pip_prisondoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3414,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:32-37"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "bucket_blessedwater"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "cell_inside"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_inside"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "drezel-bless-salve-water",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "bucket_murkywater",
+                "target": {
+                  "npc": "priestperiltrappedmonk"
+                },
+                "anchor": {
+                  "tile": [
+                    3417,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5777; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:26-30,147-153"
+                },
+                "radius": 2,
+                "product": "bucket_blessedwater"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_blessedwater"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_blessedwater"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "leave-cell-with-holy-water",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "pip_prisondoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3416,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:32-37"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_inside"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "cell_inside"
+                    }
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "douse-vampire-coffin",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "bucket_blessedwater",
+                "target": {
+                  "loc": "priestperil_coffin_noanim"
+                },
+                "anchor": {
+                  "tile": [3413, 3486, 2],
+                  "source": "C maps/m53_54.jm2:5498; scripts/quests/quest_priestperil/scripts/vampire_coffin.rs2:8-17"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:7"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "return-for-drezel-release",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:cell"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_floor"
+                  }
+                }
+              }
+            },
+            {
+              "id": "reenter-drezel-cell-after-coffin",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "pip_prisondoor"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3414,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5526; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:32-37"
+                },
+                "radius": 2
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_inside"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cell_inside"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "release-drezel-to-mausoleum",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "priestperiltrappedmonk",
+                "anchor": {
+                  "tile": [
+                    3417,
+                    3489,
+                    2
+                  ],
+                  "source": "C maps/m53_54.jm2:5777; scripts/quests/quest_priestperil/scripts/trapped_drezel.rs2:16-20"
+                },
+                "leash": 2,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:8"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "meet-drezel-in-mausoleum",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:drezel-mausoleum"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              }
+            },
+            {
+              "id": "learn-fifty-essence-task",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "priestperiltrappedmonk2",
+                "anchor": {
+                  "tile": [
+                    3440,
+                    9895,
+                    0
+                  ],
+                  "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:30-48"
+                },
+                "leash": 2,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:10"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "get-next-unnoted-essence-batch",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "get:essence-batch"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blankrune"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "blankrune"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blankrune"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "blankrune"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "GAP-mine-rune-essence-missing-selected-gather-method",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "blankrune"
+                    }
+                  }
+                },
+                "max_ticks": 10
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blankrune"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blankrune"
+                  }
+                }
+              },
+              "comment": "GAP: selected 289 gathering catalog has no rune-essence method. Content scripts/skill_mining/configs/mine.dbrow:1-8 and scripts/skill_mining/scripts/mining.rs2:9-11 support blankrunestone -> blankrune, but no released selected method can compile it. This top-level named step parks after bounded failed waits when bank supplies run out. Supply fifty unnoted essence in the bank for completion; no fake mining or notes."
+            },
+            {
+              "id": "deliver-essence-reach-drezel",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "reach:drezel-mausoleum"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "mausoleum_east"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-unnoted-essence-to-drezel",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "priestperiltrappedmonk2",
+                "anchor": {
+                  "tile": [
+                    3440,
+                    9895,
+                    0
+                  ],
+                  "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:50-117"
+                },
+                "leash": 2,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "blankrune"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "quest_colour",
+                      "version": 1,
+                      "args": {
+                        "quest": "priestperil",
+                        "is": "complete"
+                      }
+                    }
+                  }
+                ]
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "priestperil:60",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "unlock-and-pass-morytania-barrier",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "open:morytania"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": [
+                      "You pass through the holy barrier."
+                    ],
+                    "clear": []
+                  }
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "message_state",
+                      "version": 1,
+                      "args": {
+                        "set": [
+                          "You pass through the holy barrier."
+                        ],
+                        "clear": []
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3423,
+                          3485,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "comment": "Completion at varp 60 is not gate access at 61. Two ordinary Drezel talks cover lost-Wolfbane replacement then advice; strict closing preferences decline Nature Spirit on a stage-61 resume. Actual Pass-through plus its message and scripted landing prove access. Stop immediately outside; do not enter Canifis or fight werewolves."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
