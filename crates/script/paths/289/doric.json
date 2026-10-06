@@ -9,18 +9,25 @@
   "quest": {
     "members": false,
     "quest_points": 1,
-    "requirements": [],
+    "requirements": [
+      {
+        "id": "mining-15",
+        "kind": { "Skill": { "skill": "mining", "level": 15 } },
+        "at": "materials",
+        "source": "scripts/skill_mining/configs/mine.dbrow:10-20,23-34,49-60 (clay/copper Mining 1; iron ore Mining 15)"
+      }
+    ],
     "items": [
-      { "obj": "clay", "qty": 6, "kind": "must_have" },
-      { "obj": "copper_ore", "qty": 4, "kind": "must_have" },
-      { "obj": "iron_ore", "qty": 2, "kind": "must_have" }
+      { "obj": "clay", "qty": 6, "kind": "acquirable", "acquire": null },
+      { "obj": "copper_ore", "qty": 4, "kind": "acquirable", "acquire": null },
+      { "obj": "iron_ore", "qty": 2, "kind": "acquirable", "acquire": null }
     ],
     "acquire": {},
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
     "areas": {},
-    "tools": ["obj:clay", "obj:copper_ore", "obj:iron_ore"],
+    "tools": ["obj:clay", "obj:copper_ore", "obj:iron_ore", "obj:bronze_pickaxe"],
     "owns_inventory": false
   },
   "roles": [
@@ -50,7 +57,7 @@
               "kind": "talk",
               "version": 1,
               "advances": true,
-              "comment": "Before this step, provisioning may park on the first known inventory-and-bank shortfall: Clay x6, then Copper ore x4, then Iron ore x2. Mining is unavailable; supply the missing ores manually.",
+              "comment": "Banked ores are withdrawn first during preparation. After Start, the Path gathers any missing clay, copper ore and iron ore at Rimmington before handing them in.",
               "args": {
                 "npc": "doric",
                 "anchor": {
@@ -72,11 +79,68 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "gather-doric-clay",
+              "kind": "gather",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "skill": "mining",
+                "resource": "clay",
+                "until": { "obj": "clay", "qty": 6 },
+                "anchor": {
+                  "tile": [2986, 3239, 0],
+                  "source": "maps/m46_50.jm2:6337 (clayrock1 at [2986,3239,0]); pack/loc.pack:2109; scripts/skill_mining/configs/mine.dbrow:10-21"
+                },
+                "radius": 3
+              },
+              "comment": "Mine to the held count of 6 after banked clay is withdrawn; the Rimmington clay rock requires Mining 1.",
+              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } }
+            },
+            {
+              "id": "gather-doric-copper",
+              "kind": "gather",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "skill": "mining",
+                "resource": "copper",
+                "until": { "obj": "copper_ore", "qty": 4 },
+                "anchor": {
+                  "tile": [2976, 3247, 0],
+                  "source": "maps/m46_50.jm2:6013 (copperrock1 at [2976,3247,0]); pack/loc.pack:2091; scripts/skill_mining/configs/mine.dbrow:23-34"
+                },
+                "radius": 3
+              },
+              "comment": "Mine to the held count of 4 after banked copper ore is withdrawn; this rock requires Mining 1.",
+              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } }
+            },
+            {
+              "id": "gather-doric-iron",
+              "kind": "gather",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "skill": "mining",
+                "resource": "iron",
+                "until": { "obj": "iron_ore", "qty": 2 },
+                "anchor": {
+                  "tile": [2968, 3239, 0],
+                  "source": "maps/m46_50.jm2:5666 (ironrock1 at [2968,3239,0]); pack/loc.pack:2093; scripts/skill_mining/configs/mine.dbrow:49-60"
+                },
+                "radius": 3
+              },
+              "comment": "Mine to the held count of 2 after banked iron ore is withdrawn; this rock requires Mining 15.",
+              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "iron_ore", "qty": 2 } } }
+            },
+            {
               "id": "hand-in-ores",
               "kind": "talk",
               "version": 1,
               "advances": true,
-              "comment": "This hand-in needs 6 clay, 4 copper ore and 2 iron ore in inventory. Mining is unavailable; if preparation parks on a missing ore, supply it in inventory or bank to satisfy the named shortfall.",
+              "comment": "The gather steps above fill only deficits left after optional bank withdrawals; Doric consumes 6 clay, 4 copper ore and 2 iron ore at this hand-in.",
               "args": {
                 "npc": "doric",
                 "anchor": {
