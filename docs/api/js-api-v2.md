@@ -216,18 +216,18 @@ keep their existing JSON helper paths where applicable; `foodCount` and
 | Method | OK | Errors |
 | --- | --- | --- |
 | `foodCount({ items, foodName })` | slot count | `invalid-args`, `missing-selected-data` |
-
-`foodCount` takes a real `ItemRow[]`. `api.snapshot.inv` is the host array view
-(`Array.isArray` is true); pass it directly. Arbitrary `{ length }` objects are
-`invalid-args`. `Array.from(api.snapshot.inv)` is optional, not required.
 | `foodHealAmount({ foodName })` | fixed heal | `unknown-food`, `missing-selected-data` |
 | `combatKeepNames({ food, … })` | string[] | `invalid-args`, `missing-selected-data` |
 | `runesPerCast({ spellName, wielded })` | costs or `null` | `invalid-args`, `missing-selected-data` |
 | `escapeRunesFor({ id })` | `{ runes, level, label }` | `unknown-id`, `missing-selected-data` |
 
+`foodCount` takes a real `ItemRow[]`. `api.snapshot.inv` is the host array view
+(`Array.isArray` is true); pass it directly. Arbitrary `{ length }` objects are
+`invalid-args`. `Array.from(api.snapshot.inv)` is optional, not required.
+
 `escapeRunesFor` resolves `id` with exact `magic_spell_teleport_{id}` rows (no
-cast `available()` filter). The public v1 `escapeRunesFor` export is W5 hunt
-integration through the same shared Rust fact module.
+cast `available()` filter). The v1 `escapeRunesFor(teleportId)` export resolves
+through the same shared Rust fact module.
 
 Example: `crates/script/examples/supply_helpers_v2.ts`.
 
@@ -495,6 +495,8 @@ that never got there: treat anything but `done` with `true` as failure, and
 for the `null` runs prove the result from the scene (the player's tile).
 `aborted` reasons are the host's.
 
+A run settles `HuntOutcome<T>` as `done` with the value, `refused` with a reason, or `aborted` with `reset | superseded | terminated | unknown`.
+
 Examples: `crates/script/examples/fight_field_v2.ts`,
 `hold_spot_v2.ts`, `retreat_spot_v2.ts`, `walk_spot_v2.ts`,
 `enter_lair_v2.ts`, `leave_lair_v2.ts`, `cell_v2.ts`, `acquire_key_v2.ts`,
@@ -512,7 +514,7 @@ Both methods read `quest_identity` only. There is no second writer field.
 | `questPrereqs({ id })` | requirements object | `invalid-args`, `missing-selected-data`, `family-unavailable:quest_prereqs`, `unknown-quest` |
 
 `questIdentity` takes exactly one of `name` or `id`, and it must be a string.
-`questIdentity()` and `questIdentity({})` are `invalid-args`, not a six-row dump.
+`questIdentity()` and `questIdentity({})` are `invalid-args`, not a full-catalog dump.
 Neither, both, a non-object, a non-string, or an array is `invalid-args`. A
 number is `invalid-args`. A blank or whitespace-only string is `unknown-quest`
 after the family check. `id` matches the seed id only (trim, ASCII
@@ -522,7 +524,7 @@ not `{ rows }` of length 1. Fields stay `id`, `component`, `display`, `varp`,
 `complete` is the number. `quest_points` is the static constant.
 
 `questPrereqs` requires a string `id`. A `name` field is not a key. An extra
-`name` is ignored. The value is the requirements object only. All six stay
+`name` is ignored. The value is the requirements object only. Every row stays
 `partial`. Empty `mustHave` is still `ok: true` with `qualification: "partial"`
 and `unknown_as_satisfied: false`. Items stay script aliases.
 
@@ -594,6 +596,7 @@ the machine read `trails()` only: not `items()`, and not the challenge answers.
 | `clue.keep(input)` | `{ keep: boolean }` | `invalid-args` |
 | `clue.begin(input?)` | `{ token }` | `missing-selected-data`, `family-unavailable:trails`, `none-held`, `constrained`, `abandoned` |
 | `await clue.run({ token }, hooks?)` | one `ClueOutcome` settlement | `invalid-args`, `stale`, or a host abort |
+| `clue.retry()` | `{ cleared: true }` | — (clears the abandon latch only; never the stripped list or live token) |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -628,7 +631,7 @@ parent. Input keys other than the one pin are ignored:
 3554 row with `access: "constrained"` and no `supported` key.
 
 Not a Promise and not a `request()` op: `api.request({ op: 'clue.row' })` stays
-`not impl`. `challengeAnswer`, `deposit`, `retry`, and `noteDeath` do not exist
+`not impl`. `challengeAnswer`, `deposit`, and `noteDeath` do not exist
 on `api.clue`.
 
 `clue.heldStep()` takes no argument. The page is the already-posted
@@ -961,7 +964,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the run advances to `done` |
 | `done` | the finished collect's own end: the token is dead; a later run with that token is refused as `stale`. Never a hunt `status: 'done'` |
 | `dead` | any live call whose posted effective `hitpoints` is some and at or below zero: the token dies with the player, nothing posts `'clue solved'`, and a page that posted no stat is not a zero |
-| `abandon` | a terminal kind with **no production trigger** yet: the machine emits it nowhere on its own, and the latch it sets — the frozen leave-in-pack `abandonedClueId`, with its `retry()` clear — is wired and observable. When it is emitted the token dies and nothing posts `'clue solved'` |
+| `abandon` | a terminal kind with **no production trigger**: the machine emits it nowhere on its own, and the latch it sets — the frozen leave-in-pack `abandonedClueId`, with its `retry()` clear — is wired and observable. When it is emitted the token dies and nothing posts `'clue solved'` |
 | `guardian-lost` | the wizard this token Attacked left the posted npc page outside the freeze-aware grace without ever being seen at zero health: the encounter is lost, the token dies and nothing redigs. A disappearance without an Attack stays `wait` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 

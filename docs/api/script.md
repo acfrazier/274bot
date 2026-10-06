@@ -59,13 +59,13 @@ authority. Watchdog, reconnect and fleet polling cannot restart that run; the
 operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
-The typed action-machine facility is a separate cutover: begins/polls still
-refuse with `ActionError::Unavailable`; this registration implementation does
-not qualify quiet leases, native walk/journal operations or watchdog clocks.
-Sherlock retains its existing clue queue/dispatch behavior through one
-crate-private borrowed host frame (no raw driver). It remains `load`-gated for
-the existing clue implementation, but never creates a V8 isolate. Clue
-transport/recovery extraction replaces that bridge, not the registration API.
+The typed action-machine facility drives real machines: `NativeActions::begin`
+and `poll` admit and advance each family's operations, and Quester polls every
+family through them each tick. `ActionError::Unavailable` is a per-request
+refusal (for example a disposal that requires a slot-exact Drop). Sherlock
+retains its existing clue queue/dispatch behavior through one crate-private
+borrowed host frame (no raw driver). It remains `load`-gated for the existing
+clue implementation, but never creates a V8 isolate.
 
 Selected fact strings can be shared with a decode-local `api::selected::FactStrings`;
 drop the interner after preparation and let the family-held Arcs own their
@@ -90,7 +90,7 @@ instance; `want_run` distinguishes operator Pause from offline.
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session. `api.questPaths()` is a sync
-read of the release Path index for the four released quests, needing no seat;
+read of the release Path index for the seventeen released quests, needing no seat;
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the
@@ -104,9 +104,8 @@ camera yaw writes survive foreground admission, but stay queued while the Load
 slot is Starting or Paused, even offline, held, or without a snapshot. They
 follow ordinary dispatch after Resume.
 Held reconnect walks and the host's carried walk are discarded while the seat
-owns the slot, not saved for replay after it ends. This deliberately differs
-from design §3.6's held-walk deferral: an old route must not regain foreground
-authority after a native session. The carried host walk is not counted as a
+owns the slot, not saved for replay after it ends: an old route must not regain
+foreground authority after a native session. The carried host walk is not counted as a
 dropped script row. When the session ends ordinary game dispatch resumes.
 The Load-slot seat's worked example is
 `crates/script/examples/gather_quest_v2.ts` (authoritative) beside
@@ -167,8 +166,9 @@ maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
 
-Shield of Arrav and Hero's Quest require two accounts explicitly running their
-own Quester in the same Play, with reciprocal partner settings and opposite
+The pair machinery below is Path-authoring reference (no bundled Beta 1 Path uses
+`partner` yet): Shield of Arrav and Hero's Quest require two accounts explicitly
+running their own Quester in the same Play, with reciprocal partner settings and opposite
 effective gangs. A separate panel or TUI process is not the same Play. The owned
 Arrav journal determines existing membership; an unjoined account must explicitly
 choose its irreversible gang. Conflicting or ambiguous membership blocks before
@@ -297,7 +297,7 @@ ends in place, and the next queued Path assesses the inventory it inherits.
 An `acquirable` row with `acquire: null` is a best-effort bank withdrawal hint;
 its authored Path steps perform acquisition. Future authored goals are not
 reserved as simultaneous inventory needs, and hints that cannot fit are deferred
-to those steps. Missing `mustHave` supplies still block. Tools are preservation
+to those steps. Missing `must_have` supplies still block. Tools are preservation
 hints only: missing tools do not cause a scan or withdrawal. An active recipe's
 declared inputs can independently request those items.
 Missing coin and active-loadout carry floats scan an unknown bank and draw
@@ -692,8 +692,7 @@ Cancellation releases protection owned by the hold.
 **Known limit (retreat destination).** The retreat tile is a fixed distance
 away from the attacker. It does not avoid other aggressive NPCs, so an abort
 walk can end beside a new attacker (the guarded hold then handles it).
-Choosing destinations away from aggressive NPCs belongs to survivable
-navigation (S2c).
+Choosing destinations away from aggressive NPCs is not implemented.
 
 **Known limit (WindDown gap).** Every `Aborted` combat end first enters
 WindDown, which turns all raised prayers off and reports only once they are
@@ -702,8 +701,8 @@ threat set, which raises Protect again only after it observes attack evidence
 and the varp echo. In that window (about two to four ticks, enough for one
 Warlord swing) a step that authored `guard: "protect"` is unprotected. This
 matters most for `Aborted(Unprotected(NoFood))`, which fires at the emergency
-HP line. It affects only steps with `guard: "protect"`; no shipped Path uses
-that mode. A later change should hand the raised prayers from an abort with a
+HP line. It affects only steps with `guard: "protect"`; Prince Ali Rescue's `jail-clear-guards`
+combat step uses it. A later change should hand the raised prayers from an abort with a
 live attacker to the abort walk or hold instead of sweeping them.
 
 Abort qualification records the step's prayer permission independently of the
@@ -727,8 +726,8 @@ active scripted work may re-arm this gap using a finite budget. This drains
 delayed reward/work pages without allowing unrelated activity to wait forever.
 Combat interruption
 is keyed directly to the client's `in_combat` flag, not to a newly observed hit
-or a combat baseline. The flag stays set for about 8 s after any hitsplat
-(`client.rs:9211` sets it to `loop_cycle + 400`; `decode.rs:1288` reads it).
+or a combat baseline. The flag stays set for about 8 s (400 client cycles)
+after any hitsplat.
 Thus a talk step that starts or ends within that window after unrelated combat
 parks as **Blocked**, even if the dialogue itself was not hit. This is
 fail-closed and requires an explicit operator Start. Poison hits count too:
@@ -1429,5 +1428,5 @@ flight settles false (a deposit loop does nothing).
 
 ## Hard no
 
-No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in
-`vendor/fr-client-rust`. No extra JSON host wire. Never Fairy-Ring.
+No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in the
+vendored client. No extra JSON host wire.
