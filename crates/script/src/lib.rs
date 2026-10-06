@@ -11,6 +11,8 @@ pub mod api_progress;
 mod api_session;
 /// Shared native bank selector and transfer machines.
 pub mod bank;
+/// The persisted per-account bank hint file (design-bank-snapshot §1.4).
+pub mod bank_hints;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;

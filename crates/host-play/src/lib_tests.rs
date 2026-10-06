@@ -6832,6 +6832,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         Some(&snapshot),
         None,
         None,
+        None,
         &scripts,
         &play.cheats,
         &navs,
@@ -19272,6 +19273,7 @@ impl ReconnectRig {
             Some(&self.snap),
             None,
             None,
+            None,
             &self.scripts,
             &self.cheats,
             &self.navs,
@@ -25536,6 +25538,8 @@ mod read_journal_tests {
         assert_eq!(slot.last_error(), Some("read callback panicked"));
     }
 }
+#[path = "bank_memory_borrow_tests.rs"]
+mod bank_memory_borrow;
 #[path = "script_journal_paint_tests.rs"]
 mod journal_paint;
 
@@ -25858,6 +25862,7 @@ mod host_batch_tests {
                 None,
                 None,
                 Some(&self.snapshot),
+                None,
                 None,
                 None,
                 &self.scripts,

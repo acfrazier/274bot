@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use vault::valid_component;
 
 use crate::public_worlds::{PublicWorld, PublicWorlds};
 
@@ -353,15 +354,6 @@ fn create_new_in_place(path: &Path, contents: &[u8]) -> std::io::Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error),
     }
-}
-
-pub fn valid_component(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_host(host: &str) -> bool {

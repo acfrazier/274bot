@@ -32,6 +32,10 @@ pub struct CompiledTick<'a> {
     pub selected: Option<&'a api::game_data::SelectedGameData>,
     /// The host's cached reach observation, borrowed without copying its planes.
     pub reach: Option<&'a api::query::ReachQueryView>,
+    /// The account's bank memory, borrowed from the slot's read guard for
+    /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
+    /// the host has no memory for the slot.
+    pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.
