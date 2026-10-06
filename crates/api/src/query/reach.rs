@@ -2208,6 +2208,40 @@ pub fn arrival_stands(
     })
 }
 
+const WALL_STRAIGHT: u8 = 0;
+
+/// A `WALL_STRAIGHT` loc's sides by angle: the facing offset, then the two
+/// along-wall offsets (engine `ReachStrategy.reachWall1`).
+fn straight_wall_sides(angle: u8) -> Option<[(i32, i32); 3]> {
+    const WEST: u8 = 0;
+    const NORTH: u8 = 1;
+    const EAST: u8 = 2;
+    const SOUTH: u8 = 3;
+
+    Some(match angle {
+        WEST => [(-1, 0), (0, 1), (0, -1)],
+        NORTH => [(0, 1), (-1, 0), (1, 0)],
+        EAST => [(1, 0), (0, 1), (0, -1)],
+        SOUTH => [(0, -1), (-1, 0), (1, 0)],
+        _ => return None,
+    })
+}
+
+/// The tile on a `WALL_STRAIGHT` loc's angle-facing side: the doorstep across
+/// the wall from the loc's own tile, from which the engine operates it.
+/// `None` for other shapes or an unknown angle.
+pub fn straight_wall_facing(destination: WorldTile, shape: u8, angle: u8) -> Option<WorldTile> {
+    if shape != WALL_STRAIGHT {
+        return None;
+    }
+    let [(dx, dz), _, _] = straight_wall_sides(angle)?;
+    Some(WorldTile {
+        x: destination.x.checked_add(dx)?,
+        z: destination.z.checked_add(dz)?,
+        level: destination.level,
+    })
+}
+
 /// Engine `ReachStrategy.reachWall1` for `WALL_STRAIGHT`: its angle-facing
 /// side is reachable across the wall; along-wall neighbours require an open
 /// step into the loc tile, matching `CollisionMap.test_wall`.
@@ -2218,12 +2252,6 @@ pub fn straight_wall_reachable(
     angle: u8,
     can_step: impl Fn(WorldTile, WorldTile) -> bool,
 ) -> bool {
-    const WALL_STRAIGHT: u8 = 0;
-    const WEST: u8 = 0;
-    const NORTH: u8 = 1;
-    const EAST: u8 = 2;
-    const SOUTH: u8 = 3;
-
     if from.level != destination.level {
         return false;
     }
@@ -2237,12 +2265,8 @@ pub fn straight_wall_reachable(
         destination.x.checked_add(dx) == Some(from.x)
             && destination.z.checked_add(dz) == Some(from.z)
     };
-    let (facing_side, along_wall_a, along_wall_b) = match angle {
-        WEST => ((-1, 0), (0, 1), (0, -1)),
-        NORTH => ((0, 1), (-1, 0), (1, 0)),
-        EAST => ((1, 0), (0, 1), (0, -1)),
-        SOUTH => ((0, -1), (-1, 0), (1, 0)),
-        _ => return false,
+    let Some([facing_side, along_wall_a, along_wall_b]) = straight_wall_sides(angle) else {
+        return false;
     };
     at_offset(facing_side.0, facing_side.1)
         || ((at_offset(along_wall_a.0, along_wall_a.1)

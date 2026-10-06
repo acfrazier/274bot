@@ -640,6 +640,9 @@
                   "$ref": "#/$defs/fact.equipment_only.v1"
                 },
                 {
+                  "$ref": "#/$defs/fact.pack_only.v1"
+                },
+                {
                   "$ref": "#/$defs/fact.partner_item_count_at_least.v1"
                 }
               ]
@@ -1637,6 +1640,42 @@
         },
         "args": {
           "$ref": "#/$defs/EquipmentOnlyArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "PackOnlyArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Object aliases the pack may hold; none of them is required. The Path's\nprotected items (the set `bank deposit_all` always keeps) are allowed too."
+        }
+      },
+      "required": [
+        "objs"
+      ]
+    },
+    "fact.pack_only.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "pack_only"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/PackOnlyArgs"
         }
       },
       "required": [

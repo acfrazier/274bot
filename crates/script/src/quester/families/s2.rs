@@ -1710,6 +1710,53 @@ impl PredicatePlan for EquipmentOnly {
     }
 }
 
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackOnlyArgs {
+    /// Object aliases the pack may hold; none of them is required. The Path's
+    /// protected items (the set `bank deposit_all` always keeps) are allowed too.
+    objs: Vec<String>,
+}
+
+pub(super) fn compile_pack_only(
+    args: PackOnlyArgs,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let mut ids = cx.keep_ids.to_vec();
+    for alias in &args.objs {
+        ids.push(item(cx, alias)?.id);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(Arc::new(PackOnly {
+        ids: Arc::from(ids),
+    }))
+}
+
+/// True when every held pack row is an allowed id: a `bank deposit_all`
+/// with the same keep list would move nothing.
+struct PackOnly {
+    ids: Arc<[i32]>,
+}
+
+impl PredicatePlan for PackOnly {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let Some(inventory) = cx.cx.snapshot().inventory() else {
+            return Truth::Unknown;
+        };
+        if inventory
+            .value
+            .iter()
+            .all(|item| item.count <= 0 || self.ids.binary_search(&item.def.id).is_ok())
+        {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
+
 fn done(cx: &StepContext<'_, '_>) -> StepOutcome {
     StepOutcome {
         progress: None,

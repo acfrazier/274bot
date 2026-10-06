@@ -266,6 +266,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             s2::compile_equipment_only
         ),
         super::compile::fact!(
+            "pack_only",
+            1,
+            super::compile::ProgressRead::None,
+            s2::PackOnlyArgs,
+            s2::compile_pack_only
+        ),
+        super::compile::fact!(
             "partner_item_count_at_least",
             1,
             super::compile::ProgressRead::None,
@@ -2127,19 +2134,20 @@ impl StepRun for InteractRun {
                 let chosen = pick.select(self.reachable_only).map(|loc| {
                     (
                         loc.tile,
-                        reach::loc_walk_id(loc),
+                        reach::loc_walk_request(
+                            loc,
+                            cx.tick.cx.snapshot().here().map(|here| here.value),
+                            cx.required_after,
+                        ),
                         reach::loc_arrived(&cx.tick.cx, loc),
                     )
                 });
-                if let Some((tile, walk_id, arrived)) = chosen {
+                if let Some((tile, request, arrived)) = chosen {
                     if self.target_tile.is_none() {
                         self.round_pick = Some(tile);
                     }
                     if !arrived {
-                        self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, 1, walk_id, cx.required_after),
-                            &mut cx.tick.cx,
-                        )?);
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
                         return Poll::Pending;
                     }
                 }
@@ -3042,10 +3050,9 @@ impl StepRun for UseOnRun {
                                     self.deadline = None;
                                 }
                                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(
-                                        loc.tile,
-                                        1,
-                                        reach::loc_walk_id(loc),
+                                    reach::loc_walk_request(
+                                        loc,
+                                        cx.tick.cx.snapshot().here().map(|here| here.value),
                                         cx.required_after,
                                     ),
                                     &mut cx.tick.cx,
