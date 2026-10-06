@@ -27,7 +27,7 @@
     "coin_float": 0,
     "loadouts": {},
     "areas": {},
-    "tools": ["obj:clay", "obj:copper_ore", "obj:iron_ore", "obj:bronze_pickaxe"],
+    "tools": ["obj:clay", "obj:copper_ore", "obj:iron_ore", "obj:rune_pickaxe", "obj:adamant_pickaxe", "obj:mithril_pickaxe", "obj:steel_pickaxe", "obj:iron_pickaxe", "obj:bronze_pickaxe"],
     "owns_inventory": false
   },
   "roles": [
@@ -91,9 +91,10 @@
                   "tile": [2986, 3239, 0],
                   "source": "maps/m46_50.jm2:6337 (clayrock1 at [2986,3239,0]); pack/loc.pack:2109; scripts/skill_mining/configs/mine.dbrow:10-21"
                 },
-                "radius": 3
+                "radius": 3,
+                "settle_ms": 300000
               },
-              "comment": "Mine to the held count of 6 after banked clay is withdrawn; the Rimmington clay rock requires Mining 1.",
+              "comment": "Mine to the held count of 6 after banked clay is withdrawn; the Rimmington clay rock requires Mining 1. The five-minute deadline covers the roughly 215-tile approach walk from Doric plus mining; the default 120 seconds includes the whole step.",
               "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } }
             },
