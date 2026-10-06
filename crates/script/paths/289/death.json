@@ -480,6 +480,74 @@
               }
             }
           }
+        },
+        {
+          "id": "coin-float",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 300
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "owns_inventory: the generic provisioner never draws the header coin_float (provision.rs:149-151; docs/api/script.md 'Automatic coin funding is not provided'), so the Path draws its own coins once from the nearest bank (Falador West from Burthorpe). Stage 40 needs 2 gp for Tostig's Asgarnian ale (shop.rs2:59-74 charges held coins only); the stage-50 dice stake (101..1000, death_guard_equiproom.rs2:207-249) is the operator's business until that family exists. Topped up again only if the held count falls below 100, and never when the bank is known to be empty of coins. Runs after the three get-unstuck steps so a bank trip is never attempted from the cave, the secret way or Harold's room.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "coins",
+                    "qty": 100
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:80"
+                    ]
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "coins",
+                          "qty": 1
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
         }
       ],
       "sequences": [
@@ -2365,9 +2433,10 @@
                   3562,
                   0
                 ],
-                "source": "Exact stand tile: the only tile from which the 2894,3562 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "source": "Stand tile for the 2894,3562 (blue) pedestal: from here (or 2893,3561) it is the only death_stone_mechanism_corner within Chebyshev 1, so place-blue-ball's nearest-within-radius-1 selection (families/mod.rs:2461-2469, reach.rs:556-598) cannot pick a sibling; 2893,3563 ties it with the unused corner 2894,3564 and 2894/2895,3561 tie it with the yellow one.",
                 "radius": 1
               },
+              "comment": "GAP-exact-stand: no family can request exact arrival. The walk radius is clamped to at least 1 (families/mod.rs:1100), the native walk settles as soon as the player is within that radius (native/walk.rs:56-61, api/snapshot/native.rs:86-101), and a use_on loc target cannot be pinned to a tile (families/mod.rs:2180-2183); the pedestals offer no op, so an exact-tile interact is not available either. The exact tile is therefore enforced only by this settle (near radius 0): the host walk normally carries the player onto the clicked tile within the 8 s window, but a player who is already within 1 tile when the step begins (restart, manual nudge) is not moved and the step fails closed and parks instead of letting the placement pick a sibling pedestal. Recovery: step onto the tile by hand and Start.",
               "skip_if": {
                 "Any": [
                   {
@@ -2565,9 +2634,10 @@
                   3562,
                   0
                 ],
-                "source": "Exact stand tile: the only tile from which the 2895,3562 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "source": "Stand tile for the 2895,3562 (yellow) pedestal: from here (or 2896,3561) it is the only death_stone_mechanism_corner within Chebyshev 1, so place-yellow-ball's nearest-within-radius-1 selection (families/mod.rs:2461-2469, reach.rs:556-598) cannot pick a sibling; 2896,3563 ties it with the green pedestal 2895,3564 and 2894/2895,3561 tie it with the blue one.",
                 "radius": 1
               },
+              "comment": "GAP-exact-stand: no family can request exact arrival. The walk radius is clamped to at least 1 (families/mod.rs:1100), the native walk settles as soon as the player is within that radius (native/walk.rs:56-61, api/snapshot/native.rs:86-101), and a use_on loc target cannot be pinned to a tile (families/mod.rs:2180-2183); the pedestals offer no op, so an exact-tile interact is not available either. The exact tile is therefore enforced only by this settle (near radius 0): the host walk normally carries the player onto the clicked tile within the 8 s window, but a player who is already within 1 tile when the step begins (restart, manual nudge) is not moved and the step fails closed and parks instead of letting the placement pick a sibling pedestal. Recovery: step onto the tile by hand and Start.",
               "skip_if": {
                 "Any": [
                   {
@@ -2765,9 +2835,10 @@
                   3563,
                   0
                 ],
-                "source": "Exact stand tile: the only tile from which the 2894,3563 pedestal is the sole death_stone_mechanism_side within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "source": "Stand tile for the 2894,3563 (red) pedestal: from any of 2893,3562-3564 it is the only death_stone_mechanism_side within Chebyshev 1 (the other side pedestal 2895,3563 is 2 away), so place-red-ball's nearest-within-radius-1 selection (families/mod.rs:2461-2469, reach.rs:556-598) cannot pick the purple pedestal; 2893,3561 and 2893,3565 find none within 1.",
                 "radius": 1
               },
+              "comment": "GAP-exact-stand: no family can request exact arrival. The walk radius is clamped to at least 1 (families/mod.rs:1100), the native walk settles as soon as the player is within that radius (native/walk.rs:56-61, api/snapshot/native.rs:86-101), and a use_on loc target cannot be pinned to a tile (families/mod.rs:2180-2183); the pedestals offer no op, so an exact-tile interact is not available either. The exact tile is therefore enforced only by this settle (near radius 0): the host walk normally carries the player onto the clicked tile within the 8 s window, but a player who is already within 1 tile when the step begins (restart, manual nudge) is not moved and the step fails closed and parks instead of letting the placement pick a sibling pedestal. Recovery: step onto the tile by hand and Start.",
               "skip_if": {
                 "Any": [
                   {
@@ -2965,9 +3036,10 @@
                   3563,
                   0
                 ],
-                "source": "Exact stand tile: the only tile from which the 2895,3563 pedestal is the sole death_stone_mechanism_side within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "source": "Stand tile for the 2895,3563 (purple) pedestal: from any of 2896,3562-3564 it is the only death_stone_mechanism_side within Chebyshev 1 (the other side pedestal 2894,3563 is 2 away), so place-purple-ball's nearest-within-radius-1 selection (families/mod.rs:2461-2469, reach.rs:556-598) cannot pick the red pedestal; 2897,x finds none within 1.",
                 "radius": 1
               },
+              "comment": "GAP-exact-stand: no family can request exact arrival. The walk radius is clamped to at least 1 (families/mod.rs:1100), the native walk settles as soon as the player is within that radius (native/walk.rs:56-61, api/snapshot/native.rs:86-101), and a use_on loc target cannot be pinned to a tile (families/mod.rs:2180-2183); the pedestals offer no op, so an exact-tile interact is not available either. The exact tile is therefore enforced only by this settle (near radius 0): the host walk normally carries the player onto the clicked tile within the 8 s window, but a player who is already within 1 tile when the step begins (restart, manual nudge) is not moved and the step fails closed and parks instead of letting the placement pick a sibling pedestal. Recovery: step onto the tile by hand and Start.",
               "skip_if": {
                 "Any": [
                   {
@@ -3165,9 +3237,10 @@
                   3564,
                   0
                 ],
-                "source": "Exact stand tile: the only tile from which the 2895,3564 pedestal is the sole death_stone_mechanism_corner within 1 (use_on picks the nearest loc of that config within its radius from the player, families/mod.rs:2461-2469, reach.rs:556-598)",
+                "source": "Stand tile for the 2895,3564 (green) pedestal: from here it is the only death_stone_mechanism_corner within Chebyshev 1, so place-green-ball's nearest-within-radius-1 selection (families/mod.rs:2461-2469, reach.rs:556-598) cannot pick a sibling; one tile north or south (2896,3563 / 2896,3565) ties it with 2895,3562 or 2894,3564.",
                 "radius": 1
               },
+              "comment": "GAP-exact-stand: no family can request exact arrival. The walk radius is clamped to at least 1 (families/mod.rs:1100), the native walk settles as soon as the player is within that radius (native/walk.rs:56-61, api/snapshot/native.rs:86-101), and a use_on loc target cannot be pinned to a tile (families/mod.rs:2180-2183); the pedestals offer no op, so an exact-tile interact is not available either. The exact tile is therefore enforced only by this settle (near radius 0): the host walk normally carries the player onto the clicked tile within the 8 s window, but a player who is already within 1 tile when the step begins (restart, manual nudge) is not moved and the step fails closed and parks instead of letting the placement pick a sibling pedestal. Recovery: step onto the tile by hand and Start.",
               "skip_if": {
                 "Any": [
                   {
