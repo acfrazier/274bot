@@ -293,6 +293,8 @@ pub struct BankMachine {
     request: BankRequest,
     phase: Phase,
     deadline: Duration,
+    /// Fixed opening bound, separate from the per-step `deadline` armed by dialogue.
+    open_deadline: Duration,
     session: u64,
     deposits: u8,
     withdraw_index: usize,
@@ -303,6 +305,8 @@ pub struct BankMachine {
     open_stage: u8,
     open_first_target: Option<(i32, WorldTile)>,
     object_interaction_sent: bool,
+    /// A completed object dialogue cannot be restarted just because its modal remains open.
+    object_dialogue_finished: bool,
     /// The until-empty side-view bound is armed in `deadline`.
     view_armed: bool,
 }
@@ -448,10 +452,12 @@ impl NativeMachine for BankMachine {
             }
             _ => {}
         }
+        let open_deadline = cx.active_now().saturating_add(OPEN_BOUND);
         Ok(Self {
             request,
             phase: Phase::Open,
-            deadline: cx.active_now().saturating_add(OPEN_BOUND),
+            deadline: open_deadline,
+            open_deadline,
             session: 0,
             deposits: 0,
             withdraw_index: 0,
@@ -462,6 +468,7 @@ impl NativeMachine for BankMachine {
             open_stage: 0,
             open_first_target: None,
             object_interaction_sent: false,
+            object_dialogue_finished: false,
             view_armed: false,
         })
     }
@@ -515,7 +522,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::AwaitOpen;
                         continue;
                     }
-                    if cx.active_now() >= self.deadline {
+                    if cx.active_now() >= self.open_deadline {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank did not open",
                         ))));
@@ -561,6 +568,7 @@ impl NativeMachine for BankMachine {
                                 id: Some(loc.id),
                             })?;
                             self.object_interaction_sent = true;
+                            self.object_dialogue_finished = false;
                         } else {
                             let Some(locs) = cx.snapshot().locs() else {
                                 return Poll::Pending;
@@ -643,6 +651,14 @@ impl NativeMachine for BankMachine {
                     return Poll::Pending;
                 }
                 Phase::NpcAccess { mut core, dialogue } => {
+                    if dialogue == AccessDialogue::Object
+                        && cx.active_now() >= self.open_deadline
+                        && cx.snapshot().bank().is_none()
+                    {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank item table unavailable",
+                        ))));
+                    }
                     let BankAction::OpenStand { access } = &self.request.action else {
                         unreachable!("bank dialogue only belongs to OpenStand");
                     };
@@ -681,6 +697,7 @@ impl NativeMachine for BankMachine {
                         }
                         npc::Step::Done(false) => {
                             if dialogue == AccessDialogue::Object {
+                                self.object_dialogue_finished = true;
                                 self.phase = Phase::AwaitOpen;
                                 continue;
                             }
@@ -735,6 +752,11 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
+                    if cx.active_now() >= self.open_deadline {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank item table unavailable",
+                        ))));
+                    }
                     let object_access = matches!(
                         &self.request.action,
                         BankAction::OpenStand { access }
@@ -746,7 +768,11 @@ impl NativeMachine for BankMachine {
                     let chat_open = cx.snapshot().chat_modal().is_some_and(|chat| {
                         chat.value.root != -1 || chat.value.continue_component_id >= 0
                     });
-                    if self.object_interaction_sent && object_access && chat_open {
+                    if self.object_interaction_sent
+                        && !self.object_dialogue_finished
+                        && object_access
+                        && chat_open
+                    {
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Object,
@@ -775,11 +801,6 @@ impl NativeMachine for BankMachine {
                                 }
                             }
                         }
-                    }
-                    if cx.active_now() >= self.deadline {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank item table unavailable",
-                        ))));
                     }
                     return Poll::Pending;
                 }
@@ -2050,6 +2071,194 @@ mod tests {
                 id: Some(4002),
                 ..
             })) if action.as_str() == "Bank"
+        ));
+    }
+
+    #[test]
+    fn catalog_object_stuck_continue_modal_fails_at_open_deadline() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(2693),
+                ..
+            }) if action == "Open"
+        ));
+
+        snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+        ));
+
+        for tick_number in [7, 12, 17] {
+            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            assert!(matches!(
+                acknowledge(&mut ledger, tick_number),
+                HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+            ));
+        }
+
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn catalog_object_finished_dialogue_does_not_restart_for_stuck_modal() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        let _ = acknowledge(&mut ledger, 1);
+
+        snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
+        snapshot.seed_chat_options(Vec::new(), -1);
+        for tick_number in [2, 7, 12, 17] {
+            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn catalog_open_first_missing_locs_respects_open_deadline() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![bank_object_loc(
+            4001,
+            "Closed chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4001),
+                ..
+            }) if action == "Open"
+        ));
+
+        let mut missing_locs = GameSnapshot::new();
+        missing_locs.seed_ingame(1);
+        let result = with_tick(&missing_locs, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
         ));
     }
 
