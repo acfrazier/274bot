@@ -6,7 +6,7 @@ use super::compile::{
 };
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::{ProvisionEvent, Provisioner};
+use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
 use super::queue::QueueStatus;
 use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
@@ -733,6 +733,7 @@ impl Quester {
 
     fn poll_provision(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let required_after = tick.cx.evidence();
+        let bank_phase = self.provisioner.bank_phase();
         let revision = self.provisioner.status_revision();
         let mut cx = StepContext {
             tick,
@@ -754,6 +755,30 @@ impl Quester {
         );
         while let Some(event) = self.provisioner.take_trace_event() {
             self.trace_step_event(tick.output, event);
+        }
+        let bank_event = match (&result, bank_phase, self.provisioner.bank_phase()) {
+            (Poll::Pending, None, Some(phase)) => Some((phase, "begin")),
+            (Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))), Some(phase), _) => {
+                Some((phase, "settled"))
+            }
+            (Poll::Ready(Err(_)), Some(phase), _) => Some((phase, "failed")),
+            _ => None,
+        };
+        if let Some((phase, event)) = bank_event {
+            let action = match phase {
+                ProvisionPhase::Scanning => "scan",
+                ProvisionPhase::Spillover => "deposit-capacity",
+                ProvisionPhase::Withdrawing => "withdraw",
+                _ => unreachable!("a provision bank run has a bank phase"),
+            };
+            self.trace.record(
+                tick.output,
+                api::hostlog::Level::Info,
+                format_args!(
+                    "quester {}: provision bank {action} {event}",
+                    self.path.id.0
+                ),
+            );
         }
         self.dirty |= self.provisioner.status_revision() != revision;
         match result {
@@ -814,7 +839,7 @@ impl Quester {
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
         self.published_bank_receipt = None;
         self.trace.flush_repeats(tick.output);
-        self.trace.record(
+        self.trace.terminal(
             tick.output,
             api::hostlog::Level::Info,
             format_args!("quester {}: finish", self.path.id.0),
