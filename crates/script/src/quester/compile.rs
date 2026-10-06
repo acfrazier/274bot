@@ -273,6 +273,10 @@ pub struct StepOutcome {
 }
 pub trait PredicatePlan: Send + Sync {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth;
+    fn requires_bank(&self) -> bool {
+        false
+    }
+    fn bank_item_ids(&self, _ids: &mut Vec<i32>) {}
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
@@ -322,6 +326,10 @@ pub trait StepRun: Send {
         false
     }
     fn progress_read_completed(&mut self, _now: std::time::Duration) {}
+    fn needs_bank_scan(&self) -> bool {
+        false
+    }
+    fn bank_scan_completed(&mut self) {}
     /// Borrowed wait detail; machines do not allocate on pending polls.
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         None
@@ -906,6 +914,26 @@ pub(super) fn compile_uncached(
             order: sequence.order,
             steps,
         });
+    }
+    let mut predicate_bank_ids = Vec::new();
+    for predicate in recipes
+        .values()
+        .flat_map(|steps| steps.iter().map(|step| &step.skip_if))
+        .chain(prelude.iter().map(|step| &step.skip_if))
+        .chain(
+            sequences
+                .iter()
+                .flat_map(|sequence| sequence.steps.iter().map(|step| &step.skip_if)),
+        )
+        .chain(progress_reader.iter().map(|step| &step.skip_if))
+    {
+        predicate.bank_item_ids(&mut predicate_bank_ids);
+    }
+    for id in predicate_bank_ids {
+        push_unique_id(&mut bank_items, id);
+    }
+    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
+        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
     }
     for plan in recipes
         .values()

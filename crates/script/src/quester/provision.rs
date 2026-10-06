@@ -572,6 +572,26 @@ impl Provisioner {
         }
     }
 
+    pub(super) fn start_predicate_scan(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        plan: &CompiledProvisioning,
+    ) {
+        if self.bank_run.is_some() || self.acquire_run.is_some() {
+            return;
+        }
+        self.start_bank(
+            cx,
+            plan,
+            BankAction::Scan,
+            ProvisionPhase::Scanning,
+            None,
+            0,
+            0,
+            None,
+        );
+    }
+
     #[allow(clippy::too_many_arguments)] // One bank request and its producer-side status receipt.
     fn start_bank(
         &mut self,
