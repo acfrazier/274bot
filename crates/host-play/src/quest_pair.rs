@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 const INACTIVITY: Duration = Duration::from_secs(10 * 60);
 const TOTAL: Duration = Duration::from_secs(60 * 60);
+const TOTAL_LIMIT_REASON: &str =
+    "pair phase exceeded 60-minute wall-clock limit; Stop and Start both accounts";
 const MAX_PHASES: usize = 128;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -21,7 +23,7 @@ struct Entry {
     world: World,
     registration: PairRegistration,
     lease: Option<u64>,
-    cancelled: bool,
+    cancelled: Option<PairError>,
     admission_wait: bool,
     gang: Option<(Knowledge<Option<Gang>>, EvidenceStamp)>,
     ready_after: EvidenceStamp,
@@ -236,6 +238,9 @@ impl QuestPairCoordinator {
         })
     }
     fn cancel_locked(state: &mut State, id: u64) {
+        Self::cancel_with_error(state, id, PairError::Cancelled);
+    }
+    fn cancel_with_error(state: &mut State, id: u64, error: PairError) {
         let complete = state.leases.get(&id).is_some_and(Lease::complete);
         if complete {
             for entry in state.entries.values_mut() {
@@ -255,7 +260,7 @@ impl QuestPairCoordinator {
             if entry.registration.run == lease.token.left
                 || entry.registration.run == lease.token.right
             {
-                entry.cancelled = true;
+                entry.cancelled = Some(error.clone());
                 entry.admission_wait = false;
                 entry.lease = None;
             }
@@ -268,16 +273,17 @@ impl QuestPairCoordinator {
         if lease.complete() {
             return;
         }
+        if now >= lease.total_deadline {
+            Self::cancel_with_error(state, id, PairError::Failed(Arc::from(TOTAL_LIMIT_REASON)));
+            return;
+        }
         let held = [lease.token.left, lease.token.right].iter().any(|run| {
             state
                 .entries
                 .values()
                 .any(|entry| entry.registration.run == *run && !entry.registration.ready)
         });
-        if held
-            && lease.paused_since.is_none()
-            && (now >= lease.deadline || now >= lease.total_deadline)
-        {
+        if held && lease.paused_since.is_none() && now >= lease.deadline {
             Self::cancel_locked(state, id);
             return;
         }
@@ -286,12 +292,18 @@ impl QuestPairCoordinator {
             lease.paused_since.get_or_insert(now);
         } else if let Some(since) = lease.paused_since.take() {
             let elapsed = now.saturating_duration_since(since);
-            lease.deadline += elapsed;
-            lease.total_deadline += elapsed;
+            lease.deadline = (lease.deadline + elapsed).min(lease.total_deadline);
         }
     }
     fn validate(state: &State, token: &PairToken, actor: RunKey) -> Result<(), PairError> {
-        let lease = state.leases.get(&token.id).ok_or(PairError::Cancelled)?;
+        let lease = state.leases.get(&token.id).ok_or_else(|| {
+            state
+                .entries
+                .values()
+                .find(|entry| entry.registration.run == actor)
+                .and_then(|entry| entry.cancelled.clone())
+                .unwrap_or(PairError::Cancelled)
+        })?;
         if lease.token != *token {
             return Err(PairError::Stale);
         }
@@ -306,8 +318,8 @@ impl QuestPairCoordinator {
                 .values()
                 .find(|entry| entry.registration.run == run)
                 .ok_or(PairError::Stale)?;
-            if entry.cancelled {
-                return Err(PairError::Cancelled);
+            if let Some(error) = &entry.cancelled {
+                return Err(error.clone());
             }
             ready &= entry.registration.ready;
             if let Some(joined) = &lease.joined[lease.side(run)?] {
@@ -323,14 +335,24 @@ impl QuestPairCoordinator {
         Ok(())
     }
     fn validate_live(state: &mut State, token: &PairToken, actor: RunKey) -> Result<(), PairError> {
-        Self::validate(state, token, actor)?;
+        let result = Self::validate(state, token, actor);
+        if !matches!(result, Ok(()) | Err(PairError::NotReady)) {
+            return result;
+        }
         let lease = state.leases.get(&token.id).unwrap();
         let now = Instant::now();
-        if !lease.complete() && (now >= lease.deadline || now >= lease.total_deadline) {
-            Self::cancel_locked(state, token.id);
-            return Err(PairError::BarrierExpired);
+        if !lease.complete() {
+            if now >= lease.total_deadline {
+                let error = PairError::Failed(Arc::from(TOTAL_LIMIT_REASON));
+                Self::cancel_with_error(state, token.id, error.clone());
+                return Err(error);
+            }
+            if result.is_ok() && now >= lease.deadline {
+                Self::cancel_locked(state, token.id);
+                return Err(PairError::BarrierExpired);
+            }
         }
-        Ok(())
+        result
     }
     /// Recording already-owned authority/results is safe while dispatch is
     /// fenced. In particular, a hold racing a completed role cannot lose it.
@@ -380,36 +402,32 @@ impl QuestPairCoordinator {
             .get(account)
             .ok_or(PairError::PartnerNotInPlay)?;
         let Some(peer) = state.entries.get(&request.partner) else {
-            if request.plan.actions.is_none() {
-                if let Some(own) = state
-                    .entries
-                    .get_mut(account)
-                    .filter(|own| own.registration.run == request.caller)
-                {
-                    own.admission_wait = true;
-                }
+            if let Some(own) = state
+                .entries
+                .get_mut(account)
+                .filter(|own| own.registration.run == request.caller)
+            {
+                own.admission_wait = true;
             }
             return Err(PairError::PartnerNotInPlay);
         };
         if own.registration.run != request.caller || request.evidence.run != request.caller {
             return Err(PairError::Stale);
         }
-        if own.cancelled || peer.cancelled {
-            return Err(PairError::Cancelled);
+        if let Some(error) = own.cancelled.as_ref().or(peer.cancelled.as_ref()) {
+            return Err(error.clone());
         }
-        if peer.binding.as_ref().is_some_and(|binding| {
-            binding.path != request.plan.path
-                || binding.protocol != request.plan.protocol
-                || binding.digest != request.plan.digest
+        if !peer.binding.as_ref().is_some_and(|binding| {
+            binding.path == request.plan.path
+                && binding.protocol == request.plan.protocol
+                && binding.digest == request.plan.digest
         }) {
-            return Err(PairError::Failed(Arc::from(
-                "partner is running a different Path; select the same paired Path on both accounts",
-            )));
+            // An earlier queue row is not a participant in this phase.
+            state.entries.get_mut(account).unwrap().admission_wait = true;
+            return Err(PairError::Busy);
         }
         if !own.registration.ready || !peer.registration.ready {
-            if request.plan.actions.is_none() {
-                state.entries.get_mut(account).unwrap().admission_wait = true;
-            }
+            state.entries.get_mut(account).unwrap().admission_wait = true;
             return Err(PairError::NotReady);
         }
         if own.registration.evidence != request.evidence {
@@ -474,7 +492,12 @@ impl QuestPairCoordinator {
             if lease.token.left != left || lease.token.right != right {
                 return Err(PairError::Busy);
             }
-            if now >= lease.deadline || now >= lease.total_deadline {
+            if now >= lease.total_deadline {
+                let error = PairError::Failed(Arc::from(TOTAL_LIMIT_REASON));
+                Self::cancel_with_error(&mut state, id, error.clone());
+                return Err(error);
+            }
+            if now >= lease.deadline {
                 Self::cancel_locked(&mut state, id);
                 return Err(PairError::BarrierExpired);
             }
@@ -698,7 +721,7 @@ impl QuestPairPort for Seat {
             .filter(|old| {
                 old.registration.run == registration.run && old.registration.pin == registration.pin
             })
-            .map_or((None, false, None), |old| {
+            .map_or((None, None, None), |old| {
                 // A reserved role's owned membership survives a transient hold.
                 // Re-reading it would compete with the retained phase action.
                 let same_ready_epoch = old.world == world
@@ -793,8 +816,8 @@ impl QuestPairPort for Seat {
         if entry.registration.run != caller {
             return Err(PairError::Stale);
         }
-        if entry.cancelled {
-            return Err(PairError::Cancelled);
+        if let Some(error) = &entry.cancelled {
+            return Err(error.clone());
         }
         if !entry.registration.ready {
             return Err(PairError::NotReady);
@@ -823,7 +846,7 @@ impl QuestPairPort for Seat {
                 .as_ref()
                 .is_some_and(|(_, prior)| !read.closed.meets(*prior) || read.closed == *prior)
             || !entry.registration.ready
-            || entry.cancelled
+            || entry.cancelled.is_some()
         {
             return Err(PairError::Stale);
         }
@@ -836,8 +859,8 @@ impl QuestPairPort for Seat {
         let state = self.coordinator.state.lock().unwrap();
         self.actor(&state, caller)?;
         let entry = state.entries.get(&self.account).unwrap();
-        if entry.cancelled {
-            return Err(PairError::Cancelled);
+        if let Some(error) = &entry.cancelled {
+            return Err(error.clone());
         }
         if !entry.registration.ready {
             return Err(PairError::NotReady);
@@ -881,8 +904,8 @@ impl QuestPairPort for Seat {
         {
             return Err(PairError::SelfPartner);
         }
-        if own.cancelled || peer.cancelled {
-            return Err(PairError::Cancelled);
+        if let Some(error) = own.cancelled.as_ref().or(peer.cancelled.as_ref()) {
+            return Err(error.clone());
         }
         if !own.registration.ready || !peer.registration.ready {
             return Err(PairError::NotReady);
@@ -1848,7 +1871,7 @@ mod tests {
         assert_eq!(lease.deadline, now + TOTAL);
     }
     #[test]
-    fn foreign_path_binding_refuses_reservation_without_poisoning_peer() {
+    fn foreign_path_binding_waits_without_reserving_or_poisoning_peer() {
         for ready in [true, false] {
             let pair = pair();
             let plan = plan(false);
@@ -1876,19 +1899,20 @@ mod tests {
                 },
             );
             let result = pair.seats[0].begin(request(pair.runs[0], "bob", 0, &plan));
-            assert!(
-                matches!(&result, Err(PairError::Failed(reason)) if reason.contains("different Path")),
-                "foreign Path must fail before reserving either account: {result:?}"
-            );
+            assert_eq!(result, Err(PairError::Busy));
             assert!(!pair.seats[0].busy() && !pair.seats[1].busy());
+            assert!(pair.seats[0].waiting(pair.runs[0]));
+            assert!(!pair.seats[1].waiting(pair.runs[1]));
             assert!(
-                !pair.core.state.lock().unwrap().entries[&AccountKey(Arc::from("bob"))].cancelled
+                pair.core.state.lock().unwrap().entries[&AccountKey(Arc::from("bob"))]
+                    .cancelled
+                    .is_none()
             );
         }
     }
 
     #[test]
-    fn unbound_peer_gameplay_does_not_rearm_reserved_phase() {
+    fn unbound_peer_waits_without_reserving_or_rearming_a_phase() {
         let pair = pair();
         pair.seats[1].observe(
             PairRegistration {
@@ -1905,27 +1929,27 @@ mod tests {
         );
         let plan = plan(true);
         let now = Instant::now();
-        let token = pair
-            .core
-            .begin_at(
+        assert_eq!(
+            pair.core.begin_at(
                 &AccountKey(Arc::from("alice")),
                 request(pair.runs[0], "bob", 0, &plan),
                 now,
-            )
-            .unwrap();
+            ),
+            Err(PairError::Busy)
+        );
         pair.seats[1].gameplay_progress(
             pair.runs[1],
             stamp(pair.runs[1], 2),
             now + Duration::from_secs(300),
         );
-        assert_eq!(
-            pair.core.state.lock().unwrap().leases[&token.id].deadline,
-            now + INACTIVITY
-        );
+        assert!(pair.core.state.lock().unwrap().leases.is_empty());
+        assert!(!pair.seats[0].busy() && !pair.seats[1].busy());
+        assert!(pair.seats[0].waiting(pair.runs[0]));
+        assert!(!pair.seats[1].waiting(pair.runs[1]));
     }
 
     #[test]
-    fn transient_ready_hold_keeps_reservation_and_pauses_both_deadlines() {
+    fn transient_ready_hold_pauses_inactivity_but_keeps_wall_clock_total_bound() {
         let pair = pair();
         let plan = plan(true);
         let token = pair.seats[0]
@@ -1994,12 +2018,50 @@ mod tests {
         ));
         let state = pair.core.state.lock().unwrap();
         assert!(state.leases[&token.id].deadline > deadline);
-        assert!(state.leases[&token.id].total_deadline > total);
+        assert_eq!(state.leases[&token.id].total_deadline, total);
         drop(state);
         assert!(matches!(
             pair.seats[0].poll(&token, pair.runs[0]),
             Poll::Ready(Ok(PairStep::Act(_)))
         ));
+    }
+
+    #[test]
+    fn quest_pair_r2_wall_clock_limit_expires_even_while_partner_is_held() {
+        let pair = pair();
+        let plan = plan(true);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .unwrap();
+        pair.seats[1]
+            .begin(request(pair.runs[1], "alice", 1, &plan))
+            .unwrap();
+        register_ready(
+            pair.seats[1].as_ref(),
+            pair.runs[1],
+            "alice",
+            Gang::BlackArm,
+            3,
+            false,
+        );
+        {
+            let mut state = pair.core.state.lock().unwrap();
+            let lease = state.leases.get_mut(&token.id).unwrap();
+            assert!(lease.paused_since.is_some());
+            lease.total_deadline = Instant::now() - Duration::from_secs(1);
+        }
+        for side in 0..2 {
+            let Poll::Ready(Err(error)) = pair.seats[side].poll(&token, pair.runs[side]) else {
+                panic!("the wall-clock bound must end the held phase");
+            };
+            assert!(
+                matches!(error.action(), ActionError::Blocked(reason) if reason.contains("60-minute wall-clock limit")),
+                "the held phase must park with the limit and recovery reason"
+            );
+        }
+        assert!(!pair.seats[0].busy() && !pair.seats[1].busy());
+        assert!(!pair.seats[0].waiting(pair.runs[0]) && !pair.seats[1].waiting(pair.runs[1]));
+        assert!(!pair.seats[0].held(pair.runs[0]) && !pair.seats[1].held(pair.runs[1]));
     }
 
     #[test]

@@ -87,6 +87,7 @@ pub struct Quester {
     custom_read_after: Option<api::quest_progress::EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
     pair_admission_since: Option<Duration>,
+    pair_begin_since: Option<Duration>,
     pair_admitted: bool,
     gang_reader: super::gang::GangRead,
     bank: BankMemo,
@@ -404,6 +405,7 @@ impl Quester {
             custom_read_after: None,
             pair_admission: None,
             pair_admission_since: None,
+            pair_begin_since: None,
             pair_admitted: false,
             gang_reader: super::gang::GangRead::default(),
             bank: BankMemo::default(),
@@ -1033,6 +1035,7 @@ impl Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
+        self.pair_begin_since = None;
         self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
@@ -1417,6 +1420,7 @@ impl Quester {
     fn pair_work_pending(&self) -> bool {
         self.pair_admission_since.is_some()
             || self.pair_admission.is_some()
+            || self.pair_begin_since.is_some()
             || self.pair_step_active()
     }
 
@@ -1898,11 +1902,27 @@ impl Script for Quester {
             self.advances = advances;
             self.empty_reads = 0;
             self.in_prelude = prelude;
+            if self.pair_begin_since.is_some_and(|since| {
+                tick.cx.active_now().saturating_sub(since) >= PAIR_ADMISSION_TIMEOUT
+            }) {
+                if let Some(port) = tick.pairs {
+                    port.invalidate(tick.cx.run());
+                }
+                self.pair_begin_since = None;
+                self.waiting = None;
+                self.record_failure(ActionError::Blocked(Arc::from(
+                    "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts",
+                )));
+                self.parked = true;
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             let step = if prelude {
                 &self.path.prelude[index]
             } else {
                 &self.path.sequences[self.seq_index].steps[index]
             };
+            let pair_step = step.kind.as_ref() == "partner";
             self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
             if step.kind.as_ref() == "combat" {
@@ -1919,13 +1939,25 @@ impl Script for Quester {
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
+                    self.pair_begin_since = None;
+                    self.waiting = None;
                     self.step = Some(run);
                     self.step_after = required_after;
                     self.last_outcome = None;
                     self.dirty = true;
                     self.clear_last_error();
                 }
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted)
+                    if pair_step =>
+                {
+                    self.pair_begin_since.get_or_insert(tick.cx.active_now());
+                    self.waiting = Some(("Partner phase begin", Arc::clone(&self.path.id.0)));
+                    self.clear_last_error();
+                    self.dirty = true;
+                }
                 Err(error) => {
+                    self.pair_begin_since = None;
+                    self.waiting = None;
                     self.attempts = self.attempts.saturating_add(1);
                     self.record_failure(error);
                     if self.attempts >= 5 {
@@ -2078,6 +2110,7 @@ impl Script for Quester {
         if !matches!(event, Interrupt::Hold(_)) {
             self.pair_admission = None;
             self.pair_admission_since = None;
+            self.pair_begin_since = None;
         }
         if cancel_pair_work {
             self.pair_admitted = false;
@@ -2172,6 +2205,7 @@ impl Script for Quester {
         self.custom_read_after = None;
         self.pair_admission = None;
         self.pair_admission_since = None;
+        self.pair_begin_since = None;
         self.pair_admitted = false;
         self.gang_reader.cancel();
         self.step = None;
@@ -3996,6 +4030,53 @@ mod tests {
         assert_eq!(
             script.blocked_failure().message.as_ref(),
             "partner admission timed out; Stop and Start both accounts"
+        );
+    }
+
+    #[test]
+    fn quest_pair_r2_phase_begin_busy_wait_has_an_active_time_bound() {
+        use super::super::compile::StepPlan;
+        struct BusyPhase;
+        impl StepPlan for BusyPhase {
+            fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+                Err(ActionError::Busy)
+            }
+        }
+        struct NeverSkip;
+        impl super::super::compile::PredicatePlan for NeverSkip {
+            fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+                Truth::False
+            }
+        }
+        let (mut script, snapshot) = fixture();
+        script.needs_read = false;
+        script.stage = Some(script.path.colour_not_started.clone());
+        let path = Arc::get_mut(&mut script.path).unwrap();
+        let step = &mut path.sequences[0].steps[0];
+        step.kind = Arc::from("partner");
+        step.skip_if = Arc::new(NeverSkip);
+        step.plan = Arc::new(BusyPhase);
+        let mut ledger = None;
+        for tick in 1..=10 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert_eq!(script.tick(native).unwrap(), ScriptFlow::Continue);
+            });
+            assert!(
+                !script.parked,
+                "a retryable pair begin must not consume failed attempts"
+            );
+            assert_eq!(script.attempts, 0);
+        }
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1001, |native| {
+            script.tick(native).unwrap();
+        });
+        assert!(
+            script.parked,
+            "a stuck phase begin has a ten-minute active bound"
+        );
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts"
         );
     }
 }
