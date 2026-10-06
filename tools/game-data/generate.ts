@@ -11,7 +11,7 @@ import { extractQuestIdentityFacts, questIdentityContentFiles } from './extracto
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits } from './extractors/combat.ts';
 import { consumptionRule, parseConsumeMessageDelays, parseConsumptionEffects } from './extractors/consumption.ts';
-import { extractNpcNamesFacts } from './extractors/npc-names.ts';
+import { extractNpcNamesFacts, npcNamesContentFiles } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
@@ -91,6 +91,8 @@ const combatContentFiles = [
     'pack/npc.pack',
 ];
 const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, ...combatContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles, 'maps/labels.txt', 'scripts/skill_fishing/configs/fishing.npc'];
+contentFiles.push(...npcNamesContentFiles.filter((file) => !contentFiles.includes(file)));
+
 // Manual spell names resolve through the magic tab interface, so it joins the base input closure.
 contentFiles.push('scripts/skill_magic/interfaces/magic.if');
 contentFiles.push(...dialogueUiContentFiles);

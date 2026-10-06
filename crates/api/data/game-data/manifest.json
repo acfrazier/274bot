@@ -195,8 +195,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5027886,
-      "sha256": "8e58b28e739c8f9e2061f439973021317fde77af07cb71a3371ccd5d71ee36f6",
+      "bytes": 5108257,
+      "sha256": "bfc44c68096e31d4c3b3c0c0a067ec4c76af00b3d9357b51169a4f05e294d13c",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -7198,6 +7198,11 @@
           "sha256": "91ae933640f511806d69d4b5abe40a5a8bfc94c1f46f204388cf55d909fd95ab"
         },
         {
+          "path": "scripts/skill_combat/configs/combat.param",
+          "bytes": 2076,
+          "sha256": "b1933d03a8faf424eabfa2c4291a0ff1f4d70d832f969fdb42acff221e272c11"
+        },
+        {
           "path": "scripts/skill_combat/configs/combat_damagestyles.constant",
           "bytes": 239,
           "sha256": "5f3f4fa1a65e2b640a884cca7305309536e1aeccc2f56df79ca9643185238403"
@@ -8573,8 +8578,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5467940,
-      "sha256": "519ce8027478d4d6cccf81534c2c02ce67b0f7ebc60ac7f0d0a8fbf4d0e09568",
+      "bytes": 5562294,
+      "sha256": "c78525d62ec5001aec22507b5aa973a908dfe434e8c491b9f6d71b86f392b5aa",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -16159,6 +16164,11 @@
           "path": "scripts/skill_combat/configs/combat.dbtable",
           "bytes": 76,
           "sha256": "91ae933640f511806d69d4b5abe40a5a8bfc94c1f46f204388cf55d909fd95ab"
+        },
+        {
+          "path": "scripts/skill_combat/configs/combat.param",
+          "bytes": 2076,
+          "sha256": "b1933d03a8faf424eabfa2c4291a0ff1f4d70d832f969fdb42acff221e272c11"
         },
         {
           "path": "scripts/skill_combat/configs/combat_damagestyles.constant",

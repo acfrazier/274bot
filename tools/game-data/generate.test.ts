@@ -205,7 +205,7 @@ const magic = path.join(content, 'scripts/skill_magic/configs');
 fs.mkdirSync(combat, { recursive: true });
 fs.mkdirSync(magic, { recursive: true });
 const combatParamFile = path.join(content, 'scripts/skill_combat/configs/combat.param');
-const combatParams = '[strengthbonus]\ntype=int\ndefault=0\n[rangebonus]\ntype=int\ndefault=0\n[attackrate]\ntype=int\ndefault=4\n';
+const combatParams = '[strengthbonus]\ntype=int\ndefault=0\n[rangebonus]\ntype=int\ndefault=0\n[attackrate]\ntype=int\ndefault=4\n[poison_severity]\ntype=int\ndefault=0\n[npc_forcemulti]\ntype=int\ndefault=0\n';
 fs.writeFileSync(combatParamFile, combatParams);
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
@@ -347,6 +347,8 @@ param=strengthbonus,8
 param=rangebonus,4
 param=undead,^true
 param=attackrate,6
+param=poison_severity,15
+param=npc_forcemulti,^true
 param=attack_anim,test_attack_seq
 param=magicattack_anim,test_magic_seq
 param=proj_launch,arrow_launch
@@ -497,6 +499,10 @@ assert.equal(testNpc.ranged, 3);
 assert.equal(testNpc.strengthbonus, 8);
 assert.equal(testNpc.rangebonus, 4);
 assert.equal(testNpc.undead, 1);
+assert.equal(testNpc.poison_severity, 15);
+assert.equal(testNpc.forcemulti, true);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.poison_severity, 0);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.forcemulti, false);
 assert.equal(testNpc.ap_attack, true);
 assert.equal(testNpc.attack_kind, 'mixed');
 assert.equal(testNpc.counter_protect, false);
@@ -513,6 +519,12 @@ fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7')
 const changedDefaults = extractNpcNamesFacts(content, 289, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
+fs.writeFileSync(combatParamFile, combatParams
+    .replace('[poison_severity]\ntype=int\ndefault=0', '[poison_severity]\ntype=int\ndefault=35')
+    .replace('[npc_forcemulti]\ntype=int\ndefault=0', '[npc_forcemulti]\ntype=int\ndefault=1'));
+const changedPoisonDefaults = extractNpcNamesFacts(content, 289, combatScripts);
+assert.equal(changedPoisonDefaults.rows.find((row) => row.config === 'dragon_npc')?.poison_severity, 35);
+assert.equal(changedPoisonDefaults.rows.find((row) => row.config === 'dragon_npc')?.forcemulti, true);
 fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
@@ -3246,6 +3258,11 @@ for (const relative of [
 ]) {
     assert.ok(baseContentFiles.includes(relative), `${relative} must be pinned as a base content input`);
 }
+assert.equal(
+    baseContentFiles.filter((file) => file === 'scripts/skill_combat/configs/combat.param').length,
+    1,
+    'the NPC combat parameter defaults used by risk extraction are pinned exactly once',
+);
 for (const relative of baseContentFiles) {
     const file = path.join(isoContent, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });

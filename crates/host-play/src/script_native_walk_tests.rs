@@ -3663,3 +3663,16 @@ fn combat_prayer_off_clears_two_prayers_serially_in_table_order() {
         "settled prayers are never re-clicked"
     );
 }
+
+#[test]
+fn s2a_compute_only_per_bot_layouts() {
+    eprintln!(
+        "S2a dormant layout NavBot={} SlotScript={} Combat={} WalkGuard={}",
+        std::mem::size_of::<NavBot>(),
+        std::mem::size_of::<script::SlotScript>(),
+        std::mem::size_of::<script::combat::Combat>(),
+        std::mem::size_of::<script::combat::WalkGuard>()
+    );
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
+    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 256);
+}

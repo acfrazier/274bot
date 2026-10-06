@@ -533,6 +533,8 @@ mod tests {
             attackrate: Some(4),
             bespoke: false,
             counter_protect: false,
+            poison_severity: None,
+            forcemulti: false,
         }
     }
 

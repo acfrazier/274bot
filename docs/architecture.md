@@ -308,6 +308,7 @@ tiles already verified).
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
+| `combat/risk.rs`, `combat/risk/{facts,geometry,input,replay}.rs` | pure conservative route assessment | shared combat facts and food picker; complete route geometry; persistent poison input; no admission, route-worker or runtime escape wiring |
 | `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |
 | `isolate_fb.rs` | isolate wire codec | flatc-generated bindings (`schema/generated`) plus delta/`IsolateBuf` domain layer; one verified root per message |
 | `host_js.rs` | generated Host JS types | from verb tables, not rs2b0t names |

@@ -8,6 +8,7 @@ mod machine;
 pub mod policy;
 pub mod prayer;
 pub mod request;
+pub mod risk;
 pub mod schedule;
 pub mod select;
 pub mod tables;
@@ -24,6 +25,7 @@ pub use prayer::{
     RaisedPrayers,
 };
 pub use request::*;
+pub use risk::{PoisonState, RiskInput, RouteAssessment};
 pub use select::{facts, ident, retaliate, taken_by_another};
 pub use tables::CombatTables;
 pub use threats::{HitOnset, HitOnsets, Threat, ThreatSet};
