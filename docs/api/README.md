@@ -1,24 +1,25 @@
 # Agent API
 
-Alpha kernel surface a bot agent codes against: reading world state,
+Beta kernel surface a bot agent codes against in 0.2.0 Beta 1: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
 (`crates/api`) plus `nav` (`crates/nav`) and the host tick. The script
 crate is the runner kernel (compiled cards + Load isolate + catalog
 registration). Catalog helper compatibility is **partial** and fail-closed;
-honest skilling bots are not “all green by default.” Nav **execute**, the
-random-event guardian, revision server profiles, and `tui-play` are in this
-tree.
+honest skilling bots are not “all green by default.” Revision server profiles,
+the random-event guardian, and `tui-play` are in this tree. Revision **289**
+is the production revision; 274 packs build but are best-effort, neither
+tested nor claimed.
 
 - [snapshot.md](snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
 - [query.md](query.md) — the fluent `Query<T>` read DSL + typed filters
 - [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
 - [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
-- [nav.md](nav.md) — whole-world collision + transport graph + Dijkstra
-  router + `Traveller::follow` + WalkTo picker
+- [nav.md](nav.md) — whole-world collision + transport graph (pack v16) +
+  Dijkstra router + `Traveller::follow` + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
-- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, scripts
+- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, Fleet, scripts
 - [script.md](script.md) — compiled `tick` vs Load isolate; assignment, reload, cache
 - [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const apiVersion = 2`)
 - [tui.md](tui.md) — headless operator panel (`tui-play`): same `Play`, raster Off
@@ -35,6 +36,7 @@ tree.
 | `script` | Compiled `Script` trait + Load isolate; catalog/file cards; content-addressed JS cache |
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`) + `e2e-suite` ordered runner |
+| `frontend-core` | Shared panel/TUI scripts, nav prefs, resource meter |
 | `panel` | Native UI (`panel-play`): profiles, Log in/Logout, WalkTo, scripts, MultiBox |
 | `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 

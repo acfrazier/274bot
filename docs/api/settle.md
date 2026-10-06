@@ -17,8 +17,9 @@ enum Outcome<'a> {
 `Settle::poll(&mut self, now) -> Option<Outcome>` runs one watch step:
 check each arm's evidence against (now, before) → `Some(Matched)`; else if
 disconnected/not-ingame or the tick/ms budget is exhausted → `Some(Expired)`;
-else `None` (still watching). `SettleOptions { arms: &[(name, Evidence)],
-budget_ticks, budget_ms }`.
+else `None` (still watching). `SettleOptions { arms, budget_ticks,
+budget_ms: Option<u64> }` — a `None` backstop derives from the tick budget
+(`budget_ticks × 600 ms × 4`).
 
 ## Evidence
 
@@ -37,6 +38,6 @@ closure capturing its parameters.
 - `scene_ready()` — `scene_state == 2` and a non-zero scene base.
 - `inventory_changed()` — the inventory slot:count signature changed.
 
-The poll order mirrors m8aq's `Settle.ts` watch loop: arms first, then the
+The poll order is: arms first, then the
 disconnect/ingame check, then the tick-then-ms budget (`LIVE_TICK_MS = 600`,
 `BACKSTOP_MULTIPLIER = 4`).

@@ -27,7 +27,7 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 A passphrase is required and an empty or whitespace-only one is rejected. A
 new vault accepts any non-empty passphrase; strength is the user's choice. An
 existing vault opens with whatever passphrase it was created with. First run **Create
-vault** writes `~/.274bot/vault` **empty** — panel-play does **not**
+vault** writes the bound profile's vault (`~/.274bot/vault-289` for `local-289`; see [vault.md](vault.md#which-vault-file)) **empty** — panel-play does **not**
 auto-create `test`/`test` (that is host-play CLI: `--user test` defaults,
 `password = username`). A wrong passphrase never replaces the file;
 **Reset vault** (confirm + I understand) is the forgotten-password wipe.
@@ -104,7 +104,7 @@ panel is **330 px** wide and the MultiBox rail is **264 px**; both keep that
 logical width as the window grows vertically. The rail's tile body is
 **236×155 px** at 100% scale. Splitters, undock, the tab-bar corner menu,
 and imgui.ini restore are off.
-Only grid mode fits the 274 blit to the resizable pane; single-bot and rail
+Only grid mode fits the game blit to the resizable pane; single-bot and rail
 keep the native **765×503 logical** applet centered in the leftover pane,
 scaled by display DPI in physical framebuffer coordinates. The window loop
 uses `HiDpiMode::Locked(1.0)` so ImGui's layout coordinates are physical
@@ -129,27 +129,30 @@ thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
-The Game Image is an ImGui **wgpu texture**. The 274 scene behind it is
+The Game Image is an ImGui **wgpu texture**. The game scene behind it is
 the client submodule's **wgpu GPU 3D** renderer by default (CpuPix3D
 when `BOT_CPU=1`). That is not the client's `Present` applet
 (`client-play --window` on bothost). Unfocused / renderer-off slots skip
-`game_draw`. Watch-only is a **1 fps rail**; capture is 50 fps.
+`game_draw`. Slots that draw without a 50 fps knob run the **1 fps**
+watch cadence; capture never raises fps.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
-scene); that is the 274 painter, not the ImGui chrome.
+scene); that is the client painter, not the ImGui chrome.
 
 ## Renderer vs capture
 
 274bot defaults to **lowmem** (`Profile.settings.lowmem = true`). The
 checkboxes on a focused profile:
 
-- **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
-  it after off paints **this tick** (no cold wait). Capture raises the
-  focused slot to 50 fps; sidecar 50 fps raises unfocused wall members;
-  full rate (this run) raises every drawing slot (below). Unfocused slots
-  do not raster. The Game Image is an RGBA8 texture that is **never below
-  765×503** (native, non-grid). Grid tiles `fit_applet` into their cell.
+- **game renderer** — default **on**. Checking it after off paints
+  **this tick** (no cold wait). Frame cadence is three separate knobs:
+  **focused 50 fps** raises the Game pane slot, **sidecar 50 fps** raises
+  unfocused wall members, and the ephemeral **full rate (this run)**
+  overlay raises every drawing slot (below); any other drawing slot runs
+  the 1 fps watch cadence. Capture (below) never raises fps. The Game
+  Image is an RGBA8 texture that is **never below 765×503** (native,
+  non-grid). Grid tiles `fit_applet` into their cell.
   Rendering never pauses the bot. Renderer-off /
   `set_draw(false)` detaches the head — GPU textures, chrome, and the
   decoded 3D scene are freed — while `mainloop` and collision keep
@@ -250,19 +253,18 @@ Log out issued meanwhile.
 
 ### Resource honesty
 
-The resource card is the operator measurement surface: **bots**, **CPU**,
-**RAM**, **traffic**, and **draw**, sampled once a second. These are live
+The resource card is the operator measurement surface: **bots**,
+**background**, **CPU**, **RAM**, and **traffic**, sampled once a second. These are live
 samples for the current process, not published performance guarantees or
 historical benchmark claims. The first CPU and traffic samples read
 "measuring…". Traffic is the sum of each live slot’s `ClientStream`
 payload `bytes_in + bytes_out` over that second — never a fake `0 B/s`
-before two samples, and never `0 B/s` when there are no slots (still
-measuring…). If a slot drops (or the byte sum shrinks), traffic
+before two samples, and `no live slots` when there are no slots. If a slot drops (or the byte sum shrinks), traffic
 **re-baselines** instead of inventing a wrap spike. A failed process sampler
-shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
-the whole host; on macOS the
-RAM row is **peak** (`ru_maxrss`). Draw is the focused slot’s `game_draw`
-enters plus paint/skip counts. `BOT_DEBUG=1` also prints 1 Hz loop vs raster
+shows "process sample failed" for CPU/RAM; it does not invent traffic. Process RSS is
+the whole host; the RAM row reads the current resident size plus the lifetime peak
+(`<now> process, peak <peak>`, falling back to peak-only when resident is unavailable).
+`BOT_DEBUG=1` also prints 1 Hz loop vs raster
 timings per slot and the RSS sample. Draw-off **detaches** the head, so
 unheaded slots hold only their mutable sim + the shared decode pile;
 the RSS ladder is the measurement surface and it prints `rss=…` — it
@@ -300,7 +302,7 @@ count and unique ESTABLISHED TCP to the engine port. Does **not** fail
 on RSS size. FAIL if `rss=0`, if OnDemand workers ≠ 1, or if TCP exceeds
 n+1 (game + one update socket). This ladder is **Null / draw-off**
 clients. It does **not** measure Started JS isolates (64 MB heap **cap**,
-grows from small; wall isolate RSS is unmeasured alpha — see
+grows from small; wall isolate RSS is unmeasured — see
 [`script.md`](script.md)).
 
 ```bash
@@ -350,7 +352,8 @@ green `#04A800`. Panel background `#111`.
 Right strip is **330px**-class. Section headings are collapsible (persisted
 per profile in `panel-ui.json`; **script** / **parameters** default closed)
 and **drag-reorderable** (order in `panel-ui.json`). Default order:
-**status**, **profile**, **script**, **parameters**, **debug**, **log**.
+**status**, **resource**, **profile**, **script**, **debug**, **log**; **parameters**
+is drawn after them and is not reorderable.
 Login / WalkTo / config stay at the top.
 
 **Log in** / **Logout** sit above WalkTo (always shown; disabled while
@@ -370,7 +373,9 @@ not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
 **Script** Browse / Load / Reload / Start / Pause / Stop are wired
-([script.md](script.md)). Load is enabled except while a script is active.
+([script.md](script.md)). Browse lists the compiled native cards
+(Gatherer, Quester, Sherlock) first, then loaded JS/catalog cards.
+Load is enabled except while a script is active.
 **Reload** hashes the selected File/catalog card; unchanged origins report
 “Nothing changed; nothing to reload” and skip transpile; confirm restarts
 matching running bots and **Stops** matching paused bots. Browse’s
@@ -416,9 +421,13 @@ Parameters **Edit** is live for a loaded card with a settings schema
 settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
-Start persists the per-profile script assignment. **Nav config**
-is live (debug paints / labels / FindOptions toggles) as its own
-non-blocking window. **General config** (under WalkTo, above profile) is
+Start persists the per-profile script assignment. **Nav config** is live
+as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map,
+and Quest Paths groups): the durable walk permissions (teleports, wilderness, bank fetch,
+danger zones — all default off), **Pause script on manual movement**
+(default on), and debug paints / labels. WalkTo map holds **ask before baking terrain**;
+Quest Paths holds the Quester folder-paths loader (folder, reload). **General config** (under
+WalkTo, above profile) is
 **slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**
 (sidecar 50 / only-render-selected). **Loadouts** is a live window (CRUD
@@ -466,7 +475,8 @@ guarded by `host_play::walk_map`). Walk needs a snapped walkable target. The
 zone checkbox starts unchecked and resets every time WalkTo opens; its hover
 text is `Allows routes past monsters that may kill your bot.` It applies only
 to that WalkTo's focused or group Walk confirmation and is not saved in Nav
-config. On a legacy grid pack the toggle cannot enable zone checks, and the
+config. While the global danger-zones permission is on, the per-walk checkbox is superseded.
+On a legacy grid pack the toggle cannot enable zone checks, and the
 report says `zones: unavailable (legacy grid pack)`.
 The map selection is a destination (tile/POI, plane, nav identity), not a bot.
 **Send** chooses **Focused bot** (default) or **Group** — a checklist of
