@@ -3717,6 +3717,11 @@ fn s2a_compute_only_per_bot_layouts() {
     );
     // S2a adds no field to any ordinary per-bot owner. Pin the measured
     // default-feature macOS layout; other targets retain the portable bounds.
+    // Integration-6 growth over the S2a pin (3448, 4024, 512, 256): NavBot
+    // +24 B = `walk_guard` +8 (combat S3b grew the shared Schedule to nine
+    // slots and u16 masks, WalkGuard 256 -> 264) and `traveller` +16 (648 ->
+    // 664; nav-door-expire's per-hop `DoorRetry` re-Open pacing state). Field
+    // probe: CORE-INTEGRATOR-6 probe-b656.log / probe-head.log.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -3729,8 +3734,8 @@ fn s2a_compute_only_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3448, 4024, 512, 256)
+        (3472, 4024, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
-    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 256);
+    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
 }
