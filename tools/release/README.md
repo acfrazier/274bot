@@ -6,7 +6,7 @@
 platforms:
 
 ```sh
-TAG=0.2.0   # the Cargo version, or a numeric patch tag beginning with it
+TAG=0.2.0   # after `[workspace.package] version` is `0.2.0`; a numeric patch tag may begin with that version
 COMMIT="$(git rev-parse HEAD)"
 python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
 python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
