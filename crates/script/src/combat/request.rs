@@ -51,6 +51,16 @@ impl MeleeMode {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum RangedMode {
+    Accurate,
+    #[default]
+    Rapid,
+    LongRange,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrayerMode {
     #[default]
@@ -145,6 +155,7 @@ pub struct CombatRequest {
     pub tactic: Tactic,
     pub style: Style,
     pub melee_mode: Option<MeleeMode>,
+    pub ranged_style: RangedMode,
     pub kit: Option<Arc<CompiledKit>>,
     /// An explicit order always uses manual casts, even with an armed staff.
     /// `None` selects the strongest castable spell (the 16-row chooser when
@@ -179,6 +190,7 @@ impl Default for CombatRequest {
             spells: None,
             fallback_spells: false,
             melee_mode: None,
+            ranged_style: RangedMode::default(),
             stand: None,
             search_bounds: None,
             engage_radius: 12,

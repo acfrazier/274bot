@@ -166,6 +166,9 @@ pub struct NpcView {
 pub struct PlayerView {
     pub index: usize,
     pub actor: ActorView,
+    /// Path-head network SW: `map_build_base + route[0]`, same level as `actor.tile`.
+    /// Packet-time at player rebuild; not the interpolated rendered pose.
+    pub network: WorldTile,
     pub combat_level: i32,
     pub skill_level: i32,
     /// Client appearance headicon bitmask (protect melee/missiles/magic are bits 3/4/5).

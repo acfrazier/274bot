@@ -482,10 +482,33 @@ fn same_name_food_facts_keep_per_item_heals_and_legacy_name_ambiguity() {
 }
 
 #[test]
-fn legacy_selected_data_has_no_invented_melee_controls() {
+fn legacy_selected_data_has_no_invented_combat_controls() {
     let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
     assert!(data.melee_modes().is_empty());
     assert_eq!(data.melee_mode_varp(), None);
+    assert!(data.ranged_weapons().is_empty());
+    assert!(data.ranged_ammo().is_empty());
+    assert!(data.ranged_modes().is_empty());
+    assert_eq!(data.ranged_mode_varp(), None);
+}
+
+#[test]
+fn ranged_fact_payload_decodes_and_is_exposed_by_selected_data() {
+    let json = minimal_json(
+        r#", "ranged_weapons":[{"obj_id":841,"attackrange":10,"levelrequire":30,"ammo_family":"ogre_arrow"}],
+        "ranged_ammo":[{"obj_id":2866,"levelrequire":30,"family":"ogre_arrow"}],
+        "ranged_modes":[{"tab":12,"slot":1,"mode":1,"button":20032}],
+        "ranged_mode_varp":43"#,
+    );
+    let data = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274).unwrap();
+    assert_eq!(
+        data.ranged_weapons()[0].ammo_family,
+        RangedAmmoFamily::OgreArrow
+    );
+    assert_eq!(data.ranged_weapons()[0].attackrange, 10);
+    assert_eq!(data.ranged_ammo()[0].family, RangedAmmoFamily::OgreArrow);
+    assert_eq!(data.ranged_modes()[0].mode, 1);
+    assert_eq!(data.ranged_mode_varp(), Some(43));
 }
 
 fn debug_catalog() -> crate::debug_commands::DebugCatalog {

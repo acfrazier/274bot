@@ -234,6 +234,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                         evidence: None,
                         cross: Vec::new().into_boxed_slice(),
                         protect: false,
+                        food_guard: false,
                         allow: Default::default(),
                     },
                     &mut tick.cx,

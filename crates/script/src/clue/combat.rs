@@ -97,6 +97,7 @@ impl Delegation {
             tactic: Tactic::Open,
             style: Style::Melee,
             melee_mode: None,
+            ranged_style: Default::default(),
             kit: None,
             spells: None,
             fallback_spells: false,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::combat::RangedMode;
 use crate::native::{ledger, ActionHandle, HostEffect, NativeActions, RetainedMemory};
 use api::game_data::NpcAttackKind;
 use api::game_data::SelectedGameData;
@@ -32,6 +33,7 @@ struct Runtime {
     budget: ledger::TickBudget,
     wall: Instant,
     evidence: Option<EvidenceStamp>,
+    reach: Option<api::query::ReachQueryView>,
 }
 impl Runtime {
     fn context<R>(
@@ -61,7 +63,7 @@ impl Runtime {
         let mut cx = ActionContext {
             evidence,
             pin: &self.pin,
-            snapshot: SnapshotView::new(Some(snapshot), evidence),
+            snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
@@ -138,6 +140,7 @@ impl Harness {
             budget: ledger::TickBudget::default(),
             wall: Instant::now(),
             evidence: None,
+            reach: None,
         };
         let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
             let lease = actions.begin::<Lease>((), cx).unwrap();
@@ -341,6 +344,7 @@ impl Scene {
             local: LocalPlayerView {
                 player: PlayerView {
                     index: 1,
+                    network: at,
                     actor: actor(at),
                     combat_level: 60,
                     skill_level: 0,
@@ -559,6 +563,7 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     let mut scene = Scene::new("imp");
     let mut attacker = PlayerView {
         index: 8,
+        network: tile(2601, 3200),
         actor: actor(tile(2601, 3200)),
         combat_level: 60,
         skill_level: 0,
@@ -607,12 +612,11 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 }
 
 #[test]
-fn fail_closed_later_slices_have_no_host_work() {
+fn fail_closed_flick_and_pvp_modes_have_no_host_work() {
     let scene = Scene::new("imp");
-    for change in [0, 2, 3] {
+    for change in [2, 3] {
         let mut request = scene.request();
         match change {
-            0 => request.style = Style::Ranged,
             2 => request.prayer_mode = PrayerMode::Flick,
             _ => {
                 request.target = Target::Player {
@@ -1197,6 +1201,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         evidence: None,
         cross: Vec::new().into_boxed_slice(),
         protect: true,
+        food_guard: false,
         allow: crate::native::WalkAllow::default(),
     };
     let mut guard =
@@ -3441,5 +3446,602 @@ fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() 
     );
 }
 
+#[test]
+fn case_31_ranged_launch_advances_cycle_but_impact_does_not() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    let mut arrows = scene.held("steel_arrow", 13);
+    arrows.container = ItemContainer::Equipment;
+    arrows.count = 150;
+    let tab = scene.tables.weapon_style(bow.def.id).unwrap().tab.unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    scene.varps.push(VarpView {
+        index: scene.data.ranged_mode_varp().unwrap(),
+        value: i32::from(rapid.slot),
+    });
+    scene.equipment = vec![bow, arrows];
+    scene.refresh();
+    scene.combat_tab(root);
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    scene.install();
+    scene.refresh();
+    scene.combat_tab(root);
+    assert!(harness.pending(&scene, 2).is_none());
+    scene.equipment[1].count -= 1;
+    scene.refresh();
+    scene.combat_tab(root);
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            level: 0,
+            src: scene.local.player.actor.tile,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Npc,
+                index: 7,
+            }),
+            // The packet arrives now; bow flight starts 41 client cycles later.
+            t1: 41,
+            t2: 51,
+        }]);
+    assert!(harness.pending(&scene, 3).is_none());
+    assert_eq!(harness.machine.counters.swings, 1);
+    assert!(harness.machine.schedule.cycle.known);
+    assert_eq!(harness.machine.schedule.cycle.deadline, 6);
+    assert_eq!(scene.equipment[1].count, 149);
+    scene.npcs[0].health -= 1;
+    scene.local.player.actor.tile.x += 1;
+    scene.refresh();
+    scene.combat_tab(root);
+    assert!(harness.pending(&scene, 6).is_none());
+    assert_eq!(harness.machine.counters.swings, 1);
+    assert_eq!(harness.machine.schedule.cycle.deadline, 6);
+}
+
+#[test]
+fn ranged_wrong_ammo_aborts_prep_without_attack() {
+    let mut scene = Scene::new("cow");
+    let bow = scene.held("maple_shortbow", 0);
+    let mut bolts = scene.held("bolt", 1);
+    bolts.count = 50;
+    scene.inventory = vec![bow, bolts];
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    assert_eq!(
+        harness.ready(&scene, 1).end,
+        CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Ammo))
+    );
+}
+
+#[test]
+fn ranged_prep_waits_for_style_observation_then_ammo_out_is_explicit() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    let mut arrows = scene.held("steel_arrow", 13);
+    arrows.container = ItemContainer::Equipment;
+    arrows.count = 2;
+    let tab = scene.tables.weapon_style(bow.def.id).unwrap().tab.unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    let (button, slot) = (rapid.button, rapid.slot);
+    let varp = scene.data.ranged_mode_varp().unwrap();
+    scene.varps.retain(|row| row.index != varp);
+    scene.varps.push(VarpView {
+        index: varp,
+        value: 0,
+    });
+    scene.equipment = vec![bow, arrows];
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    assert!(
+        harness.pending(&scene, 1).is_none(),
+        "missing tab cannot arm"
+    );
+    scene.combat_tab(root);
+    assert!(matches!(harness.pending(&scene, 2),
+        Some(HostEffect::Interaction(InteractReq::IfButton { component_id }))
+        if component_id == button));
+    assert_eq!(harness.machine.phase, Phase::Prep);
+    assert!(harness.pending(&scene, 3).is_none());
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == varp)
+        .unwrap()
+        .value = i32::from(slot);
+    scene.refresh();
+    scene.combat_tab(root);
+    attack(harness.pending(&scene, 4));
+    scene.install();
+    scene.equipment[1].count = 0;
+    scene.refresh();
+    scene.combat_tab(root);
+    assert_eq!(
+        harness.ready(&scene, 5).end,
+        CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoAmmo))
+    );
+}
+
+#[test]
+fn ranged_winddown_caps_even_unobserved_pickups_at_four() {
+    ranged_winddown_fixture(false, false);
+}
+
+#[test]
+fn ranged_winddown_aborts_for_another_live_threat() {
+    ranged_winddown_fixture(true, false);
+}
+
+#[test]
+fn ranged_winddown_does_not_ignore_a_respawned_target() {
+    ranged_winddown_fixture(false, true);
+}
+
+fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
+    let mut scene = Scene::new("cow");
+    let ammo = scene.held("steel_arrow", 0);
+    let here = scene.local.player.actor.tile;
+    let mut held = ammo.clone();
+    held.count = 40_000;
+    scene.inventory.push(held);
+    scene.npcs[0].health = if respawned { 30 } else { 0 };
+    if other_threat {
+        let mut other = scene.npcs[0].clone();
+        other.index = 8;
+        other.health = 30;
+        other.target = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        });
+        other.in_combat = true;
+        scene.npcs.push(other);
+    }
+    scene.refresh();
+    scene
+        .snapshot
+        .seed_ground_items(vec![api::snapshot::GroundItemView {
+            def: ammo.def.clone(),
+            count: 5,
+            actions: vec![Some("Take".into())],
+            tile: here,
+            distance: 0,
+        }]);
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    harness.runtime.reach = Some(api::query::ReachQueryView {
+        available: true,
+        base_x: here.x,
+        base_z: here.z,
+        level: here.level,
+        width: 1,
+        height: 1,
+        walkable: vec![1],
+        reachable: vec![1],
+        reachable_adj: vec![1],
+        exact_rank: vec![0],
+        adjacent_rank: vec![0],
+        step: vec![0],
+        canlight: Vec::new(),
+    });
+    harness.machine.ranged_mut().ammo_pick = ammo.def.id;
+    harness.machine.engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    harness.machine.threats.observe_hunt(
+        [(7, scene.npcs[0].r#type.unwrap() as i32, true, 2, 1)],
+        1,
+        &scene.tables,
+        0,
+    );
+    harness.machine.finish(CombatEnd::Killed, 0);
+    let mut pickups = 0;
+    let mut completed = false;
+    for tick in 1..=24 {
+        match harness.poll(&scene.snapshot, tick) {
+            Poll::Pending => {
+                if let Some(effect) = harness.drain(None).into_single() {
+                    assert!(matches!(
+                        effect,
+                        HostEffect::Interaction(InteractReq::Obj { .. })
+                    ));
+                    pickups += 1;
+                }
+            }
+            Poll::Ready(Ok(report)) => {
+                assert_eq!(report.end, CombatEnd::Killed);
+                assert_eq!(
+                    report.ammo_pickups, 0,
+                    "unobserved pickup is not counted as recovered"
+                );
+                completed = true;
+                break;
+            }
+            other => panic!("unexpected sweep result: {other:?}"),
+        }
+    }
+    assert!(completed);
+    assert_eq!(pickups, if other_threat || respawned { 0 } else { 4 });
+}
+
+#[test]
+fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
+    let mut scene = Scene::new("cow");
+    let mut darts = scene.held("bronze_dart", 3);
+    darts.container = ItemContainer::Equipment;
+    darts.count = 50;
+    let tab = scene
+        .tables
+        .weapon_style(darts.def.id)
+        .unwrap()
+        .tab
+        .unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    scene.varps.push(VarpView {
+        index: scene.data.ranged_mode_varp().unwrap(),
+        value: i32::from(rapid.slot),
+    });
+    let id = darts.def.id;
+    scene.equipment = vec![darts];
+    scene.refresh();
+    scene.combat_tab(root);
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    assert_eq!(harness.machine.ranged().ammo_pick, id);
+    assert_eq!(harness.machine.desired(13), None);
+    scene.install();
+    // Route-head launch coordinates lead the rendered pose during a chase.
+    scene.local.player.actor.tile.x += 3;
+    scene.refresh();
+    scene.combat_tab(root);
+    assert!(harness.pending(&scene, 2).is_none());
+    for tick in 3..203 {
+        let cycle = i32::try_from(tick).unwrap() * 30;
+        scene.snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: cycle,
+        });
+        scene
+            .snapshot
+            .seed_projectiles(vec![api::snapshot::ProjectileView {
+                spotanim: 9,
+                level: 0,
+                src: scene.local.player.network,
+                target: Some(ActorTargetView {
+                    kind: ActorKind::Npc,
+                    index: 7,
+                }),
+                t1: cycle,
+                t2: cycle + 10,
+            }]);
+        let allocations = allocation_counter::measure(|| {
+            assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+            assert!(harness.runtime.ledger.as_ref().unwrap().outbox.is_empty());
+        });
+        assert_eq!(allocations.count_total, 0);
+    }
+    scene.equipment.clear();
+    scene.refresh();
+    scene.combat_tab(root);
+    assert_eq!(
+        harness.ready(&scene, 203).end,
+        CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoAmmo))
+    );
+}
+
+fn contains_wear(batch: &DrainedBatch, wanted: &str) -> bool {
+    (0..batch.len()).any(|index| {
+        matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Wear { name })) if name.as_str() == wanted
+        )
+    })
+}
+
+#[test]
+fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
+    let mut scene = Scene::new("cow");
+    let mut darts = scene.held("bronze_dart", 0);
+    darts.count = 50;
+    let id = darts.def.id;
+    scene.inventory.push(darts.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+    let first = harness.pending_batch(&scene, 1);
+    assert!(contains_wear(&first, darts.def.name.as_deref().unwrap()));
+
+    scene.inventory.clear();
+    scene.refresh();
+    assert!(
+        matches!(harness.poll(&scene.snapshot, 2), Poll::Pending),
+        "an in-flight thrown-weapon Wear must cover the split frame"
+    );
+    harness.drain(None);
+
+    darts.container = ItemContainer::Equipment;
+    darts.slot = 3;
+    scene.equipment.push(darts);
+    scene.refresh();
+    assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
+    harness.drain(None);
+}
+
+#[test]
+fn ranged_fight_waits_for_torn_bow_ammo_wear_frame() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    let bow_id = bow.def.id;
+    let mut arrows = scene.held("steel_arrow", 13);
+    arrows.container = ItemContainer::Equipment;
+    arrows.count = 50;
+    let arrow_id = arrows.def.id;
+    let tab = scene.tables.weapon_style(bow_id).unwrap().tab.unwrap();
+    let root = scene.tables.combat_tab_root(tab).unwrap();
+    let rapid = scene
+        .data
+        .ranged_modes()
+        .iter()
+        .find(|row| row.tab == tab as u8 && row.mode == RangedMode::Rapid as u8)
+        .unwrap();
+    scene.varps.push(VarpView {
+        index: scene.data.ranged_mode_varp().unwrap(),
+        value: i32::from(rapid.slot),
+    });
+    scene.equipment = vec![bow, arrows.clone()];
+    scene.refresh();
+    scene.combat_tab(root);
+
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, bow_id), (13, arrow_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    scene.install();
+
+    scene.equipment.retain(|item| item.slot != 13);
+    let mut carried_arrows = arrows.clone();
+    carried_arrows.container = ItemContainer::Inventory;
+    carried_arrows.slot = 0;
+    scene.inventory.push(carried_arrows);
+    scene.refresh();
+    scene.combat_tab(root);
+
+    let mut wear_tick = None;
+    for tick in 2..=8 {
+        let batch = harness.pending_batch(&scene, tick);
+        if contains_wear(&batch, arrows.def.name.as_deref().unwrap()) {
+            wear_tick = Some(tick);
+            break;
+        }
+    }
+    let wear_tick = wear_tick.expect("Fight should re-wear the carried arrows");
+
+    scene.inventory.clear();
+    scene.refresh();
+    scene.combat_tab(root);
+    let torn = harness.pending_batch(&scene, wear_tick + 1);
+    assert!(
+        !(0..torn.len()).any(|index| matches!(
+            torn.get(index),
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. }))
+                if action == "Attack"
+        )),
+        "do not attack while the ammo Wear is still in flight"
+    );
+
+    arrows.container = ItemContainer::Equipment;
+    scene.equipment.push(arrows);
+    scene.refresh();
+    scene.combat_tab(root);
+    assert!(matches!(
+        harness.poll(&scene.snapshot, wear_tick + 2),
+        Poll::Pending
+    ));
+    harness.drain(None);
+}
+
+#[test]
+fn ranged_missing_bow_ammo_wear_times_out_as_prep_failed_ammo() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    let bow_id = bow.def.id;
+    let mut arrows = scene.held("steel_arrow", 0);
+    arrows.count = 50;
+    let arrow_id = arrows.def.id;
+    scene.equipment.push(bow);
+    scene.inventory.push(arrows.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, bow_id), (13, arrow_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+    assert!(contains_wear(
+        &harness.pending_batch(&scene, 1),
+        arrows.def.name.as_deref().unwrap()
+    ));
+
+    scene.inventory.clear();
+    scene.refresh();
+    for tick in 2..=4 {
+        assert!(
+            matches!(harness.poll(&scene.snapshot, tick), Poll::Pending),
+            "missing ammo remains pending only while its Wear is settling"
+        );
+        harness.drain(None);
+    }
+    assert_eq!(
+        harness.ready(&scene, 5).end,
+        CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Ammo))
+    );
+}
+
+#[test]
+fn ranged_missing_thrown_weapon_wear_times_out_as_prep_failed_weapon() {
+    let mut scene = Scene::new("cow");
+    let mut darts = scene.held("bronze_dart", 0);
+    darts.count = 50;
+    let id = darts.def.id;
+    scene.inventory.push(darts.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+    assert!(contains_wear(
+        &harness.pending_batch(&scene, 1),
+        darts.def.name.as_deref().unwrap()
+    ));
+
+    scene.inventory.clear();
+    scene.refresh();
+    for tick in 2..=4 {
+        assert!(matches!(harness.poll(&scene.snapshot, tick), Poll::Pending));
+        harness.drain(None);
+    }
+    assert_eq!(
+        harness.ready(&scene, 5).end,
+        CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon))
+    );
+}
+
+#[test]
+fn ranged_stacked_shooter_uses_rate_clock_then_resumes_launch_evidence() {
+    let mut scene = Scene::new("cow");
+    let mut bow = scene.held("maple_shortbow", 3);
+    bow.container = ItemContainer::Equipment;
+    scene.equipment.push(bow);
+    scene.install();
+    let mut other = scene.local.player.clone();
+    other.index = 2;
+    // A co-located network shooter can still have a different rendered pose.
+    other.actor.tile.x += 2;
+    scene.players.push(other);
+    scene.refresh();
+    let mut request = scene.request();
+    request.style = Style::Ranged;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.engaged = Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    let rate = measured_weapon_rate(&harness, &scene);
+    harness.machine.schedule.observe_swing(1, rate);
+    for tick in 2..=30 {
+        let frame = Frame::borrow(SnapshotView::new(
+            Some(&scene.snapshot),
+            harness.runtime.evidence.unwrap(),
+        ))
+        .unwrap();
+        harness.machine.settle(&frame, tick);
+        assert_eq!(harness.machine.schedule.last_swing, 1);
+        assert_eq!(harness.machine.counters.swings, 0);
+        assert!(!harness.machine.schedule.stale_ready(tick, rate));
+        assert!(!reached(tick, harness.machine.schedule.cycle.deadline));
+    }
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            src: scene.local.player.actor.tile,
+            level: scene.local.player.actor.tile.level,
+            target: scene.local.player.actor.target,
+            t1: 32,
+            t2: 40,
+        }]);
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 31);
+    assert_eq!(harness.machine.ranged().launch_cycle, 32);
+    assert_eq!(harness.machine.counters.swings, 0);
+    scene.snapshot.seed_players(Vec::new());
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 32);
+    assert_eq!(
+        harness.machine.counters.swings, 0,
+        "old ambiguous launch stays consumed"
+    );
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            src: scene.local.player.actor.tile,
+            level: scene.local.player.actor.tile.level,
+            target: scene.local.player.actor.target,
+            t1: 35,
+            t2: 45,
+        }]);
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.settle(&frame, 33);
+    assert_eq!(harness.machine.counters.swings, 1);
+    assert_eq!(harness.machine.schedule.last_swing, 33);
+    assert_eq!(
+        harness.machine.schedule.cycle.deadline,
+        33 + u16::from(rate)
+    );
+}
 #[path = "magic_machine_tests.rs"]
 mod magic_tests;

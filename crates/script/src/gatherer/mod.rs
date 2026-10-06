@@ -215,6 +215,7 @@ pub(crate) fn test_full_pack_fixture(
     snapshot.seed_local_player(LocalPlayerView {
         player: PlayerView {
             index: 0,
+            network: actor.tile,
             actor,
             combat_level: 3,
             skill_level: 1,

@@ -23,7 +23,9 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
-/// Maximum locally relevant projectiles; incoming threats retain priority.
+/// Maximum number of projectiles retained per snapshot. Incoming local-target
+/// threats and candidates sourced from the local tile are included; incoming
+/// threats retain priority over local-source candidates.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
