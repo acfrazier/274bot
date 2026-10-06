@@ -536,4 +536,138 @@ fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
         Choice::Step(FactKey::new("flour"))
     );
     assert_eq!(probe.choice("cook:1", 4, &empty), Choice::Exhausted);
+/// REVIEW-PATHS-MEMBERS-A items H6/H7: the `elena:25` rule only matched varp
+/// 26+ journal text while rule `elena:26` precedes it, so the clerk step could
+/// never settle and the Bravek steps never ran. The merge into `elena:24-25`
+/// plus the corrected/new area boxes must keep resolving; this guards both
+/// the first-win rule order and the box data. Journal lines mirror
+/// `scripts/quests/quest_elena/scripts/elena_journal.rs2`.
+#[test]
+fn elena_stage_24_25_merge_and_area_boxes_resolve() {
+    use script::quester::progress::normalize_journal;
+    use std::sync::Arc;
+
+    fn resolve(compiled: &script::quester::compile::CompiledPath, lines: &[&str]) -> String {
+        let arcs: Vec<Arc<str>> = lines.iter().map(|line| Arc::<str>::from(*line)).collect();
+        let text = normalize_journal(&arcs);
+        compiled
+            .progress
+            .rules
+            .iter()
+            .find(|rule| {
+                rule.all.iter().all(|needle| text.contains(needle.as_ref()))
+                    && (rule.any.is_empty()
+                        || rule.any.iter().any(|needle| text.contains(needle.as_ref())))
+                    && rule
+                        .not
+                        .iter()
+                        .all(|needle| !text.contains(needle.as_ref()))
+            })
+            .map(|rule| rule.stage.0.as_ref().to_string())
+            .unwrap_or_else(|| "journal-no-match".to_string())
+    }
+
+    let _home = script::IsolatedEnv::enter("path-schema-elena-24-25");
+    let root = paths_dir();
+    let (selected, quests) = selected_and_quests();
+
+    let elena_value = read_path(&root.join("elena.json"));
+    let elena = compile_value(elena_value.clone(), &selected, &quests).expect("elena compiles");
+
+    // Every sequence stage resolves to an authored rule: no dead stages.
+    for sequence in &elena.sequences {
+        let stage = sequence.stage.0.as_ref();
+        assert!(
+            elena.progress.rule_for_stage(&sequence.stage).is_some(),
+            "sequence {stage} has no progress rule"
+        );
+    }
+    let rule_stages: Vec<&str> = elena
+        .progress
+        .rules
+        .iter()
+        .map(|rule| rule.stage.0.as_ref())
+        .collect();
+    assert!(rule_stages.contains(&"elena:24-25"), "merged rule missing");
+    assert!(
+        !rule_stages.contains(&"elena:25"),
+        "dead rule elena:25 still present"
+    );
+    assert!(
+        !rule_stages.contains(&"elena:24"),
+        "unmerged rule elena:24 still present"
+    );
+
+    // Varp spoke_to_plague_house / spoke_to_clerk share one journal paragraph,
+    // so both resolve to the merged stage even though older struck lines also match.
+    let clerk_lines = [
+        "I've spoken to Jethick, he thinks Elena was staying with",
+        "the Rehnison Family, in a timber house to the north of the city.",
+        "I've spoken to Milli about Elena, she says Elena was taken",
+        "into one of the Plague Houses.",
+        "I need clearance from either the Head Mourner or Bravek",
+        "to get into the Plague House",
+    ];
+    assert_eq!(resolve(&elena, &clerk_lines), "elena:24-25");
+    // Varp spoke_to_bravek adds the cure paragraph, which rule 26 (ordered
+    // before 24-25) claims.
+    let bravek_lines = [
+        "I've spoken to Milli about Elena, she says Elena was taken",
+        "into one of the Plague Houses.",
+        "I need clearance from either the Head Mourner or Bravek",
+        "to get into the Plague House",
+        "Bravek might give me clearance if I make his Hangover",
+        "Cure.",
+        "I need to bring Bravek the Hangover Cure",
+        "when I work it out.",
+    ];
+    assert_eq!(resolve(&elena, &bravek_lines), "elena:26");
+
+    // H7 plus the new sewer box the picture/manhole recoveries navigate by.
+    assert_eq!(
+        elena_value["quest"]["areas"]["elena_house_interior"]["boxes"],
+        json!([[2533, 3264, 2544, 3271, 0]])
+    );
+    assert_eq!(
+        elena_value["quest"]["areas"]["elena_sewer"]["boxes"],
+        json!([[2528, 9696, 2570, 9740, 0]])
+    );
+
+    // The merged sequence carries the clerk introduction and both Bravek steps.
+    let merged = elena_value["roles"][0]["sequences"]
+        .as_array()
+        .expect("sequences")
+        .iter()
+        .find(|sequence| sequence["stage"] == json!("elena:24-25"))
+        .expect("merged sequence");
+    let step_ids: Vec<&str> = merged["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .map(|step| step["id"].as_str().expect("step id"))
+        .collect();
+    assert_eq!(
+        step_ids,
+        [
+            "get-clerk-introduction-to-bravek",
+            "open-bravek-office-door",
+            "ask-bravek-for-cure-recipe"
+        ]
+    );
+
+    // Hazeel cave box the entry-raft recovery settles in.
+    let hazeel_value = read_path(&root.join("hazeelcult.json"));
+    let hazeel =
+        compile_value(hazeel_value.clone(), &selected, &quests).expect("hazeelcult compiles");
+    for sequence in &hazeel.sequences {
+        let stage = sequence.stage.0.as_ref();
+        assert!(
+            hazeel.progress.rule_for_stage(&sequence.stage).is_some(),
+            "sequence {stage} has no progress rule"
+        );
+    }
+    assert_eq!(
+        hazeel_value["quest"]["areas"]["hazeel_cave"]["boxes"],
+        json!([[2560, 9672, 2576, 9690, 0]])
+    );
 }

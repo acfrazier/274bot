@@ -1664,6 +1664,9 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
         "imp" => Some(IMP_JSON.as_bytes()),
         "vampire" => Some(VAMPIRE_JSON.as_bytes()),
+        "drunkmonk" => Some(include_str!("../../paths/289/drunkmonk.json").as_bytes()),
+        "hazeelcult" => Some(include_str!("../../paths/289/hazeelcult.json").as_bytes()),
+        "elena" => Some(include_str!("../../paths/289/elena.json").as_bytes()),
         _ => None,
     }
 }
