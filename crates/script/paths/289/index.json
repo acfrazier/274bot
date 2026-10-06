@@ -18,6 +18,9 @@
     { "id": "desertrescue", "file": "desertrescue.json" },
     { "id": "priestperil", "file": "priestperil.json" },
     { "id": "cog", "file": "cog.json" },
+    { "id": "drunkmonk", "file": "drunkmonk.json" },
+    { "id": "hazeelcult", "file": "hazeelcult.json" },
+    { "id": "elena", "file": "elena.json" },
     {
       "id": "hauntedmine",
       "name": "Haunted Mine",

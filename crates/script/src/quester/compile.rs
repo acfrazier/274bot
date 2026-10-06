@@ -1705,6 +1705,9 @@ pub const DEATH_JSON: &str = include_str!("../../paths/289/death.json");
 pub const DESERT_RESCUE_JSON: &str = include_str!("../../paths/289/desertrescue.json");
 pub const PRIEST_PERIL_JSON: &str = include_str!("../../paths/289/priestperil.json");
 pub const CLOCK_TOWER_JSON: &str = include_str!("../../paths/289/cog.json");
+pub const MONKS_FRIEND_JSON: &str = include_str!("../../paths/289/drunkmonk.json");
+pub const HAZEEL_CULT_JSON: &str = include_str!("../../paths/289/hazeelcult.json");
+pub const PLAGUE_CITY_JSON: &str = include_str!("../../paths/289/elena.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -1726,6 +1729,9 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "desertrescue" => Some(DESERT_RESCUE_JSON.as_bytes()),
         "priestperil" => Some(PRIEST_PERIL_JSON.as_bytes()),
         "cog" => Some(CLOCK_TOWER_JSON.as_bytes()),
+        "drunkmonk" => Some(MONKS_FRIEND_JSON.as_bytes()),
+        "hazeelcult" => Some(HAZEEL_CULT_JSON.as_bytes()),
+        "elena" => Some(PLAGUE_CITY_JSON.as_bytes()),
         _ => None,
     }
 }
