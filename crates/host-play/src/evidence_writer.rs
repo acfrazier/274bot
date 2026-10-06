@@ -88,10 +88,23 @@ pub struct WriterStats {
 }
 
 /// Writer tuning. `bound == 0` drops every submit after `submit_wait`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct WriterConfig {
     pub bound: usize,
     pub submit_wait: Duration,
+    /// Test-only gate the worker calls with the job id just before
+    /// `write_capture`. Absent in non-test builds, so it costs nothing there.
+    #[cfg(test)]
+    pub before_write: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for WriterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriterConfig")
+            .field("bound", &self.bound)
+            .field("submit_wait", &self.submit_wait)
+            .finish()
+    }
 }
 
 impl Default for WriterConfig {
@@ -99,6 +112,8 @@ impl Default for WriterConfig {
         Self {
             bound: DEFAULT_QUEUE_BOUND,
             submit_wait: DEFAULT_SUBMIT_WAIT,
+            #[cfg(test)]
+            before_write: None,
         }
     }
 }
@@ -341,6 +356,10 @@ fn worker_loop(inner: Arc<WriterInner>) {
         // without this the submit stalls until `submit_wait`.
         inner.changed.notify_all();
         let QueuedJob { job, request } = queued;
+        #[cfg(test)]
+        if let Some(hook) = inner.config.before_write.clone() {
+            hook(job.id);
+        }
         let outcome = write_capture(job.id, &request);
         {
             let mut state = inner.state.lock();
@@ -729,6 +748,7 @@ mod tests {
         let writer = EvidenceWriter::with_config(WriterConfig {
             bound: 0,
             submit_wait: Duration::from_millis(1),
+            before_write: None,
         });
         let job = writer.submit(EvidenceRequest {
             png_path: PathBuf::from("never.png"),
@@ -745,58 +765,122 @@ mod tests {
 
     #[test]
     fn full_queue_submit_wakes_when_worker_pops() {
+        use std::collections::HashSet;
+
+        struct WriteGate {
+            entered: std::sync::Mutex<HashSet<u64>>,
+            entered_cv: std::sync::Condvar,
+            released: std::sync::Mutex<HashSet<u64>>,
+            released_cv: std::sync::Condvar,
+        }
+
+        impl WriteGate {
+            fn hook(&self, id: u64) {
+                {
+                    let mut entered = self.entered.lock().expect("entered");
+                    entered.insert(id);
+                    self.entered_cv.notify_all();
+                }
+                let mut released = self.released.lock().expect("released");
+                while !released.contains(&id) {
+                    released = self.released_cv.wait(released).expect("wait release");
+                }
+            }
+
+            fn wait_entered(&self, id: u64, timeout: Duration) {
+                let deadline = Instant::now() + timeout;
+                let mut entered = self.entered.lock().expect("entered");
+                while !entered.contains(&id) {
+                    let now = Instant::now();
+                    assert!(now < deadline, "job {id} never entered write gate");
+                    let (guard, wait) = self
+                        .entered_cv
+                        .wait_timeout(entered, deadline - now)
+                        .expect("wait entered");
+                    entered = guard;
+                    assert!(
+                        entered.contains(&id) || !wait.timed_out(),
+                        "job {id} never entered write gate"
+                    );
+                }
+            }
+
+            fn release(&self, id: u64) {
+                self.released.lock().expect("released").insert(id);
+                self.released_cv.notify_all();
+            }
+        }
+
         let dir =
             std::env::temp_dir().join(format!("274bot-evidence-wakeup-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch");
-        let submit_wait = Duration::from_secs(2);
-        let writer = EvidenceWriter::with_config(WriterConfig {
+        let gate = Arc::new(WriteGate {
+            entered: std::sync::Mutex::new(HashSet::new()),
+            entered_cv: std::sync::Condvar::new(),
+            released: std::sync::Mutex::new(HashSet::new()),
+            released_cv: std::sync::Condvar::new(),
+        });
+        let hook_gate = Arc::clone(&gate);
+        let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |id| hook_gate.hook(id));
+        let writer = Arc::new(EvidenceWriter::with_config(WriterConfig {
             bound: 1,
-            submit_wait,
-        });
-        // A large first capture keeps the worker busy while the next two
-        // submits fill the single queue slot, so the third submit must
-        // block until the worker pops.
-        let big = vec![0x7f7f_7f7fi32; 512 * 512];
-        let job0 = writer.submit(EvidenceRequest {
-            png_path: dir.join("w0.png"),
-            width: 512,
-            height: 512,
-            pixels: big,
-            color: PngColor::Rgba,
-            sidecar: None,
-        });
-        drop(job0);
-        let job1 = writer.submit(EvidenceRequest {
-            png_path: dir.join("w1.png"),
+            submit_wait: Duration::from_secs(10),
+            before_write: Some(hook),
+        }));
+        let request = |name: &str| EvidenceRequest {
+            png_path: dir.join(name),
             width: 2,
             height: 2,
             pixels: test_pixels(2, 2),
             color: PngColor::Rgba,
             sidecar: None,
+        };
+
+        // 1. Submit A and wait until the worker gates on it.
+        let job_a = writer.submit(request("w0.png"));
+        let id_a = job_a.id();
+        gate.wait_entered(id_a, Duration::from_secs(10));
+
+        // 2. B queues behind the gated A.
+        let job_b = writer.submit(request("w1.png"));
+        let id_b = job_b.id();
+        assert!(writer.poll(&job_b).is_none(), "B must queue, not drop");
+
+        // 3. C blocks on the full queue.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer_c = Arc::clone(&writer);
+        let request_c = request("w2.png");
+        std::thread::spawn(move || {
+            let job_c = writer_c.submit(request_c);
+            tx.send(job_c).expect("send C");
         });
-        let start = Instant::now();
-        let job2 = writer.submit(EvidenceRequest {
-            png_path: dir.join("w2.png"),
-            width: 2,
-            height: 2,
-            pixels: test_pixels(2, 2),
-            color: PngColor::Rgba,
-            sidecar: None,
-        });
-        let elapsed = start.elapsed();
+        // Let the C thread park inside `submit` while the queue is full.
+        std::thread::sleep(Duration::from_millis(300));
+
+        // 4. Release A; the worker completes it, pops B, and gates on B.
+        gate.release(id_a);
+        gate.wait_entered(id_b, Duration::from_secs(10));
+
+        // 5. The pop must have woken C even though B is still gated.
+        let job_c = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("submit blocked on a full queue must enqueue once the worker pops");
         assert!(
-            elapsed < submit_wait,
-            "submit to a full queue must enqueue after a pop, not stall the full {submit_wait:?} (took {elapsed:?})"
+            writer.poll(&job_c).is_none(),
+            "woken submit must be pending, not dropped"
         );
-        // The woken submit must have enqueued rather than dropped.
-        let outcome = writer
-            .wait(&job1, Duration::from_secs(10))
-            .expect("queued capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
-        let outcome = writer
-            .wait(&job2, Duration::from_secs(10))
-            .expect("woken capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert_eq!(writer.stats().dropped, 0);
+
+        // 6. Drain.
+        let id_c = job_c.id();
+        gate.release(id_b);
+        gate.release(id_c);
+        for job in [&job_a, &job_b, &job_c] {
+            let outcome = writer
+                .wait(job, Duration::from_secs(10))
+                .expect("capture completes");
+            assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        }
         assert!(writer.flush(Duration::from_secs(10)));
         assert_eq!(writer.stats().dropped, 0);
         std::fs::remove_dir_all(&dir).ok();
