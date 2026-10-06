@@ -299,6 +299,9 @@ pub struct ReturnObservation<'a> {
     pub now: u64,
     pub skill_stat: i32,
     pub avoided: &'a [AvoidedTile; MAX_AVOID],
+    /// Packed collision used to keep Area r=1 return stands off tiles with
+    /// no legal goals. `None` skips the filter (unit fixtures without a pack).
+    pub collision: Option<&'a nav::collision::WorldCollision>,
 }
 
 pub struct PlacementScene<'a> {
@@ -808,8 +811,10 @@ fn select_with_access(
 }
 
 /// Banking can end inside the gathering bound while its resources remain
-/// unobserved. Return to a selected placement's observation stand, not the
-/// work-area centroid or a fishing actor's occupied tile.
+/// unobserved. Return to a selected placement's observation stand at the
+/// resource site — inside the gathering area or next to the resource — not
+/// a point clamped toward the player's current tile, the work-area centroid,
+/// or a fishing actor's occupied tile.
 pub fn resource_return_target(
     catalog: &GatherCatalog,
     method_indices: &[usize],
@@ -858,6 +863,7 @@ pub fn resource_return_target(
                 if !known_resource_target(method, spot.entity)
                     || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
                     || avoid_until(spot, method.skill, observation.avoided) > observation.now
+                    || !has_area_arrival(observation.collision, spot.origin)
                 {
                     continue;
                 }
@@ -904,9 +910,66 @@ fn fishing_return_stand(
     {
         return None;
     }
+    // Observe the resource from the resource, never from `here`. Clamping
+    // toward the player is how a Draynor bank trip lands a stand inside the
+    // booth (the spots sit inside NPC view of the interior). Packed Area
+    // goals reuse `standable` over radius one; an all-water origin clamp is
+    // replaced by the nearest observation-safe stand Walk can arrive at.
     observation_cells(movement_bounds(spot)?)
-        .map(|cell| observation_stand(cell, observation.here))
-        .min_by_key(|stand| distance(observation.here, *stand))
+        .filter_map(|cell| {
+            legal_fishing_return_stand(cell, spot.origin, area, observation.collision)
+        })
+        .min_by_key(|stand| {
+            (
+                i64::from(!area.contains(*stand)),
+                distance(spot.origin, *stand),
+            )
+        })
+}
+
+fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: WorldTile) -> bool {
+    collision.is_none_or(|collision| {
+        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
+            collision.standable(tile)
+        })
+    })
+}
+
+fn legal_fishing_return_stand(
+    cell: SceneRegionInput,
+    origin: WorldTile,
+    area: WorkArea,
+    collision: Option<&nav::collision::WorldCollision>,
+) -> Option<WorldTile> {
+    let preferred = observation_stand(cell, origin);
+    if has_area_arrival(collision, preferred) {
+        return Some(preferred);
+    }
+    let min_x = cell.max_x - OBSERVATION_RADIUS;
+    let max_x = cell.min_x + OBSERVATION_RADIUS;
+    let min_z = cell.max_z - OBSERVATION_RADIUS;
+    let max_z = cell.min_z + OBSERVATION_RADIUS;
+    if min_x > max_x || min_z > max_z {
+        return None;
+    }
+    let mut best = None;
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            let stand = WorldTile {
+                x,
+                z,
+                level: cell.level,
+            };
+            if !has_area_arrival(collision, stand) {
+                continue;
+            }
+            let key = (i64::from(!area.contains(stand)), distance(origin, stand));
+            if best.as_ref().is_none_or(|(_, current)| key < *current) {
+                best = Some((stand, key));
+            }
+        }
+    }
+    best.map(|(stand, _)| stand)
 }
 
 fn consider_candidate<'a>(
@@ -1298,6 +1361,99 @@ mod tests {
         }
     }
 
+    fn radius_one_tiles(centre: WorldTile) -> impl Iterator<Item = WorldTile> {
+        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+        (-radius..=radius).flat_map(move |dx| {
+            (-radius..=radius).map(move |dz| WorldTile {
+                x: centre.x + dx,
+                z: centre.z + dz,
+                level: centre.level,
+            })
+        })
+    }
+
+    fn fishing_cover(method: &GatherMethod, area: WorkArea) -> Vec<WorldTile> {
+        complete_spots(method)
+            .into_iter()
+            .flatten()
+            .filter(|spot| fishing_spot_eligible(spot, area))
+            .flat_map(|spot| {
+                let bounds = movement_bounds(spot).expect("eligible spots have movement");
+                [
+                    spot.origin,
+                    WorldTile {
+                        x: bounds.min_x,
+                        z: bounds.min_z,
+                        level: bounds.level,
+                    },
+                    WorldTile {
+                        x: bounds.max_x,
+                        z: bounds.max_z,
+                        level: bounds.level,
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    /// Standable grid over the covered tiles. `blocked` cells are `SQ_BLOCKED`
+    /// (Catherby water); every other cell is standable, including Draynor shore.
+    fn synthetic_collision(
+        cover: impl IntoIterator<Item = WorldTile>,
+        blocked: impl IntoIterator<Item = WorldTile>,
+    ) -> nav::collision::WorldCollision {
+        let blocked: Vec<WorldTile> = blocked.into_iter().collect();
+        let pad = OBSERVATION_RADIUS + i32::from(RESOURCE_APPROACH_RADIUS);
+        let mut min_x = i32::MAX;
+        let mut min_z = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_z = i32::MIN;
+        for tile in cover.into_iter().chain(blocked.iter().copied()) {
+            min_x = min_x.min(tile.x - pad);
+            min_z = min_z.min(tile.z - pad);
+            max_x = max_x.max(tile.x + pad);
+            max_z = max_z.max(tile.z + pad);
+        }
+        assert!(
+            min_x <= max_x && min_z <= max_z,
+            "synthetic collision needs at least one covered tile"
+        );
+        let width = usize::try_from(max_x - min_x + 1).expect("collision width");
+        let height = usize::try_from(max_z - min_z + 1).expect("collision height");
+        let mut flags = vec![0u32; 4 * width * height];
+        let block = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+        for tile in &blocked {
+            let Ok(lx) = usize::try_from(tile.x - min_x) else {
+                continue;
+            };
+            let Ok(lz) = usize::try_from(tile.z - min_z) else {
+                continue;
+            };
+            if tile.level == 0 && lx < width && lz < height {
+                flags[lz * width + lx] = block;
+            }
+        }
+        let (walk, packed) = nav::collision::pack_walk(&flags);
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: min_x,
+                z: min_z,
+                level: 0,
+            },
+            width,
+            height,
+            walk,
+            blocked: packed,
+            flags: None,
+        }
+    }
+
+    fn area_arrival_ok(collision: &nav::collision::WorldCollision, stand: WorldTile) -> bool {
+        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
+            collision.standable(tile)
+        })
+    }
+
     #[test]
     fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
         let catalog = real_catalog();
@@ -1327,9 +1483,15 @@ mod tests {
             anchor: origin,
             radius: 1,
         };
-        let expected = WorldTile {
+        let expected_survey = WorldTile {
             x: bounds.max_x - OBSERVATION_RADIUS,
             z: here.z,
+            ..origin
+        };
+        // Return stands at the resource, not the cell nearest the player.
+        let expected_return = WorldTile {
+            x: origin.x + OBSERVATION_RADIUS,
+            z: origin.z + OBSERVATION_RADIUS,
             ..origin
         };
         let observation = ReturnObservation {
@@ -1337,19 +1499,20 @@ mod tests {
             now: 1,
             skill_stat: 10,
             avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: None,
         };
         assert_eq!(
             fishing_return_stand(&catalog, method, &spot, area, &observation),
-            Some(expected),
+            Some(expected_return),
             "Return must not reject a spot solely because its movement spans nine cells"
         );
         let mut fishing = FishingSurvey::default();
         let survey = fishing.placement(0, spot.id.0);
-        assert_eq!(survey.next_stand(bounds, here), Some(expected));
-        survey.observe(bounds, &scene_around(expected), expected, 2);
+        assert_eq!(survey.next_stand(bounds, here), Some(expected_survey));
+        survey.observe(bounds, &scene_around(expected_survey), expected_survey, 2);
         assert_ne!(
-            survey.next_stand(bounds, expected),
-            Some(expected),
+            survey.next_stand(bounds, expected_survey),
+            Some(expected_survey),
             "arrival must record the ninth cell before selecting the next observation"
         );
     }
@@ -1898,6 +2061,26 @@ mod tests {
             radius: 40,
             ..GathererSettings::default()
         };
+        let water = WorldTile {
+            x: 2850,
+            z: 3423,
+            level: 0,
+        };
+        let collision = synthetic_collision(
+            fishing_cover(
+                method,
+                WorkArea {
+                    mode: AreaMode::Custom,
+                    anchor: WorldTile {
+                        x: 2848,
+                        z: 3426,
+                        level: 0,
+                    },
+                    radius: settings.radius,
+                },
+            ),
+            radius_one_tiles(water),
+        );
         for mode in [AreaMode::Auto, AreaMode::Start, AreaMode::Custom] {
             let area = WorkArea {
                 mode,
@@ -1922,6 +2105,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                    collision: Some(&collision),
                 },
             )
             .expect("the selected content supplies a resource observation stand");
@@ -1951,6 +2135,295 @@ mod tests {
                 "every accepted radius-one arrival observes a selected movement cell"
             );
         }
+    }
+
+    #[test]
+    fn catherby_edgeville_return_skips_the_all_water_harpoon_stand() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let water = WorldTile {
+            x: 2850,
+            z: 3423,
+            level: 0,
+        };
+        let edgeville = WorldTile {
+            x: 3094,
+            z: 3493,
+            level: 0,
+        };
+        let anchor = WorldTile {
+            x: 2848,
+            z: 3426,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: AreaMode::Custom,
+            anchor,
+            radius: 40,
+        };
+        let collision = synthetic_collision(fishing_cover(method, area), radius_one_tiles(water));
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: area.radius,
+            bank: "Edgeville".into(),
+            ..GathererSettings::default()
+        };
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                fishing_spot_eligible(spot, area)
+                    && known_resource_target(method, spot.entity)
+                    && observation_cells(movement_bounds(spot).unwrap())
+                        .any(|cell| observation_stand(cell, spot.origin) == water)
+            }),
+            "pinned 289 Catherby harpoon still origin-clamps the eastern placement to {water:?}"
+        );
+        assert!(
+            !area_arrival_ok(&collision, water),
+            "{water:?} has no legal radius-one Area goal"
+        );
+        let target = resource_return_target(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            ReturnObservation {
+                here: edgeville,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(&collision),
+            },
+        )
+        .expect("Catherby harpoon supplies a resource return stand");
+        assert_ne!(
+            target.tile, water,
+            "Edgeville ranking used to pick the all-water eastern stand"
+        );
+        assert!(
+            area_arrival_ok(&collision, target.tile),
+            "return stand {:?} must have a legal radius-one Area goal",
+            target.tile
+        );
+        assert_ne!(target.tile, edgeville);
+        assert_eq!(target.npc_index, NO_NPC_INDEX);
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                spot.entity == target.entity
+                    && fishing_spot_eligible(spot, area)
+                    && observation_cells(movement_bounds(spot).unwrap()).any(|cell| {
+                        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+                        (-radius..=radius).all(|dx| {
+                            (-radius..=radius).all(|dz| {
+                                region_visible(
+                                    cell,
+                                    WorldTile {
+                                        x: target.tile.x + dx,
+                                        z: target.tile.z + dz,
+                                        level: target.tile.level,
+                                    },
+                                )
+                            })
+                        })
+                    })
+            }),
+            "every accepted radius-one arrival observes a selected movement cell"
+        );
+    }
+
+    #[test]
+    fn draynor_bank_return_stand_is_at_the_saltfish_spots_not_the_booth() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog
+            .method("fishing.saltfish.op3")
+            .expect("Draynor bait fishing");
+        let index = method_index(&catalog, method);
+        let bank_interior = WorldTile {
+            x: 3092,
+            z: 3241,
+            level: 0,
+        };
+        let north_door = WorldTile {
+            x: 3091,
+            z: 3247,
+            level: 0,
+        };
+        let spots = [
+            WorldTile {
+                x: 3085,
+                z: 3230,
+                level: 0,
+            },
+            WorldTile {
+                x: 3086,
+                z: 3227,
+                level: 0,
+            },
+        ];
+        let anchor = WorldTile {
+            x: 3086,
+            z: 3229,
+            level: 0,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: 8,
+            ..GathererSettings::default()
+        };
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                let bounds = movement_bounds(spot).unwrap_or(SceneRegionInput {
+                    min_x: spot.origin.x,
+                    min_z: spot.origin.z,
+                    max_x: spot.origin.x,
+                    max_z: spot.origin.z,
+                    level: spot.origin.level,
+                });
+                spots.iter().any(|tile| region_contains(bounds, *tile))
+            }),
+            "pinned 289 content must include the Draynor saltfish envelope"
+        );
+        for (mode, radius) in [
+            (AreaMode::Custom, 8_u16),
+            (AreaMode::Start, 8),
+            (AreaMode::Auto, 40),
+        ] {
+            let area = WorkArea {
+                mode,
+                anchor,
+                radius,
+            };
+            let collision = synthetic_collision(
+                fishing_cover(method, area).into_iter().chain([
+                    bank_interior,
+                    north_door,
+                    anchor,
+                    spots[0],
+                    spots[1],
+                ]),
+                std::iter::empty::<WorldTile>(),
+            );
+            let target = resource_return_target(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                ReturnObservation {
+                    here: bank_interior,
+                    now: 1,
+                    skill_stat: 10,
+                    avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                    collision: Some(&collision),
+                },
+            )
+            .expect("Draynor saltfish supplies a resource return stand");
+            assert_ne!(
+                target.tile, bank_interior,
+                "{mode:?}: clamp-toward-here used to pick the bank interior"
+            );
+            assert_ne!(target.tile, north_door);
+            assert!(
+                area.contains(target.tile)
+                    || spots.iter().any(|spot| distance(target.tile, *spot) <= 1),
+                "{mode:?}: stand {target:?} must sit in the gathering area or next to a spot"
+            );
+            assert!(
+                spots
+                    .iter()
+                    .any(|spot| distance(target.tile, *spot) <= i64::from(NPC_VIEW_RADIUS)),
+                "{mode:?}: the spots must stay in view from {target:?}"
+            );
+            assert!(
+                distance(target.tile, north_door) > i64::from(NPC_VIEW_RADIUS)
+                    || target.tile.z < north_door.z,
+                "{mode:?}: a north-door click route loses the spots (dz ≈ 17)"
+            );
+            assert_eq!(target.npc_index, NO_NPC_INDEX);
+            let player_clamp = observation_cells(
+                complete_spots(method)
+                    .unwrap()
+                    .iter()
+                    .find(|spot| {
+                        fishing_spot_eligible(spot, area)
+                            && known_resource_target(method, spot.entity)
+                    })
+                    .and_then(movement_bounds)
+                    .expect("eligible Draynor saltfish movement"),
+            )
+            .map(|cell| observation_stand(cell, bank_interior))
+            .min_by_key(|stand| distance(bank_interior, *stand))
+            .expect("a toward-player observation clamp");
+            assert_ne!(
+                target.tile, player_clamp,
+                "{mode:?}: return must not reuse the player-clamped observation stand {player_clamp:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loc_bank_return_uses_the_resource_origin_not_an_observation_clamp() {
+        let catalog = real_catalog();
+        let method = catalog.method("woodcutting.willow").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile {
+            x: 3092,
+            z: 3241,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: WorldTile {
+                x: 3083,
+                z: 3237,
+                level: 0,
+            },
+            radius: 16,
+        };
+        assert!(area.contains(here));
+        let settings = GathererSettings {
+            skill: "Woodcutting".into(),
+            woodcutting_resources: vec!["willow".into()],
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let collision = synthetic_collision(
+            catalog
+                .spots(method, &area.region())
+                .expect("willow placements")
+                .map(|spot| spot.origin),
+            std::iter::empty::<WorldTile>(),
+        );
+        let target = resource_return_target(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            ReturnObservation {
+                here,
+                now: 1,
+                skill_stat: 30,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(&collision),
+            },
+        )
+        .expect("willow origin is the loc return stand");
+        assert!(
+            catalog
+                .spots(method, &area.region())
+                .expect("willow placements")
+                .any(|spot| known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+                    && spot.origin == target.tile),
+            "loc return walks to a resource origin, not a player-clamped observation stand: {:?}",
+            target.tile
+        );
+        assert_ne!(target.tile, here);
     }
 
     #[test]

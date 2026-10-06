@@ -66,3 +66,32 @@ fn area_arrival_checks_radius_plane_and_current_standability_only() {
     assert!(arrived_in_area(shore, shore, 0, |_| true));
     assert!(!arrived_in_area(shore, shore, 0, |_| false));
 }
+
+#[test]
+fn area_goals_are_the_standable_chebyshev_neighbourhood() {
+    use crate::arrival::area_has_standable_goal;
+    use api::snapshot::WorldTile;
+
+    let centre = WorldTile {
+        x: 2850,
+        z: 3423,
+        level: 0,
+    };
+    assert!(!area_has_standable_goal(centre, 1, |_| false));
+    assert!(area_has_standable_goal(centre, 1, |tile| {
+        tile == WorldTile {
+            x: 2849,
+            z: 3424,
+            level: 0,
+        }
+    }));
+    assert!(!area_has_standable_goal(centre, 1, |tile| {
+        tile == WorldTile {
+            x: 2848,
+            z: 3423,
+            level: 0,
+        }
+    }));
+    assert!(!area_has_standable_goal(centre, -1, |_| unreachable!()));
+    assert!(area_has_standable_goal(centre, 0, |tile| tile == centre));
+}

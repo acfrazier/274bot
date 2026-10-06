@@ -866,6 +866,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         bank_memory: bank_memory.as_deref(),
+                        collision: world.as_ref().map(|world| &world.collision),
                         hold: hold || ours,
                         world_members,
                         ..Default::default()

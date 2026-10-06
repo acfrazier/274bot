@@ -28,6 +28,29 @@ pub fn arrived_in_area(
         && standable(here)
 }
 
+/// Packed Area goals are every standable tile in the Chebyshev neighbourhood
+/// (`WorldCollision::standable`, not the stricter walk word). Empty means a
+/// Walk has no Area goals. Radius is capped at 104, matching packed approach.
+pub fn area_has_standable_goal(
+    centre: api::snapshot::WorldTile,
+    radius: i32,
+    mut standable: impl FnMut(api::snapshot::WorldTile) -> bool,
+) -> bool {
+    let Ok(radius) = u32::try_from(radius) else {
+        return false;
+    };
+    let radius = i32::try_from(radius.min(104)).unwrap_or(0);
+    (-radius..=radius).any(|dx| {
+        (-radius..=radius).any(|dz| {
+            standable(api::snapshot::WorldTile {
+                x: centre.x + dx,
+                z: centre.z + dz,
+                level: centre.level,
+            })
+        })
+    })
+}
+
 /// True when the bot has arrived at `dest`: either standing on it, or
 /// standing one tile away on the same level while `dest` is solid (so the
 /// bot cannot step onto it).
