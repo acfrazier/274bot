@@ -5513,6 +5513,126 @@ fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
     });
 }
 
+/// desertrescue's `stow-extras` skips on `pack_only` with its keep list: true
+/// once a `deposit_all` with that list (plus the Path's protected items)
+/// would move nothing, false while any other row is held, Unknown unobserved.
+#[test]
+fn pack_only_allows_listed_and_protected_rows_and_preserves_unknown() {
+    compile_context_test(|base| {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let protected = [selected.item_by_alias("bronze_axe").unwrap().id];
+        let cx = CompileContext {
+            keep_ids: &protected,
+            ..*base
+        };
+        let predicate = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "pack_only".into(),
+                version: 1,
+                args: serde_json::json!({"objs":["coins","shantay_pass","desert_shirt"]}),
+            },
+            &cx,
+        )
+        .unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::Unknown
+        );
+        let row = |alias, slot| loadout_test_item(alias, ItemContainer::Inventory, slot);
+        let mut emptied_helm = row("rune_full_helm", 1);
+        emptied_helm.count = 0;
+        for (pack, expected) in [
+            (vec![], Truth::True),
+            (vec![row("coins", 0)], Truth::True),
+            (vec![row("coins", 0), row("bronze_axe", 1)], Truth::True),
+            (
+                vec![row("coins", 0), row("rune_full_helm", 1)],
+                Truth::False,
+            ),
+            (vec![emptied_helm, row("desert_shirt", 2)], Truth::True),
+        ] {
+            snapshot.seed_inventory(pack, 28);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                expected
+            );
+        }
+    });
+}
+
+/// The CI6 desertrescue park: after the stage-0 buys and `desert-kit`, the
+/// pack held only kept rows, yet `stow-extras` (`deposit_all`, empty settle)
+/// was reselected every boundary until the watchdog parked it. Its bundled
+/// skip must now prove that pack clean, admit every kept row, and still run
+/// for anything else.
+#[test]
+fn desertrescue_stow_extras_skips_the_observed_clean_pack() {
+    compile_context_test(|cx| {
+        let document: crate::quester::path::PathDocument =
+            serde_json::from_str(crate::quester::compile::DESERT_RESCUE_JSON).unwrap();
+        let stow = document
+            .roles
+            .iter()
+            .flat_map(|role| &role.sequences)
+            .flat_map(|sequence| &sequence.steps)
+            .find(|step| step.id.0.as_ref() == "stow-extras")
+            .unwrap();
+        let PredicateDocument::Any(items) = &stow.skip_if else {
+            panic!("stow-extras skip_if is an Any");
+        };
+        let clean = items
+            .iter()
+            .find(
+                |item| matches!(item, PredicateDocument::Fact { kind, .. } if kind == "pack_only"),
+            )
+            .expect("stow-extras skips once the pack holds only its keep list");
+        let predicate = compile_predicate(clean, cx).unwrap();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let row = |id: i32, slot: i32| ItemView {
+            def: def(id, "row"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        // `EV/.../03-end-fail.json`: coins, passes, waterskins, bars,
+        // feathers, hammer, rune scimitar and lobsters.
+        let observed = [995, 1854, 1823, 2349, 314, 2347, 1333, 379];
+        let mut snapshot = ready();
+        snapshot.seed_inventory(
+            observed
+                .iter()
+                .enumerate()
+                .map(|(slot, id)| row(*id, slot as i32))
+                .collect(),
+            28,
+        );
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::True
+        );
+        for alias in stow.args["keep"].as_array().unwrap() {
+            let id = selected.item_by_alias(alias.as_str().unwrap()).unwrap().id;
+            snapshot.seed_inventory(vec![row(id, 0)], 28);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                Truth::True,
+                "kept row {alias} must not rerun the sweep"
+            );
+        }
+        let helm = selected.item_by_alias("rune_full_helm").unwrap().id;
+        snapshot.seed_inventory(vec![row(995, 0), row(helm, 1)], 28);
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::False
+        );
+    });
+}
+
 #[test]
 fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
     with_loadout_context(|cx| {
@@ -5896,4 +6016,324 @@ fn members_world_rejects_arguments() {
             "invalid-args"
         );
     });
+}
+
+/// Tenzing's door (`death_sherpa_door`, shape 0 angle 2): a straight wall on
+/// the east edge of its own tile. The anchored pre-walk goes to the doorstep
+/// east of it at radius 0, not to the door tile across the wall, then opens
+/// the door from there.
+#[test]
+fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
+    compile_context_test(|_| {
+        let door_tile = tile(2822, 3555);
+        let doorstep = tile(2823, 3555);
+        let mut door = loc(3745, "Door", "Open");
+        door.tile = door_tile;
+        door.layer = LocLayer::Wall;
+        door.shape = 0;
+        door.angle = 2;
+        door.distance = 8;
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(2830, 3555)));
+        snapshot.seed_locs(vec![door.clone()]);
+        let plan = InteractPlan {
+            kind: reach::ReachKind::Loc {
+                id: Some(door.id),
+                name: None,
+            },
+            op: Arc::from("Open"),
+            tile: Some(door_tile),
+            radius: 2,
+            wait_if_missing: false,
+            settle_ms: None,
+            ambiguous: false,
+            default_dialogue: false,
+            dialogue_options: None,
+            until: None,
+            target_tile: None,
+            reachable_only: false,
+        };
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == doorstep && request.radius == 0
+                        && request.loc_id.is_none()
+            ),
+            "a straight-wall door is approached on its facing side, not its own tile"
+        );
+
+        snapshot.seed_local_player(local_player(doorstep));
+        door.distance = 1;
+        snapshot.seed_locs(vec![door]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc { x: 2822, z: 3555, action, .. }
+                if action.eq_ignore_ascii_case("open")
+        ));
+    });
+}
+
+/// The Priest in Peril crypt gate (`pip_underground_door1`, shape 0 angle 3,
+/// the south edge of 3405,9895) is crossed both ways. Returning from the
+/// monuments (south) walks to the facing tile 3405,9894; entering from the
+/// north keeps the gate tile, which is on the player's side.
+#[test]
+fn anchored_interact_wall_gate_approaches_from_the_players_side() {
+    compile_context_test(|_| {
+        let gate_tile = WorldTile {
+            x: 3405,
+            z: 9895,
+            level: 0,
+        };
+        for (from, target, radius) in [
+            (tile(3428, 9891), tile(3405, 9894), 0),
+            (tile(3405, 9899), gate_tile, 1),
+            (tile(3403, 9895), gate_tile, 1),
+        ] {
+            let mut gate = loc(3444, "Gate", "Open");
+            gate.tile = gate_tile;
+            gate.layer = LocLayer::Wall;
+            gate.shape = 0;
+            gate.angle = 3;
+            gate.distance = 4;
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(from));
+            snapshot.seed_locs(vec![gate.clone()]);
+            let plan = InteractPlan {
+                kind: reach::ReachKind::Loc {
+                    id: Some(gate.id),
+                    name: None,
+                },
+                op: Arc::from("Open"),
+                tile: Some(gate_tile),
+                radius: 2,
+                wait_if_missing: false,
+                settle_ms: None,
+                ambiguous: false,
+                default_dialogue: false,
+                dialogue_options: None,
+                until: None,
+                target_tile: None,
+                reachable_only: false,
+            };
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(
+                    ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                    Some(HostEffect::Walk(request))
+                        if request.target == target && request.radius == radius
+                            && request.loc_id.is_none()
+                ),
+                "from {from:?} the gate is approached at {target:?} r{radius}"
+            );
+        }
+    });
+}
+
+/// DIAG-STEP-LATENCY regression 3, Priest in Peril's temple door
+/// (`priestperiltempledoorl`, shape 0 angle 2: the east edge of 3408,3489).
+/// `crypt-exit-temple-door` leaves from inside (anchor 3409,3489) with the
+/// player at 3415,3488. The pre-walk must stop at the inside facing tile:
+/// walking to the door tile made nav's door transport cross out, the
+/// authored Open from the door tile sent the player back in, and the acquire
+/// settle timed out. From there exactly one Open is sent. `cell-enter-temple`
+/// (anchor 3407,3489, outside) keeps the door tile, which is outside.
+#[test]
+fn temple_door_exit_prewalks_to_the_inside_stand_and_opens_once() {
+    compile_context_test(|_| {
+        let door_tile = tile(3408, 3489);
+        let inside = tile(3409, 3489);
+        let mut door = loc(3489, "Large door", "Open");
+        door.tile = door_tile;
+        door.layer = LocLayer::Wall;
+        door.shape = 0;
+        door.angle = 2;
+        door.distance = 7;
+        let door_id = door.id;
+        let plan = |anchor: WorldTile, radius| InteractPlan {
+            kind: reach::ReachKind::Loc {
+                id: Some(door_id),
+                name: None,
+            },
+            op: Arc::from("Open"),
+            tile: Some(anchor),
+            radius,
+            wait_if_missing: false,
+            settle_ms: None,
+            ambiguous: false,
+            default_dialogue: false,
+            dialogue_options: None,
+            until: None,
+            target_tile: None,
+            reachable_only: false,
+        };
+        let opens = |ledger: &Option<Box<ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        &entry.effect,
+                        HostEffect::Interaction(InteractReq::Loc { action, .. })
+                            if action.eq_ignore_ascii_case("open")
+                    )
+                })
+                .count()
+        };
+
+        let exit = plan(inside, 1);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3415, 3488)));
+        snapshot.seed_locs(vec![door.clone()]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| exit.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == inside && request.radius == 0
+                        && request.loc_id.is_none()
+            ),
+            "the exit pre-walk stops inside instead of routing through the door"
+        );
+        snapshot.seed_local_player(local_player(inside));
+        door.distance = 1;
+        snapshot.seed_locs(vec![door.clone()]);
+        for tick in 3..6 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert_eq!(opens(&ledger), 1, "one authored Open from the inside stand");
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc {
+                x: 3408,
+                z: 3489,
+                ..
+            }
+        ));
+
+        let enter = plan(tile(3407, 3489), 2);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3400, 3490)));
+        door.distance = 8;
+        snapshot.seed_locs(vec![door]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| enter.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == door_tile && request.radius == 1
+                        && request.loc_id.is_none()
+            ),
+            "the outside entry keeps the door tile, which is on the player's side"
+        );
+    });
+}
+
+/// The side is the half-plane across the wall edge for each angle: strictly
+/// on the facing side walks to the facing tile at r0; the loc's own side, the
+/// wall line and diagonal or corner walls (shapes 1-3, 9) keep the loc tile at
+/// r1. A footprint loc keeps its own arrival rule.
+#[test]
+fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
+    let origin = tile(10, 10);
+    let wall = |shape: i32, angle: i32| {
+        let mut wall = loc(1530, "Door", "Open");
+        wall.tile = origin;
+        wall.layer = LocLayer::Wall;
+        wall.shape = shape;
+        wall.angle = angle;
+        wall
+    };
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let walk = |wall: &LocView, here: Option<WorldTile>| {
+        let request = reach::loc_walk_request(wall, here, stamp);
+        (request.target, request.radius, request.loc_id)
+    };
+    // angle, facing tile, far facing-side tile, far loc-side tile, wall-line tile
+    for (angle, facing, far_facing, far_own, along) in [
+        (0, tile(9, 10), tile(4, 13), tile(16, 7), tile(10, 15)),
+        (1, tile(10, 11), tile(7, 16), tile(13, 4), tile(15, 10)),
+        (2, tile(11, 10), tile(16, 7), tile(4, 13), tile(10, 5)),
+        (3, tile(10, 9), tile(13, 4), tile(7, 16), tile(5, 10)),
+    ] {
+        let door = wall(0, angle);
+        for here in [Some(facing), Some(far_facing), None] {
+            assert_eq!(
+                walk(&door, here),
+                (facing, 0, None),
+                "angle {angle} from {here:?}"
+            );
+        }
+        for here in [far_own, along, origin] {
+            assert_eq!(
+                walk(&door, Some(here)),
+                (origin, 1, None),
+                "angle {angle} from {here:?}"
+            );
+        }
+    }
+    for shape in [1, 2, 3, 9] {
+        assert_eq!(
+            walk(&wall(shape, 2), Some(tile(16, 10))),
+            (origin, 1, None),
+            "shape {shape} has no single facing side"
+        );
+    }
+    let mut footprint = wall(10, 0);
+    footprint.layer = LocLayer::Ground;
+    footprint.width = 2;
+    footprint.length = 2;
+    footprint.footprint_width = 2;
+    footprint.footprint_length = 2;
+    assert_eq!(
+        walk(&footprint, Some(tile(16, 10))),
+        (origin, 1, Some(footprint.id))
+    );
 }
