@@ -18,6 +18,7 @@
 
 use std::collections::HashSet;
 
+use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
@@ -31,6 +32,17 @@ use crate::world_state::WorldState;
 /// building: the Walk arrives at any of their access tiles and Open may use
 /// any of their booths or tellers.
 pub const SAME_BANK: i32 = 12;
+
+/// An account's bank rows as the host hands them to a planner: the memory's
+/// `(obj id, count)` rows with the origin they came from
+/// (design-bank-snapshot §1.2, §2.4). `Unknown` with no rows is the
+/// never-observed bank. The rows are one copy per operator walk arm, the
+/// same size the UI collected from the open bank before.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BankRows {
+    pub origin: Origin,
+    pub rows: Vec<(i32, i32)>,
+}
 
 /// The standable tiles `stand` is used from, by the access rule the C1
 /// named-bank stands also use ([`is_access_tile`] over the stand's one-tile

@@ -97,6 +97,7 @@ fn with_tick_output_reach<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&data),
                 reach: None,
+                bank_memory: None,
                 hold: false,
                 interacts: Some(Vec::new()),
             },
