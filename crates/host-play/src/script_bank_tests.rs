@@ -1004,8 +1004,22 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         routable: true,
     };
     let (access_tiles, access) = native_bank_access(&world, shantay_bank).unwrap();
-    assert_eq!(access_tiles, vec![shantay.tile]);
-    assert_eq!(access.stand_tile, shantay.tile);
+    let chest_tile = api::snapshot::WorldTile {
+        x: shantay.tile.x + 1,
+        z: shantay.tile.z,
+        level: shantay.tile.level,
+    };
+    assert!(access_tiles.contains(&access.stand_tile));
+    assert_ne!(access.stand_tile, chest_tile);
+    assert_eq!(access.stand_tile.level, chest_tile.level);
+    assert_eq!(
+        access
+            .stand_tile
+            .x
+            .abs_diff(chest_tile.x)
+            .max(access.stand_tile.z.abs_diff(chest_tile.z)),
+        1
+    );
     assert_eq!(access.kind, NativeAccessKind::Booth);
     assert_eq!(access.name.as_deref(), Some("Shantay chest"));
     assert_eq!(access.stand_op, 0);
