@@ -1650,7 +1650,15 @@ impl Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
-        let fresh = self.progress.is_none();
+        if self.progress.is_none() {
+            // Progress is dropped on every restart (Start, Resume, session
+            // change, death, an unpaired random event), so the first adoption
+            // after a drop replays an ordered sequence from its first step.
+            // The reset precedes storing the read: an Unknown or Partial first
+            // read must not spend it, or the Known read that follows would
+            // resume at the stale cursor.
+            self.cursor = 0;
+        }
         self.progress = Some(progress);
         self.dirty = true;
         let sequence = stage
@@ -1683,11 +1691,9 @@ impl Quester {
             self.empty_reads = 0;
         }
         if retarget {
-            // Progress is dropped on every restart (Start, Resume, session
-            // change, death, random event), so a fresh adoption replays an
-            // ordered sequence from its first step; a same-stage re-read keeps
-            // the cursor, and another sequence starts at its top.
-            if fresh || self.seq_index != sequence {
+            // A same-stage re-read keeps the cursor; another sequence starts
+            // at its top.
+            if self.seq_index != sequence {
                 self.cursor = 0;
             }
             self.seq_index = sequence;
@@ -2300,7 +2306,7 @@ impl Script for Quester {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
-            let selected = {
+            let (selected, skipped_to) = {
                 let path = &self.path;
                 let seq_index = self.seq_index;
                 let cursor = self.cursor;
@@ -2338,19 +2344,34 @@ impl Script for Quester {
                         ),
                     );
                 }) {
-                    SelectionDecision::Selected(sel) => {
-                        Ok(Some((sel.index, sel.step.advances, sel.prelude)))
-                    }
-                    SelectionDecision::Exhausted => Ok(None),
-                    SelectionDecision::Unknown(sel) => Err((
-                        sel.index,
-                        sel.prelude,
-                        Arc::clone(&sel.step.id.0),
-                        Arc::clone(&sel.step.skip_if_summary),
-                        sel.step.skip_if.requires_bank(),
-                    )),
+                    SelectionDecision::Selected(sel) => (
+                        Ok(Some((sel.index, sel.step.advances, sel.prelude))),
+                        (!sel.prelude).then_some(sel.index),
+                    ),
+                    SelectionDecision::Exhausted => (
+                        Ok(None),
+                        path.sequences.get(seq_index).map(|seq| seq.steps.len()),
+                    ),
+                    SelectionDecision::Unknown(sel) => (
+                        Err((
+                            sel.index,
+                            sel.prelude,
+                            Arc::clone(&sel.step.id.0),
+                            Arc::clone(&sel.step.skip_if_summary),
+                            sel.step.skip_if.requires_bank(),
+                        )),
+                        (!sel.prelude).then_some(sel.index),
+                    ),
                 }
             };
+            // Every sequence step the selector passed over had a proven-true
+            // skip_if, so those skips commit to the ordered cursor whether the
+            // selection then started a step, blocked on Unknown evidence, or
+            // ran out of steps: a skipped prefix never re-runs without a
+            // reset. Prelude skips never move it.
+            if let Some(cursor) = skipped_to {
+                self.cursor = cursor;
+            }
             let selected = match selected {
                 Ok(selected) => selected,
                 Err((index, prelude, id, predicate, requires_bank)) => {
@@ -2433,10 +2454,6 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Continue);
             };
             self.step_index = index;
-            if !prelude {
-                // A proven-true skip_if jumps the ordered cursor forward.
-                self.cursor = index;
-            }
             self.advances = advances;
             self.empty_reads = 0;
             self.in_prelude = prelude;
@@ -2807,6 +2824,11 @@ impl Script for Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.gang_reader.cancel();
+        // Dropping progress makes the next adoption fresh, which replays an
+        // ordered sequence from step 1. While paired work is pending (partner
+        // admission, a partner begin, or an active partner step) the
+        // progress, step and ordered cursor are kept instead: replaying a
+        // partnered sequence mid-pairing would desync the partners.
         if !preserve_pair_work {
             self.pair_admission = None;
             self.pair_admission_since = None;

@@ -5,9 +5,12 @@
 use super::tests::status_fixture;
 use super::*;
 use crate::native::ledger::Ledger;
-use crate::quester::families::tests::with_tick_output;
+use crate::native::NativeActions;
+use crate::quester::compile::StepPlan;
+use crate::quester::families::tests::{with_tick, with_tick_output};
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
 use api::snapshot::{GameSnapshot, QuestStatusView};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const NOT_STARTED: i32 = 0xF80000;
 const IN_PROGRESS: i32 = 0xF8F800;
@@ -29,6 +32,15 @@ fn has_egg() -> PredicateDocument {
     }
 }
 
+/// Unknown until the equipment is observed, then false.
+fn wears_egg() -> PredicateDocument {
+    PredicateDocument::Fact {
+        kind: "worn".into(),
+        version: 1,
+        args: serde_json::json!({"obj": "egg"}),
+    }
+}
+
 /// A wait step that completes on its first poll; `settle` decides whether the
 /// boundary settles (`All []`) or times out (`Any []`).
 fn wait_step(id: &str, skip_if: PredicateDocument, settle: PredicateDocument) -> StepDocument {
@@ -45,11 +57,11 @@ fn wait_step(id: &str, skip_if: PredicateDocument, settle: PredicateDocument) ->
 }
 
 /// Cook's Assistant with five indistinguishable steps in the not-started
-/// sequence and two in the in-progress one. `third_skip` replaces step 3's
-/// skip and `second_settle` replaces step 2's settle.
+/// sequence and two in the in-progress one. `skip` supplies step `n`'s skip
+/// (1-based) and `second_settle` replaces step 2's settle.
 fn document(
     order: SequenceOrder,
-    third_skip: PredicateDocument,
+    skip: impl Fn(usize) -> PredicateDocument,
     second_settle: PredicateDocument,
 ) -> PathDocument {
     let mut document = crate::quester::compile::decode_cook().unwrap();
@@ -58,13 +70,12 @@ fn document(
     first.order = order;
     first.steps = (1..=5)
         .map(|n| {
-            let skip = if n == 3 { third_skip.clone() } else { never() };
             let settle = if n == 2 {
                 second_settle.clone()
             } else {
                 always()
             };
-            wait_step(&format!("step-{n}"), skip, settle)
+            wait_step(&format!("step-{n}"), skip(n), settle)
         })
         .collect();
     let second = &mut role.sequences[1];
@@ -73,6 +84,60 @@ fn document(
         .map(|n| wait_step(&format!("later-{n}"), never(), always()))
         .collect();
     document
+}
+
+fn random_event() -> DetectedRandom {
+    DetectedRandom {
+        kind: api::random::RandomKind::Dialog,
+        name: "genie".into(),
+        ours: true,
+        npc_index: Some(0),
+    }
+}
+
+/// A `progress_reader` whose reads resolve, in order, to scripted colours and
+/// then repeat the last one. Each read stays pending for one tick so its
+/// evidence is strictly newer than the read's start, as `valid_progress`
+/// requires of an owned read.
+struct ScriptedReader {
+    reads: Vec<QuestProgress>,
+    next: AtomicUsize,
+}
+
+impl StepPlan for ScriptedReader {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let index = self
+            .next
+            .fetch_add(1, Ordering::Relaxed)
+            .min(self.reads.len() - 1);
+        Ok(Box::new(ScriptedRead {
+            progress: self.reads[index].clone(),
+            pending: true,
+        }))
+    }
+}
+
+struct ScriptedRead {
+    progress: QuestProgress,
+    pending: bool,
+}
+
+impl StepRun for ScriptedRead {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if std::mem::take(&mut self.pending) {
+            return Poll::Pending;
+        }
+        let evidence = cx.tick.cx.evidence();
+        let mut progress = self.progress.clone();
+        progress.evidence = evidence;
+        Poll::Ready(Ok(StepOutcome {
+            evidence,
+            progress: Some(Arc::new(progress)),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
 }
 
 #[derive(Default)]
@@ -152,6 +217,54 @@ impl Harness {
         );
     }
 
+    fn drop_egg(&mut self) {
+        self.snapshot.seed_inventory(Vec::new(), 28);
+    }
+
+    fn observe_empty_equipment(&mut self) {
+        self.snapshot.seed_equipment(Vec::new());
+    }
+
+    /// Replaces colour reads with a `progress_reader` that answers `colours`
+    /// in order, repeating the last one.
+    fn script_reads(&mut self, colours: &[QuestListStatus]) {
+        let reads = with_tick(&self.snapshot, &mut None, 0, |tick| {
+            colours
+                .iter()
+                .map(|&colour| {
+                    resolve_colour(
+                        &self.script.path,
+                        colour,
+                        tick.cx.evidence(),
+                        Arc::new(tick.cx.pin().clone()),
+                    )
+                })
+                .collect()
+        });
+        let path = Arc::get_mut(&mut self.script.path).expect("unshared path");
+        let template = &path.sequences[0].steps[0];
+        let reader = CompiledStep {
+            id: FactKey::new("scripted-reader"),
+            kind: Arc::clone(&template.kind),
+            comment: None,
+            loadout: None,
+            tactic: None,
+            advances: false,
+            skip_if: Arc::clone(&template.skip_if),
+            skip_if_summary: Arc::clone(&template.skip_if_summary),
+            settle: Arc::clone(&template.settle),
+            plan: Arc::new(ScriptedReader {
+                reads,
+                next: AtomicUsize::new(0),
+            }),
+        };
+        path.progress_reader = Some(Box::new(reader));
+    }
+
+    fn active_now(&self) -> Duration {
+        Duration::from_millis(self.tick * 600)
+    }
+
     fn step(&mut self) {
         self.tick += 1;
         assert!(
@@ -186,11 +299,22 @@ impl Harness {
             self.step();
         }
     }
+
+    fn run_until_logged(&mut self, needle: &str) {
+        while !self.logged(needle) {
+            assert!(!self.script.parked, "parked before logging {needle:?}");
+            self.step();
+        }
+    }
+
+    fn logged(&self, needle: &str) -> bool {
+        self.logs.0.iter().any(|line| line.contains(needle))
+    }
 }
 
 #[test]
 fn ordered_sequence_advances_through_indistinguishable_steps_once() {
-    let mut harness = Harness::new(document(SequenceOrder::Ordered, never(), always()));
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_parked();
     assert_eq!(
         harness.begun,
@@ -202,11 +326,7 @@ fn ordered_sequence_advances_through_indistinguishable_steps_once() {
         "a sequence that runs off its end without a stage change parks"
     );
     assert!(
-        harness
-            .logs
-            .0
-            .iter()
-            .any(|line| line.contains("ordered sequence has no step left at cursor 5")),
+        harness.logged("ordered sequence has no step left at cursor 5"),
         "the exhausted cursor is traced: {:?}",
         harness.logs.0
     );
@@ -214,14 +334,14 @@ fn ordered_sequence_advances_through_indistinguishable_steps_once() {
 
 #[test]
 fn authored_sequence_still_reselects_from_the_top() {
-    let mut harness = Harness::new(document(SequenceOrder::Authored, never(), always()));
+    let mut harness = Harness::new(document(SequenceOrder::Authored, |_| never(), always()));
     harness.run_until_begun(3);
     assert_eq!(harness.begun, ["step-1", "step-1", "step-1"]);
 }
 
 #[test]
 fn restart_replays_an_ordered_sequence_from_its_first_step() {
-    let mut harness = Harness::new(document(SequenceOrder::Ordered, never(), always()));
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_begun(2);
     assert_eq!(harness.begun, ["step-1", "step-2"]);
     harness.script.interrupt(Interrupt::Resume);
@@ -238,24 +358,159 @@ fn restart_replays_an_ordered_sequence_from_its_first_step() {
 
 #[test]
 fn skip_if_jumps_the_ordered_cursor_forward() {
-    let mut harness = Harness::new(document(SequenceOrder::Ordered, has_egg(), always()));
+    let mut harness = Harness::new(document(
+        SequenceOrder::Ordered,
+        |n| if n == 3 { has_egg() } else { never() },
+        always(),
+    ));
     harness.hold_egg();
     harness.run_until_parked();
     assert_eq!(harness.begun, ["step-1", "step-2", "step-4", "step-5"]);
     assert!(
-        harness
-            .logs
-            .0
-            .iter()
-            .any(|line| line.contains("step step-3 skipped")),
+        harness.logged("step step-3 skipped"),
         "the skipped step is traced: {:?}",
         harness.logs.0
     );
 }
 
 #[test]
+fn proven_skip_stays_committed_while_a_later_skip_is_unknown() {
+    // Step 1 is proven done; step 2's skip is unknown until the equipment is
+    // observed. Selection waits on step 2, and that wait must not forget
+    // step 1's proven skip.
+    let mut harness = Harness::new(document(
+        SequenceOrder::Ordered,
+        |n| match n {
+            1 => has_egg(),
+            2 => wears_egg(),
+            _ => never(),
+        },
+        always(),
+    ));
+    harness.hold_egg();
+    harness.run_until_logged("step step-2 skip predicate waiting");
+    assert_eq!(
+        harness.script.cursor, 1,
+        "the proven skip is committed before the wait"
+    );
+    // Step 1's evidence flips while step 2 is still unknown: the skipped
+    // prefix must not become runnable again.
+    harness.drop_egg();
+    for _ in 0..3 {
+        harness.step();
+    }
+    assert!(
+        harness.begun.is_empty(),
+        "no step may start while step 2 is unknown"
+    );
+    assert_eq!(
+        harness.script.cursor, 1,
+        "the flipped evidence does not move the cursor back"
+    );
+    harness.observe_empty_equipment();
+    harness.run_until_parked();
+    assert_eq!(
+        harness.begun,
+        ["step-2", "step-3", "step-4", "step-5"],
+        "step 1 was proven done once and never re-runs without a reset"
+    );
+}
+
+#[test]
+fn all_skipped_suffix_commits_the_cursor_to_the_end() {
+    // Steps 3-5 are proven done once steps 1-2 settle, so selection exhausts
+    // the sequence; the confirming read must not re-evaluate them.
+    let mut harness = Harness::new(document(
+        SequenceOrder::Ordered,
+        |n| if n >= 3 { has_egg() } else { never() },
+        always(),
+    ));
+    harness.hold_egg();
+    harness.run_until_begun(2);
+    harness.run_until_logged("ordered sequence has no step left at cursor 5");
+    assert_eq!(harness.script.cursor, 5);
+    // The evidence flips between the exhausted selection and its confirming
+    // read; the skipped suffix stays skipped.
+    harness.drop_egg();
+    harness.run_until_parked();
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2"],
+        "an all-skipped suffix never runs after the cursor passed it"
+    );
+    assert_eq!(harness.script.park_reason, "no step for stage");
+}
+
+#[test]
+fn unresolved_first_read_after_resume_still_resets_the_cursor() {
+    // After Resume the first owned read is unresolved; the Known read that
+    // follows must still replay the sequence from step 1.
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    harness.script_reads(&[
+        QuestListStatus::NotStarted,
+        QuestListStatus::Unknown,
+        QuestListStatus::NotStarted,
+    ]);
+    harness.run_until_begun(2);
+    assert_eq!(harness.begun, ["step-1", "step-2"]);
+    harness.script.interrupt(Interrupt::Resume);
+    while !harness
+        .script
+        .progress
+        .as_ref()
+        .is_some_and(|progress| matches!(progress.stage, Knowledge::Unknown(_)))
+    {
+        assert!(!harness.script.parked);
+        harness.step();
+    }
+    assert_eq!(
+        harness.script.cursor, 0,
+        "the fresh adoption resets the cursor even while its stage is unresolved"
+    );
+    harness.run_until_begun(3);
+    assert!(
+        harness.logged("stage unknown → "),
+        "the Known read follows the unresolved one: {:?}",
+        harness.logs.0
+    );
+    assert_eq!(
+        harness.begun[2], "step-1",
+        "an Unknown-then-Known resume replays from step 1, not the stale cursor"
+    );
+}
+
+#[test]
+fn random_event_replays_an_ordered_sequence_unless_paired_work_is_pending() {
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    harness.run_until_begun(2);
+    assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
+    assert!(harness.script.progress.is_none());
+    harness.run_until_begun(4);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-1", "step-2"],
+        "an ordinary random event drops progress, so the sequence replays from step 1"
+    );
+    // Let step 2 settle so the cursor sits past it, then model partner
+    // admission in flight, which is pending paired work.
+    while harness.script.settling {
+        harness.step();
+    }
+    assert_eq!(harness.script.cursor, 2);
+    harness.script.pair_admission_since = Some(harness.active_now());
+    assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 2);
+    harness.run_until_begun(5);
+    assert_eq!(
+        harness.begun[4], "step-3",
+        "while paired work is pending a random event keeps the cursor: replaying mid-pairing would desync the partners"
+    );
+}
+
+#[test]
 fn stage_change_resets_the_ordered_cursor() {
-    let mut harness = Harness::new(document(SequenceOrder::Ordered, never(), always()));
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_begun(2);
     harness.colour(IN_PROGRESS);
     harness.run_until_begun(3);
@@ -270,7 +525,7 @@ fn stage_change_resets_the_ordered_cursor() {
 
 #[test]
 fn failed_ordered_step_is_retried_in_place() {
-    let mut harness = Harness::new(document(SequenceOrder::Ordered, never(), never()));
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), never()));
     harness.run_until_parked();
     assert_eq!(
         harness.begun,
