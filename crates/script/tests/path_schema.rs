@@ -144,6 +144,11 @@ fn bundled_paths_decode_and_compile() {
     assert_eq!(index.schema, 1, "the release index has its own schema");
 
     let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = std::sync::Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
     for entry in index.paths {
         // Unavailable rows may keep their authored Path validated here.
         let Some(file) = entry.file else {
