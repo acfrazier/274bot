@@ -293,7 +293,8 @@ to those steps. Missing `mustHave` supplies still block. Tools are preservation
 hints only: missing tools do not cause a scan or withdrawal. An active recipe's
 declared inputs can independently request those items.
 Missing coin and active-loadout carry floats scan an unknown bank and draw
-available stock. Held floats skip that scan. A satisfied float is latched for
+available stock when it fits; a float that doesn't fit is skipped, since floats
+are optional. Held floats skip that scan. A satisfied float is latched for
 the pass rather than replenished after every dose or meal; death resets those
 latches. Paths marked `owns_inventory` retain their authored inventory steps.
 Automatic coin funding is not provided.
