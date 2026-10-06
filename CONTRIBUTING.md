@@ -38,8 +38,9 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   revision’s pack and flags next to the binary
   (`target/<profile>/nav/<revision>/`, revision **289** by default,
   `BOT_NAV_REVISION=274` for 274), so the app boots with a bound nav world
-  and no manual step. A normal bundled-nav build needs `BOT_NAV_ENGINE_DIR`
-  or `ENGINE_DIR`; set `BOT_NAV_BUILD=skip` to build without bundling. The
+  and no manual step. A normal bundled-nav build needs `ENGINE_DIR`, the
+  engine checkout's `engine/` folder (or set it once under `[env]` in
+  `~/.cargo/config.toml`); set `BOT_NAV_BUILD=skip` to build without bundling. The
   `nav-pack` CLI stays for custom bakes (`$NAV_PACK` or
   `~/.274bot/274bot.navpack`, magic `274V`, version byte **12**; v11 and older
   are `BadVersion`). Details:
