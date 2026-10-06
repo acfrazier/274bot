@@ -1920,6 +1920,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
             end: WalkEnd::Arrived,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
     );
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
@@ -2138,6 +2141,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
             end: WalkEnd::Arrived,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
     );
     slot.reconnect_session_work();
@@ -2170,6 +2176,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
             end: WalkEnd::Arrived,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
     );
     let (authority, request_id, mut effect) = next_trip_effect(&mut slot, &frame, &mut now);
@@ -2195,6 +2204,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                 end: WalkEnd::Arrived,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
         );
         effect = next_trip_effect(&mut slot, &frame, &mut now).2;
@@ -2330,6 +2342,9 @@ fn complete_lifecycle_walk(
             end,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
     );
 }
@@ -3223,6 +3238,9 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
             end: script::native::WalkEnd::Refused,
             blocked: None,
             detail: Some(Arc::from("no route to the selected site")),
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
     );
     now += 1;

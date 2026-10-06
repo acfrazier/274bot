@@ -18,7 +18,8 @@ use ratatui::widgets::{Block, Borders, Clear, Widget};
 use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
-    GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED, SCRIPT_SCOPE_NOTICE,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED,
+    SCRIPT_SCOPE_NOTICE, SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };
 use vault::ProfileSettings;
 
@@ -73,6 +74,8 @@ pub enum SettingsKey {
     WalkGlobal(NavPreference),
     /// The one-time script-scope notice was dismissed.
     ScriptScopeNoticeAck,
+    /// The one-time danger-routing migration notice was dismissed.
+    SurvivableRoutingNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
     /// The Quester folder settings changed and need shared persistence.
@@ -101,6 +104,7 @@ pub struct SettingsPane<'a> {
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
+    pub survivable_routing_notice_ack: Option<&'a mut bool>,
     pub quester_paths: Option<&'a mut QuesterPathsView>,
     pub quester_paths_notice: Option<&'a str>,
     pub quester_paths_notice_error: bool,
@@ -127,6 +131,7 @@ impl<'a> SettingsPane<'a> {
             memory: None,
             pause_script_on_manual_walk_abort: None,
             script_scope_notice_ack: None,
+            survivable_routing_notice_ack: None,
             quester_paths: None,
             quester_paths_notice: None,
             quester_paths_notice_error: false,
@@ -136,6 +141,12 @@ impl<'a> SettingsPane<'a> {
     /// Bind the shared script-scope acknowledgement.
     pub fn script_scope_notice_ack(mut self, value: &'a mut bool) -> Self {
         self.script_scope_notice_ack = Some(value);
+        self
+    }
+
+    /// Bind the independent survivable-routing notice acknowledgement.
+    pub fn survivable_routing_notice_ack(mut self, value: &'a mut bool) -> Self {
+        self.survivable_routing_notice_ack = Some(value);
         self
     }
 
@@ -152,9 +163,10 @@ impl<'a> SettingsPane<'a> {
     }
 
     /// One key while the popup is open. Up/Down move the row; Enter/Space
-    /// toggles settings, `d` dismisses the one-time script-scope notice,
-    /// `r` relogs the bound member only while its login mode differs and no
-    /// relog is already queued; Esc closes.
+    /// toggles settings, `d` dismisses the script-scope notice, and `n`
+    /// dismisses the independent survivable-routing notice; `r` relogs the
+    /// bound member only while its login mode differs and no relog is queued.
+    /// Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         if self.state.folder_editing {
             return self.folder_key(key);
@@ -171,6 +183,14 @@ impl<'a> SettingsPane<'a> {
                     .is_some_and(|ack| !*ack) =>
             {
                 SettingsKey::ScriptScopeNoticeAck
+            }
+            KeyCode::Char('n')
+                if self
+                    .survivable_routing_notice_ack
+                    .as_deref()
+                    .is_some_and(|ack| !*ack) =>
+            {
+                SettingsKey::SurvivableRoutingNoticeAck
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.state.row = self.state.row.saturating_sub(1);
@@ -250,7 +270,7 @@ impl<'a> SettingsPane<'a> {
             }
             6 => {
                 self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::AllowDangerZones)
+                SettingsKey::WalkGlobal(NavPreference::SurvivableRouting)
             }
             7 if self.pause_script_on_manual_walk_abort.is_some() => {
                 self.activate_value();
@@ -295,10 +315,13 @@ impl<'a> SettingsPane<'a> {
             3 => self.nav.allow_teleports = !self.nav.allow_teleports,
             4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
             5 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
-            6 => self.nav.allow_danger_zones = !self.nav.allow_danger_zones,
+            6 => {
+                let next = self.nav.danger_level().next();
+                self.nav.set_danger_level(next);
+            }
             7 => {
-                if let Some(pause) = self.pause_script_on_manual_walk_abort.as_mut() {
-                    **pause = !**pause;
+                if let Some(pause) = self.pause_script_on_manual_walk_abort.as_deref_mut() {
+                    *pause = !*pause;
                 }
             }
             8 => *self.map_bake = self.map_bake.toggled(),
@@ -322,6 +345,15 @@ impl Widget for SettingsPane<'_> {
             .script_scope_notice_ack
             .as_deref()
             .is_some_and(|ack| !*ack);
+        let show_survivable_routing_notice = self
+            .survivable_routing_notice_ack
+            .as_deref()
+            .is_some_and(|ack| !*ack);
+        let danger_level = self.nav.danger_level();
+        let selected_row = self.state.row.min(12);
+        let danger_help = (selected_row == 6
+            && danger_level == frontend_core::DangerLevel::WhenSurvivable)
+            .then_some(SURVIVABLE_ROUTING_TOOLTIP);
         let marker = |row| if row == self.state.row { "> " } else { "  " };
         let path_folder = self
             .quester_paths
@@ -371,13 +403,24 @@ impl Widget for SettingsPane<'_> {
                 self.nav.allow_bank_fetch,
                 BANK_FETCH_PERMISSION_SCOPE
             ),
-            format!(
-                "{}{}: {} · {}",
-                marker(6),
-                GLOBAL_PERMISSION_LABELS[3].1,
-                self.nav.allow_danger_zones,
-                GLOBAL_PERMISSION_SCOPE
-            ),
+            if danger_level == frontend_core::DangerLevel::Always {
+                format!(
+                    "{}{}: {} — {} · {}",
+                    marker(6),
+                    GLOBAL_PERMISSION_LABELS[3].1,
+                    danger_level.label(),
+                    GLOBAL_DANGER_WARNING,
+                    GLOBAL_PERMISSION_SCOPE
+                )
+            } else {
+                format!(
+                    "{}{}: {} · {}",
+                    marker(6),
+                    GLOBAL_PERMISSION_LABELS[3].1,
+                    danger_level.label(),
+                    GLOBAL_PERMISSION_SCOPE
+                )
+            },
             format!(
                 "{}Pause script on manual movement: {}",
                 marker(7),
@@ -399,12 +442,19 @@ impl Widget for SettingsPane<'_> {
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
+        let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
         let scope_height = if show_scope_notice {
             wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + 1
         } else {
             0
         };
+        let migration_notice_height = if show_survivable_routing_notice {
+            wrapped_rows(SURVIVABLE_ROUTING_NOTICE, columns) + 1
+        } else {
+            0
+        };
+        let help_height = danger_help.map_or(0, |help| wrapped_rows(help, columns));
         let notice_height = self.notice.map_or(0, |notice| {
             notice.error().map_or_else(
                 || wrapped_rows(notice.text(), columns),
@@ -416,6 +466,8 @@ impl Widget for SettingsPane<'_> {
             .map_or(0, |notice| wrapped_rows(notice, columns));
         let height = (row_heights.iter().sum::<u16>()
             + memory_height
+            + help_height
+            + migration_notice_height
             + scope_height
             + notice_height
             + path_notice_height
@@ -432,17 +484,27 @@ impl Widget for SettingsPane<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        // Keep feedback visible and the selected setting reachable when the
-        // long global labels or scope notice cannot fit the terminal.
-        let footer_capacity = inner.height.saturating_sub(1);
+        // Preserve one row for the selected setting while keeping feedback
+        // visible when the terminal is too small for every notice.
+        let mut footer_capacity = inner.height.saturating_sub(1);
         let path_notice_height = path_notice_height.min(footer_capacity);
-        let notice_height = notice_height.min(footer_capacity - path_notice_height);
-        let memory_height = memory_height.min(footer_capacity - path_notice_height - notice_height);
-        let scope_height =
-            scope_height.min(footer_capacity - path_notice_height - notice_height - memory_height);
-        let rows_height =
-            inner.height - path_notice_height - notice_height - memory_height - scope_height;
-        let selected = self.state.row.min(rows.len() - 1);
+        footer_capacity -= path_notice_height;
+        let notice_height = notice_height.min(footer_capacity);
+        footer_capacity -= notice_height;
+        let memory_height = memory_height.min(footer_capacity);
+        footer_capacity -= memory_height;
+        let help_height = help_height.min(footer_capacity);
+        footer_capacity -= help_height;
+        let migration_notice_height = migration_notice_height.min(footer_capacity);
+        footer_capacity -= migration_notice_height;
+        let scope_height = scope_height.min(footer_capacity);
+        let rows_height = inner.height
+            - path_notice_height
+            - notice_height
+            - memory_height
+            - help_height
+            - migration_notice_height
+            - scope_height;
         let mut first = 0;
         let mut through_selected = row_heights[..=selected].iter().sum::<u16>();
         while first < selected && through_selected > rows_height {
@@ -457,19 +519,48 @@ impl Widget for SettingsPane<'_> {
             }
             let bottom = (y + row_heights[index]).min(rows_bottom);
             self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
-            y = draw_wrapped(buf, inner, y, bottom, text, Style::default());
+            let row_style = if index == 6 && danger_level == frontend_core::DangerLevel::Always {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+            };
+            y = draw_wrapped(buf, inner, y, bottom, text, row_style);
         }
 
         let yellow = Style::default().fg(Color::Yellow);
         let memory_bottom = rows_bottom + memory_height;
         draw_wrapped(buf, inner, rows_bottom, memory_bottom, memory_note, yellow);
-        let scope_bottom = memory_bottom + scope_height;
+        let help_bottom = memory_bottom + help_height;
+        if let Some(help) = danger_help {
+            draw_wrapped(buf, inner, memory_bottom, help_bottom, help, yellow);
+        }
+        let migration_bottom = help_bottom + migration_notice_height;
+        if show_survivable_routing_notice && migration_notice_height > 0 {
+            let dismiss_y = migration_bottom.saturating_sub(1);
+            draw_wrapped(
+                buf,
+                inner,
+                help_bottom,
+                dismiss_y,
+                SURVIVABLE_ROUTING_NOTICE,
+                yellow,
+            );
+            draw_wrapped(
+                buf,
+                inner,
+                dismiss_y,
+                migration_bottom,
+                "[n] dismiss this notice",
+                yellow,
+            );
+        }
+        let scope_bottom = migration_bottom + scope_height;
         if show_scope_notice && scope_height > 0 {
             let dismiss_y = scope_bottom.saturating_sub(1);
             draw_wrapped(
                 buf,
                 inner,
-                memory_bottom,
+                migration_bottom,
                 dismiss_y,
                 SCRIPT_SCOPE_NOTICE,
                 yellow,
@@ -700,7 +791,7 @@ mod tests {
             (3, NavPreference::AllowTeleports),
             (4, NavPreference::AllowWilderness),
             (5, NavPreference::AllowBankFetch),
-            (6, NavPreference::AllowDangerZones),
+            (6, NavPreference::SurvivableRouting),
         ] {
             let mut state = SettingsState {
                 open: true,
@@ -717,6 +808,7 @@ mod tests {
         assert!(nav.allow_wilderness);
         assert!(nav.allow_bank_fetch);
         assert!(nav.allow_danger_zones);
+        assert_eq!(nav.danger_level(), frontend_core::DangerLevel::Always);
     }
 
     #[test]
@@ -754,6 +846,47 @@ mod tests {
             24,
         );
         assert!(!text.contains("Teleports and wilderness in Nav config"));
+    }
+
+    #[test]
+    fn survivable_routing_notice_uses_an_independent_acknowledgement() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 0,
+            ..Default::default()
+        };
+        let mut old_acknowledged = true;
+        let mut acknowledged = false;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut old_acknowledged)
+                .survivable_routing_notice_ack(&mut acknowledged),
+            100,
+            24,
+        );
+        assert!(
+            text.contains("Danger routing now has three levels"),
+            "the migration notice remains visible after the old notice was dismissed: {text:?}"
+        );
+        let outcome = {
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut old_acknowledged)
+                .survivable_routing_notice_ack(&mut acknowledged);
+            pane.on_key(key(KeyCode::Char('n')))
+        };
+        assert_eq!(outcome, SettingsKey::SurvivableRoutingNoticeAck);
+        acknowledged = true;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut old_acknowledged)
+                .survivable_routing_notice_ack(&mut acknowledged),
+            100,
+            24,
+        );
+        assert!(!text.contains("Danger routing now has three levels"));
     }
 
     #[test]

@@ -374,7 +374,9 @@ where
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                let queued = arm.queue_route_avoiding(x, z, level, opts, request_id, exclusions);
+                let queued = arm.queue_fixed_route_in_snapshot_avoiding(
+                    snapshot, x, z, level, opts, request_id, exclusions,
+                );
                 if queued {
                     record_script_act(
                         navs,

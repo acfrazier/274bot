@@ -218,8 +218,18 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         });
         let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
         let arms = WalkArms::default();
-        let route = match command.walk_on(&world, &context, &name, &state, &[], &arms) {
-            Ok(route) => route,
+        let admission = host_play::admission::Admission::manual(
+            command.options(),
+            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            0,
+            host_play::WalkGlobals {
+                allow_danger_zones: true,
+                survivable_routing: false,
+                ..Default::default()
+            },
+        );
+        let route = match command.walk_on(&world, &context, &name, &state, &[], admission, &arms) {
+            Ok(route) => route.route,
             Err(error) => return Err(format!("walk_on: {error:?}")),
         };
         receipt["route_legs"] = json!(format!("{:?}", route.legs));

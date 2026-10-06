@@ -377,6 +377,10 @@ pub struct SlotDetail {
     pub card: Option<String>,
     /// Only focused detail retains the richer native output; fleet rows stay scalar.
     pub native_status: Option<Arc<script::native::ScriptStatus>>,
+    /// Retained native/v2 walk reason; only the focused detail projects it.
+    pub walk_risk: Option<Arc<str>>,
+    /// Current or last manual WalkTo reason, separate from script ownership.
+    pub manual_walk_risk: Option<Arc<str>>,
 }
 
 impl Clone for SlotDetail {
@@ -393,6 +397,8 @@ impl Clone for SlotDetail {
             random: self.random.clone(),
             card: self.card.clone(),
             native_status: self.native_status.clone(),
+            walk_risk: self.walk_risk.clone(),
+            manual_walk_risk: self.manual_walk_risk.clone(),
         }
     }
 
@@ -408,6 +414,8 @@ impl Clone for SlotDetail {
         self.random.clone_from(&source.random);
         self.card.clone_from(&source.card);
         self.native_status.clone_from(&source.native_status);
+        self.walk_risk.clone_from(&source.walk_risk);
+        self.manual_walk_risk.clone_from(&source.manual_walk_risk);
     }
 }
 
@@ -644,6 +652,22 @@ impl Views {
         if detail.native_status != native {
             detail.native_status = native;
             changed = true;
+        }
+        let risk = input.play.and_then(|play| play.script_walk_risk(selected));
+        changed |= set_shared_text(&mut detail.walk_risk, risk);
+        match input.walks.and_then(|walks| walks.get(selected)) {
+            Some(arm) => match arm.try_lock() {
+                Ok(arm) => {
+                    changed |=
+                        set_shared_text(&mut detail.manual_walk_risk, arm.risk_reason().cloned());
+                }
+                // Preserve the last answer while its slot is stepping.
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Poisoned(_)) => {
+                    changed |= set_shared_text(&mut detail.manual_walk_risk, None);
+                }
+            },
+            None => changed |= set_shared_text(&mut detail.manual_walk_risk, None),
         }
         changed
     }
@@ -1111,6 +1135,18 @@ fn swap_if_different(current: &mut String, candidate: &mut String) -> bool {
         return false;
     }
     std::mem::swap(current, candidate);
+    true
+}
+
+fn set_shared_text(current: &mut Option<Arc<str>>, next: Option<Arc<str>>) -> bool {
+    if match (current.as_ref(), next.as_ref()) {
+        (Some(current), Some(next)) => Arc::ptr_eq(current, next),
+        (None, None) => true,
+        _ => false,
+    } {
+        return false;
+    }
+    *current = next;
     true
 }
 

@@ -131,6 +131,21 @@ impl MapFixture {
             |_, _, _| {},
         )
         .unwrap();
+        // Geometry-only callers explicitly proceed with an Unknown assessment.
+        if play
+            .world()
+            .unwrap()
+            .graph
+            .zones
+            .as_ref()
+            .is_none_or(|zones| zones.zones().is_empty())
+        {
+            play.set_walk_globals(map_host::WalkGlobals {
+                allow_danger_zones: true,
+                survivable_routing: false,
+                ..map_host::WalkGlobals::default()
+            });
+        }
         play.attach_arm("alice", SlotArm::new(1, false));
         play.focus("alice");
         play.statuses.lock().unwrap().push(SlotStatus {

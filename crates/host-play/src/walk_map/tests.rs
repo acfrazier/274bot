@@ -38,6 +38,20 @@ fn bound_context(play: &crate::Play) -> MapContext {
     }
 }
 
+// Legacy geometry fixtures have no zone table and opt in rather than invent facts.
+fn routing_test_admission(world: &NavWorld) -> crate::admission::Admission {
+    crate::admission::Admission::manual(
+        FindOptions::default(),
+        Default::default(),
+        0,
+        crate::WalkGlobals {
+            allow_danger_zones: world.graph.zones.is_none(),
+            survivable_routing: false,
+            ..crate::WalkGlobals::default()
+        },
+    )
+}
+
 fn t(x: i32, z: i32, level: i32) -> Tile {
     Tile { x, z, level }
 }
@@ -540,9 +554,17 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
     assert_eq!(command.options(), opts);
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let route = command
-        .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &world,
+            &ctx,
+            "alice",
+            &WorldState::empty(),
+            &[],
+            routing_test_admission(&world),
+            &arms,
+        )
         .unwrap();
-    assert_eq!(route.dest, wt(2, 2, 0));
+    assert_eq!(route.route.dest, wt(2, 2, 0));
     assert_eq!(
         arms.lock().unwrap()["alice"].lock().unwrap().queued_tile(),
         Some(t(2, 2, 0))
@@ -564,7 +586,15 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
         .unwrap();
     assert_eq!(
         command
-            .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+            .walk_on(
+                &world,
+                &ctx,
+                "alice",
+                &WorldState::empty(),
+                &[],
+                routing_test_admission(&world),
+                &arms
+            )
             .unwrap_err(),
         ActionError::NoPath
     );
@@ -588,7 +618,15 @@ fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
         .unwrap();
     let arms = crate::WalkArms::default();
     let error = command
-        .walk_on(&world, &ctx, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &world,
+            &ctx,
+            "alice",
+            &WorldState::empty(),
+            &[],
+            routing_test_admission(&world),
+            &arms,
+        )
         .unwrap_err();
     assert_eq!(error, ActionError::OriginNotStandable);
     assert!(
@@ -664,7 +702,15 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
         .expect("selected members-only destination");
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let error = command
-        .walk_on(&nav, &context, "alice", &WorldState::empty(), &[], &arms)
+        .walk_on(
+            &nav,
+            &context,
+            "alice",
+            &WorldState::empty(),
+            &[],
+            routing_test_admission(&nav),
+            &arms,
+        )
         .expect_err("F2P must refuse the members-only route");
     assert_eq!(error, ActionError::MembersOnly);
     assert_eq!(error.to_string(), "This route requires a members' world");
@@ -916,9 +962,16 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
         .unwrap();
     let route = play
-        .map_walk(command, &ctx, &WorldState::empty(), &[], &arms)
+        .map_walk(
+            command,
+            &ctx,
+            &WorldState::empty(),
+            &[],
+            Default::default(),
+            &arms,
+        )
         .unwrap();
-    assert_eq!(route.dest, wt(3205, 3206, 0));
+    assert_eq!(route.route.dest, wt(3205, 3206, 0));
     let generation = {
         let arms = arms.lock().unwrap();
         let arm = arms["alice"].lock().unwrap();
@@ -943,8 +996,15 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         )
         .unwrap();
     assert_eq!(
-        play.map_walk(command, &foreign, &WorldState::empty(), &[], &arms)
-            .unwrap_err(),
+        play.map_walk(
+            command,
+            &foreign,
+            &WorldState::empty(),
+            &[],
+            Default::default(),
+            &arms
+        )
+        .unwrap_err(),
         ActionError::Stale
     );
     let arms = arms.lock().unwrap();
@@ -1309,6 +1369,7 @@ fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
             FindOptions::default(),
             &WorldState::empty(),
             &[],
+            routing_test_admission(&world),
             &arms,
             Some("alice"),
         )
@@ -1360,8 +1421,15 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
         )
         .unwrap();
     let arms = Arc::new(Mutex::new(HashMap::new()));
-    play.map_walk(command, &bob_ctx, &WorldState::empty(), &[], &arms)
-        .unwrap();
+    play.map_walk(
+        command,
+        &bob_ctx,
+        &WorldState::empty(),
+        &[],
+        Default::default(),
+        &arms,
+    )
+    .unwrap();
     assert_eq!(
         arms.lock().unwrap()["bob"].lock().unwrap().queued_tile(),
         Some(dest)
@@ -1420,6 +1488,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
             name,
             state: &empty,
             bank: &bank,
+            risk_input: Default::default(),
         })
         .collect();
 
@@ -1546,7 +1615,13 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     let arms = arms.lock().unwrap();
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
-    assert!(!arms.contains_key("bot3"));
+    let bot3 = arms
+        .get("bot3")
+        .expect("refused slot retains its arm shell");
+    assert!(
+        bot3.lock().unwrap().route.is_none(),
+        "failed bot3 must not have an armed route or movement"
+    );
 }
 
 #[test]
@@ -1571,6 +1646,7 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
         name: "alice",
         state: &state,
         bank: &bank,
+        risk_input: Default::default(),
     }];
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
@@ -1578,15 +1654,19 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
     let WalkSlotOutcomeKind::Failed(error) = &report.outcomes[0].kind else {
         unreachable!("zone refusal must carry its error");
     };
-    let ActionError::BlockedByZones {
-        detail: Some(detail),
-    } = error
-    else {
-        unreachable!("zone refusal must carry its named diagnosis");
+    let ActionError::RiskRefused { refusal, detail } = error else {
+        unreachable!("zone refusal must retain its typed risk diagnosis");
     };
-    assert!(error.to_string().contains("test-barrier@3203,"), "{error}");
-    assert!(detail.starts_with("blocked by danger zones:"), "{detail}");
+    assert!(
+        matches!(
+            refusal,
+            script::native::WalkRefusal::NoRouteWithinBounds { .. }
+        ),
+        "{refusal:?}"
+    );
+    assert!(detail.contains("blocked by danger zones:"), "{detail}");
     assert!(detail.contains("test-barrier@3203,"), "{detail}");
+    assert_eq!(error.to_string(), detail.as_str());
 }
 /// Each failure keeps its own group-walk reason: a nav-identity mismatch reads
 /// "stale" and a membership refusal "members-only path", never a generic label.
@@ -1682,7 +1762,15 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         )
         .unwrap();
     let error = command
-        .walk_on(&nav, &ctx, "alice", &state, &[], &arms)
+        .walk_on(
+            &nav,
+            &ctx,
+            "alice",
+            &state,
+            &[],
+            routing_test_admission(&nav),
+            &arms,
+        )
         .unwrap_err();
     let message = error.to_string();
     assert!(
@@ -1694,5 +1782,8 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         "{message}"
     );
     assert!(message.contains("need 60, carrying 30"), "{message}");
-    assert!(arms.lock().unwrap().get("alice").is_none());
+    let arm = Arc::clone(&arms.lock().unwrap()["alice"]);
+    let arm = arm.lock().unwrap();
+    assert!(arm.route.is_none() && arm.bank_fetch.is_none());
+    assert!(!arm.admission_pending);
 }

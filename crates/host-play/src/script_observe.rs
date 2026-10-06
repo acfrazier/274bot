@@ -441,7 +441,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // The slot repeats the run/action fence before accepting the receipt.
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             deliver_native_walk_end(&mut slot, bot, tick);
-            deliver_native_bank_pick(&mut slot, bot);
+            deliver_native_advice(&mut slot, bot);
             slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
         }
         slot_work_epoch = Some(slot.work_epoch());
@@ -864,11 +864,12 @@ pub(crate) fn script_observe_cached_with_channels(
                 wrote = true;
             }
         }
-        navs.lock()
-            .unwrap()
-            .entry(name.to_owned())
-            .or_default()
-            .native_permissions = slot.native_walk_permissions();
+        {
+            let mut navs = navs.lock().unwrap();
+            let bot = navs.entry(name.to_owned()).or_default();
+            bot.native_permissions = slot.native_walk_permissions();
+            bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+        }
         emit_script_debug_logs(&mut slot, name);
         // Fold forwarded shim requests on running frames. Pause leaves the
         // isolate queue untouched so Resume can dispatch it; guardian hold
@@ -1119,11 +1120,12 @@ pub(crate) fn script_observe_cached_with_channels(
                     && slot.state() == script::RunState::Running
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
-                    navs.lock()
-                        .unwrap()
-                        .entry(name.to_owned())
-                        .or_default()
-                        .native_permissions = slot.native_walk_permissions();
+                    {
+                        let mut navs = navs.lock().unwrap();
+                        let bot = navs.entry(name.to_owned()).or_default();
+                        bot.native_permissions = slot.native_walk_permissions();
+                        bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+                    }
                     let mut refused_batch = None;
                     while let Some(action) = slot.take_native_action() {
                         let batch = action.batch;
@@ -1325,6 +1327,30 @@ pub(crate) fn script_observe_cached_with_channels(
                                 // A refusal reaches the owner as a typed
                                 // `Refused` receipt on the next observation.
                                 arm.queue_native_route(snapshot, request, authority);
+                            }
+                            script::native::HostEffect::AssessWalk(request) => {
+                                let arm = super::ScriptWalkArm {
+                                    here,
+                                    world: world.clone(),
+                                    navs: Arc::clone(navs),
+                                    name: name.to_owned(),
+                                    state: state.clone(),
+                                    bank: snapshot
+                                        .bank()
+                                        .iter()
+                                        .map(|item| (item.def.id, item.count))
+                                        .collect(),
+                                };
+                                arm.queue_native_assess(
+                                    snapshot,
+                                    request,
+                                    authority.clone(),
+                                    api::quest_progress::EvidenceStamp {
+                                        run: authority.run(),
+                                        tick,
+                                        sequence: tick,
+                                    },
+                                );
                             }
                             script::native::HostEffect::BankPick(request) => {
                                 super::bank::queue_native_bank_pick(
@@ -1691,18 +1717,26 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     for (owner, event) in bot.walk_guard_events.drain(..) {
         slot.notify_native_walk(&owner, event);
     }
-    let receipt =
-        |owner: &script::native::HostAuthority, end, blocked, detail| script::native::WalkReceipt {
-            request_id: owner.request_id().get(),
-            evidence: api::quest_progress::EvidenceStamp {
-                run: owner.run(),
-                tick,
-                sequence: tick,
-            },
-            end,
-            blocked,
-            detail,
-        };
+    let receipt = |owner: &script::native::HostAuthority,
+                   end,
+                   blocked,
+                   detail,
+                   assessment,
+                   refusal,
+                   escape| script::native::WalkReceipt {
+        request_id: owner.request_id().get(),
+        evidence: api::quest_progress::EvidenceStamp {
+            run: owner.run(),
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked,
+        detail,
+        assessment,
+        refusal,
+        escape,
+    };
     if let Some((owner, end)) = bot.native_end.take() {
         let request_id = owner.request_id().get();
         let detail =
@@ -1711,7 +1745,15 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             } else {
                 None
             };
-        slot.complete_native_walk(&owner, receipt(&owner, end, None, detail));
+        let risk = bot.native_end_risk.take();
+        let assessment = risk.as_deref().and_then(|risk| risk.assessment.clone());
+        let refusal = risk.as_deref().and_then(|risk| risk.refusal);
+        let escape = risk.as_deref().and_then(|risk| risk.escape);
+        let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
+        slot.complete_native_walk(
+            &owner,
+            receipt(&owner, end, blocked, detail, assessment, refusal, escape),
+        );
         if bot.walk_outcome_request_id == request_id {
             bot.walk_outcome_detail = None;
         }
@@ -1745,15 +1787,32 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     let detail = (bot.walk_outcome_request_id == request_id)
         .then(|| bot.walk_outcome_detail.clone())
         .flatten();
-    slot.complete_native_walk(owner, receipt(owner, end, blocked, detail));
+    let refusal = bot
+        .risk_refusal
+        .as_deref()
+        .filter(|(request, _)| *request == request_id)
+        .map(|(_, refusal)| *refusal);
+    let assessment = bot.assessment.clone();
+    let escape = bot
+        .admission
+        .as_deref()
+        .and_then(|admission| admission.escape);
+    slot.complete_native_walk(
+        owner,
+        receipt(owner, end, blocked, detail, assessment, refusal, escape),
+    );
     bot.native_receipt_seq = bot.walk_outcome_seq;
     bot.native_walk_blocked = None;
     bot.walk_outcome_detail = None;
 }
 
-fn deliver_native_bank_pick(slot: &mut script::SlotScript, bot: &mut NavBot) {
+fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) {
     if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
         slot.complete_native_bank_pick(&authority, receipt);
+    }
+    if let Some(result) = bot.assess_result.take() {
+        let (authority, receipt) = *result;
+        slot.complete_native_assess_walk(&authority, receipt);
     }
 }
 

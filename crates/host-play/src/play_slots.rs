@@ -39,8 +39,8 @@ use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
     deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
-    reset_script_nav, script_active, script_observe_cached_with_channels, script_paint_of,
-    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
+    reset_script_nav, script_active, script_frame_state, script_observe_cached_with_channels,
+    script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
@@ -53,6 +53,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SlotFrameInput {
     pub hold: bool,
+    /// Native/script or escape ownership freezes ordinary frontend movement.
+    pub host_move_owned: bool,
     pub manual_move_intent: Option<host::ManualMoveIntent>,
     pub manual_steps: usize,
 }
@@ -80,6 +82,7 @@ pub(super) fn take_slot_frame_input(
         .unwrap_or_default();
     let frame = SlotFrameInput {
         hold,
+        host_move_owned: false,
         manual_move_intent: input.take_manual_move_intent(),
         manual_steps: wires
             .iter()
@@ -1405,7 +1408,7 @@ fn spawn_slot_thread(
                             // Collect intent before either follow pump or script
                             // dispatch; this is the shared takeover ordering seam.
                             // Keep these commands for their normal late send/hold gate.
-                            let (frame_input, wires) =
+                            let (mut frame_input, wires) =
                                 take_slot_frame_input(&slot_input, name, &slot_wires, hold);
                             take_manual_walk_ownership(
                                 &slot_scripts,
@@ -1416,6 +1419,14 @@ fn spawn_slot_thread(
                                 *script_tick,
                                 slot_manual_abort_pause.load(Ordering::Relaxed),
                             );
+                            let script_state = script_frame_state(&slot_scripts, name);
+                            let running = script_state == Some(script::RunState::Running);
+                            let script_owned = crate::script_runtime::script_movement_owned(script_state);
+                            let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
+                                bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
+                                bot.route.is_some() || bot.bank_fetch.is_some(),
+                            ));
+                            frame_input.host_move_owned = script_owned || nav_owned;
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             slot_frame(c, name, frame_input);
@@ -1485,11 +1496,7 @@ fn spawn_slot_thread(
                             } else {
                                 super::script_channels::BrokerWorld::Local
                             };
-                            let running = script_running(&slot_scripts, name);
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
-                            let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                b.route.is_some() || b.bank_fetch.is_some()
-                            });
                             let nav_state = nav_world_state_for_observe(
                                 here,
                                 &nav_snapshot,

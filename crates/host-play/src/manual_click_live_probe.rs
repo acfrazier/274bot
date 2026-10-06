@@ -19,6 +19,9 @@ impl Play {
                     .probe("globalThis.__manual_v2_reason ?? null")
                     .unwrap_or(serde_json::Value::Null),
                 "watchdog_state": format!("{:?}", slot.watchdog().state()),
+                "sustain_eats": slot
+                    .probe("globalThis.__manual_sustain_eats ?? 0")
+                    .unwrap_or(serde_json::Value::Null),
                 "recovering_anchor": slot.watchdog().recovering_anchor().map(|tile| [
                     tile.x, tile.z, tile.level,
                 ]),
@@ -65,6 +68,23 @@ impl Play {
                 "failed": bot.walk_outcome_failed,
                 "blocked": bot.walk_outcome_blocked,
                 "reason": format!("{:?}", bot.walk_outcome_cancel_reason),
+                "compat_v1": bot.compat_v1,
+                "guard_active": bot.walk_guard.is_some(),
+                "off_debt": bot.walk_guard_off.is_some(),
+                "escape": bot.slot_escape().map(|escape| format!("{escape:?}")),
+                "admission": bot.admission.as_deref().map(|admission| serde_json::json!({
+                    "policy": format!("{:?}", admission.policy),
+                    "prayer": admission.allow.prayer,
+                    "food": admission.allow.food,
+                    "escape": admission.allow.escape,
+                })),
+                "assessment": bot.assessment.as_ref().or(bot.last_assessment.as_ref()).map(|assessment| {
+                    serde_json::json!({
+                        "verdict": format!("{:?}", assessment.verdict),
+                        "reason": assessment.reason.as_ref(),
+                        "crossings": assessment.plan.intervals.len(),
+                    })
+                }),
                 "user_move_intent_seq": bot.user_move_intent_seq,
                 "takeover_watermark": bot.manual_takeover_watermark,
                 "destination": [bot.walk_outcome_x, bot.walk_outcome_z, bot.walk_outcome_level],

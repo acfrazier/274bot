@@ -68,6 +68,67 @@ pub enum GuardRefusal {
     Tables,
 }
 
+/// Passive receipt vocabulary for the runtime escape net. S2b publishes these
+/// types; the host owns their execution and lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeAction {
+    Retreat,
+    Forward,
+    Teleport,
+    Stand,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeState {
+    Running,
+    Suspended,
+    Done,
+    Unresolved,
+    Dropped(DropWhy),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeOwner {
+    Native,
+    Manual,
+    Host,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropWhy {
+    UserInput,
+    Death,
+    Reconnect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetireWhy {
+    Safe,
+    Quiet,
+    Bound,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Escape {
+    pub action: EscapeAction,
+    pub state: EscapeState,
+    pub owner: EscapeOwner,
+    pub allow: crate::native::WalkAllow,
+    pub from: api::WorldTile,
+    pub to: api::WorldTile,
+    pub hp: u8,
+    pub floor: u8,
+    pub volley: u8,
+    pub tick: u32,
+    pub generation: u64,
+    pub switches: u8,
+    pub last_hit: u32,
+    pub retired: Option<RetireWhy>,
+}
+
+const _: () = assert!(std::mem::size_of::<Escape>() <= 64);
+
 /// Per-followed-route protection and eat driver. Threats plus a few clocks;
 /// tables live behind an `Arc`.
 pub struct WalkGuard {
@@ -103,7 +164,8 @@ static TABLES: LazyLock<Option<Arc<CombatTables>>> = LazyLock::new(|| {
         .and_then(|data| CombatTables::build(data).ok())
 });
 
-fn shared_tables() -> Result<Arc<CombatTables>, GuardRefusal> {
+/// Shared by the guard and passive admission facts; never builds a second table.
+pub fn shared_tables() -> Result<Arc<CombatTables>, GuardRefusal> {
     TABLES.clone().ok_or(GuardRefusal::Tables)
 }
 

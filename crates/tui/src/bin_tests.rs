@@ -1819,6 +1819,7 @@ fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
         level: 0,
     });
     app.nav.allow_bank_fetch = true;
+    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     session.arm_walk_on(
         &mut app,
         Tile {
@@ -1851,6 +1852,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
     let mut app = TuiApp::new("274bot headless");
+    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     session.pump(&mut app);
     assert!(!app.fleet[0].walking);
 

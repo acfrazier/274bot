@@ -4,6 +4,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod admission;
 pub mod audio;
 pub mod cache;
 pub mod catalog_core;
@@ -92,10 +93,11 @@ pub use map_cache::{
 };
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
-    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, step_walk_arm_bank_fetch,
-    step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
+    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, observe_walk_arm_admission,
+    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath,
+    WalkArm, WalkArms, WalkRoute,
 };
-pub use walk_permissions::WalkGlobals;
+pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
@@ -307,7 +309,7 @@ impl Play {
     pub fn walk_globals(&self) -> WalkGlobals {
         self.walk_globals_store.as_ref().map_or_else(
             || *self.walk_globals.lock().unwrap(),
-            |path| WalkGlobals::read_at(path).unwrap_or_default(),
+            |path| WalkGlobals::read_at(path).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         )
     }
 

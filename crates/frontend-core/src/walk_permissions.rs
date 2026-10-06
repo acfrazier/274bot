@@ -7,13 +7,20 @@
 use std::io;
 use std::path::Path;
 
+pub use host_play::DangerLevel;
 use host_play::WalkGlobals;
 use nav::router::FindOptions;
 
 /// Shared explanation of how the Nav config walk grants apply to scripts.
-pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. Danger is new (default off). rs2b0t-compatible scripts always allow wilderness and bank fetch.";
+pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
-/// Warning shown in place of the one-shot danger control when its global is on.
+/// The explanatory copy for the `When survivable` danger-routing level.
+pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host crosses monsters it expects your bot to survive walking through — eating, and praying when points allow — turns back when hits run ahead of the estimate, and refuses the rest with the reason. Scripts and the map control can still override.";
+
+/// One-time notice for the danger-routing level migration.
+pub const SURVIVABLE_ROUTING_NOTICE: &str = "Danger routing now has three levels and defaults to 'When survivable'. Walks into a monster's reach are refused with a reason unless the host expects you to survive, and turn back when hits run ahead of the estimate; rs2b0t-compatible scripts keep rs2b0t's own behaviour. Rebake the navigation pack (274V17).";
+
+/// Warning shown for the global Always override and in place of the one-shot control.
 pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.";
 
 /// Label for the single-admission danger-zone control.
@@ -23,37 +30,72 @@ pub const GLOBAL_PERMISSION_SCOPE: &str = "Global — applies to every walk.";
 /// Bank-budget fetching is available to manual WalkTo only.
 pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
 
-/// Shared labels for the four durable walk permissions: preference id, label.
+/// Shared labels for the durable walk settings: preference id, label.
 pub const GLOBAL_PERMISSION_LABELS: [(&str, &str); 4] = [
     ("allow_teleports", "allow teleports"),
     ("allow_wilderness", "allow wilderness"),
     ("allow_bank_fetch", "allow bank fetch"),
-    ("allow_danger_zones", DANGER_THIS_WALK_LABEL),
+    ("allow_danger_zones", "Danger routing"),
 ];
 
-/// One durable read of all global walk permissions and the shared notice ack.
+/// One durable read of all global walk permissions and their notice acknowledgements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalkGlobalsView {
     pub globals: WalkGlobals,
     pub script_scope_notice_ack: bool,
+    pub survivable_routing_notice_ack: bool,
 }
 
 impl WalkGlobalsView {
-    /// Read the `nav` object once. Missing or malformed grant data grants
-    /// nothing; a missing or malformed notice acknowledgement remains off.
+    /// Read the shared preference file once. A missing file is a first-run
+    /// default; unreadable or malformed files deny every grant.
     pub fn read_at(path: &Path) -> Self {
-        let Some(nav) = host_play::panel_ui_value_at(path, "nav") else {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Self::default(),
+            Err(_) => return Self::fail_closed(),
+        };
+        let document = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(document) => document,
+            Err(_) => return Self::fail_closed(),
+        };
+        let Some(root) = document.as_object() else {
+            return Self::fail_closed();
+        };
+        let Some(nav) = root.get("nav") else {
             return Self::default();
         };
-        let script_scope_notice_ack = nav
-            .get("script_scope_notice_ack")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let globals = serde_json::from_value(nav).unwrap_or_default();
+        let Some(nav_object) = nav.as_object() else {
+            return Self::fail_closed();
+        };
+        let globals = match serde_json::from_value(serde_json::Value::Object(nav_object.clone())) {
+            Ok(globals) => globals,
+            Err(_) => return Self::fail_closed(),
+        };
         Self {
             globals,
-            script_scope_notice_ack,
+            script_scope_notice_ack: nav
+                .get("script_scope_notice_ack")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            survivable_routing_notice_ack: nav
+                .get("survivable_routing_notice_ack")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         }
+    }
+
+    fn fail_closed() -> Self {
+        Self {
+            globals: WalkGlobals::fail_closed(),
+            script_scope_notice_ack: false,
+            survivable_routing_notice_ack: false,
+        }
+    }
+
+    /// Return the stored three-way setting, not the runtime-net-gated level.
+    pub const fn danger_level(self) -> DangerLevel {
+        self.globals.danger_level()
     }
 
     /// Manual WalkTo has no script grant; a danger opt-in applies to one walk.
@@ -103,9 +145,19 @@ impl WalkGlobalsView {
                 after.globals.allow_danger_zones,
             ),
             (
+                "survivable_routing",
+                before.globals.survivable_routing,
+                after.globals.survivable_routing,
+            ),
+            (
                 "script_scope_notice_ack",
                 before.script_scope_notice_ack,
                 after.script_scope_notice_ack,
+            ),
+            (
+                "survivable_routing_notice_ack",
+                before.survivable_routing_notice_ack,
+                after.survivable_routing_notice_ack,
             ),
         ];
         if changed.iter().all(|(_, before, after)| before == after) {
@@ -135,7 +187,7 @@ impl WalkGlobalsView {
 
 #[cfg(test)]
 mod tests {
-    use super::WalkGlobalsView;
+    use super::{DangerLevel, WalkGlobalsView};
     use host_play::WalkGlobals;
     use nav::zones::ZoneExempt;
     use std::path::{Path, PathBuf};
@@ -173,16 +225,16 @@ mod tests {
     }
 
     #[test]
-    fn projection_reads_globals_and_fails_closed_for_missing_or_corrupt_files() {
+    fn projection_reads_migrates_and_fails_closed_without_reusing_the_old_notice_ack() {
         let store = TempStore::new("read");
-        assert_eq!(
-            WalkGlobalsView::read_at(store.path()),
-            WalkGlobalsView::default()
-        );
+        let absent = WalkGlobalsView::read_at(store.path());
+        assert_eq!(absent, WalkGlobalsView::default());
+        assert_eq!(absent.danger_level(), DangerLevel::WhenSurvivable);
+        assert!(!absent.survivable_routing_notice_ack);
 
         std::fs::write(
             store.path(),
-            r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"script_scope_notice_ack":true}}"#,
+            r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"survivable_routing":false,"script_scope_notice_ack":true,"survivable_routing_notice_ack":true}}"#,
         )
         .unwrap();
         let view = WalkGlobalsView::read_at(store.path());
@@ -193,9 +245,12 @@ mod tests {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 allow_danger_zones: true,
+                survivable_routing: false,
             }
         );
+        assert_eq!(view.danger_level(), DangerLevel::Always);
         assert!(view.script_scope_notice_ack);
+        assert!(view.survivable_routing_notice_ack);
         assert_eq!(view.permission_enabled("allow_teleports"), Some(true));
         assert_eq!(view.permission_enabled("allowTeleports"), Some(true));
         assert_eq!(view.permission_enabled("allow_wilderness"), Some(true));
@@ -206,11 +261,27 @@ mod tests {
         assert_eq!(view.permission_enabled("allowBankFetch"), None);
         assert_eq!(view.permission_enabled("unrelated"), None);
 
-        std::fs::write(store.path(), b"{truncated").unwrap();
+        std::fs::write(
+            store.path(),
+            r#"{"nav":{"allow_danger_zones":false,"script_scope_notice_ack":true}}"#,
+        )
+        .unwrap();
+        let migrated = WalkGlobalsView::read_at(store.path());
+        assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
+        assert!(migrated.globals.survivable_routing);
         assert_eq!(
-            WalkGlobalsView::read_at(store.path()),
-            WalkGlobalsView::default()
+            migrated.globals.effective_danger_level(),
+            DangerLevel::Never
         );
+        assert!(migrated.script_scope_notice_ack);
+        assert!(!migrated.survivable_routing_notice_ack);
+
+        std::fs::write(store.path(), b"{truncated").unwrap();
+        let malformed = WalkGlobalsView::read_at(store.path());
+        assert_eq!(malformed.globals, WalkGlobals::fail_closed());
+        assert!(!malformed.globals.survivable_routing);
+        assert!(!malformed.script_scope_notice_ack);
+        assert!(!malformed.survivable_routing_notice_ack);
     }
 
     #[test]
@@ -247,7 +318,7 @@ mod tests {
         let store = TempStore::new("write");
         std::fs::write(
             store.path(),
-            r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"custom":"keep"}}"#,
+            r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
         )
         .unwrap();
         let before = WalkGlobalsView::read_at(store.path());
@@ -258,13 +329,15 @@ mod tests {
         external["nav"]["show_nav_path"] = serde_json::Value::Bool(false);
         std::fs::write(store.path(), serde_json::to_vec(&external).unwrap()).unwrap();
 
-        let after = WalkGlobalsView {
+        let mut after = WalkGlobalsView {
             globals: WalkGlobals {
                 allow_teleports: true,
                 ..before.globals
             },
             script_scope_notice_ack: true,
+            survivable_routing_notice_ack: true,
         };
+        after.globals.set_danger_level(DangerLevel::WhenSurvivable);
         WalkGlobalsView::persist_changed_at(store.path(), before, after).unwrap();
         let persisted =
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
@@ -274,8 +347,10 @@ mod tests {
         assert_eq!(persisted["nav"]["allow_teleports"], true);
         assert_eq!(persisted["nav"]["allow_wilderness"], true);
         assert!(persisted["nav"].get("allow_bank_fetch").is_none());
-        assert!(persisted["nav"].get("allow_danger_zones").is_none());
+        assert_eq!(persisted["nav"]["allow_danger_zones"], false);
+        assert_eq!(persisted["nav"]["survivable_routing"], true);
         assert_eq!(persisted["nav"]["script_scope_notice_ack"], true);
+        assert_eq!(persisted["nav"]["survivable_routing_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
         crate::nav_preference_at(
