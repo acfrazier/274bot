@@ -5549,6 +5549,75 @@ fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
 }
 
 #[test]
+fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        let (mut snapshot, mut target, _) =
+            use_on_footprint_fixture(cx, tile(origin.x - 7, origin.z));
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"},
+                "anchor": {"tile": [3166, 3308, 0], "source": "unit fixture"},
+                "radius": 3
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().and_then(|ledger| ledger.outbox.first()).map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == origin && request.loc_id == Some(target.id)
+            ),
+            "a visible anchored loc is approached directly, not via the anchor radius"
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.cx.active_now = Duration::from_secs(30);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "the initial stand approach must not spend the use-on settle window"
+        );
+
+        snapshot.seed_local_player(local_player(tile(origin.x + 3, origin.z)));
+        target.distance = 3;
+        snapshot.seed_locs(vec![target.clone()]);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.active_now = Duration::from_secs(31);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                emitted(&ledger),
+                InteractReq::UseOn { x, z, target_item_id: Some(id), .. }
+                    if (*x, *z, *id) == (origin.x, origin.z, target.id)
+            ),
+            "arrival after more than twenty seconds still dispatches the selected loc use"
+        );
+        assert!(
+            matches!(
+                with_tick(&snapshot, &mut ledger, 5, |tick| {
+                    tick.cx.active_now = Duration::from_secs(52);
+                    with_step(tick, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == "use_on timeout"
+            ),
+            "the actual use-on settle window remains bounded after arrival"
+        );
+    });
+}
+
+#[test]
 fn anchored_interact_loc_ignores_the_nearer_player_relative_decoy() {
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);

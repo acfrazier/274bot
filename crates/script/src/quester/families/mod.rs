@@ -2801,6 +2801,11 @@ impl StepRun for UseOnRun {
                         if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
                             self.target_tile = Some(loc.tile);
                             if !reach::loc_arrived(&cx.tick.cx, loc) {
+                                // Direct anchored arrival replaces the pre-settle anchor walk.
+                                // Repeated uses still share their original settle deadline.
+                                if self.tile.is_some() && self.accepted_tick.is_none() {
+                                    self.deadline = None;
+                                }
                                 self.walk = Some(cx.tick.actions.begin::<Walk>(
                                     reach::walk_request(
                                         loc.tile,
