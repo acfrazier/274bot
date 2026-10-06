@@ -170,6 +170,8 @@ active admission time for its saved partner to Start, become ready and reach
 the same compiled paired Path; expiry parks the Path with
 `partner admission timed out; Stop and Start both accounts`. A peer on an earlier
 solo row or a different Path is not reserved, cancelled or suspended by that wait.
+When a same-Path lease ends before its peer joins, the reservation is released
+without cancelling that peer's run; only joined sides are cancelled.
 Beginning a handoff while the peer is held also waits, without spending failed
 attempts or reserving either account, for up to ten minutes of the actor's active
 time. Expiry parks with

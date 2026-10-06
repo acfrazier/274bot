@@ -257,12 +257,14 @@ impl QuestPairCoordinator {
             action.revoke();
         }
         for entry in state.entries.values_mut() {
-            if entry.registration.run == lease.token.left
-                || entry.registration.run == lease.token.right
-            {
+            let Ok(side) = lease.side(entry.registration.run) else {
+                continue;
+            };
+            entry.lease = None;
+            if lease.joined[side].is_some() {
+                // Reservation alone does not make the peer part of this attempt.
                 entry.cancelled = Some(error.clone());
                 entry.admission_wait = false;
-                entry.lease = None;
             }
         }
     }
@@ -1909,6 +1911,126 @@ mod tests {
                     .is_none()
             );
         }
+    }
+    fn assert_unjoined_peer_can_join_again(pair: &Pair, plan: &Arc<CompiledPairPlan>) {
+        register(
+            pair.seats[1].as_ref(),
+            pair.runs[1],
+            "alice",
+            Gang::BlackArm,
+            4,
+        );
+        let next_alice = RunKey {
+            run: pair.runs[0].run + 1,
+            ..pair.runs[0]
+        };
+        register(pair.seats[0].as_ref(), next_alice, "bob", Gang::Phoenix, 1);
+        register(pair.seats[0].as_ref(), next_alice, "bob", Gang::Phoenix, 2);
+        assert!(matches!(
+            pair.seats[0].observe_gang(&read(next_alice)),
+            Ok(Knowledge::Known(None))
+        ));
+
+        let mut bob_request = request(pair.runs[1], "alice", 1, plan);
+        bob_request.evidence = stamp(pair.runs[1], 4);
+        let token = pair.seats[1]
+            .begin(bob_request)
+            .expect("the unjoined peer can be admitted after the other side restarts");
+        assert_eq!(
+            pair.seats[0].begin(request(next_alice, "bob", 0, plan)),
+            Ok(token)
+        );
+    }
+
+    #[test]
+    fn same_path_unjoined_peer_survives_lease_cancel_and_can_rejoin() {
+        let pair = pair();
+        let plan = plan(false);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .expect("same-Path peer is reserved for admission");
+        assert!(pair.seats[1].busy());
+        assert!(
+            pair.core.state.lock().unwrap().leases[&token.id].joined[1].is_none(),
+            "bob has not joined"
+        );
+
+        let hero = FactKey::new("hero");
+        let hero_protocol = FactKey::new("heroes");
+        pair.seats[1].observe(
+            PairRegistration {
+                run: pair.runs[1],
+                pin: pin(),
+                ready: true,
+                settings: Some(PairSettings {
+                    partner: Some(AccountKey(Arc::from("alice"))),
+                    gang: Some(Gang::BlackArm),
+                }),
+                evidence: stamp(pair.runs[1], 3),
+            },
+            PairFrame {
+                binding: Some(PairBinding {
+                    path: &hero,
+                    protocol: &hero_protocol,
+                    digest: &[3; 32],
+                    role: &plan.roles[1].id,
+                }),
+                inventory: None,
+            },
+        );
+
+        assert!(pair.seats[1].settings(pair.runs[1]).is_ok());
+        assert!(
+            pair.core.state.lock().unwrap().entries[&AccountKey(Arc::from("bob"))]
+                .cancelled
+                .is_none(),
+            "a side that never joined is not sticky-cancelled"
+        );
+        assert!(!pair.seats[1].busy());
+        assert!(
+            matches!(
+                pair.seats[0].poll(&token, pair.runs[0]),
+                Poll::Ready(Err(PairError::Cancelled))
+            ),
+            "the joined side's attempt is cancelled"
+        );
+        assert_unjoined_peer_can_join_again(&pair, &plan);
+    }
+
+    #[test]
+    fn same_path_unjoined_peer_survives_lease_expiry_and_can_rejoin() {
+        let pair = pair();
+        let plan = plan(false);
+        let token = pair.seats[0]
+            .begin(request(pair.runs[0], "bob", 0, &plan))
+            .expect("same-Path peer is reserved for admission");
+        assert!(pair.seats[1].busy());
+        assert!(
+            pair.core.state.lock().unwrap().leases[&token.id].joined[1].is_none(),
+            "bob has not joined"
+        );
+        pair.core
+            .state
+            .lock()
+            .unwrap()
+            .leases
+            .get_mut(&token.id)
+            .unwrap()
+            .deadline = Instant::now();
+
+        assert!(matches!(
+            pair.seats[0].poll(&token, pair.runs[0]),
+            Poll::Ready(Err(PairError::BarrierExpired))
+        ));
+        assert!(pair.seats[1].settings(pair.runs[1]).is_ok());
+        assert!(
+            pair.core.state.lock().unwrap().entries[&AccountKey(Arc::from("bob"))]
+                .cancelled
+                .is_none(),
+            "expiry must not cancel a side that never joined"
+        );
+        assert!(!pair.seats[1].busy());
+        assert_unjoined_peer_can_join_again(&pair, &plan);
     }
 
     #[test]
