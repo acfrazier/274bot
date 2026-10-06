@@ -3,6 +3,8 @@
 # write_player_fixture.ts — uses server Player.save() + PlayerLoading.verify/load.
 # run_write_player_fixture.sh — esbuild bundle with World/Environment stubs + real bzip2.
 # test_server_root_selection.sh — CLI --server-root must override env for source+pack.
+# check_server_root_selection.py — asserts the .sh outputs: CLI --server-root
+# B wins over env root A (pureA==A, cliB==B, pureB==B by receipt provenance).
 #
 # Example:
 #   ./tools/harness/run_write_player_fixture.sh \

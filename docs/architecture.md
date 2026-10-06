@@ -4,6 +4,10 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
+0.2.0 is Beta 1. Revision 289 is the production revision: the product is
+built, tested and claimed for it. Revision 274 is best-effort: it may run,
+but it is neither tested nor claimed.
+
 The Cargo workspace graph is **enforced**. Runtime semantics that a manifest
 cannot prove stay **review requirements**. Changing a crate edge is a
 deliberate policy edit plus documentation and review; do not sneak a reverse
@@ -116,7 +120,9 @@ and get review. Do not add a second hidden graph.
 
 ## Per-crate module ownership
 
-Paths relative to `crates/<crate>/src`, as they are at `bb51386a6`.
+Paths relative to `crates/<crate>/src`. The `quester/`, `gatherer/` and
+`combat/` directories are summarized one row each; their internals follow
+one-machine-per-behavior like the rows they sit beside.
 `api`, `e2e`, `host`, `nav`, `scenario`, `script` are split as listed.
 `host-play`, `panel`, `tui` are listed as they are: one file per owner,
 no split children. `*_tests.rs` rows are test bodies, not production
@@ -357,6 +363,9 @@ tiles already verified).
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
 | `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
 | `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
+| `quester/` | Quester card, Path compiler and runner, quest families | native quest execution; Paths are content-derived documents, one family each |
+| `gatherer/` | Gatherer card and runner | native woodcutting, mining and fishing from live observation |
+| `combat/` | shared observed-state combat machine | melee, ranged and magic on one planner; prayer, sips, eating |
 | `clue_tests.rs`, `slot_tests.rs`, `rs2b0t_registry_tests.rs`, `canvas/canvas_tests.rs`, `load/isolate_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
 
 ### host-play
@@ -545,6 +554,59 @@ These are product boundaries. The crate checker does not prove them.
 
 The JS shim must not grow its own API or shared policy. Compatibility maps
 the JavaScript surface onto Rust host APIs.
+
+## Native script machines
+
+The 0.2.0 headline scripts are compiled into the host. They drive host
+verbs directly, with no isolate. Catalog cards they replace stay dim.
+
+| Machine | Card | What it does |
+| --- | --- | --- |
+| Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. |
+| Gatherer (`script/src/gatherer/`) | `Gatherer` | Woodcutting, mining and fishing from live observation: held-tool loop, disposal including power-drop batching, bank trips and provisioning, over methods from the selected content facts. |
+| Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter. |
+| Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each. It replaces catalog ClueSolver. |
+
+## Compatibility shim boundary
+
+Catalog scripts written for the frozen catalog API run unmodified through
+the compat isolate (JS API v1). The shim maps those names onto host verbs,
+step machines or `not impl`: name maps, value coercion and await plumbing
+only. Loops, tables, decisions, retries and sequencing live in Rust step
+machines that read the snapshot Rust already holds.
+
+The only JS↔Rust wire is the FlatBuffer: `IsolateBuf` posts snapshots into
+each isolate and decodes the shim's interact batches back. Bounded
+synchronous Rust calculations with typed value marshalling are the one
+authorized exception; they compute and never send a game action.
+
+## Navigation pack and server profiles
+
+The nav pack is format v16 (magic `274V`). Decoding rejects v15 and older
+as `BadVersion`: rebake custom packs with `nav-pack`. Three sidecars ride
+beside the pack: raw flags (`274F`/1), paint-reach (`274R`/1) and static
+canlight (`274L`/1). Application builds bake and stage the selected
+revision's navigation automatically (`BOT_NAV_REVISION`, default 289);
+`nav-pack` is only for deliberate custom-input bakes, selected with
+`--nav-pack`.
+
+`--profile NAME` picks a server profile from `~/.274bot/servers.json`,
+created on first use with `local-274`, `local-289` and `rs2b2t`.
+`--rs2b2t` selects the public profile; local profiles need an engine
+directory (`--engine`, `ENGINE_DIR`, or the profile's `engine_dir`) and
+public profiles need nothing. The fleet marks — the bots a bulk command
+acts on — are shared between the panel and the TUI through
+`frontend-core`.
+
+## Per-bot memory principles
+
+- Immutable content is shared once per process (`Arc`; parsed game facts
+  through `OnceLock` and `Arc`), never copied per bot.
+- Per-bot state is bounded and inline: fixed-size structs with asserted
+  budgets, no per-tick or per-frame allocation on hot paths.
+- Measurement never equates allocation counts with RSS. The opt-in
+  `BOT_MEMORY_N` harness (see `docs/harness.md`) reports RSS per
+  additional bot; sample fields are separate domains and are never summed.
 
 ## Behavioral invariants (review unless noted)
 

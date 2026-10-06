@@ -8,6 +8,10 @@ owns the run ledger, the receipts and the child processes. It contains no scenar
 no JavaScript runtime and no gameplay assertion of its own; a green child is a recorded
 observation that a human still has to read back.
 
+The suite runs the cases for the selected server profile. Revision 289 is
+the production revision; 274 cases run best-effort and are neither tested
+nor claimed.
+
     cargo run -p e2e --bin e2e-suite -- list
     cargo run -p e2e --bin e2e-suite -- dry-run --level quick
     cargo run -p e2e --bin e2e-suite -- run --level quick \
@@ -40,7 +44,7 @@ reason and are recorded `unavailable`; nothing is substituted or silently droppe
 
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
 launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
-`--lowmem` (the default) or `--highmem`, `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
+`--world-members true|false`, `--lowmem` (the default) or `--highmem`, `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
 `--exec-external PATH`, `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable).
 
 The child command line is the *resolved* executable, the profile flags and the case's live

@@ -12,6 +12,67 @@ ownership, prefer the tracked suite entrypoint
 record — not automatic script qualification. Captures that require human
 readback stay `pending_visual_review`; raw failures stay preserved.
 
+## Live entry points
+
+Live cells need a local engine and cache, run one at a time
+(`--test-threads=1`), and are all behind `LIVE=1` with `--ignored`:
+
+```sh
+# Native script cells (Gatherer, combat, Quester families, bank, WalkGuard).
+LIVE=1 cargo test -p host-play -- --ignored
+# Navigation and door cells against engine-backed endpoints.
+LIVE=1 cargo test -p e2e -- --ignored
+```
+
+The Quester Path smoke runs one content quest id from the embedded release
+index (or from `QUESTER_PATH_DIR`) under a fixed 45-minute deadline:
+
+```sh
+env HOME="$(mktemp -d)" LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh BOT_NAV_BUILD=skip \
+  WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<274bot.navpack> \
+  WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> \
+  BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> LIVE_EVIDENCE_DIR=<evidence-root> \
+  QUESTER_PATH=cook QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
+  cargo test -p host-play --test quester_path_live --features "live-harness test-support" \
+    live_quester_path_smoke -- --ignored --nocapture --test-threads=1
+```
+
+Headed runs use the panel (or TUI) scenario with `--live
+script_quester_path` and optional `HEADED_RECORD=1` video, as below. The
+headless cell needs `QUESTER_SEEDS`; the headed scenario accepts seeds and
+otherwise starts from a clean account at the Path's authored anchor.
+
+## Evidence paths and throwaway HOME
+
+| Variable | What it holds |
+| --- | --- |
+| `LIVE_EVIDENCE_DIR` | Receipts, CPU-rendered PNGs and captures for `host-play` live cells. Always outside the throwaway HOME. |
+| `BOT_EVIDENCE_DIR` | Receipt root for the older API cells; the test's `HOME` must be a disposable directory under it. |
+| `274BOT_SMOKE_DIR` | Capture root the `e2e-suite` runner points at its run's `shots/` directory. |
+
+Live cells run under a throwaway `HOME` (`env HOME="$(mktemp -d)"`) with an
+ephemeral vault and minted `live<token>_<i>` accounts, so a run never
+touches `~/.274bot` or the operator's vault. The source client cache is
+copied into the cell's temp root before use; the run never writes the
+source cache.
+
+## Live-cell rules
+
+- **Real content.** Shared world entities stay real: no spawned NPCs, locs
+  or chance-drop waits. Only the tested account is seeded, before Start.
+- **Seeded incidentals are observations, never requirements.** A seeded gem
+  disposal or casket deposit is verified when observed; a naturally dropped
+  one is recorded as an observation (`not_exercised` when absent) and never
+  required to pass.
+- **Nothing cheats after Start.** All fixture seeds, kit, stats and teleports
+  happen before Start; after Start the cell only observes completion, stops
+  and restarts.
+- **Fixed deadlines.** Every cell runs under a fixed bound: 45 minutes for
+  the Quester Path smoke (`QUESTER_PATH_DEADLINE_S` overrides the headed
+  scenario's deadline; zero and non-integer values are rejected), per-scenario
+  deadlines with a short terminal grace elsewhere. A cell that cannot finish
+  inside its bound fails instead of burning the shared engine.
+
 ## Path-backed Quester qualification
 
 New quest fixtures use `scenario::quester::quester_stage(QuesterStage { ... })`.
@@ -159,8 +220,8 @@ apart in engine logs and player saves. An invalid value stops the run.
 Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`). The door test also accepts
 `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
-player must reach the exact destination. Pack format is version **11**
-(magic `274V`; `decode` rejects v10 and older as `BadVersion`). **Rebake
+player must reach the exact destination. Pack format is version **16**
+(magic `274V`; `decode` rejects v15 and older as `BadVersion`). **Rebake
 existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
