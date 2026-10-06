@@ -14,7 +14,8 @@ stages pack + flags + reach + sidecar manifest + stamp under the install resourc
 bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
 the identity that the compile-time table `host_play::bundled_nav_identities()`
 serves. Normal WalkTo in that build needs no manual step. The default revision
-is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead.
+is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead. Revision
+289 is the production revision; 274 is best-effort, neither tested nor claimed.
 
 `nav-pack` remains for deliberate developer/custom-input bakes. It calls the
 same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
@@ -303,6 +304,16 @@ no zones (a legacy 274N grid) gates nothing. Packed spell and
 jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
+
+### Members gating at runtime
+
+Bake-time `members_req` is only half the gate. Every search runs under a
+`WorldState` whose `map_members` comes from the bound server profile: an
+explicit `--world-members` override wins; otherwise a local profile reads
+its engine's `world.json` for the selected revision, and an all-rs2b2t
+roster declares members. Anything unresolved routes as F2P, and a walk
+that would need a members-only crossing is refused with “This route
+requires a members' world”.
 
 The NPC Boat edge models `set_sail`; each eligible gangplank Cross remains a
 separate player-relative Ladder edge. Its displacement includes the one-tile
@@ -748,6 +759,11 @@ progress and `Some(TravelOutcome)` at a terminal state
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 on_leg, on_event }`.
 
+Arrival radius is the Chebyshev distance treated as arrived at a hop
+target. `close_enough` defaults to 2. Legs with an exact planned
+`takeoff` settle at radius 0 on the planned landing; teleport hops accept
+radius 2 and glider landings radius 1 whatever the runner passes.
+
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.
   A delayed action or queued modal can block successive accepted clicks;
@@ -857,7 +873,8 @@ WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
 fail-closed: when only held, consumed, or worn item requirements are missing,
 the host plans a fetch-and-wear session from the packed bank stand table
 (`NavWorld::banks()`), walks to a standable access tile of the nearest
-stand (never the booth loc or a teller spawn behind the counter), opens
+stand — same level first, then Chebyshev distance — (never the booth loc
+or a teller spawn behind the counter), opens
 it, withdraws only shortages, closes the bank, then wears any missing worn
 item (the client cannot wear while the bank is open), and re-runs the strict
 search. It never deposits backpack items: tools, quest items, food, and existing

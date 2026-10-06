@@ -94,7 +94,7 @@ New accounts spawn on Tutorial Island. Two different local-engine paths:
 
 `tele` / `setvar` / `setstat` have **no** tilde. Engine debugprocs are cheat bodies that **start with `~`** (`~home` from the panel Lumbridge button; type `::~name` in chat). Panel capture must pass colon, tilde, and comma.
 
-This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Local engine grants staff cheats when not `production`.
+This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Cheat sends are admitted on local (loopback) profiles; remote profiles refuse them.
 
 ## RSA (local engine)
 
@@ -182,3 +182,10 @@ counts awake time, so system sleep does not advance the ten minutes. The
 script's work remains held, and **Log in** clears the guard and resumes it.
 Operator **Logout**, Stop, and removal remain terminal and are never
 automatically resurrected.
+
+## Relog now (memory mode)
+
+Switching lowmem/highmem queues the whole mode for the next login after a
+clean logout ([panel.md](panel.md), [tui.md](tui.md)). **Relog now** performs
+that logout and login through the ordinary queue above — it is not a shortcut
+around it — and warns first when a running script would be interrupted.
