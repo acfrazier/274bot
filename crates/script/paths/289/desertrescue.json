@@ -203,7 +203,238 @@
           }
         }
       ],
-      "acquire:escape-cart": [
+      "acquire:surface-rescue": [
+        {
+          "id": "pull-winch",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "loc": "ropepullthingy"
+            },
+            "op": "Use",
+            "anchor": {
+              "tile": [
+                3280,
+                3017,
+                0
+              ],
+              "source": "C maps/m51_47.jm2:4342 (ropepullthingy 2667 at 3279,3017 length 2, op2 Use); quest_desertrescue.rs2:883-894"
+            },
+            "radius": 3,
+            "settle_ms": 15000
+          },
+          "comment": "quest_desertrescue.rs2:883-894: with Ana on the lift the winch brings her barrel up ('You pull on the winch.' then the barrel box; stage 23); without her a second line adds 'a heavy barrel filled with stone'. Restart evidence: the last mine exit prints 'The doors open with some effort!' (427) after the lower-mine pickup, so the winch is due only while that line is newer than any winch pull, stone barrel or pickup; after the surface pickup (and the chat-silent cart loading) the pickup is newest and the cursor moves on to the driver. A stone result on a mistaken pull fails this step once and skips it on the retry.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "thanainabarrel"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "camp_surface"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": [
+                      "you pull on the winch.",
+                      "filled with stone",
+                      "you pick up ana in a barrel"
+                    ],
+                    "clear": [
+                      "the doors open with some effort"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "All": [
+              {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "you pull on the winch."
+                    ]
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "message",
+                    "version": 1,
+                    "args": {
+                      "any": [
+                        "filled with stone"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "take-ana-from-barrel",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "loc": "thminebarrel_full",
+              "tile": [
+                3278,
+                3017,
+                0
+              ],
+              "source": "C maps/m51_47.jm2:4329 (thminebarrel_full 2680 at 3278,3017 = ^desertrescue_upper_barrel_coord); quest_desertrescue.rs2:715-730"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                3278,
+                3018,
+                0
+              ],
+              "source": "C maps/m51_47.jm2:4329 (thminebarrel_full 2680 at 3278,3017 = ^desertrescue_upper_barrel_coord); quest_desertrescue.rs2:715-730"
+            },
+            "radius": 3,
+            "settle_ms": 12000
+          },
+          "comment": "quest_desertrescue.rs2:715-730: only the full barrel at 3278,3017 (^desertrescue_upper_barrel_coord) holds Ana after the winch; the exact loc tile avoids the sibling barrel at 3277,3019. Needs one free pack slot; stage 24. Due only while a successful winch pull is the newest of winch/stone/pickup/mine-exit lines, so it is not replayed after the cart loading.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "thanainabarrel"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "camp_surface"
+                    }
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "message_state",
+                    "version": 1,
+                    "args": {
+                      "set": [
+                        "you pull on the winch."
+                      ],
+                      "clear": [
+                        "filled with stone",
+                        "you pick up ana in a barrel",
+                        "the doors open with some effort"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "thanainabarrel"
+              }
+            }
+          }
+        },
+        {
+          "id": "ana-onto-cart",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "thanainabarrel",
+            "target": {
+              "loc": "loc_2682"
+            },
+            "anchor": {
+              "tile": [
+                3286,
+                3024,
+                0
+              ],
+              "source": "C maps/m51_47.jm2:4461 (loc_2682 Mine Cart 2x3 at 3287,3023 op2 Search); quest_desertrescue.rs2:358-400"
+            },
+            "radius": 4,
+            "settle_ms": 15000
+          },
+          "comment": "quest_desertrescue.rs2:392-400: barrel on the Mine Cart by the gate sets 25 and the ana_mining_cart bit (message box only, no chat line).",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "thanainabarrel"
+                    }
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "camp_surface"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "thanainabarrel"
+                }
+              }
+            }
+          }
+        },
         {
           "id": "bribe-cart-driver",
           "kind": "talk",
@@ -232,9 +463,30 @@
               "A hundred it is!"
             ]
           },
-          "comment": "mine_cart_driver.rs2:1-12,24-110: with Ana's barrel on the cart this exact chain ends in the 100-coin bribe that sets ^desertrescue_ready_rescue; 'Prison riot' + 'Good luck!' loses Ana (117-122) and most other branches call the guards, so strict. Leaves no chat line, hence the recipe cursor.",
+          "comment": "mine_cart_driver.rs2:1-12,24-110: with Ana's barrel on the cart (stage 25) this exact chain ends in the 100-coin bribe that sets ^desertrescue_ready_rescue; 'Prison riot' + 'Good luck!' loses Ana (117-122) and most other branches call the guards, so strict. Before stage 25 he only says 'Don't trouble me' (13-17) and once bribed 'Hurry up, get in the cart' (2-4): both are menu-less pages, so this step completes and the ride decides.",
           "skip_if": {
-            "Any": []
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "thanainabarrel"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "camp_surface"
+                    }
+                  }
+                }
+              }
+            ]
           },
           "settle": {
             "All": []
@@ -266,9 +518,30 @@
               ]
             }
           },
-          "comment": "quest_desertrescue.rs2:358-380: once bribed, 'Yes, I'll get on.' sets 26 (escaped), hands back thanainabarrel and teleports to 3258,3029 west of the camp.",
+          "comment": "quest_desertrescue.rs2:358-380: once bribed, 'Yes, I'll get on.' sets 26 (escaped), hands back thanainabarrel and teleports to 3258,3029 west of the camp. Without the bribe the Search only describes the cart, the settle times out and the whole cursor is retried.",
           "skip_if": {
-            "Any": []
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "thanainabarrel"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "camp_surface"
+                    }
+                  }
+                }
+              }
+            ]
           },
           "settle": {
             "Not": {
@@ -1709,7 +1982,7 @@
                   }
                 }
               },
-              "comment": "mercenary_captain.rs2:193-216: on the captain's death the metal key is added straight to the pack and stage 4 is set; Attack is only accepted while he is already fighting the player (218-241), hence the taunt first. The mercenaries do not join a duel (mercenary.rs2:225).",
+              "comment": "mercenary_captain.rs2:193-216: on the captain's death the metal key is added straight to the pack and stage 4 is set. Before stage 4 a cold Attack goes through the 'Are you sure' prompt and summons the guards (218-241), hence the taunt first; from stage 4 on Attack is accepted directly (the key-recovery steps rely on that). The mercenaries do not join a duel (mercenary.rs2:225).",
               "skip_if": {
                 "Fact": {
                   "kind": "has_item",
@@ -1737,37 +2010,6 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
-            {
-              "id": "sheathe-scimitar",
-              "kind": "unequip",
-              "version": 1,
-              "args": {
-                "obj": "rune_scimitar"
-              },
-              "comment": "A worn weapon inside the camp means jail on the next guard check (quest_desertrescue.rs2:150-157).",
-              "skip_if": {
-                "Not": {
-                  "Fact": {
-                    "kind": "worn",
-                    "version": 1,
-                    "args": {
-                      "obj": "rune_scimitar"
-                    }
-                  }
-                }
-              },
-              "settle": {
-                "Not": {
-                  "Fact": {
-                    "kind": "worn",
-                    "version": 1,
-                    "args": {
-                      "obj": "rune_scimitar"
-                    }
-                  }
-                }
-              }
-            },
             {
               "id": "withdraw-metal-key",
               "kind": "bank",
@@ -1840,34 +2082,13 @@
               }
             },
             {
-              "id": "recover-key-captain",
-              "kind": "talk",
+              "id": "wield-scimitar-key",
+              "kind": "equip",
               "version": 1,
-              "advances": false,
               "args": {
-                "npc": "desertminingcaptain",
-                "anchor": {
-                  "tile": [
-                    3270,
-                    3029,
-                    0
-                  ],
-                  "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830, lvl 47, hp 80 desertrescue.npc:253-305)"
-                },
-                "leash": 6,
-                "strict": true,
-                "prefer": [
-                  "Wow! A real captain!",
-                  "I'd love to work for a tough guy like you!",
-                  "Can't I do something for a strong Captain like you?",
-                  "Sorry Sir, I don't think I can do that.",
-                  "It's a funny captain who can't fight his own battles!"
-                ],
-                "expect_combat": {
-                  "npc": "desertminingcaptain"
-                }
+                "obj": "rune_scimitar"
               },
-              "comment": "Key lost outside the camp: mercenary_captain.rs2:2-5 re-runs the taunt chain at stage>=4 without a key in the pack; killing him again re-issues it (203-216; a banked copy is refused, so withdraw it instead).",
+              "comment": "Key lost outside the camp: outside the camp zone (x<3274) no equipment check runs, so the scimitar goes on for the re-kill and comes off again before the gate (sheathe-scimitar).",
               "skip_if": {
                 "Any": [
                   {
@@ -1881,10 +2102,21 @@
                   },
                   {
                     "Fact": {
-                      "kind": "bank_has",
+                      "kind": "worn",
                       "version": 1,
                       "args": {
-                        "obj": "metal_key"
+                        "obj": "rune_scimitar"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "rune_scimitar"
+                        }
                       }
                     }
                   },
@@ -1909,28 +2141,17 @@
                 ]
               },
               "settle": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "in_combat",
-                      "version": 1,
-                      "args": {}
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "metal_key"
-                      }
-                    }
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "rune_scimitar"
                   }
-                ]
+                }
               }
             },
             {
-              "id": "fight-captain-again",
+              "id": "kill-captain-key",
               "kind": "combat",
               "version": 1,
               "advances": false,
@@ -1966,6 +2187,7 @@
                   }
                 }
               },
+              "comment": "Key lost outside the camp: from stage 4 on the captain's Attack option is accepted directly (npc_combat.rs2:165-167,251-253 call mercenary_capt_attack, which returns true once %desertrescue >= killed_capt, mercenary_captain.rs2:218-221); no taunt chain is needed. His death queue re-adds the key when neither pack nor bank holds one (193-216), so a banked copy is withdrawn first. Refuses without the scimitar worn rather than fighting a level-47 bare-handed.",
               "skip_if": {
                 "Any": [
                   {
@@ -1978,13 +2200,53 @@
                     }
                   },
                   {
-                    "Not": {
-                      "Fact": {
-                        "kind": "in_combat",
-                        "version": 1,
-                        "args": {}
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "camp_surface"
                       }
                     }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "underground"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "worn",
+                        "version": 1,
+                        "args": {
+                          "obj": "rune_scimitar"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "bank_has",
+                          "version": 1,
+                          "args": {
+                            "obj": "metal_key"
+                          }
+                        }
+                      }
+                    ]
                   }
                 ]
               },
@@ -1994,6 +2256,37 @@
                   "version": 1,
                   "args": {
                     "obj": "metal_key"
+                  }
+                }
+              }
+            },
+            {
+              "id": "sheathe-scimitar",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "obj": "rune_scimitar"
+              },
+              "comment": "A worn weapon inside the camp means jail on the next guard check (quest_desertrescue.rs2:150-157); off again before the gate, after any re-kill.",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "rune_scimitar"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "rune_scimitar"
+                    }
                   }
                 }
               }
@@ -2504,6 +2797,288 @@
                     "version": 1,
                     "args": {
                       "area": "camp_surface"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "withdraw-metal-key-6",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "items": [
+                  {
+                    "obj": "metal_key",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Jail-escape key recovery, part 1. The guards' search on the way into the cell removes a held metal_key one time in five ('The guards find the main gate key and remove it!', quest_desertrescue.rs2:558-561) and the window/rocks escape lands outside the fence (188-274), where the gate needs the key again (119-132). A banked copy is withdrawn first: the captain re-issues the key only when neither pack nor bank holds one (mercenary_captain.rs2:207-212). Nearest bank from the camp is the Shantay chest.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "camp_surface"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "underground"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "metal_key"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "wield-scimitar-key-6",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "rune_scimitar"
+              },
+              "comment": "Jail-escape key recovery, part 2: outside the camp zone (x<3274) no equipment check runs, so the scimitar goes on for the re-kill and comes off again before the gate (sheathe-scimitar-6).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "rune_scimitar"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "rune_scimitar"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "camp_surface"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "underground"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "rune_scimitar"
+                  }
+                }
+              }
+            },
+            {
+              "id": "kill-captain-key-6",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "desertminingcaptain",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "stand": {
+                  "tile": [
+                    3270,
+                    3029,
+                    0
+                  ],
+                  "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830, lvl 47, hp 80 desertrescue.npc:253-305)"
+                },
+                "lost_radius": 15,
+                "kill_budget_ticks": 500,
+                "win": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "metal_key"
+                    }
+                  }
+                }
+              },
+              "comment": "Jail-escape key recovery, part 3: from stage 4 on the captain's Attack option is accepted directly (npc_combat.rs2:165-167,251-253 call mercenary_capt_attack, which returns true once %desertrescue >= killed_capt, mercenary_captain.rs2:218-221); no taunt chain is needed. His death queue re-adds the key when neither pack nor bank holds one (193-216). Refuses without the scimitar worn rather than fighting a level-47 bare-handed.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "camp_surface"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "underground"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "worn",
+                        "version": 1,
+                        "args": {
+                          "obj": "rune_scimitar"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "bank_has",
+                          "version": 1,
+                          "args": {
+                            "obj": "metal_key"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "metal_key"
+                  }
+                }
+              }
+            },
+            {
+              "id": "sheathe-scimitar-6",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "obj": "rune_scimitar"
+              },
+              "comment": "A worn weapon inside the camp means jail on the next guard check (quest_desertrescue.rs2:150-157); off again before the gate.",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "rune_scimitar"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "rune_scimitar"
                     }
                   }
                 }
@@ -6695,286 +7270,15 @@
               }
             },
             {
-              "id": "pull-winch",
-              "kind": "interact",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "target": {
-                  "loc": "ropepullthingy"
-                },
-                "op": "Use",
-                "anchor": {
-                  "tile": [
-                    3280,
-                    3017,
-                    0
-                  ],
-                  "source": "C maps/m51_47.jm2:4342 (ropepullthingy 2667 at 3279,3017 length 2, op2 Use); quest_desertrescue.rs2:883-894"
-                },
-                "radius": 3,
-                "settle_ms": 15000
-              },
-              "comment": "quest_desertrescue.rs2:883-894: with Ana on the lift the winch brings her barrel up ('You pull on the winch.' then the barrel box; stage 23); without her it says 'a heavy barrel filled with stone'. Stays in the slave set so the camp guards keep ignoring the player.",
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "thanainabarrel"
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "in_area",
-                        "version": 1,
-                        "args": {
-                          "area": "camp_surface"
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "message_state",
-                      "version": 1,
-                      "args": {
-                        "set": [
-                          "you pull on the winch."
-                        ],
-                        "clear": [
-                          "you pick up ana in a barrel",
-                          "the guards drag ana"
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "All": [
-                        {
-                          "Fact": {
-                            "kind": "worn",
-                            "version": 1,
-                            "args": {
-                              "obj": "slave_shirt"
-                            }
-                          }
-                        },
-                        {
-                          "Fact": {
-                            "kind": "worn",
-                            "version": 1,
-                            "args": {
-                              "obj": "slave_robe"
-                            }
-                          }
-                        },
-                        {
-                          "Fact": {
-                            "kind": "worn",
-                            "version": 1,
-                            "args": {
-                              "obj": "slave_boots"
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "All": [
-                  {
-                    "Fact": {
-                      "kind": "message",
-                      "version": 1,
-                      "args": {
-                        "any": [
-                          "you pull on the winch."
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "message",
-                        "version": 1,
-                        "args": {
-                          "any": [
-                            "filled with stone"
-                          ]
-                        }
-                      }
-                    }
-                  }
-                ]
-              }
-            },
-            {
-              "id": "take-ana-from-barrel",
-              "kind": "interact",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "target": {
-                  "loc": "thminebarrel_full",
-                  "tile": [
-                    3278,
-                    3017,
-                    0
-                  ],
-                  "source": "C maps/m51_47.jm2:4329 (thminebarrel_full 2680 at 3278,3017 = ^desertrescue_upper_barrel_coord); quest_desertrescue.rs2:715-730"
-                },
-                "op": "Search",
-                "anchor": {
-                  "tile": [
-                    3278,
-                    3018,
-                    0
-                  ],
-                  "source": "C maps/m51_47.jm2:4329 (thminebarrel_full 2680 at 3278,3017 = ^desertrescue_upper_barrel_coord); quest_desertrescue.rs2:715-730"
-                },
-                "radius": 3,
-                "settle_ms": 12000
-              },
-              "comment": "quest_desertrescue.rs2:715-730: only the full barrel at 3278,3017 (^desertrescue_upper_barrel_coord) holds Ana after the winch; the exact loc tile avoids the sibling barrel at 3277,3019. Needs one free pack slot; stage 24.",
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "thanainabarrel"
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "in_area",
-                        "version": 1,
-                        "args": {
-                          "area": "camp_surface"
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "message_state",
-                        "version": 1,
-                        "args": {
-                          "set": [
-                            "you pull on the winch."
-                          ],
-                          "clear": [
-                            "you pick up ana in a barrel",
-                            "the guards drag ana"
-                          ]
-                        }
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "thanainabarrel"
-                  }
-                }
-              }
-            },
-            {
-              "id": "ana-onto-cart",
-              "kind": "use_on",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "item": "thanainabarrel",
-                "target": {
-                  "loc": "loc_2682"
-                },
-                "anchor": {
-                  "tile": [
-                    3286,
-                    3024,
-                    0
-                  ],
-                  "source": "C maps/m51_47.jm2:4461 (loc_2682 Mine Cart 2x3 at 3287,3023 op2 Search); quest_desertrescue.rs2:358-400"
-                },
-                "radius": 4,
-                "settle_ms": 15000
-              },
-              "comment": "quest_desertrescue.rs2:392-400: barrel on the Mine Cart by the gate sets 25 and the ana_mining_cart bit (message box only).",
-              "skip_if": {
-                "Any": [
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "has_item",
-                        "version": 1,
-                        "args": {
-                          "obj": "thanainabarrel"
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "Not": {
-                      "Fact": {
-                        "kind": "in_area",
-                        "version": 1,
-                        "args": {
-                          "area": "camp_surface"
-                        }
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Not": {
-                  "Fact": {
-                    "kind": "has_item",
-                    "version": 1,
-                    "args": {
-                      "obj": "thanainabarrel"
-                    }
-                  }
-                }
-              }
-            },
-            {
-              "id": "escape-on-cart",
+              "id": "surface-rescue",
               "kind": "acquire",
               "version": 1,
               "args": {
-                "recipe": "acquire:escape-cart"
+                "recipe": "acquire:surface-rescue"
               },
-              "comment": "Bribe then ride, as one cursor: neither leaves a chat line. Ends outside the camp at 3258,3029 holding Ana (stage 26, journal unchanged).",
+              "comment": "Winch, surface barrel, cart loading, driver bribe and cart ride as one cursor. Stages 22-26 share the stage-19 journal line and loading Ana on the cart leaves no chat line (quest_desertrescue.rs2:392-398 is a message box), so after the loading the inventory and chat ring look exactly like the arrival from the mine; selecting the surface steps individually re-picked the winch. The recipe steps carry chat-evidence skips for a restart part-way through. Ends outside the camp at 3258,3029 holding Ana (stage 26, journal unchanged). A jailed player has no authored recovery here (parks: no step for stage).",
               "skip_if": {
                 "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "thanainabarrel"
-                      }
-                    }
-                  },
                   {
                     "Not": {
                       "Fact": {
@@ -6983,6 +7287,15 @@
                         "args": {
                           "area": "camp_surface"
                         }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "surface_jail"
                       }
                     }
                   }
