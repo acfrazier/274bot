@@ -85,11 +85,16 @@ pub struct Reach {
     avoid: Avoid,
     walk: Option<Walk>,
     request_id: u64,
+    /// The last emitted target click was within interaction range on the
+    /// snapshot that chose it, before the server could transform the loc or
+    /// teleport the player.
+    in_range_at_click: bool,
 }
 
 /// What the chooser asks the reach loop to do next.
 enum Choice {
-    Click(InteractReq, Option<AvoidKey>, i32),
+    /// Request, avoid key, held count before, target within interaction range.
+    Click(InteractReq, Option<AvoidKey>, i32, bool),
     /// No NPC or ground match in the area is reachable from here: nav-walk
     /// to the best in-area match instead of a raw click.
     Approach(WorldTile),
@@ -113,6 +118,7 @@ impl NativeMachine for Reach {
             avoid: Avoid::default(),
             walk: None,
             request_id: 0,
+            in_range_at_click: false,
         };
         reach.click(cx)?;
         Ok(reach)
@@ -226,6 +232,11 @@ impl Reach {
     pub(crate) fn interaction_request_id(&self) -> Option<u64> {
         (self.request_id != 0).then_some(self.request_id)
     }
+    /// Whether the last emitted target click was within interaction range
+    /// when it was chosen. Read before the poll that accepts the click.
+    pub(crate) fn in_range_at_click(&self) -> bool {
+        self.in_range_at_click
+    }
     fn click(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
         let choice = self.choice(cx, self.args.reachable_only, true)?;
         self.act(choice, cx)
@@ -265,6 +276,7 @@ impl Reach {
                 },
                 Some(AvoidKey::Tile(loc.tile)),
                 0,
+                loc.distance <= 1,
             ),
             None => Choice::Missing,
         };
@@ -286,6 +298,7 @@ impl Reach {
                         },
                         Some(AvoidKey::Npc(npc.index)),
                         0,
+                        npc_adjacent(cx, npc),
                     ),
                     Some((npc, false)) => Choice::Approach(npc.tile),
                     None => Choice::Missing,
@@ -332,6 +345,7 @@ impl Reach {
                             },
                             Some(AvoidKey::Tile(item.tile)),
                             before,
+                            false,
                         )
                     }
                     Some((item, false)) => Choice::Approach(item.tile),
@@ -368,14 +382,15 @@ impl Reach {
                     },
                     None,
                     0,
+                    false,
                 )
             }
         })
     }
 
     fn act(&mut self, choice: Choice, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
-        let (request, key, before) = match choice {
-            Choice::Click(request, key, before) => (request, key, before),
+        let (request, key, before, in_range) = match choice {
+            Choice::Click(request, key, before, in_range) => (request, key, before, in_range),
             Choice::Approach(tile) => {
                 // Each approach is a bounded attempt, like a click.
                 self.attempts += 1;
@@ -408,6 +423,7 @@ impl Reach {
         };
         self.request_id = cx.emit(request)?;
         self.before_count = before;
+        self.in_range_at_click = in_range;
         self.clicked_loc = clicked_loc;
         self.clicked = key;
         self.phase = Phase::Click;

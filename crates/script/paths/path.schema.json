@@ -461,11 +461,14 @@
           "default": ""
         },
         "radius": {
-          "type": "integer",
-          "default": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Navigation radius in tiles; 0 means 1."
+          "description": "Navigation radius in tiles; omitted means 1. An explicit 0 requires\nthe exact tile: the walk settles only on it, and a blocked or\nunstandable tile is refused by the route instead of approached."
         },
         "cross": {
           "type": "array",

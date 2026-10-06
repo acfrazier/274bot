@@ -10,7 +10,9 @@ use std::{sync::Arc, task::Poll, time::Duration};
 // generic player/quest_journal.rs2 opens this root for every roster journal.
 pub(crate) const ROOT_289: i32 = 8134;
 pub(crate) const TITLE_289: i32 = 8144;
-const WINDOW: Duration = Duration::from_secs(3);
+/// Each phase's window in observed game ticks (5 × 600 ms = the former 3 s).
+/// A host hitch that freezes the snapshot does not spend it.
+const WINDOW_TICKS: u64 = 5;
 const OVERALL: Duration = Duration::from_secs(8);
 pub struct JournalRequest {
     pub quest: FactKey,
@@ -33,7 +35,7 @@ pub struct JournalMachine {
     pin: Arc<SelectedPin>,
     lease: Option<QuietReadLease>,
     phase: Phase,
-    deadline: Duration,
+    deadline_tick: u64,
     overall_deadline: Duration,
     acquired: Option<EvidenceStamp>,
     lines: Arc<[Arc<str>]>,
@@ -92,7 +94,10 @@ impl NativeMachine for JournalMachine {
         let snapshot = cx.snapshot();
         let pair = snapshot.main_modal().ok_or(ActionError::Busy)?;
         let chat = snapshot.chat_modal().ok_or(ActionError::Busy)?;
-        let adopted_before = if chat.value.root != -1 || !chat.value.texts.is_empty() {
+        let adopted_before = if chat.value.root != -1
+            || !chat.value.texts.is_empty()
+            || chat.value.continue_component_id >= 0
+        {
             return Err(ActionError::Busy);
         } else if pair.value.root == ROOT_289 {
             match snapshot.journal_widgets(ROOT_289, TITLE_289) {
@@ -134,7 +139,7 @@ impl NativeMachine for JournalMachine {
             phase: adopted_before
                 .map(|before| Phase::Adopt { before })
                 .unwrap_or(Phase::Click),
-            deadline: cx.active_now() + WINDOW,
+            deadline_tick: cx.evidence().tick + WINDOW_TICKS,
             overall_deadline: cx.active_now() + OVERALL,
             acquired: None,
             lines: Arc::from([]),
@@ -148,7 +153,7 @@ impl NativeMachine for JournalMachine {
         if !self.lease.as_ref().is_some_and(QuietReadLease::live) {
             return Poll::Ready(Err(failure("journal quiet lease expired")));
         }
-        if cx.active_now() >= self.deadline {
+        if cx.evidence().tick >= self.deadline_tick {
             return Poll::Ready(Err(failure("journal modal timeout")));
         }
         let snapshot = cx.snapshot();
@@ -159,9 +164,9 @@ impl NativeMachine for JournalMachine {
             Phase::Click => {
                 if pair.value.root != -1
                     || !pair.value.texts.is_empty()
-                    || snapshot
-                        .chat_modal()
-                        .is_none_or(|chat| chat.value.root != -1)
+                    || snapshot.chat_modal().is_none_or(|chat| {
+                        chat.value.root != -1 || chat.value.continue_component_id >= 0
+                    })
                 {
                     return Poll::Ready(Err(ActionError::Busy));
                 }
@@ -170,7 +175,7 @@ impl NativeMachine for JournalMachine {
                 }) {
                     Ok(request) => {
                         self.phase = Phase::Acquire { request };
-                        self.deadline = cx.active_now() + WINDOW;
+                        self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
                     }
                     Err(ActionError::BudgetExhausted) => {}
                     Err(error) => return Poll::Ready(Err(error)),
@@ -201,7 +206,7 @@ impl NativeMachine for JournalMachine {
                 self.lines = page.value.lines().map(Arc::<str>::from).collect();
                 self.acquired = Some(page.stamp);
                 self.phase = Phase::Close;
-                self.deadline = cx.active_now() + WINDOW;
+                self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
             }
             Phase::Adopt { before } => {
                 if snapshot
@@ -224,7 +229,7 @@ impl NativeMachine for JournalMachine {
                 self.lines = page.value.lines().map(Arc::<str>::from).collect();
                 self.acquired = Some(page.stamp);
                 self.phase = Phase::Close;
-                self.deadline = cx.active_now() + WINDOW;
+                self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
             }
             Phase::Close => {
                 if snapshot
@@ -244,7 +249,7 @@ impl NativeMachine for JournalMachine {
                 match cx.emit(InteractReq::CloseModal) {
                     Ok(request) => {
                         self.phase = Phase::Closing { request };
-                        self.deadline = cx.active_now() + WINDOW;
+                        self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
                     }
                     Err(ActionError::BudgetExhausted) => {}
                     Err(error) => return Poll::Ready(Err(error)),
