@@ -13,7 +13,7 @@
     "items": [
       { "obj": "gasmask", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "spade", "qty": 1, "kind": "acquirable", "acquire": null },
-      { "obj": "bucket_water", "qty": 4, "kind": "acquirable", "acquire": null },
+      { "obj": "bucket_water", "qty": 4, "kind": "acquirable", "acquire": "acquire:bucket_water" },
       { "obj": "rope", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "elena_picture", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "turnip_book", "qty": 1, "kind": "acquirable", "acquire": null },
@@ -25,7 +25,40 @@
       { "obj": "warrant", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "elenakey", "qty": 1, "kind": "acquirable", "acquire": null }
     ],
-    "acquire": {},
+    "acquire": {
+      "acquire:bucket_water": [
+        {
+          "id": "take-bucket-empty", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Exactly four empties feed the fill below; stray bucket_empty breaks the pour counter, so this recipe over-collects nothing on a fresh run.",
+          "args": {
+            "target": { "ground": "bucket_empty" }, "op": "Take",
+            "anchor": { "tile": [2616, 3255, 0], "source": "289 maps/m40_50.jm2:7062; pack/obj.pack:bucket_empty" },
+            "radius": 4, "wait_if_missing": true,
+            "until": { "obj": "bucket_empty", "qty": 4 }
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_empty", "qty": 4 } } },
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_empty", "qty": 4 } } },
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
+          ] }
+        },
+        {
+          "id": "fill-buckets-at-well", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Well fill is mes() chat text (scripts/general_use/scripts/water_sources.rs2:86-93); the sink2 at (2617,3325) near the garden works the same via _watersource.",
+          "args": {
+            "item": "bucket_empty", "target": { "loc": "well" },
+            "anchor": { "tile": [2612, 3254, 0], "source": "289 maps/m40_50.jm2:5864; pack/loc.pack:well" },
+            "radius": 8,
+            "until": { "obj": "bucket_water", "qty": 4 }
+          },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
+        }
+      ]
+    },
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -39,12 +72,16 @@
         "source": "289 maps/m39_51.jm2:5983,8738-8759; pack/loc.pack:loc_2535"
       },
       "elena_house_interior": {
-        "boxes": [[2534, 3264, 2544, 3270, 0]],
-        "source": "289 maps/m39_51.jm2:6100; pack/loc.pack:plaguehousestairsdown"
+        "boxes": [[2533, 3264, 2544, 3271, 0]],
+        "source": "289 maps/m39_51.jm2:5983,6100; pack/loc.pack:loc_2535,plaguehousestairsdown; scripts/quests/quest_elena/scripts/plaguehouse.rs2:13-19 (stairs-up landing 2536,3271; door entry lands 2533,3271)"
       },
       "elena_house_basement": {
         "boxes": [[2528, 9664, 2552, 9680, 0]],
         "source": "289 maps/m39_151.jm2:5125,5204,6388; pack/loc.pack:plaguehousestairsup,elenagateshut; pack/npc.pack:elenap"
+      },
+      "elena_sewer": {
+        "boxes": [[2528, 9696, 2570, 9740, 0]],
+        "source": "289 maps/m39_151.jm2:4992 (pipe 2530,9701), m40_152.jm2:4325 (mud pile 2561,9738); scripts/quests/quest_elena/configs/quest_elena.constant:24-27"
       }
     },
     "tools": ["obj:gasmask", "obj:rope", "obj:spade"],
@@ -60,8 +97,7 @@
         { "stage": "elena:28", "all": ["i've freed elena from the plague house"] },
         { "stage": "elena:27", "all": ["i've given bravek the hangover cure", "warrant"] },
         { "stage": "elena:26", "all": ["i need to bring bravek the hangover cure"] },
-        { "stage": "elena:25", "all": ["bravek might give me clearance"] },
-        { "stage": "elena:24", "all": ["i need clearance from either the head mourner or bravek"] },
+        { "stage": "elena:24-25", "all": ["i need clearance from either the head mourner or bravek"] },
         { "stage": "elena:23", "all": ["i've spoken to milli about elena", "plague houses"] },
         { "stage": "elena:22", "all": ["the rehnisons' daughter milli", "may have seen elena"] },
         { "stage": "elena:20-21", "all": ["i've spoken to jethick", "rehnison family"] },
@@ -150,17 +186,60 @@
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } }
           },
           {
-            "id": "GAP-elena-mud-pour-count", "kind": "wait", "version": 1,
-            "comment": "GAP: journal text does not distinguish varp stages 3–6 and Quester has no safe mud-pour counter. Carry four buckets of water and manually use them one at a time on Edmond's mud patch; the quest consumes each bucket and returns an empty bucket. Restart the Path after the journal says the soil is soft enough to dig.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "id": "fetch-mud-water", "kind": "acquire", "version": 1,
+            "args": { "recipe": "acquire:bucket_water" },
+            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
+          },
+          {
+            "id": "pour-water-on-mud", "kind": "use_on", "version": 1, "advances": true,
+            "comment": "Each pour deletes one full bucket and adds one empty (scripts/quests/quest_elena/scripts/mud_patch.rs2:119-129); the fourth pour reaches varp 7 with its own journal line. The empties count doubles as the pour counter, so a resume mid-way converges; precondition is no stray bucket_empty outside this cycle. Pour text is ~mesbox drained by the default dialogue.",
+            "args": {
+              "item": "bucket_water", "target": { "loc": "plaguemudpatch1" },
+              "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1; scripts/quests/quest_elena/scripts/mud_patch.rs2:13-26" },
+              "radius": 5,
+              "until": { "obj": "bucket_empty", "qty": 4 }
+            },
             "skip_if": { "Any": [] },
-            "settle": { "Any": [] }
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:7"] } } }
           }
         ]
       },
       {
         "stage": "elena:7", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
+          {
+            "id": "scan-gasmask-bank-7", "kind": "bank", "version": 1,
+            "comment": "Last surface chance to recover a banked mask before the sewer dive: the cupboard spare is refused while banked (scripts/quests/quest_elena/scripts/cupboard.rs2:6-11).",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-gasmask-7", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "gasmask", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "gasmask" } } } },
+              { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } }
+          },
+          {
+            "id": "buy-rope-for-sewer", "kind": "buy", "version": 1,
+            "comment": "Guarded rope recovery for a stage-7/8 resume: the only other rope buy sits in stage 03-06, and the sewer tie needs one held.",
+            "args": {
+              "shop": { "npc": "aemad", "anchor": { "tile": [2613, 3294, 0], "source": "289 maps/m40_51.jm2:10809; pack/npc.pack:590=aemad; scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-658; ardougne_east.inv:55-73" } },
+              "obj": "rope", "qty": 1
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } }
+          },
           {
             "id": "take-elena-picture", "kind": "interact", "version": 1, "advances": false,
             "args": {
@@ -197,11 +276,39 @@
         "stage": "elena:8", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
           {
-            "id": "GAP-elena-picture-not-held", "kind": "wait", "version": 1,
-            "comment": "GAP: the Elena picture is on the East Ardougne ground spawn at 2576,3334,0 (m40_52.jm2:7349), but this stage begins after the tunnel has moved the player into the sewer. The Path has no verified recovery route back to that spawn; obtain and carry the picture before Jethick or resume with it in inventory.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "id": "climb-mud-pile-for-picture", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Picture recovery: the spawn refills ~instantly (respawn 5 ticks) and digging back down re-enters the sewer at any varp >= 7 (scripts/quests/quest_elena/scripts/mud_patch.rs2:1-14). The picture is only spent at Jethick, so this trio is skipped once held.",
+            "args": {
+              "target": { "loc": "plaguemudpile" }, "op": "Climb",
+              "anchor": { "tile": [2561, 9738, 0], "source": "289 maps/m40_152.jm2:4325; pack/loc.pack:plaguemudpile; scripts/quests/quest_elena/scripts/mud_pile.rs2:1-5" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
+          },
+          {
+            "id": "recover-elena-picture", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "elena_picture" }, "op": "Take",
+              "anchor": { "tile": [2576, 3334, 0], "source": "289 maps/m40_52.jm2:7349; pack/obj.pack:elena_picture" },
+              "radius": 3, "wait_if_missing": true
+            },
             "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
-            "settle": { "Any": [] }
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } }
+          },
+          {
+            "id": "dig-back-to-sewer", "kind": "use_on", "version": 1, "advances": false,
+            "comment": "Only runs when the climb above actually left the sewer; digging at varp >= 7 just teleports back down (spade is not consumed).",
+            "args": {
+              "item": "spade", "target": { "loc": "plaguemudpatch1" },
+              "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1" },
+              "radius": 5
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
           },
           {
             "id": "tie-rope-to-sewer-grill", "kind": "use_on", "version": 1, "advances": true,
@@ -220,25 +327,156 @@
       },
       {
         "stage": "elena:9", "required": [], "terminal": false, "recovery_entry": null,
-        "steps": [{
-          "id": "pull-grill-with-edmond", "kind": "talk", "version": 1, "advances": true,
-          "args": {
-            "npc": "edmond",
-            "anchor": { "tile": [2535, 9719, 0], "source": "289 maps/m39_151.jm2:6387; pack/npc.pack:edmond; scripts/quests/quest_elena/scripts/edmond.rs2:27-32" },
-            "leash": 8, "prefer": []
+        "steps": [
+          {
+            "id": "climb-mud-pile-for-picture-9", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Same picture recovery as stage 8: Jethick needs the picture held (scripts/quests/quest_elena/scripts/jethick.rs2:18-20).",
+            "args": {
+              "target": { "loc": "plaguemudpile" }, "op": "Climb",
+              "anchor": { "tile": [2561, 9738, 0], "source": "289 maps/m40_152.jm2:4325; pack/loc.pack:plaguemudpile; scripts/quests/quest_elena/scripts/mud_pile.rs2:1-5" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
           },
-          "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:10"] } } }
-        }]
+          {
+            "id": "recover-elena-picture-9", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "elena_picture" }, "op": "Take",
+              "anchor": { "tile": [2576, 3334, 0], "source": "289 maps/m40_52.jm2:7349; pack/obj.pack:elena_picture" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } }
+          },
+          {
+            "id": "dig-back-to-sewer-9", "kind": "use_on", "version": 1, "advances": false,
+            "args": {
+              "item": "spade", "target": { "loc": "plaguemudpatch1" },
+              "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1" },
+              "radius": 5
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+          },
+          {
+            "id": "pull-grill-with-edmond", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "edmond",
+              "anchor": { "tile": [2535, 9719, 0], "source": "289 maps/m39_151.jm2:6387; pack/npc.pack:edmond; scripts/quests/quest_elena/scripts/edmond.rs2:27-32" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:10"] } } }
+          }
+        ]
       },
       {
         "stage": "elena:10", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
           {
+            "id": "scan-gasmask-bank", "kind": "bank", "version": 1,
+            "comment": "Alrena's cupboard spare is refused while a mask sits in the bank (scripts/quests/quest_elena/scripts/cupboard.rs2:6-11), so withdraw instead. Skipped in the normal flow (mask worn).",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-gasmask", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "gasmask", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "gasmask" } } } },
+              { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } }
+          },
+          {
             "id": "wear-gasmask", "kind": "equip", "version": 1,
             "args": { "obj": "gasmask" },
             "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } },
             "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } }
+          },
+          {
+            "id": "walk-to-west-manhole", "kind": "walk", "version": 1,
+            "comment": "West-side picture loss: Elena's own hint is the city manhole (scripts/quests/quest_elena/scripts/elena.rs2:63). The wall doors stay shut until Biohazard, and manhole/mud pile need no mask (scripts/quests/quest_elena/scripts/sewerpipe.rs2:143-153 checks the hat only on east-to-west pipe entry). All skipped once the picture is held.",
+            "args": { "tile": [2529, 3302, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:1-15", "radius": 3 },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+            ] },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2529, 3302, 0], "radius": 3 } } }
+          },
+          {
+            "id": "open-west-manhole", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguemanholeclosed" }, "op": "Open",
+              "anchor": { "tile": [2529, 3303, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:1-6" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } },
+              { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "plaguemanholeopen" } } }
+            ] },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "plaguemanholeopen" } } }
+          },
+          {
+            "id": "climb-down-west-manhole", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguemanholeopen" }, "op": "Climb-down",
+              "anchor": { "tile": [2529, 3303, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:8-15" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+          },
+          {
+            "id": "climb-mud-pile-for-picture-10", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguemudpile" }, "op": "Climb",
+              "anchor": { "tile": [2561, 9738, 0], "source": "289 maps/m40_152.jm2:4325; pack/loc.pack:plaguemudpile; scripts/quests/quest_elena/scripts/mud_pile.rs2:1-5" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
+          },
+          {
+            "id": "recover-elena-picture-10", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "elena_picture" }, "op": "Take",
+              "anchor": { "tile": [2576, 3334, 0], "source": "289 maps/m40_52.jm2:7349; pack/obj.pack:elena_picture" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } }
+          },
+          {
+            "id": "dig-back-to-sewer-10", "kind": "use_on", "version": 1, "advances": false,
+            "args": {
+              "item": "spade", "target": { "loc": "plaguemudpatch1" },
+              "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1" },
+              "radius": 5
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
           },
           {
             "id": "squeeze-through-sewer-pipe", "kind": "interact", "version": 1, "advances": false,
@@ -270,13 +508,14 @@
         "steps": [
           {
             "id": "return-book-to-rehnisons", "kind": "interact", "version": 1, "advances": true,
+            "comment": "The hand-over text is ~objbox (scripts/quests/quest_elena/scripts/doors.rs2:113-114), invisible to message facts; the deleted book plus drained dialogue proves the entry.",
             "args": {
               "target": { "loc": "rehnisondoorshut" }, "op": "Open",
               "anchor": { "tile": [2531, 3328, 0], "source": "289 maps/m39_52.jm2:5287; pack/loc.pack:rehnisondoorshut; scripts/quests/quest_elena/scripts/doors.rs2:95-117" },
-              "radius": 7
+              "radius": 7, "dialogue": "continue"
             },
             "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "turnip_book" } } } },
-            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you hand the book to ted as you enter"] } } }
+            "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "turnip_book" } } } }
           },
           {
             "id": "ask-rehnisons-about-elena", "kind": "talk", "version": 1, "advances": true,
@@ -326,13 +565,14 @@
             "dialogue": { "prefer": ["I fear not a mere plague.", "How do I get clearance?"] }
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:24"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:24-25"] } } }
         }]
       },
       {
-        "stage": "elena:24", "required": [], "terminal": false, "recovery_entry": null,
+        "stage": "elena:24-25", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [{
           "id": "get-clerk-introduction-to-bravek", "kind": "talk", "version": 1, "advances": true,
+          "comment": "Merged 24/25: the journal prints identical text for varp spoke_to_plague_house (24) and spoke_to_clerk (25) (scripts/quests/quest_elena/scripts/elena_journal.rs2:80-82), and the clerk only advances the varp when Bravek is within 7 tiles (scripts/areas/area_ardougne_west/scripts/clerk.rs2:53-55). Either varp resolves here; the Bravek talk below carries the sequence to 26.",
           "args": {
             "npc": "clerk",
             "anchor": { "tile": [2528, 3317, 0], "source": "289 maps/m39_51.jm2:8738; pack/npc.pack:clerk; scripts/areas/area_ardougne_west/scripts/clerk.rs2:1-5,27-54" },
@@ -340,12 +580,8 @@
             "prefer": ["I need permission to enter a plague house.", "This is urgent though!"]
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:25"] } } }
-        }]
-      },
-      {
-        "stage": "elena:25", "required": [], "terminal": false, "recovery_entry": null,
-        "steps": [
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:24-25"] } } }
+        },
           {
             "id": "open-bravek-office-door", "kind": "interact", "version": 1, "advances": false,
             "comment": "Bravek's office door opens briefly; pass through it on the following talk step.",
@@ -452,7 +688,7 @@
         "steps": [
           {
             "id": "open-black-cross-door", "kind": "interact", "version": 1, "advances": false,
-            "comment": "The temporary entry requires the warrant in inventory and a mourner within 14 tiles.",
+            "comment": "The temporary entry requires the warrant in inventory and a mourner within 14 tiles. The sneak text is ~mesbox (scripts/quests/quest_elena/scripts/doors.rs2:51), invisible to message facts; the corrected interior box proves entry.",
             "args": {
               "target": { "loc": "loc_2535" }, "op": "Open",
               "anchor": { "tile": [2533, 3272, 0], "source": "289 maps/m39_51.jm2:5983; pack/loc.pack:loc_2535; scripts/quests/quest_elena/scripts/doors.rs2:23-56" },
@@ -462,7 +698,7 @@
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_interior" } } },
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } }
             ] },
-            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["sneak into the building"] } } }
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_interior" } } }
           },
           {
             "id": "return-upstairs-for-cellar-key", "kind": "interact", "version": 1, "advances": false,
@@ -524,11 +760,93 @@
         "stage": "elena:28", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
           {
-            "id": "GAP-elena-west-to-east-return", "kind": "wait", "version": 1,
-            "comment": "GAP: the Path has not established a safe West Ardougne → East Ardougne return route after the rescue. Move to East Ardougne manually with the gasmask worn, then restart; this step skips once the player is in the East Ardougne region.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "id": "open-cellar-gate-return", "kind": "interact", "version": 1, "advances": false,
+            "comment": "West to east via Elena's manhole hint (scripts/quests/quest_elena/scripts/elena.rs2:63). The cellar gate opens freely at varp >= 28 (scripts/quests/quest_elena/scripts/plaguehouse.rs2:26-47). All steps skip once east.",
+            "args": {
+              "target": { "loc": "elenagateshut" }, "op": "Open",
+              "anchor": { "tile": [2539, 9672, 0], "source": "289 maps/m39_151.jm2:5204; pack/loc.pack:elenagateshut" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } }
+            ] },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } }
+          },
+          {
+            "id": "climb-cellar-stairs-return", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguehousestairsup" }, "op": "Walk-Up",
+              "anchor": { "tile": [2536, 9671, 0], "source": "289 maps/m39_151.jm2:5125; pack/loc.pack:plaguehousestairsup; scripts/quests/quest_elena/scripts/plaguehouse.rs2:17-19" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_interior" } } }
+          },
+          {
+            "id": "leave-plague-house-return", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Opening loc_2535 from inside walks out (scripts/quests/quest_elena/scripts/doors.rs2:10-13).",
+            "args": {
+              "target": { "loc": "loc_2535" }, "op": "Open",
+              "anchor": { "tile": [2533, 3272, 0], "source": "289 maps/m39_51.jm2:5983; pack/loc.pack:loc_2535" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_interior" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_west_surface" } } }
+          },
+          {
+            "id": "walk-to-manhole-return", "kind": "walk", "version": 1,
+            "args": { "tile": [2529, 3302, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:1-15", "radius": 3 },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+            ] },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2529, 3302, 0], "radius": 3 } } }
+          },
+          {
+            "id": "open-manhole-return", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Any closed manhole in the zone opens (scripts/areas/area_ardougne_west/scripts/manhole.rs2:5-14); the pipe crossing opens it for 500 ticks, so this often skips.",
+            "args": {
+              "target": { "loc": "plaguemanholeclosed" }, "op": "Open",
+              "anchor": { "tile": [2529, 3303, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:1-6" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } },
+              { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "plaguemanholeopen" } } }
+            ] },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "plaguemanholeopen" } } }
+          },
+          {
+            "id": "climb-down-manhole-return", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguemanholeopen" }, "op": "Climb-down",
+              "anchor": { "tile": [2529, 3303, 0], "source": "289 maps/m39_51.jm2:5828; scripts/areas/area_ardougne_west/configs/manhole.loc:8-15" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_sewer" } } }
+          },
+          {
+            "id": "climb-mud-pile-return", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Manhole and mud pile need no worn mask; the mask check sits only on east-to-west pipe entry (scripts/quests/quest_elena/scripts/sewerpipe.rs2:143-153).",
+            "args": {
+              "target": { "loc": "plaguemudpile" }, "op": "Climb",
+              "anchor": { "tile": [2561, 9738, 0], "source": "289 maps/m40_152.jm2:4325; pack/loc.pack:plaguemudpile; scripts/quests/quest_elena/scripts/mud_pile.rs2:1-5" },
+              "radius": 5
+            },
             "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
-            "settle": { "Any": [] }
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } }
           },
           {
             "id": "report-rescue-to-edmond", "kind": "talk", "version": 1, "advances": true,

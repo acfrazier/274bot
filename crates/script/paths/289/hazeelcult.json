@@ -25,6 +25,10 @@
       "hazeel_hideout": {
         "boxes": [[2598, 9660, 2620, 9702, 0]],
         "source": "289 maps/m40_151.jm2:7943,8682; pack/loc.pack:hazeelsewerraft; pack/npc.pack:alomone_hazeel_cultist"
+      },
+      "hazeel_cave": {
+        "boxes": [[2560, 9672, 2576, 9690, 0]],
+        "source": "289 maps/m40_151.jm2:7025,7127; pack/loc.pack:hazeelcultcave,hazeelcultstairs,hazeelsewerraft"
       }
     },
     "tools": ["obj:carnillean_armour"],
@@ -67,24 +71,26 @@
         "stage": "hazeelcult:2", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [{
           "id": "meet-clivet", "kind": "talk", "version": 1, "advances": true,
+          "comment": "One conversation answers three menus: the opening multi, then refuse, then decline to join. The good-side answers must all be preferred: talk falls back to the LAST option, which joins the cult (scripts/quests/quest_hazeelcult/scripts/clivet.rs2:89-132). The refuse path jumps straight to varp 4 (clivet_decision), whose good-side journal text resolves hazeelcult:4, so settle accepts 3 or 4.",
           "args": {
             "npc": "clivet_hazeel_cultist",
             "anchor": { "tile": [2566, 9683, 0], "source": "289 maps/m40_151.jm2:8661; pack/npc.pack:clivet_hazeel_cultist; scripts/quests/quest_hazeelcult/scripts/clivet.rs2:8-20" },
-            "leash": 8, "prefer": ["What do you mean?"]
+            "leash": 8, "prefer": ["What do you mean?", "You're crazy, I'd never help you.", "No. I won't do it."]
           },
           "skip_if": { "Any": [] },
-          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hazeelcult", "any": ["hazeelcult:3"] } } }
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hazeelcult", "any": ["hazeelcult:3", "hazeelcult:4"] } } }
         }]
       },
       {
         "stage": "hazeelcult:3", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [{
           "id": "refuse-clivet", "kind": "talk", "version": 1, "advances": true,
+          "comment": "Resume path for varp 3 (spoken_clivet): the same three-menu conversation as meet-clivet. All good-side answers preferred for the same fallback reason.",
           "args": {
             "npc": "clivet_hazeel_cultist",
             "anchor": { "tile": [2566, 9683, 0], "source": "289 maps/m40_151.jm2:8661; scripts/quests/quest_hazeelcult/scripts/clivet.rs2:89-132" },
             "leash": 8,
-            "prefer": ["What do you mean?", "You're crazy, I'd never help you."]
+            "prefer": ["What do you mean?", "You're crazy, I'd never help you.", "No. I won't do it."]
           },
           "skip_if": { "Any": [] },
           "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hazeelcult", "any": ["hazeelcult:4"] } } }
@@ -107,23 +113,107 @@
             "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } }
           },
           {
-            "id": "walk-to-first-valve", "kind": "walk", "version": 1,
-            "args": { "tile": [2562, 3247, 0], "source": "289 maps/m40_50.jm2:4397; pack/loc.pack:sewervalve1", "radius": 2 },
+            "id": "turn-sewervalve-1", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Valves set/clear bits, never toggle (scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:56-70), so replaying all five west to east is idempotent. Five consecutive set bits from bit 0 opens the hideout ride (:42-53). Success text is ~mesbox, proved by explicit continue draining a page per round.",
+            "args": {
+              "target": { "loc": "sewervalve1" }, "op": "Turn-right",
+              "anchor": { "tile": [2562, 3247, 0], "source": "289 maps/m40_50.jm2:4397; pack/loc.pack:sewervalve1" },
+              "radius": 2, "dialogue": "continue"
+            },
             "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
-            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2562, 3247, 0], "radius": 2 } } }
+            "settle": { "All": [] }
           },
           {
-            "id": "GAP-hazeelcult-valve-state", "kind": "wait", "version": 1,
-            "comment": "GAP: there is no runtime-safe reader for %hazeelcult_valves or raft state. Content's sequence is right, right, left, right, right from west to east; solve it manually, ride into the hideout, then restart the Path there.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "id": "turn-sewervalve-2", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "sewervalve2" }, "op": "Turn-right",
+              "anchor": { "tile": [2572, 3263, 0], "source": "289 maps/m40_50.jm2:4764; pack/loc.pack:sewervalve2" },
+              "radius": 2, "dialogue": "continue"
+            },
             "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
-            "settle": { "Any": [] }
+            "settle": { "All": [] }
+          },
+          {
+            "id": "turn-sewervalve-3", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Valve 3 is inverted: Turn-left sets its bit, Turn-right clears it (scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:56-70).",
+            "args": {
+              "target": { "loc": "sewervalve3" }, "op": "Turn-left",
+              "anchor": { "tile": [2585, 3245, 0], "source": "289 maps/m40_50.jm2:5092; pack/loc.pack:sewervalve3" },
+              "radius": 2, "dialogue": "continue"
+            },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
+            "settle": { "All": [] }
+          },
+          {
+            "id": "turn-sewervalve-4", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "sewervalve4" }, "op": "Turn-right",
+              "anchor": { "tile": [2597, 3263, 0], "source": "289 maps/m40_50.jm2:5420; pack/loc.pack:sewervalve4" },
+              "radius": 2, "dialogue": "continue"
+            },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
+            "settle": { "All": [] }
+          },
+          {
+            "id": "turn-sewervalve-5", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "sewervalve5" }, "op": "Turn-right",
+              "anchor": { "tile": [2609, 3243, 0], "source": "289 maps/m40_50.jm2:5785; pack/loc.pack:sewervalve5" },
+              "radius": 2, "dialogue": "continue"
+            },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
+            "settle": { "All": [] }
+          },
+          {
+            "id": "scan-armour-bank", "kind": "bank", "version": 1,
+            "comment": "Alomone drops nothing while any armour copy exists in inventory, bank or worn (scripts/quests/quest_hazeelcult/scripts/alomone.rs2:115-122). Runs on the surface leg: the hideout has no bank route, so a hideout resume skips straight to the fight.",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-armour", "kind": "bank", "version": 1,
+            "comment": "Not bank_known skips when the scan above was skipped (unscanned bank_has is Unknown and would block the steps below).",
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "carnillean_armour", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "carnillean_armour" } } } },
+              { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } }
+          },
+          {
+            "id": "drop-banked-armour", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Zero the account total so Alomone drops a fresh copy on the kill below. Only runs when a banked copy was just withdrawn (normal flow holds nothing here).",
+            "args": { "target": { "held": "carnillean_armour" }, "op": "Drop" },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } } },
+            "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } } }
+          },
+          {
+            "id": "enter-hazeel-cave", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Return underground after the surface valve work (scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:3-5).",
+            "args": {
+              "target": { "loc": "hazeelcultcave" }, "op": "Enter",
+              "anchor": { "tile": [2585, 3233, 0], "source": "289 maps/m40_50.jm2:5088; pack/loc.pack:hazeelcultcave" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } }
           },
           {
             "id": "board-raft-to-hideout", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Board the ENTRY raft: only (2567,9679) rides to the hideout once all five valves are set; the hideout-side raft only returns to the cave (scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:12-40).",
             "args": {
               "target": { "loc": "hazeelsewerraft" }, "op": "Board",
-              "anchor": { "tile": [2606, 9693, 0], "source": "289 maps/m40_151.jm2:7943; pack/loc.pack:hazeelsewerraft; scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:21-40" },
+              "anchor": { "tile": [2567, 9679, 0], "source": "289 maps/m40_151.jm2:7025; pack/loc.pack:hazeelsewerraft; scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:21-40" },
               "radius": 8
             },
             "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } },
@@ -155,6 +245,73 @@
         "stage": "hazeelcult:6", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
           {
+            "id": "scan-armour-bank-stage6", "kind": "bank", "version": 1,
+            "comment": "Banked copy first: Ceril takes inventory or worn armour (scripts/quests/quest_hazeelcult/scripts/ceril_carnillean.rs2:72,121-125).",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-armour-stage6", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "carnillean_armour", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "carnillean_armour" } } } },
+              { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } }
+          },
+          {
+            "id": "enter-cave-for-armour", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Armour gone entirely: Alomone drops a fresh copy whenever the account total is zero and varp is in [4,7) (scripts/quests/quest_hazeelcult/scripts/alomone.rs2:115-122). Valve bits are permanent, so re-ride the entry raft with no re-solve.",
+            "args": {
+              "target": { "loc": "hazeelcultcave" }, "op": "Enter",
+              "anchor": { "tile": [2585, 3233, 0], "source": "289 maps/m40_50.jm2:5088; pack/loc.pack:hazeelcultcave" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } }
+          },
+          {
+            "id": "board-entry-raft-again", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "hazeelsewerraft" }, "op": "Board",
+              "anchor": { "tile": [2567, 9679, 0], "source": "289 maps/m40_151.jm2:7025; pack/loc.pack:hazeelsewerraft" },
+              "radius": 8
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+          },
+          {
+            "id": "fight-alomone-again", "kind": "combat", "version": 1, "advances": false,
+            "comment": "Recovery kill only: varp is already 6, so this earns just the fresh armour drop.",
+            "args": {
+              "target": { "npc": "alomone_hazeel_cultist", "not_targeting_others": true, "pick": "nearest" },
+              "lost_radius": 12,
+              "area": { "box": [2598, 9660, 2620, 9702, 0], "source": "289 maps/m40_151.jm2:8682; pack/npc.pack:alomone_hazeel_cultist" },
+              "stand": { "tile": [2609, 9669, 0], "source": "289 maps/m40_151.jm2:8682; pack/npc.pack:alomone_hazeel_cultist" },
+              "tactic": { "kind": "open", "style": "melee", "engage_radius": 6, "auto_retaliate": true },
+              "loadout": null,
+              "kill_budget_ticks": 240,
+              "loot": ["carnillean_armour"],
+              "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } }
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } }
+          },
+          {
             "id": "raft-back-to-cave", "kind": "interact", "version": 1, "advances": false,
             "args": {
               "target": { "loc": "hazeelsewerraft" }, "op": "Board",
@@ -175,13 +332,6 @@
             "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } }
           },
           {
-            "id": "GAP-hazeelcult-stage6-armour-missing", "kind": "wait", "version": 1,
-            "comment": "GAP: stage 6 can return only if the account still holds Carnillean armour. This Path has no verified recovery for a missing copy; retrieve it from the bank or recover it manually, then restart.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
-            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
-            "settle": { "Any": [] }
-          },
-          {
             "id": "return-armour-to-ceril", "kind": "talk", "version": 1, "advances": true,
             "comment": "Ceril needs the recovered armour in inventory or worn equipment.",
             "args": {
@@ -197,13 +347,6 @@
       {
         "stage": "hazeelcult:7", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
-          {
-            "id": "GAP-hazeelcult-armour-missing", "kind": "wait", "version": 1,
-            "comment": "GAP: stage 7 cannot return the armour unless a real Carnillean armour is held. The Path has no verified stage-7 recovery route; retrieve it from bank or recover it manually, then restart.",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
-            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "carnillean_armour" } } },
-            "settle": { "Any": [] }
-          },
           {
             "id": "open-jones-cupboard", "kind": "interact", "version": 1, "advances": false,
             "args": {
