@@ -486,15 +486,12 @@ fn derive_zone_table(
             zone,
             npc_id: spawn.npc_id,
             shape_bits,
-            // A zero-wander hunter acquires from its spawn, even if it can
-            // subsequently pursue. Moving acquisition centres retain the
-            // conservative envelope; only fixed, LOS-checked ranged centres
-            // can prove a permanently occluded tile safe.
+            // The engine checks LOS from the NPC's current tile. Keep positive-
+            // wander hunters conservative; carve only for nomove or zero-wander
+            // hunters around their spawn tile.
             carve_visibility: ap
                 && definition.check_lineofsight
-                && (definition.stationary
-                    || definition.never_wanders
-                    || definition.wanderrange == 0),
+                && (definition.stationary || definition.wanderrange == 0),
         });
     }
     pending.sort_unstable_by_key(|row| {
@@ -669,9 +666,10 @@ fn stationary_ranged_bounds(
     Ok((min_x, min_z, max_x, max_z))
 }
 
-/// Keep the range-derived index bounds, subtracting only cells permanently
-/// hidden from the fixed acquisition centre. Reuse the shared collision ray;
-/// the engine's HuntIterator casts from the player to the NPC's SW tile.
+/// Keep the range-derived index bounds, subtracting only cells hidden from the
+/// NPC's spawn tile. The engine's HuntIterator casts from the player to the
+/// NPC's current tile; the caller limits this spawn-centred approximation to
+/// `nomove` and zero-wander NPCs.
 /// Horizontal runs keep the existing packed carve representation compact.
 fn append_ranged_visibility_carves(
     collision: &WorldCollision,

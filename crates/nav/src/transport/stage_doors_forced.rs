@@ -435,20 +435,25 @@ impl Motion<'_> {
         Some(())
     }
 
+    fn price_and_relocate_chebyshev(&mut self, to: WorldTile) -> Option<()> {
+        if to.level != self.here.level {
+            return None;
+        }
+        let distance =
+            to.x.checked_sub(self.here.x)?
+                .checked_abs()?
+                .max(to.z.checked_sub(self.here.z)?.checked_abs()?);
+        self.price(distance)?;
+        self.relocate(to)?;
+        self.moved = true;
+        Some(())
+    }
+
     fn call(&mut self, name: &str, args: &[Expr], env: &Env) -> End {
         let result = match name {
             "~forcemove" if self.proofs.contains("forcemove") => match args {
                 [dest] => self.value(dest, env).and_then(|value| match value {
-                    Val::Coord(to) if to.level == self.here.level => {
-                        let distance =
-                            to.x.checked_sub(self.here.x)?
-                                .checked_abs()?
-                                .max(to.z.checked_sub(self.here.z)?.checked_abs()?);
-                        self.price(distance)?;
-                        self.relocate(to)?;
-                        self.moved = true;
-                        Some(())
-                    }
+                    Val::Coord(to) => self.price_and_relocate_chebyshev(to),
                     _ => None,
                 }),
                 _ => None,
@@ -461,16 +466,7 @@ impl Motion<'_> {
                         return End::Refused;
                     }
                     self.value(dest, env).and_then(|value| match value {
-                        Val::Coord(to) if to.level == self.here.level => {
-                            let distance =
-                                to.x.checked_sub(self.here.x)?
-                                    .checked_abs()?
-                                    .max(to.z.checked_sub(self.here.z)?.checked_abs()?);
-                            self.price(distance)?;
-                            self.relocate(to)?;
-                            self.moved = true;
-                            Some(())
-                        }
+                        Val::Coord(to) => self.price_and_relocate_chebyshev(to),
                         _ => None,
                     })
                 }
