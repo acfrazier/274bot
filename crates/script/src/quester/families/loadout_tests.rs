@@ -14,6 +14,22 @@ fn with_path_loadout<R>(
     allow_lower_tier: bool,
     f: impl FnOnce(&Arc<dyn StepPlan>, &Arc<dyn PredicatePlan>, &api::game_data::SelectedGameData) -> R,
 ) -> R {
+    with_path_loadout_args(
+        store_rows,
+        authored_row,
+        serde_json::json!({"allow_lower_tier": allow_lower_tier}),
+        f,
+    )
+}
+
+/// `args` are the step's authored `loadout` arguments besides `loadout`
+/// itself; the `loadout_ready` skip gets the same ones.
+fn with_path_loadout_args<R>(
+    store_rows: Vec<crate::loadouts_store::Loadout>,
+    authored_row: serde_json::Value,
+    mut args: serde_json::Value,
+    f: impl FnOnce(&Arc<dyn StepPlan>, &Arc<dyn PredicatePlan>, &api::game_data::SelectedGameData) -> R,
+) -> R {
     let _home = crate::IsolatedEnv::enter("quester-family-header-loadout");
     let mut store = crate::loadouts_store::LoadoutsStore::with_default_path();
     for row in store_rows {
@@ -25,16 +41,17 @@ fn with_path_loadout<R>(
     let mut document: serde_json::Value =
         serde_json::from_str(crate::quester::compile::COOK_JSON).unwrap();
     document["quest"]["loadouts"] = serde_json::json!({"melee": authored_row});
+    args["loadout"] = serde_json::json!("melee");
     document["roles"][0]["prelude"] = serde_json::json!([{
         "id": "header-loadout",
         "kind": "loadout",
         "version": 1,
-        "args": {"loadout": "melee", "allow_lower_tier": allow_lower_tier},
+        "args": args,
         "skip_if": {
             "Fact": {
                 "kind": "loadout_ready",
                 "version": 1,
-                "args": {"loadout": "melee", "allow_lower_tier": allow_lower_tier}
+                "args": args
             }
         },
         "settle": {"All": []}
@@ -607,7 +624,9 @@ struct FixtureBank {
 /// snapshot's bank into it before every tick the way the host does.
 /// Returns the bank item ids whose withdraw was clicked and how the run
 /// ended: `Ok(Some(name))` at its first `Wear`, `Ok(None)` when it
-/// completed without one.
+/// completed without one. Every `Wear`/`Unequip` must find the bank shut:
+/// both act on the regular inventory widget, which an open bank hides. An
+/// `Unequip` moves the worn row into the pack.
 fn drive_loadout(
     plan: &Arc<dyn StepPlan>,
     snapshot: &mut GameSnapshot,
@@ -706,7 +725,33 @@ fn drive_loadout(
         };
         match request {
             crate::shim::InteractReq::Wear { name } => {
+                assert!(
+                    snapshot.bank_component_id() < 0,
+                    "Wear {name} dispatched with the bank open"
+                );
                 return (withdrawn, Ok(Some(name.clone())));
+            }
+            crate::shim::InteractReq::Unequip { name } => {
+                assert!(
+                    snapshot.bank_component_id() < 0,
+                    "Unequip {name} dispatched with the bank open"
+                );
+                accept(&mut ledger_state);
+                let mut equipment = snapshot.equipment().to_vec();
+                let index = equipment
+                    .iter()
+                    .position(|row| row.def.name.as_deref() == Some(name))
+                    .expect("an Unequip names a worn item");
+                let removed = equipment.remove(index);
+                let mut inventory = snapshot.inventory().to_vec();
+                inventory.push(held_item(
+                    removed.def.id,
+                    name,
+                    removed.count,
+                    ItemContainer::Inventory,
+                ));
+                snapshot.seed_equipment(equipment);
+                snapshot.seed_inventory(inventory, 28);
             }
             crate::shim::InteractReq::OpenStand { .. } => {
                 let rows = fixture
@@ -724,15 +769,18 @@ fn drive_loadout(
             } => {
                 withdrawn.push(*bank_item_id);
                 accept(&mut ledger_state);
-                snapshot.seed_inventory(
-                    vec![held_item(
+                let mut inventory = snapshot.inventory().to_vec();
+                if let Some(held) = inventory.iter_mut().find(|row| row.def.id == *bank_item_id) {
+                    held.count += *count;
+                } else {
+                    inventory.push(held_item(
                         *bank_item_id,
                         name,
                         *count,
                         ItemContainer::Inventory,
-                    )],
-                    28,
-                );
+                    ));
+                }
+                snapshot.seed_inventory(inventory, 28);
             }
             crate::shim::InteractReq::SetNoteMode { .. } => accept(&mut ledger_state),
             crate::shim::InteractReq::Close => {
@@ -919,6 +967,106 @@ fn loadout_at_an_open_bank_issues_no_select_walk_or_open() {
             memory.origin(),
             Origin::Session,
             "the open bank was observed"
+        );
+    });
+}
+
+/// A legal tier that is held but not worn still needs its `Wear`, and a
+/// `Wear` acts on the regular inventory widget: the carry withdrawal at
+/// the open bank is followed by a `Close` before the helm goes on.
+#[test]
+fn held_legal_tier_is_worn_only_after_the_carry_trip_closes_the_bank() {
+    with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
+        let adamant = data.item_by_alias("adamant_full_helm").unwrap();
+        let lobster = data.item_by_alias("lobster").unwrap();
+        let (bank, banks) = bank_facts();
+        let mut snapshot = snapshot(
+            vec![held_item(
+                adamant.id,
+                "Adamant full helm",
+                1,
+                ItemContainer::Inventory,
+            )],
+            vec![],
+            Some(vec![bank_item(lobster.id, "Lobster", 10)]),
+            defence_40(),
+        );
+        let fixture = FixtureBank {
+            bank,
+            opens_with: None,
+        };
+        let mut memory = BankMemory::default();
+        let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
+        assert_eq!(withdrawn, [lobster.id], "only the carry row is withdrawn");
+        assert_eq!(end.unwrap().as_deref(), Some("Adamant full helm"));
+    });
+}
+
+/// Everything held at an incoming open bank: no trip at all, yet the bank
+/// is closed before the `Wear`.
+#[test]
+fn fully_held_loadout_closes_an_open_bank_before_wearing() {
+    with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
+        let adamant = data.item_by_alias("adamant_full_helm").unwrap();
+        let lobster = data.item_by_alias("lobster").unwrap();
+        let (bank, banks) = bank_facts();
+        let mut snapshot = snapshot(
+            vec![
+                held_item(adamant.id, "Adamant full helm", 1, ItemContainer::Inventory),
+                held_item(lobster.id, "Lobster", 2, ItemContainer::Inventory),
+            ],
+            vec![],
+            Some(vec![]),
+            defence_40(),
+        );
+        let fixture = FixtureBank {
+            bank,
+            opens_with: None,
+        };
+        let mut memory = BankMemory::default();
+        let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
+        assert!(withdrawn.is_empty(), "nothing to withdraw");
+        assert_eq!(end.unwrap().as_deref(), Some("Adamant full helm"));
+    });
+}
+
+/// An exclusive loadout strips the extra worn item only after the trip
+/// and its `Close`: the `Unequip`, like the `Wear`, needs the regular
+/// inventory widget.
+#[test]
+fn exclusive_strip_follows_the_trip_and_its_close() {
+    let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
+    let args = serde_json::json!({"exclusive": true});
+    with_path_loadout_args(vec![], loadout, args, |plan, _, data| {
+        let helm = data.item_by_alias("rune_full_helm").unwrap();
+        let boots = data.item_by_alias("desert_boots").unwrap();
+        let (bank, banks) = bank_facts();
+        let mut snapshot = snapshot(
+            vec![],
+            vec![held_item(
+                boots.id,
+                "Desert boots",
+                1,
+                ItemContainer::Equipment,
+            )],
+            Some(vec![bank_item(helm.id, "Rune full helm", 1)]),
+            vec![],
+        );
+        let fixture = FixtureBank {
+            bank,
+            opens_with: None,
+        };
+        let mut memory = BankMemory::default();
+        let (withdrawn, end) = drive_loadout(plan, &mut snapshot, &mut memory, &fixture, &banks);
+        assert_eq!(withdrawn, [helm.id]);
+        assert_eq!(end.unwrap().as_deref(), Some("Rune full helm"));
+        assert!(
+            snapshot.equipment().is_empty()
+                && snapshot
+                    .inventory()
+                    .iter()
+                    .any(|row| row.def.id == boots.id),
+            "the extra boots were removed into the pack before the Wear"
         );
     });
 }

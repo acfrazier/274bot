@@ -310,8 +310,12 @@ impl Provisioner {
             if ready {
                 continue;
             }
-            let candidate = if known { banked_tool } else { first_tool };
-            if let Some(item) = candidate {
+            // The banked candidate is the withdrawal; otherwise the first
+            // stat-legal tool carries the need to `require`, whose origin
+            // rule decides: an `Unknown` bank or a `Hint` lacking every tool
+            // row costs the one verifying scan (design-bank-snapshot §2.4);
+            // a `Session` bank without one leaves the optional need alone.
+            if let Some(item) = banked_tool.or(first_tool) {
                 needs.require(item, 1, MissingKind::Optional, Presence::Carried, &stock)?;
             }
         }
@@ -480,7 +484,23 @@ impl Provisioner {
             );
             return Poll::Pending;
         }
-        let active_need = needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
+        if let Some(missing) = needs.blocked {
+            // A `Session` shortage of a required item is final (design-bank-
+            // snapshot §2.4, D4): in place, before any spillover or
+            // withdrawal trip — the same observation already rules the
+            // target out, however much of it the bank could still cover.
+            let item = Arc::from(format!("{} x{}", missing.item, missing.need));
+            self.set_status(
+                ProvisionPhase::Blocked,
+                Some(Arc::clone(&missing.item)),
+                missing.need,
+                missing.pack,
+                missing.bank,
+                true,
+            );
+            return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
+        }
+        let active_need = needs.acquire.as_ref();
 
         let mut required_slots =
             planned_required_slots(plan, &needs, inventory, active_need, active_recipe);
@@ -556,18 +576,6 @@ impl Provisioner {
                 first.bank,
             );
             return Poll::Pending;
-        }
-        if let Some(missing) = needs.blocked {
-            let item = Arc::from(format!("{} x{}", missing.item, missing.need));
-            self.set_status(
-                ProvisionPhase::Blocked,
-                Some(Arc::clone(&missing.item)),
-                missing.need,
-                missing.pack,
-                missing.bank,
-                true,
-            );
-            return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
         }
         if let (Some(recipe_need), Some(recipe)) = (needs.acquire, active_recipe) {
             let acquire = AcquirePlan {
@@ -1145,7 +1153,7 @@ mod tests {
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
-    use crate::quester::compile::{self, CompiledQuestItem};
+    use crate::quester::compile::{self, CompiledPath, CompiledQuestItem};
     use crate::quester::families::tests::{def, local_player, with_tick, with_tick_bank};
     use api::bank_memory::{BankMemory, Origin};
     use api::named_banks::{NamedBank, NamedBankFacts};
@@ -1798,8 +1806,10 @@ mod tests {
         assert!(ledger.is_none());
     }
 
-    #[test]
-    fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+    /// Cook's Path plus one level-1 woodcutting gather step, compiled: one
+    /// gather-tool need whose tools include the bronze axe. The snapshot
+    /// carries no axe at woodcutting 1 on a members world.
+    fn woodcutting_tool_fixture() -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot, i32) {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let data = Arc::clone(&selected);
@@ -1829,7 +1839,6 @@ mod tests {
         assert_eq!(path.provisioning.gather_tool_needs.len(), 1);
         assert!(path.provisioning.tools.iter().any(|tool| tool.id == axe_id));
 
-        let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut snapshot = ready_snapshot(Vec::new());
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_stats(vec![StatView {
@@ -1844,6 +1853,13 @@ mod tests {
             members: true,
             ..Default::default()
         });
+        (path, quests, snapshot, axe_id)
+    }
+
+    #[test]
+    fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+        let (path, quests, snapshot, axe_id) = woodcutting_tool_fixture();
+        let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
         let banks = Arc::new(NamedBankFacts::empty());
@@ -1870,6 +1886,46 @@ mod tests {
         assert_eq!(status.item, Some(tool.name.as_ref()));
         assert_eq!(status.need, 1);
         assert_eq!(status.bank, Some(1));
+    }
+
+    /// design-bank-snapshot §2.4: a `Hint` lacking every usable tool row is
+    /// a Hint shortage like any other — the optional tool need costs the
+    /// one verifying scan rather than being dropped before `require`. The
+    /// scan is labelled with the strongest usable candidate, as an
+    /// `Unknown` bank's is.
+    #[test]
+    fn hint_lacking_every_gather_tool_costs_the_verifying_scan() {
+        let (path, quests, snapshot, _) = woodcutting_tool_fixture();
+        let memo = BankMemory::seeded(&[], Origin::Hint);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let banks = Arc::new(NamedBankFacts::empty());
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        let status = provisioner.status();
+        assert_eq!(status.phase, ProvisionPhase::Scanning);
+        assert!(
+            status.item.is_some_and(|item| {
+                path.provisioning
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name.as_ref() == item)
+            }),
+            "the scan is for a hinted-absent axe: {:?}",
+            status.item
+        );
+        assert_eq!(status.need, 1);
+        assert_eq!(status.bank, Some(0));
     }
 
     #[test]
@@ -2815,6 +2871,53 @@ mod tests {
         ));
         assert_eq!(provisioner.status().phase, ProvisionPhase::Blocked);
         assert!(ledger.is_none(), "a Session block queues no bank trip");
+    }
+
+    /// design-bank-snapshot §2.4 (D4): a `Session` bank that covers only
+    /// part of a MustHave (target 2, carried 0, banked 1) still proves the
+    /// target impossible — the block is in place, not after a withdrawal
+    /// trip for the part it does hold.
+    #[test]
+    fn partially_banked_session_must_have_blocks_in_place_without_a_withdrawal() {
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                2,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let snapshot = ready_snapshot(Vec::new());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memory = BankMemory::seeded(&[(42, 1)], Origin::Session);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Blocked { item }))
+                if item.as_ref() == "Quest token x2"
+        ));
+        let status = provisioner.status();
+        assert_eq!(status.phase, ProvisionPhase::Blocked);
+        assert_eq!(status.bank, Some(1), "the block reports the partial stock");
+        assert!(
+            ledger.is_none(),
+            "no withdrawal trip starts for the part the bank holds"
+        );
     }
 
     #[test]
