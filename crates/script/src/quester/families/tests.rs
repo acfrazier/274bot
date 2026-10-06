@@ -111,6 +111,7 @@ fn with_tick_output_reach<R>(
                 selected: Some(&data),
                 reach: None,
                 bank_memory: bank,
+                collision: None,
                 hold: false,
                 interacts: Some(Vec::new()),
             },

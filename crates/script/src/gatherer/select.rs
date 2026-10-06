@@ -299,6 +299,9 @@ pub struct ReturnObservation<'a> {
     pub now: u64,
     pub skill_stat: i32,
     pub avoided: &'a [AvoidedTile; MAX_AVOID],
+    /// Packed collision used to keep Area r=1 return stands off tiles with
+    /// no legal goals. `None` skips the filter (unit fixtures without a pack).
+    pub collision: Option<&'a nav::collision::WorldCollision>,
 }
 
 pub struct PlacementScene<'a> {
@@ -860,6 +863,7 @@ pub fn resource_return_target(
                 if !known_resource_target(method, spot.entity)
                     || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
                     || avoid_until(spot, method.skill, observation.avoided) > observation.now
+                    || !has_area_arrival(observation.collision, spot.origin)
                 {
                     continue;
                 }
@@ -908,15 +912,64 @@ fn fishing_return_stand(
     }
     // Observe the resource from the resource, never from `here`. Clamping
     // toward the player is how a Draynor bank trip lands a stand inside the
-    // booth (the spots sit inside NPC view of the interior).
+    // booth (the spots sit inside NPC view of the interior). Packed Area
+    // goals reuse `standable` over radius one; an all-water origin clamp is
+    // replaced by the nearest observation-safe stand Walk can arrive at.
     observation_cells(movement_bounds(spot)?)
-        .map(|cell| observation_stand(cell, spot.origin))
+        .filter_map(|cell| {
+            legal_fishing_return_stand(cell, spot.origin, area, observation.collision)
+        })
         .min_by_key(|stand| {
             (
                 i64::from(!area.contains(*stand)),
                 distance(spot.origin, *stand),
             )
         })
+}
+
+fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: WorldTile) -> bool {
+    collision.is_none_or(|collision| {
+        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
+            collision.standable(tile)
+        })
+    })
+}
+
+fn legal_fishing_return_stand(
+    cell: SceneRegionInput,
+    origin: WorldTile,
+    area: WorkArea,
+    collision: Option<&nav::collision::WorldCollision>,
+) -> Option<WorldTile> {
+    let preferred = observation_stand(cell, origin);
+    if has_area_arrival(collision, preferred) {
+        return Some(preferred);
+    }
+    let min_x = cell.max_x - OBSERVATION_RADIUS;
+    let max_x = cell.min_x + OBSERVATION_RADIUS;
+    let min_z = cell.max_z - OBSERVATION_RADIUS;
+    let max_z = cell.min_z + OBSERVATION_RADIUS;
+    if min_x > max_x || min_z > max_z {
+        return None;
+    }
+    let mut best = None;
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            let stand = WorldTile {
+                x,
+                z,
+                level: cell.level,
+            };
+            if !has_area_arrival(collision, stand) {
+                continue;
+            }
+            let key = (i64::from(!area.contains(stand)), distance(origin, stand));
+            if best.as_ref().is_none_or(|(_, current)| key < *current) {
+                best = Some((stand, key));
+            }
+        }
+    }
+    best.map(|(stand, _)| stand)
 }
 
 fn consider_candidate<'a>(
@@ -1308,6 +1361,27 @@ mod tests {
         }
     }
 
+    fn packed_world() -> &'static nav::world::NavWorld {
+        static PACK: std::sync::OnceLock<nav::world::NavWorld> = std::sync::OnceLock::new();
+        PACK.get_or_init(|| {
+            let path = std::env::var_os("WORLD_NAV_PACK")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(
+                        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-6/nav/289/274bot.navpack",
+                    )
+                });
+            nav::world::NavWorld::load_pack(&path)
+                .unwrap_or_else(|error| panic!("load nav pack {}: {error}", path.display()))
+        })
+    }
+
+    fn area_arrival_ok(collision: &nav::collision::WorldCollision, stand: WorldTile) -> bool {
+        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
+            collision.standable(tile)
+        })
+    }
+
     #[test]
     fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
         let catalog = real_catalog();
@@ -1353,6 +1427,7 @@ mod tests {
             now: 1,
             skill_stat: 10,
             avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: None,
         };
         assert_eq!(
             fishing_return_stand(&catalog, method, &spot, area, &observation),
@@ -1938,6 +2013,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                    collision: Some(&packed_world().collision),
                 },
             )
             .expect("the selected content supplies a resource observation stand");
@@ -1967,6 +2043,103 @@ mod tests {
                 "every accepted radius-one arrival observes a selected movement cell"
             );
         }
+    }
+
+    #[test]
+    fn catherby_edgeville_return_skips_the_all_water_harpoon_stand() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let collision = &packed_world().collision;
+        let water = WorldTile {
+            x: 2850,
+            z: 3423,
+            level: 0,
+        };
+        let edgeville = WorldTile {
+            x: 3094,
+            z: 3493,
+            level: 0,
+        };
+        let anchor = WorldTile {
+            x: 2848,
+            z: 3426,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: AreaMode::Custom,
+            anchor,
+            radius: 40,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: area.radius,
+            bank: "Edgeville".into(),
+            ..GathererSettings::default()
+        };
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                fishing_spot_eligible(spot, area)
+                    && known_resource_target(method, spot.entity)
+                    && observation_cells(movement_bounds(spot).unwrap())
+                        .any(|cell| observation_stand(cell, spot.origin) == water)
+            }),
+            "pinned 289 Catherby harpoon still origin-clamps the eastern placement to {water:?}"
+        );
+        assert!(
+            !area_arrival_ok(collision, water),
+            "{water:?} has no legal radius-one Area goal"
+        );
+        let target = resource_return_target(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            ReturnObservation {
+                here: edgeville,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(collision),
+            },
+        )
+        .expect("Catherby harpoon supplies a resource return stand");
+        assert_ne!(
+            target.tile, water,
+            "Edgeville ranking used to pick the all-water eastern stand"
+        );
+        assert!(
+            area_arrival_ok(collision, target.tile),
+            "return stand {:?} must have a legal radius-one Area goal",
+            target.tile
+        );
+        assert_ne!(target.tile, edgeville);
+        assert_eq!(target.npc_index, NO_NPC_INDEX);
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                spot.entity == target.entity
+                    && fishing_spot_eligible(spot, area)
+                    && observation_cells(movement_bounds(spot).unwrap()).any(|cell| {
+                        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+                        (-radius..=radius).all(|dx| {
+                            (-radius..=radius).all(|dz| {
+                                region_visible(
+                                    cell,
+                                    WorldTile {
+                                        x: target.tile.x + dx,
+                                        z: target.tile.z + dz,
+                                        level: target.tile.level,
+                                    },
+                                )
+                            })
+                        })
+                    })
+            }),
+            "every accepted radius-one arrival observes a selected movement cell"
+        );
     }
 
     #[test]
@@ -2044,6 +2217,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                    collision: Some(&packed_world().collision),
                 },
             )
             .expect("Draynor saltfish supplies a resource return stand");
@@ -2126,6 +2300,7 @@ mod tests {
                 now: 1,
                 skill_stat: 30,
                 avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(&packed_world().collision),
             },
         )
         .expect("willow origin is the loc return stand");

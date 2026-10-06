@@ -393,6 +393,7 @@ impl CompiledRun {
                         selected: Some(&self.selected),
                         reach: ctx.compiled.reach,
                         bank_memory: ctx.compiled.bank_memory,
+                        collision: ctx.compiled.collision,
                         hold: ctx.compiled.hold,
                         #[cfg(feature = "load")]
                         interacts,

@@ -1371,6 +1371,7 @@ fn compiled_ctx<'a>(
             selected,
             reach: None,
             bank_memory: None,
+            collision: None,
             hold: false,
             interacts: None,
         },
