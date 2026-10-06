@@ -487,13 +487,20 @@ fn the_owned_first_chat_page_is_not_exposed_after_continue_is_emitted() {
 }
 
 #[test]
-fn server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap() {
-    // Pinned foreman.rs2:19-38 closes chat, teleports to the office and
-    // forcewalks before opening the next page, without an inventory reward.
+fn grandtree_foreman_cutscene_rearms_the_shorter_closed_chat_gap() {
+    // Sourced from content (quests/quest_grandtree/scripts/foreman.rs2:12-38):
+    // `if_close` at T, `p_walk` at T+3, `p_teleport` at T+6, `forcewalk` at
+    // T+8, and the next chat page at T+9. The player walks the first leg
+    // from an adjacent tile, so every leg re-arms the gap on position
+    // change with the same finite budget. This replaces the unsourced
+    // `server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap`
+    // fixture, whose 10/15/17/22 timings match no content case and only
+    // passed with the eight-tick gap. The sourced T+3/T+6/T+8/T+9 legs fit
+    // the four-tick gap, so this passes with both gap sizes.
     let mut snapshot = snapshot();
     snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 2989,
-        z: 3048,
+        x: 2955,
+        z: 3034,
         level: 0,
     }));
     snapshot.seed_chat_modal(100, vec!["Follow me.".into()]);
@@ -508,22 +515,11 @@ fn server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    // T = 3 is `if_close`: the walk lands at T+3 = 6, the teleport at
+    // T+6 = 9, the forcewalk at T+8 = 11, and the next page at T+9 = 12.
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in 3..=21 {
-        let tile = match game_tick {
-            10 => Some((2955, 3033)),
-            15 => Some((2954, 3028)),
-            17 => Some((2954, 3025)),
-            _ => None,
-        };
-        if let Some((x, z)) = tile {
-            snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
-                x,
-                z,
-                level: 0,
-            }));
-        }
+    for game_tick in [3, 4, 5] {
         assert!(
             with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 tick.actions.poll(&handle, &mut tick.cx)
@@ -532,9 +528,49 @@ fn server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap() {
             "the cutscene is still active at tick {game_tick}"
         );
     }
+    snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 2955,
+        z: 3033,
+        level: 0,
+    }));
+    for game_tick in [6, 7, 8] {
+        assert!(
+            with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the cutscene is still active at tick {game_tick}"
+        );
+    }
+    snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 2954,
+        z: 3028,
+        level: 0,
+    }));
+    for game_tick in [9, 10] {
+        assert!(
+            with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the cutscene is still active at tick {game_tick}"
+        );
+    }
+    snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 2954,
+        z: 3025,
+        level: 0,
+    }));
+    assert!(
+        with_tick(&snapshot, &mut ledger, 11, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending(),
+        "the cutscene is still active at tick 11"
+    );
     snapshot.seed_chat_modal(100, vec!["Tell me again why you're here.".into()]);
     snapshot.seed_chat_options(vec![], 101);
-    assert!(with_tick(&snapshot, &mut ledger, 22, |tick| {
+    assert!(with_tick(&snapshot, &mut ledger, 12, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
@@ -551,6 +587,92 @@ fn server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap() {
             .all(|action| { matches!(action.effect, HostEffect::Interaction(_)) }),
         "dialogue must not send an authored return-to-spawn walk during the cutscene"
     );
+}
+
+#[test]
+fn level_up_page_after_owned_scroll_close_is_drained_as_continuation() {
+    // Cook's hand-in (DIAG-COOK-HEADED report section 1): chat pages, then
+    // the quest-complete scroll on the Main surface, our `CloseModal`, then
+    // a level-up chat page opens ("Congratulations, you just advanced a
+    // Cooking level" with Continue). Before the fix `Surface::Main` plus an
+    // active chat page returned `Failed` and the page stayed open; now the
+    // owned close adopts it and drains it with the normal chat driver.
+    let ids = dialogue_ui();
+    let mut snapshot = snapshot();
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    complete_last_interaction(&mut ledger, 3, true);
+    snapshot.seed_main_modal(-1, vec![]);
+    snapshot.seed_chat_modal(
+        100,
+        vec!["Congratulations, you just advanced a Cooking level.".into()],
+    );
+    snapshot.seed_chat_options(vec![], 101);
+    // This poll returned `Failed` before the fix.
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for game_tick in [4, 5, 6, 7, 8] {
+        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn chat_page_while_main_scroll_still_open_stays_failed() {
+    // The level-up adoption above only applies once the owned Main modal is
+    // observed closed. A chat page that opens while the scroll is still
+    // open is still a failure, before and after the fix.
+    let ids = dialogue_ui();
+    let mut snapshot = snapshot();
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    snapshot.seed_chat_modal(
+        100,
+        vec!["Congratulations, you just advanced a Cooking level.".into()],
+    );
+    snapshot.seed_chat_options(vec![], 101);
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
 }
 
 #[test]
@@ -575,14 +697,16 @@ fn unchanged_position_does_not_extend_closed_chat_completion() {
     .is_pending());
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in 3..12 {
+    // The gap starts at tick 4, so a quiet close completes at tick 8 with
+    // the four-tick gap (tick 12 with the old eight-tick gap).
+    for game_tick in 3..8 {
         assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 12, |tick| {
+        with_tick(&snapshot, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))

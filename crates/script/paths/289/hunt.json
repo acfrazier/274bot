@@ -1,0 +1,1619 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "hunt",
+  "display_name": "Pirate's Treasure",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 2,
+    "requirements": [],
+    "items": [
+      { "obj": "white_apron", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "karamja_rum", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "banana", "qty": 10, "kind": "acquirable", "acquire": null },
+      { "obj": "chest_key", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "piratemessage", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "spade", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:apron": [
+        {
+          "id": "apron-withdraw-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "white_apron", "qty": 1 }],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "apron-withdraw-cash",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "coins", "qty": 10 }],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 10 } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 10 } } }
+        },
+        {
+          "id": "apron-buy-thessalia",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "thessalia",
+              "anchor": {
+                "tile": [3204, 3417, 0],
+                "source": "content/maps/m50_53.jm2:12897; content/scripts/areas/area_varrock/configs/varrock.npc:265-295; content/scripts/areas/area_varrock/configs/varrock.inv:158-166"
+              }
+            },
+            "obj": "white_apron",
+            "qty": 1,
+            "est_gp": 2,
+            "option": "Buy 1"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+            ]
+          }
+        },
+        {
+          "id": "apron-wear",
+          "kind": "equip",
+          "version": 1,
+          "args": { "obj": "white_apron" },
+          "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
+          "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+        }
+      ],
+      "acquire:smuggle-rum": [
+        {
+          "id": "rum-island-held-walk",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2943, 3151, 0],
+            "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2943, 3151, 0], "radius": 2 } } }
+        },
+        {
+          "id": "rum-island-held-luthas",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "luthas",
+            "anchor": {
+              "tile": [2939, 3154, 0],
+              "source": "content/maps/m45_49.jm2:6502; content/scripts/quests/quest_hunt/scripts/luthas.rs2:8-37"
+            },
+            "leash": 8,
+            "prefer": ["Could you offer me employment on your plantation?", "No, the crate isn't full yet.", "Thank you, I'll be on my way"],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "rum-island-held-search",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananacrate" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:1-18"
+            },
+            "radius": 5,
+            "settle_ms": 15000
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": ["the crate is completely empty", "there is some rum in here", "the crate is full of bananas", "the crate has"]
+              }
+            }
+          }
+        },
+        {
+          "id": "rum-island-held-stash",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "karamja_rum",
+            "target": { "loc": "bananacrate" },
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-68"
+            },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": { "area": "karamja" }
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": { "obj": "karamja_rum" }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": [
+                      "there is some rum in here, although with no bananas to cover it",
+                      "there is also some rum stashed in here too",
+                      "you stash the rum in the crate"
+                    ],
+                    "clear": [
+                      "the crate is completely empty",
+                      "the crate has",
+                      "the crate is full of bananas"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } }
+        },
+        {
+          "id": "rum-customs-to-mainland-bank",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "customs_officer",
+            "anchor": {
+              "tile": [2953, 3147, 0],
+              "source": "content/maps/m46_49.jm2:5457-5458; content/scripts/areas/area_karamja/configs/karamja.npc:28-34; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-85"
+            },
+            "leash": 8,
+            "prefer": ["Can I journey on this ship?", "Search away, I have nothing to hide.", "Ok."],
+            "strict": true
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } }
+        },
+        {
+          "id": "rum-disembark-port-ship",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "karamjashipplank_off" },
+            "op": "Cross",
+            "anchor": {
+              "tile": [3031, 3217, 1],
+              "source": "content/maps/m47_50.jm2:8788; content/scripts/general_use/configs/gangplank.loc:27-33; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+            },
+            "radius": 4,
+            "settle_ms": 20000
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } }
+        },
+        {
+          "id": "rum-mainland-cash",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "coins", "qty": 120 }],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 120 } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 120 } } }
+        },
+        {
+          "id": "rum-deposit-before-banana-route",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit_all",
+            "at": "nearest",
+            "keep": ["coins", "white_apron", "karamja_rum"]
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "rum-withdraw-banked-bottle",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "karamja_rum", "qty": 1 }],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "rum-sail-to-karamja",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "captain_tobias",
+            "anchor": {
+              "tile": [3028, 3216, 0],
+              "source": "content/maps/m47_50.jm2:10010; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:44-70; content/scripts/areas/area_port_sarim/scripts/sailors.rs2:1-31"
+            },
+            "leash": 8,
+            "prefer": ["Yes please."],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } }
+        },
+        {
+          "id": "rum-disembark-karamja-after-sail",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "sarimshipplank_off" },
+            "op": "Cross",
+            "anchor": {
+              "tile": [2956, 3144, 1],
+              "source": "content/maps/m46_49.jm2:5217; content/scripts/general_use/configs/gangplank.loc:10-16; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+            },
+            "radius": 4,
+            "settle_ms": 20000
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } }
+        },
+        {
+          "id": "rum-walk-to-plantation",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2943, 3151, 0],
+            "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2943, 3151, 0], "radius": 2 } }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2943, 3151, 0], "radius": 2 } } }
+        },
+        {
+          "id": "rum-search-before-buy",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananacrate" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:1-18"
+            },
+            "radius": 5,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": ["the crate is completely empty", "there is some rum in here", "the crate is full of bananas", "the crate has"]
+              }
+            }
+          }
+        },
+        {
+          "id": "rum-buy-zambo",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "zambo",
+              "anchor": {
+                "tile": [2925, 3143, 0],
+                "source": "content/maps/m45_49.jm2:6498; content/scripts/areas/area_karamja/configs/karamja.npc:133-166; content/scripts/areas/area_karamja/configs/karamja.inv:1-11"
+              }
+            },
+            "obj": "karamja_rum",
+            "qty": 1,
+            "est_gp": 30,
+            "option": "Buy 1"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": {
+                "set": ["there is some rum in here, although with no bananas to cover it", "there is also some rum stashed in here too", "you stash the rum in the crate"],
+                "clear": ["the crate is completely empty", "the crate has", "the crate is full of bananas"]
+              } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+        },
+        {
+          "id": "rum-walk-after-buy",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2943, 3151, 0],
+            "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2943, 3151, 0], "radius": 2 } }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2943, 3151, 0], "radius": 2 } } }
+        },
+        {
+          "id": "rum-luthas-job",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "luthas",
+            "anchor": {
+              "tile": [2939, 3154, 0],
+              "source": "content/maps/m45_49.jm2:6502; content/scripts/quests/quest_hunt/scripts/luthas.rs2:8-37"
+            },
+            "leash": 8,
+            "prefer": ["Could you offer me employment on your plantation?", "No, the crate isn't full yet.", "Thank you, I'll be on my way"],
+            "strict": true
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "rum-search-before-stash",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananacrate" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:1-18"
+            },
+            "radius": 5,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": ["the crate is completely empty", "there is some rum in here", "the crate is full of bananas", "the crate has"]
+              }
+            }
+          }
+        },
+        {
+          "id": "rum-stash-in-crate",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "karamja_rum",
+            "target": { "loc": "bananacrate" },
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-68"
+            },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": {
+                "set": ["there is some rum in here, although with no bananas to cover it", "there is also some rum stashed in here too", "you stash the rum in the crate"],
+                "clear": ["the crate is completely empty", "the crate has", "the crate is full of bananas"]
+              } } }
+            ]
+          },
+          "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } }
+        },
+        {
+          "id": "rum-search-before-banana-pick",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananacrate" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:1-18"
+            },
+            "radius": 5,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": ["the crate is completely empty", "there is some rum in here", "the crate is full of bananas", "the crate has"]
+              }
+            }
+          }
+        },
+        {
+          "id": "rum-pick-ten-bananas",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananatreefull" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2906, 3161, 0],
+              "source": "content/maps/m45_49.jm2:5136-5138,5238-5242,5329-5333,5391-5400,5467-5481,5555-5560,5620-5625,5713-5714,5787-5789; content/scripts/areas/area_karamja/configs/plantation.loc:1-63; content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12"
+            },
+            "radius": 30,
+            "wait_if_missing": true,
+            "settle_ms": 120000,
+            "until": { "obj": "banana", "qty": 10 }
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": {
+                "set": ["the crate is full of bananas", "the crate is already full"],
+                "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"]
+              } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 10 } } }
+        },
+        {
+          "id": "rum-pack-banana-01",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 10 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 10 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-02",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 9 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 9 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-03",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 8 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 8 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-04",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 7 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 7 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-05",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 6 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 6 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-06",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 5 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 5 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-07",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 4 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 4 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-08",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 3 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 3 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-09",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 2 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 2 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-pack-banana-10",
+          "kind": "use_on",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "item": "banana",
+            "target": { "loc": "bananacrate" },
+            "anchor": { "tile": [2943, 3151, 0], "source": "content/maps/m45_49.jm2:5974; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:20-51" },
+            "radius": 4,
+            "settle_ms": 20000,
+            "dialogue": "none"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is full of bananas", "the crate is already full"], "clear": ["the crate is completely empty", "the crate has", "you pack a banana into the crate"] } } },
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 1 } } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "banana", "qty": 1 } } } },
+              { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["the crate is already full"], "clear": ["you pack a banana into the crate"] } } }
+            ]
+          }
+        },
+        {
+          "id": "rum-search-confirm-full-crate",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "bananacrate" },
+            "op": "Search",
+            "anchor": {
+              "tile": [2943, 3151, 0],
+              "source": "content/maps/m45_49.jm2:5974; content/scripts/areas/area_karamja/configs/plantation.loc:65-69; content/scripts/quests/quest_hunt/scripts/banana_crate.rs2:1-18"
+            },
+            "radius": 5,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": { "Fact": { "kind": "message_state", "version": 1, "args": {
+            "set": ["the crate is full of bananas"],
+            "clear": ["the crate is completely empty", "the crate has"]
+          } } }
+        },
+        {
+          "id": "rum-talk-luthas-to-ship",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "luthas",
+            "anchor": {
+              "tile": [2939, 3154, 0],
+              "source": "content/maps/m45_49.jm2:6502; content/scripts/quests/quest_hunt/scripts/luthas.rs2:13-27"
+            },
+            "leash": 8,
+            "prefer": ["Thank you, I'll be on my way"],
+            "strict": true
+          },
+          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } }
+        }
+      ],
+      "acquire:chest-key": [
+        {
+          "id": "key-withdraw-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "chest_key", "qty": 1 }],
+            "partial_ok": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "key-replace-from-frank",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "redbeard_frank",
+            "anchor": {
+              "tile": [3053, 3250, 0],
+              "source": "content/maps/m47_50.jm2:10018; content/scripts/quests/quest_hunt/scripts/redbeard_frank.rs2:7-23"
+            },
+            "leash": 6,
+            "prefer": ["Do you have anything for trade?"],
+            "strict": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } }
+        }
+      ],
+      "acquire:spade": [
+        {
+          "id": "spade-withdraw-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [{ "obj": "spade", "qty": 1 }],
+            "partial_ok": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "spade-take-shared-ground-spawn",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "spade" },
+            "op": "Take",
+            "anchor": {
+              "tile": [2981, 3369, 0],
+              "source": "content/maps/m46_52.jm2:12010; content/pack/obj.pack:953"
+            },
+            "radius": 2,
+            "wait_if_missing": true,
+            "settle_ms": 120000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } }
+        }
+      ],
+      "acquire:dig-treasure": [
+        {
+          "id": "dig-deposit-all-except-spade",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "deposit_all", "at": "nearest", "keep": ["spade"] },
+          "skip_if": { "Any": [] },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "dig-walk-to-mound",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2999, 3383, 0],
+            "source": "content/scripts/general_use/scripts/spade.rs2:1-5; content/scripts/quests/quest_hunt/scripts/dig.rs2:1-13",
+            "radius": 1
+          },
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2999, 3383, 0], "radius": 1 } } },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2999, 3383, 0], "radius": 1 } } }
+        },
+        {
+          "id": "dig-clear-present-gardener",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "npc": "falador_gardener", "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 10 },
+            "stand": {
+              "tile": [2999, 3383, 0],
+              "source": "content/scripts/quests/quest_hunt/scripts/dig.rs2:7-9; content/scripts/general_use/scripts/spade.rs2:1-5"
+            },
+            "area": "dig-site",
+            "lost_radius": 12,
+            "kill_budget_ticks": 400,
+            "until": { "Fact": { "kind": "npc_absent", "version": 1, "args": { "npc": "falador_gardener" } } }
+          },
+          "skip_if": { "Fact": { "kind": "npc_absent", "version": 1, "args": { "npc": "falador_gardener" } } },
+          "settle": { "Fact": { "kind": "npc_absent", "version": 1, "args": { "npc": "falador_gardener" } } }
+        },
+        {
+          "id": "dig-return-to-mound",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2999, 3383, 0],
+            "source": "content/scripts/general_use/scripts/spade.rs2:1-5; content/scripts/quests/quest_hunt/scripts/dig.rs2:1-13",
+            "radius": 1
+          },
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2999, 3383, 0], "radius": 1 } } },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2999, 3383, 0], "radius": 1 } } }
+        },
+        {
+          "id": "dig-with-spade",
+          "kind": "interact",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "target": { "held": "spade" },
+            "op": "Dig",
+            "anchor": {
+              "tile": [2999, 3383, 0],
+              "source": "content/scripts/general_use/scripts/spade.rs2:1-5; content/scripts/quests/quest_hunt/scripts/dig.rs2:1-26"
+            },
+            "radius": 1,
+            "settle_ms": 30000
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:4"] } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 130,
+    "loadouts": {},
+    "areas": {
+      "karamja": {
+        "boxes": [
+          [2880, 3135, 2965, 3185, 0],
+          [2940, 3135, 2965, 3155, 1]
+        ],
+        "source": "content/maps/m45_49.jm2:5136-5790; content/maps/m46_49.jm2:5217-5218,5457-5458"
+      },
+      "karamja-ship": {
+        "boxes": [[2956, 3143, 2956, 3145, 1]],
+        "source": "content/maps/m46_49.jm2:5217-5218; content/scripts/areas/area_port_sarim/scripts/sailors.rs2:10"
+      },
+      "port-ship": {
+        "boxes": [[3030, 3217, 3032, 3217, 1]],
+        "source": "content/maps/m47_50.jm2:8758,8788; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:84"
+      },
+      "dig-site": {
+        "boxes": [[2989, 3373, 3009, 3393, 0]],
+        "source": "content/scripts/quests/quest_hunt/scripts/dig.rs2:7-9; content/maps/m46_52.jm2:11980; content/pack/npc.pack:1218"
+      }
+    },
+    "tools": ["obj:spade"],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:hunt",
+      "progress": {
+        "colour": { "not_started": "hunt:0", "in_progress": "hunt:1", "complete": "hunt:4" },
+        "rules": [
+          { "stage": "hunt:4", "varp": 4, "all": ["quest complete!"] },
+          { "stage": "hunt:3", "varp": 3, "all": ["the note reads"] },
+          { "stage": "hunt:2", "varp": 2, "all": ["i have given the rum to"] },
+          { "stage": "hunt:1", "varp": 1, "all": ["he has agreed to tell me the location"] },
+          { "stage": "hunt:0", "varp": 0, "all": ["i can start this quest by speaking to"] }
+        ],
+        "flags": [
+          { "flag": "rum-shipped", "any": ["the crate has been shipped to"] },
+          { "flag": "wydin-employed", "any": ["i have taken a job at wydin's store"] }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "hunt:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hunt-start-frank",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "redbeard_frank",
+                "anchor": { "tile": [3053, 3250, 0], "source": "content/maps/m47_50.jm2:10018; content/scripts/quests/quest_hunt/scripts/redbeard_frank.rs2:19-23,59-67" },
+                "leash": 6,
+                "prefer": ["I'm in search of treasure."],
+                "strict": true
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "hunt", "is": "in_progress" } } }
+            }
+          ]
+        },
+        {
+          "stage": "hunt:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hunt-disembark-karamja-ship-before-rum",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "sarimshipplank_off" },
+                "op": "Cross",
+                "anchor": {
+                  "tile": [2956, 3144, 1],
+                  "source": "content/maps/m46_49.jm2:5217; content/scripts/general_use/configs/gangplank.loc:10-16; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+                },
+                "radius": 4,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } },
+              "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } }
+            },
+            {
+              "id": "scan-bank-for-hunt-rum",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "comment": "Make bank_has evidence available before the rum-withdrawal skip; on Karamja, or with rum already held, the rum step is skipped instead.",
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+              ] },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "hunt-withdraw-banked-rum",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [{ "obj": "karamja_rum", "qty": 1 }],
+                "partial_ok": false
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                  { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "karamja_rum" } } } },
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+            },
+            {
+              "id": "hunt-smuggle-rum",
+              "kind": "acquire",
+              "version": 1,
+              "advances": true,
+              "args": { "recipe": "acquire:smuggle-rum" },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+                  { "All": [
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                    { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } }
+                  ] }
+                ]
+              },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } }
+            },
+            {
+              "id": "hunt-hand-banked-rum-to-frank",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "redbeard_frank",
+                "anchor": {
+                  "tile": [3053, 3250, 0],
+                  "source": "content/maps/m47_50.jm2:10018; content/scripts/quests/quest_hunt/scripts/redbeard_frank.rs2:25-56"
+                },
+                "leash": 6,
+                "prefer": ["Ok thanks, I'll go and get it."],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } } },
+                  { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:2"] } } }
+            },
+            {
+              "id": "hunt-customs-to-mainland",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "customs_officer",
+                "anchor": {
+                  "tile": [2953, 3147, 0],
+                  "source": "content/maps/m46_49.jm2:5457-5458; content/scripts/areas/area_karamja/configs/karamja.npc:28-34; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-85"
+                },
+                "leash": 8,
+                "prefer": ["Can I journey on this ship?", "Search away, I have nothing to hide.", "Ok."],
+                "strict": true
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } }
+            },
+            {
+              "id": "hunt-disembark-port-ship",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "karamjashipplank_off" },
+                "op": "Cross",
+                "anchor": {
+                  "tile": [3031, 3217, 1],
+                  "source": "content/maps/m47_50.jm2:8788; content/scripts/general_use/configs/gangplank.loc:27-33; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+                },
+                "radius": 4,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } },
+              "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } }
+            },
+            {
+              "id": "hunt-walk-to-wydin",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3014, 3204, 0],
+                "source": "content/maps/m47_50.jm2:10005; content/scripts/quests/quest_hunt/scripts/wydin.rs2:1-66",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3014, 3204, 0], "radius": 2 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3011, 3204, 0], "radius": 1 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3009, 3207, 0], "radius": 3 } } },
+                  { "All": [
+                    { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } } },
+                    { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "wydin-employed", "is": true } } } }
+                  ] },
+                  { "All": [
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                    { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } }
+                  ] }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3014, 3204, 0], "radius": 2 } } }
+            },
+            {
+              "id": "hunt-acquire-apron",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:apron" },
+              "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
+              "settle": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
+                  { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+                ]
+              }
+            },
+            {
+              "id": "hunt-wydin-job",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "wydin",
+                "anchor": {
+                  "tile": [3014, 3204, 0],
+                  "source": "content/maps/m47_50.jm2:10005; content/scripts/quests/quest_hunt/scripts/wydin.rs2:8-45"
+                },
+                "leash": 6,
+                "prefer": ["Can I get a job here?", "No, it's a complete mess"],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                  { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "wydin-employed", "is": true } } },
+                  {
+                    "All": [
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "rum-shipped", "is": true }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "wydin-employed", "is": true }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": { "All": [] }
+            },
+            {
+              "id": "hunt-open-wydin-back-room",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "wydindoor" },
+                "op": "Open",
+                "anchor": {
+                  "tile": [3012, 3204, 0],
+                  "source": "content/maps/m47_50.jm2:6686; content/scripts/quests/quest_hunt/configs/quest_hunt.loc:1-9; content/scripts/quests/quest_hunt/scripts/food_store.rs2:1-16; content/scripts/doors/scripts/door_procs.rs2:1-9"
+                },
+                "radius": 4,
+                "settle_ms": 15000
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                  {
+                    "All": [
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "rum-shipped", "is": true }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "wydin-employed", "is": true }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3011, 3204, 0], "radius": 1 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3011, 3204, 0], "radius": 1 } } }
+            },
+            {
+              "id": "hunt-search-wydin-crate",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "grocerycrate" },
+                "op": "Search",
+                "anchor": {
+                  "tile": [3009, 3207, 0],
+                  "source": "content/maps/m47_50.jm2:6506; content/scripts/quests/quest_hunt/configs/quest_hunt.loc:11-15; content/scripts/quests/quest_hunt/scripts/food_store.rs2:25-47"
+                },
+                "radius": 5,
+                "settle_ms": 30000,
+                "dialogue": { "prefer": ["No"], "strict": true }
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+                  {
+                    "All": [
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "rum-shipped", "is": true }
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "flag",
+                            "version": 1,
+                            "args": { "quest": "hunt", "flag": "wydin-employed", "is": true }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+            },
+            {
+              "id": "hunt-hand-rum-to-frank",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "redbeard_frank",
+                "anchor": {
+                  "tile": [3053, 3250, 0],
+                  "source": "content/maps/m47_50.jm2:10018; content/scripts/quests/quest_hunt/scripts/redbeard_frank.rs2:25-56"
+                },
+                "leash": 6,
+                "prefer": ["Ok thanks, I'll go and get it."],
+                "strict": true
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hunt:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hunt-disembark-karamja-ship-stage2",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "sarimshipplank_off" },
+                "op": "Cross",
+                "anchor": {
+                  "tile": [2956, 3144, 1],
+                  "source": "content/maps/m46_49.jm2:5217; content/scripts/general_use/configs/gangplank.loc:10-16; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+                },
+                "radius": 4,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } },
+              "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } } }
+            },
+            {
+              "id": "hunt-customs-to-mainland-stage2",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "customs_officer",
+                "anchor": {
+                  "tile": [2953, 3147, 0],
+                  "source": "content/maps/m46_49.jm2:5457-5458; content/scripts/areas/area_karamja/configs/karamja.npc:28-34; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-85"
+                },
+                "leash": 8,
+                "prefer": ["Can I journey on this ship?", "Ok."],
+                "strict": true
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } }
+            },
+            {
+              "id": "hunt-disembark-port-ship-stage2",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "karamjashipplank_off" },
+                "op": "Cross",
+                "anchor": {
+                  "tile": [3031, 3217, 1],
+                  "source": "content/maps/m47_50.jm2:8788; content/scripts/general_use/configs/gangplank.loc:27-33; content/scripts/general_use/scripts/gangplank.rs2:28-39"
+                },
+                "radius": 4,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } },
+              "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } } }
+            },
+            {
+              "id": "hunt-acquire-chest-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:chest-key" },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } }
+                ]
+              }
+            },
+            {
+              "id": "hunt-walk-to-blue-moon-stairs",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3227, 3393, 0],
+                "source": "content/maps/m50_53.jm2:8226; content/scripts/ladders+stairs/scripts/stairs.rs2:427-431",
+                "radius": 2
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3230, 3393, 1], "radius": 2 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3218, 3396, 1], "radius": 4 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3227, 3393, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3227, 3393, 0], "radius": 2 } } }
+            },
+            {
+              "id": "hunt-climb-blue-moon-stairs",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "woodenstairs" },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [3227, 3393, 0],
+                  "source": "content/maps/m50_53.jm2:8226; content/scripts/ladders+stairs/scripts/stairs.rs2:427-431"
+                },
+                "radius": 3,
+                "settle_ms": 15000
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3230, 3393, 1], "radius": 2 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3218, 3396, 1], "radius": 4 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3230, 3393, 1], "radius": 1 } } }
+            },
+            {
+              "id": "hunt-use-key-on-chest",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "chest_key",
+                "target": { "loc": "piratechest" },
+                "anchor": {
+                  "tile": [3218, 3396, 1],
+                  "source": "content/maps/m50_53.jm2:10368; content/scripts/quests/quest_hunt/configs/quest_hunt.loc:17-28; content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:5-21"
+                },
+                "radius": 6,
+                "product": "piratemessage",
+                "settle_ms": 30000,
+                "dialogue": "none"
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "piratemessage" } } }
+            },
+            {
+              "id": "hunt-read-pirate-message",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "held": "piratemessage" },
+                "op": "Read",
+                "anchor": {
+                  "tile": [3218, 3396, 1],
+                  "source": "content/pack/obj.pack:434; content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:23-27"
+                },
+                "radius": 1,
+                "settle_ms": 15000,
+                "dialogue": "none"
+              },
+              "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3", "hunt:4"] } } },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hunt:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "hunt-acquire-spade",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:spade" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } }
+            },
+            {
+              "id": "hunt-dig-treasure",
+              "kind": "acquire",
+              "version": 1,
+              "advances": true,
+              "args": { "recipe": "acquire:dig-treasure" },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:4"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hunt:4",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,390 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "hetty",
+  "display_name": "Witch's Potion",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "onion", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "rats_tail", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "eye_of_newt", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "burnt_meat", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:rat-tail": [
+        {
+          "id": "withdraw-rat-tail",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "rats_tail", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "rats_tail" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+        },
+        {
+          "id": "farm-rat-tail",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "comment": "The Rat drop is conditional on Witch's Potion being active and no Rat's tail being held or banked; the preceding bank check handles the bank condition.",
+          "args": {
+            "target": { "npc": "rat", "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true },
+            "stand": {
+              "tile": [2955, 3204, 0],
+              "source": "scripts/_unpack/225/all.npc:1197-1205; scripts/drop tables/scripts/rat.rs2:8-12; maps/m46_50.jm2:7416-7419 (Rat spawns in the colony at [2953-2960,3202-3205,0])"
+            },
+            "lost_radius": 8,
+            "kill_budget_ticks": 240,
+            "loadout": null,
+            "loot": ["rats_tail"],
+            "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+        }
+      ],
+      "acquire:onion": [
+        {
+          "id": "withdraw-onion",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "onion", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "onion" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+        },
+        {
+          "id": "pick-onion",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "onion" },
+            "op": "Pick",
+            "anchor": {
+              "tile": [2950, 3251, 0],
+              "source": "scripts/_unpack/225/all.loc:15089-15096; scripts/general_use/scripts/pickables.rs2:30-40; maps/m46_50.jm2:4747-5142 (Rimmington onion locs, including [2950,3251,0])"
+            },
+            "radius": 4,
+            "wait_if_missing": true,
+            "until": { "obj": "onion", "qty": 1 },
+            "settle_ms": 120000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+        }
+      ],
+      "acquire:eye-of-newt": [
+        {
+          "id": "withdraw-eye-of-newt",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "eye_of_newt", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "eye_of_newt" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+        },
+        {
+          "id": "buy-eye-of-newt",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "betty",
+              "anchor": {
+                "tile": [3011, 3260, 0],
+                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:187-205; scripts/areas/area_port_sarim/configs/port_sarim.inv:50; maps/m47_50.jm2:10002 (Betty at [3012,3259,0])"
+              }
+            },
+            "obj": "eye_of_newt",
+            "qty": 1,
+            "est_gp": 10
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+        }
+      ],
+      "acquire:burnt-meat": [
+        {
+          "id": "withdraw-burnt-meat",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "burnt_meat", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "burnt_meat" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+        },
+        {
+          "id": "withdraw-cooked-meat",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "cooked_meat", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "cooked_meat" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "withdraw-raw-beef",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "raw_beef", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "raw_beef" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "buy-raw-beef",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "wydin",
+              "anchor": {
+                "tile": [3014, 3204, 0],
+                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
+              }
+            },
+            "obj": "raw_beef",
+            "qty": 1,
+            "est_gp": 10
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "cook-beef",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "comment": "Cooking raw beef may yield cooked_meat or burnt_meat; the content burn message and inventory predicate both settle that outcome.",
+          "args": {
+            "item": "raw_beef",
+            "target": { "loc": "range" },
+            "anchor": {
+              "tile": [2970, 3209, 0],
+              "source": "scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:38-48; scripts/skill_cooking/configs/cooking_source/cooking_sources.loc:1-7; maps/m46_50.jm2:5740 (range at [2970,3209,0])"
+            },
+            "radius": 6,
+            "product": "cooked_meat",
+            "no_product": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["You accidentally burn the meat."] } } },
+            "settle_ms": 30000
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "burn-cooked-meat",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "comment": "The content gives cooking cooked_meat into burnt_meat successchance 1,1.",
+          "args": {
+            "item": "cooked_meat",
+            "target": { "loc": "range" },
+            "anchor": {
+              "tile": [2970, 3209, 0],
+              "source": "scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:50-60; scripts/skill_cooking/configs/cooking_source/cooking_sources.loc:1-7; maps/m46_50.jm2:5740 (range at [2970,3209,0])"
+            },
+            "radius": 6,
+            "product": "burnt_meat",
+            "settle_ms": 30000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 50,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:onion", "obj:eye_of_newt", "obj:rats_tail", "obj:burnt_meat", "obj:raw_beef", "obj:cooked_meat"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:hetty",
+      "progress": {
+        "colour": { "not_started": "hetty:0", "in_progress": "hetty:1", "complete": "hetty:3" },
+        "rules": [
+          { "stage": "hetty:3", "all": ["quest complete!"], "varp": 3 },
+          { "stage": "hetty:2", "all": ["i brought her an onion", "i should drink from the cauldron"], "varp": 2 },
+          { "stage": "hetty:1", "all": ["i spoke to hetty in her house at rimmington", "hetty needs me to bring her the following"], "varp": 1 },
+          { "stage": "hetty:0", "all": ["i can start this quest by speaking to hetty", "rimmington"], "varp": 0 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "hetty:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-hetty",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "hetty",
+                "anchor": {
+                  "tile": [2970, 3207, 0],
+                  "source": "scripts/areas/area_rimmington/configs/rimmington.npc:1-8; scripts/areas/area_rimmington/scripts/hetty.rs2:40-83; maps/m46_50.jm2:7420 (Hetty at [2968,3206,0])"
+                },
+                "leash": 6,
+                "prefer": ["I am in search of a quest.", "Yes help me become one with my darker side."]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hetty", "any": ["hetty:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hetty:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "scan-bank-for-hetty-ingredients",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "get-rat-tail",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:rat-tail" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+            },
+            {
+              "id": "get-onion",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:onion" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+            },
+            {
+              "id": "get-eye-of-newt",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:eye-of-newt" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+            },
+            {
+              "id": "get-burnt-meat",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:burnt-meat" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+            },
+            {
+              "id": "hand-in-ingredients",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "hetty",
+                "anchor": {
+                  "tile": [2970, 3207, 0],
+                  "source": "scripts/areas/area_rimmington/configs/rimmington.npc:1-8; scripts/areas/area_rimmington/scripts/hetty.rs2:13-30; maps/m46_50.jm2:7420 (Hetty at [2968,3206,0])"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+              ] } },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hetty", "any": ["hetty:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hetty:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "drink-hetty-cauldron",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "hettycauldron" },
+                "op": "Drink From",
+                "anchor": {
+                  "tile": [2967, 3205, 0],
+                  "source": "scripts/_unpack/225/all.loc:11307-11312; scripts/quests/quest_hetty/scripts/quest_hetty.rs2:1-13; maps/m46_50.jm2:5596 (hettycauldron at [2967,3205,0])"
+                },
+                "radius": 3,
+                "settle_ms": 30000
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "hetty", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "hetty:3", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}

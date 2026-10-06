@@ -450,7 +450,9 @@ fn native_bank_access(
                 vec![bank.tile],
                 BankStandAccess {
                     bank,
-                    stand_tile: definition.tile,
+                    // Catalog object tiles are walk stands; BankMachine resolves
+                    // the live object row separately at that stand.
+                    stand_tile: bank.tile,
                     kind: NativeAccessKind::Booth,
                     // Object operations are resolved against the live loc row
                     // by BankMachine immediately before dispatch.

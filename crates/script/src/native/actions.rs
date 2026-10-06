@@ -445,6 +445,16 @@ impl<M: NativeMachine> Drop for ActionHandle<M> {
     }
 }
 
+impl<M: NativeMachine> ActionHandle<M> {
+    pub(crate) fn machine_prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        let machine = self.machine.borrow();
+        match machine.as_ref() {
+            Some(machine) => machine.prayer_cleanup(),
+            None => crate::combat::RaisedPrayers::empty(),
+        }
+    }
+}
+
 impl ActionHandle<crate::combat::Combat> {
     pub(crate) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();
@@ -1245,6 +1255,7 @@ mod tests {
                 loc_id: None,
                 cross: Box::new([]),
                 protect: false,
+                food_guard: false,
                 allow: Default::default(),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
@@ -1755,6 +1766,7 @@ mod tests {
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
                 protect: false,
+                food_guard: false,
                 allow: Default::default(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -1788,6 +1800,7 @@ mod tests {
         snapshot.seed_local_player(LocalPlayerView {
             player: PlayerView {
                 index: 0,
+                network: tile,
                 actor: ActorView {
                     name: Some("alice".into()),
                     actions: Vec::new(),
@@ -1851,6 +1864,7 @@ mod tests {
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
                             protect: false,
+                            food_guard: false,
                             allow: Default::default(),
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();

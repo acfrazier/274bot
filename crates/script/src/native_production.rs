@@ -4,7 +4,7 @@
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::production::{MakeXCore, MakeXPhase, MakeXProduct, MakeXSelection, MakeXStep};
 use crate::shim::InteractReq;
-use api::snapshot::{ItemView, MakeProductView};
+use api::snapshot::MakeProductView;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -234,12 +234,5 @@ impl NativeMachine for MakeMachine {
 }
 
 fn held(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
-    cx.snapshot().inventory().map(|rows| count(rows.value, id))
-}
-
-fn count(rows: &[ItemView], id: i32) -> i32 {
-    rows.iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count)
-        .sum()
+    cx.snapshot().stock().held(id)
 }

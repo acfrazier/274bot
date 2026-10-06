@@ -16,7 +16,7 @@ use api::selected::ClientRevision;
 use api::snapshot::SnapshotView;
 use std::sync::{Arc, LazyLock};
 
-const LOWEST_PROTECT: i32 = 37;
+pub const MIN_PROTECT_PRAYER_LEVEL: i32 = 37;
 const PRAYER_STAT: i32 = 5;
 const HITPOINTS_STAT: i32 = 3;
 
@@ -64,6 +64,7 @@ pub enum GuardOp {
 pub enum GuardRefusal {
     PrayerTooLow,
     PrayerDisallowed,
+    FoodDisallowed,
     Snapshot,
     Tables,
 }
@@ -94,8 +95,11 @@ const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
 const FLAG_FOOD_ALLOWED: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
+const FLAG_FOOD_ONLY: u8 = 16;
 
-const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
+// Pickup expands the shared Schedule to nine slots and u16 masks; the merged
+// food guard needs 264 bytes without adding any guard fields for abort upkeep.
+const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 264);
 
 static TABLES: LazyLock<Option<Arc<CombatTables>>> = LazyLock::new(|| {
     api::game_data::for_revision(ClientRevision::R289)
@@ -164,10 +168,54 @@ impl WalkGuard {
             return Err(GuardRefusal::PrayerDisallowed);
         }
         let base = prayer_base(snapshot).ok_or(GuardRefusal::Snapshot)?;
-        if base < LOWEST_PROTECT {
+        if base < MIN_PROTECT_PRAYER_LEVEL {
             return Err(GuardRefusal::PrayerTooLow);
         }
-        Ok(Self {
+        Ok(Self::new(tables, request.allow.food, false))
+    }
+
+    /// Begin food-only upkeep for a route when protection is not allowed.
+    pub fn begin_food_only(
+        request: &WalkRequest,
+        snapshot: &SnapshotView<'_>,
+    ) -> Result<Self, GuardRefusal> {
+        Self::begin_food_only_with(request, snapshot, shared_tables()?)
+    }
+
+    /// Host/tests supply the pin's tables explicitly.
+    pub fn begin_food_only_with(
+        request: &WalkRequest,
+        _snapshot: &SnapshotView<'_>,
+        tables: Arc<CombatTables>,
+    ) -> Result<Self, GuardRefusal> {
+        if !request.allow.food {
+            return Err(GuardRefusal::FoodDisallowed);
+        }
+        Ok(Self::new(tables, true, true))
+    }
+
+    /// Whether any recognized food remains in the observed inventory.
+    /// Missing inventory is unknown, not exhausted.
+    pub fn has_food(&self, snapshot: &SnapshotView<'_>) -> Option<bool> {
+        if self.flags & FLAG_FOOD_ALLOWED == 0 {
+            return Some(false);
+        }
+        let inventory = snapshot.inventory()?;
+        Some(
+            inventory
+                .value
+                .iter()
+                .any(|row| row.count > 0 && self.tables.food(row.def.id).is_some()),
+        )
+    }
+
+    /// Prayers this guard has observed being raised by its admitted click.
+    pub fn prayer_cleanup(&self) -> RaisedPrayers {
+        self.raised_prayers
+    }
+
+    fn new(tables: Arc<CombatTables>, food_allowed: bool, food_only: bool) -> Self {
+        Self {
             threats: ThreatSet::default(),
             tables,
             schedule: Schedule::default(),
@@ -178,18 +226,15 @@ impl WalkGuard {
             raised_prayers: RaisedPrayers::default(),
             prayer_admission_tick: 0,
             unprotectable: 0,
-            flags: if request.allow.food {
-                FLAG_FOOD_ALLOWED
-            } else {
-                0
-            },
+            flags: if food_allowed { FLAG_FOOD_ALLOWED } else { 0 }
+                | if food_only { FLAG_FOOD_ONLY } else { 0 },
             drink_points: 0,
             drink_doses: 0,
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
             eat_admission_tick: 0,
-        })
+        }
     }
 
     /// Previous drink lock or protect click still covers `tick`: the route
@@ -324,8 +369,10 @@ impl WalkGuard {
             });
         }
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
-        self.observe_protect(&frame);
-        self.settle_drink(&frame, tick, points);
+        if self.flags & FLAG_FOOD_ONLY == 0 {
+            self.observe_protect(&frame);
+            self.settle_drink(&frame, tick, points);
+        }
         let danger = self
             .threats
             .danger(&frame, &self.tables, tick, false, false);
@@ -349,6 +396,9 @@ impl WalkGuard {
             if let Some(eat) = self.eat_op(&frame, eat_choice) {
                 return Some(eat);
             }
+        }
+        if self.flags & FLAG_FOOD_ONLY != 0 {
+            return self.eat_op(&frame, eat_choice);
         }
         let Some(wanted) =
             policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
@@ -403,6 +453,17 @@ impl WalkGuard {
         Some(GuardOp::IfButton {
             component: wanted.button_com,
         })
+    }
+    /// Whether the current observed HP exceeds the guard's food line for its
+    /// current live danger estimate. Unknown danger is never considered safe.
+    pub fn safe_to_stop(&self, snapshot: &SnapshotView<'_>) -> bool {
+        let Some(frame) = Frame::borrow(*snapshot) else {
+            return false;
+        };
+        let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
+        self.threats
+            .danger(&frame, &self.tables, frame.tick, false, false)
+            .is_some_and(|danger| hp > select::lines(Some(danger), hp_max).eat)
     }
 
     /// Retire the admitted protect and, while a switch is pending, the distinct
@@ -619,6 +680,7 @@ mod tests {
                 local: LocalPlayerView {
                     player: PlayerView {
                         index: 1,
+                        network: at,
                         actor: actor(at),
                         combat_level: 60,
                         skill_level: 0,
@@ -691,6 +753,7 @@ mod tests {
                 evidence: None,
                 cross: Box::default(),
                 protect: true,
+                food_guard: false,
                 allow: Default::default(),
             }
         }
@@ -858,7 +921,7 @@ mod tests {
 
     #[test]
     fn driver_fits_the_per_route_budget() {
-        assert!(std::mem::size_of::<WalkGuard>() <= 256);
+        assert!(std::mem::size_of::<WalkGuard>() <= 264);
     }
 
     #[test]

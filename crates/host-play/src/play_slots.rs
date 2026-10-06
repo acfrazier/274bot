@@ -1543,11 +1543,12 @@ fn spawn_slot_thread(
                                     *script_tick,
                                     &nav_snapshot,
                                     exclusive,
+                                    tick_edge,
                                 );
                                 if let Some(status) = script_slot(&slot_scripts, name)
                                     .and_then(|slot| slot.lock().ok()?.native_status())
                                 {
-                                    crate::combat_proof::record_status(name, &status);
+                                    crate::combat_proof::record_status(name, &status, Some(*script_tick));
                                 }
                             }
                             c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);

@@ -217,6 +217,200 @@ fn collision_with_flags(
     }
 }
 
+struct SyntheticHunterContent {
+    root: PathBuf,
+    has_door: bool,
+}
+
+impl SyntheticHunterContent {
+    fn new(wanderrange: i32, stationary: bool, has_door: bool) -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "274bot-hunter-zones-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let fixture = Self { root, has_door };
+        fixture.write(
+            "pack/npc.pack",
+            "96=white_wolf\n917=draynor_guard\n1101=thrower\n",
+        );
+        let stationary_setting = if stationary {
+            "moverestrict=nomove\n"
+        } else {
+            "defaultmode=normal\n"
+        };
+        fixture.write(
+            "scripts/configs/hunters.npc",
+            &format!(
+                "[thrower]\nhuntmode=aggressive_ranged\nhuntrange=8\nwanderrange={wanderrange}\nmaxrange=20\nattackrange=8\n{stationary_setting}\
+                 [white_wolf]\nhuntmode=support\nhuntrange=1\nwanderrange=0\nmaxrange=1\n\
+                 [draynor_guard]\nhuntmode=support\nhuntrange=1\nwanderrange=0\nmaxrange=1\n"
+            ),
+        );
+        fixture.write(
+            "scripts/configs/hunters.hunt",
+            "[aggressive_ranged]\ntype=player\ncheck_nottoostrong=off\nfind_newmode=applayer2\ncheck_vis=lineofsight\n\
+             [support]\ntype=player\ncheck_nottoostrong=off\nfind_newmode=opplayer2\n",
+        );
+        let door = if has_door { "0 26 14: 200 0 1\n" } else { "" };
+        fixture.write(
+            "maps/m44_56.jm2",
+            &format!("==== MAP ====\n==== LOC ====\n{door}==== NPC ====\n0 35 14: 1101\n"),
+        );
+        fixture.write(
+            "maps/m44_54.jm2",
+            "==== MAP ====\n==== LOC ====\n==== NPC ====\n0 35 42: 96\n",
+        );
+        fixture.write(
+            "maps/m48_50.jm2",
+            "==== MAP ====\n==== LOC ====\n==== NPC ====\n0 28 40: 917\n",
+        );
+        fixture
+    }
+
+    fn write(&self, relative: &str, text: &str) {
+        let path = self.root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+impl Drop for SyntheticHunterContent {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn synthetic_hunter_npc(id: i32) -> client::config::NpcType {
+    client::config::NpcType {
+        id,
+        name: format!("Synthetic hunter {id}"),
+        vislevel: 67,
+        size: 1,
+        ..client::config::NpcType::default()
+    }
+}
+
+fn collision_with_hunter_ridge() -> WorldCollision {
+    let mut collision = collision_with_flags(64, 64, &[]);
+    collision.origin = WorldTile {
+        x: 2828,
+        z: 3575,
+        level: 0,
+    };
+    let wall_x = usize::try_from(2847 - collision.origin.x).unwrap();
+    let mut flags = vec![0u32; 4 * 64 * 64];
+    for z in 0..64 {
+        flags[z * 64 + wall_x] = CollisionFlag::V_E as u32;
+        flags[z * 64 + wall_x + 1] = CollisionFlag::V_W as u32;
+    }
+    collision.attach_flags(flags);
+    collision
+}
+
+fn derive_synthetic_hunter_zones(
+    content: &SyntheticHunterContent,
+    collision: &WorldCollision,
+) -> DerivedZones {
+    let npc_types = [
+        synthetic_hunter_npc(96),
+        synthetic_hunter_npc(917),
+        synthetic_hunter_npc(1101),
+    ];
+    let door_ids = if content.has_door {
+        HashSet::from([200])
+    } else {
+        HashSet::new()
+    };
+    derive_zone_table(
+        &content.root,
+        collision,
+        &crate::transport::TransportGraph::default(),
+        &npc_types,
+        &door_ids,
+    )
+    .unwrap()
+}
+
+fn synthetic_thrower_zone_index(table: &ZoneTable) -> usize {
+    table
+        .zones()
+        .iter()
+        .position(|zone| zone.spawn_x == 2851 && zone.spawn_z == 3598)
+        .expect("synthetic thrower zone")
+}
+
+#[test]
+fn derive_zone_table_keeps_full_rectangle_for_wandering_los_hunter() {
+    let content = SyntheticHunterContent::new(4, false, false);
+    let collision = collision_with_hunter_ridge();
+    let derived = derive_synthetic_hunter_zones(&content, &collision);
+    let zone_index = synthetic_thrower_zone_index(&derived.table);
+    let zone = &derived.table.zones()[zone_index];
+
+    assert_eq!(
+        (zone.min_x, zone.min_z, zone.max_x, zone.max_z),
+        (2839, 3586, 2863, 3610),
+        "wandering hunter keeps its full range-derived rectangle"
+    );
+    assert!(
+        derived
+            .table
+            .carves()
+            .iter()
+            .all(|(index, _)| usize::from(*index) != zone_index),
+        "positive-wander LOS hunter must not be carved"
+    );
+    assert_eq!(
+        derived
+            .table
+            .at(WorldTile {
+                x: 2839,
+                z: 3598,
+                level: 0,
+            })
+            .count(),
+        1,
+        "the opaque ridge does not remove any tile from the wandering hunter zone"
+    );
+}
+
+#[test]
+fn derive_zone_table_suppresses_all_carves_for_nearby_openable_door() {
+    let content = SyntheticHunterContent::new(0, true, true);
+    let collision = collision_with_hunter_ridge();
+    let derived = derive_synthetic_hunter_zones(&content, &collision);
+    let zone_index = synthetic_thrower_zone_index(&derived.table);
+    let zone = &derived.table.zones()[zone_index];
+
+    assert_eq!(
+        (zone.min_x, zone.min_z, zone.max_x, zone.max_z),
+        (2843, 3590, 2859, 3606),
+        "the openable door is at x=min_x-1, inside the expanded envelope"
+    );
+    assert!(
+        derived
+            .table
+            .carves()
+            .iter()
+            .all(|(index, _)| usize::from(*index) != zone_index),
+        "one nearby openable door suppresses every visibility carve for this zone"
+    );
+    assert_eq!(
+        derived
+            .table
+            .at(WorldTile {
+                x: 2843,
+                z: 3598,
+                level: 0,
+            })
+            .count(),
+        1,
+        "the blocked boundary tile remains in the conservative zone"
+    );
+}
+
 #[test]
 fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
     let spawn = WorldTile {
@@ -243,4 +437,63 @@ fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
     .unwrap();
     let open_shape = stationary_melee_shape(&west_wall, spawn, 1, &door_faces).unwrap();
     assert_ne!(open_shape & (1u64 << 3), 0);
+}
+
+#[test]
+fn fixed_ranged_hunter_carves_occluded_tiles_but_retains_visible_range() {
+    let spawn = WorldTile {
+        x: 12,
+        z: 12,
+        level: 0,
+    };
+    let mut collision = collision_with_flags(24, 24, &[]);
+    // A permanent range-blocking ridge, unlike walk-only ground collision.
+    let mut flags = vec![0u32; 4 * 24 * 24];
+    for z in 0..24 {
+        flags[z * 24 + 8] = CollisionFlag::V_E as u32;
+        flags[z * 24 + 9] = CollisionFlag::V_W as u32;
+    }
+    collision.attach_flags(flags);
+    let zone = Zone::npc(spawn, 8, ZoneClass::Always, u16::MAX, 0);
+    let mut carves = Vec::new();
+    append_ranged_visibility_carves(&collision, &zone, 0, &mut carves).unwrap();
+    let table = ZoneTable::from_parts(
+        vec![zone],
+        vec![ZoneKind::new(
+            "thrower",
+            "Thrower Troll",
+            1101,
+            67,
+            true,
+            false,
+        )],
+        vec![],
+        carves,
+        vec![],
+        collision.origin,
+        24,
+        24,
+        &crate::transport::WildernessRules::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        table.at(spawn).count(),
+        1,
+        "the NPC and visible plateau stay dangerous"
+    );
+    assert_eq!(table.at(WorldTile { x: 9, ..spawn }).count(), 1);
+    assert_eq!(
+        table.at(WorldTile { x: 8, ..spawn }).count(),
+        0,
+        "the ridge blocks acquisition"
+    );
+    assert_eq!(table.at(WorldTile { x: 4, ..spawn }).count(), 0);
+    assert_eq!(
+        table.at(WorldTile { x: 20, ..spawn }).count(),
+        1,
+        "inclusive hunt range remains eight"
+    );
+    assert_eq!(table.at(WorldTile { x: 21, ..spawn }).count(), 0);
+    collision.drop_flags();
+    assert!(append_ranged_visibility_carves(&collision, &zone, 0, &mut Vec::new()).is_err());
 }

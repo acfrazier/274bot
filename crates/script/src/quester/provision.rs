@@ -4,12 +4,15 @@ use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
 use super::families::{self, AcquirePlan};
+use crate::bank::ops;
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
+use api::selected::FactKey;
 use api::snapshot::{ItemView, WorldTile};
+use api::stock::Stock;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -106,6 +109,7 @@ impl Provisioner {
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         if self.acquire_finished {
             self.acquire_run = None;
@@ -130,7 +134,7 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
-        self.poll_prepare(cx, plan, active_loadout)
+        self.poll_prepare(cx, plan, active_loadout, current_stage)
     }
 
     pub fn cancel(&mut self) {
@@ -217,6 +221,7 @@ impl Provisioner {
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let snapshot = cx.tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
@@ -230,8 +235,14 @@ impl Provisioner {
         let inventory = inventory.value;
         let capacity = i32::from(capacity.value);
         let mut needs = Needs::new();
+        let current = stage_index(plan, current_stage);
 
         for item in plan.items.iter() {
+            if !item_due(item, current) {
+                // The quest has not reached this item's stage yet: no need,
+                // and no Unknown-bank scan, until it is due.
+                continue;
+            }
             if item.kind == CompiledItemKind::Acquirable && item.acquire.is_none() {
                 // Authored steps may gather or transform these goals in stages.
                 // Consider their bank hints only after the immediate needs.
@@ -254,6 +265,56 @@ impl Provisioner {
             };
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
         }
+        for need in plan.gather_tool_needs.iter() {
+            let Some(stats) = snapshot.stats() else {
+                continue;
+            };
+            let mut ready = false;
+            let mut first_tool = None;
+            let mut banked_tool = None;
+            for &index in need.methods.iter() {
+                let Some(method) = need.catalog.methods().get(index) else {
+                    continue;
+                };
+                match crate::gatherer::supply::method_ready(snapshot, method, true) {
+                    Ok(true) => {
+                        ready = true;
+                        break;
+                    }
+                    Err("gather usable tool missing") => {
+                        for candidate in
+                            crate::gatherer::supply::method_tool_candidates(method, stats.value)
+                        {
+                            let Some(item) =
+                                need.tools.iter().find(|item| item.id == candidate.item)
+                            else {
+                                continue;
+                            };
+                            first_tool.get_or_insert(item);
+                            if cx.bank.known() && cx.bank.count(candidate.item).unwrap_or(0) > 0 {
+                                banked_tool = Some(item);
+                                break;
+                            }
+                        }
+                    }
+                    Ok(false) | Err(_) => {}
+                }
+                if banked_tool.is_some() {
+                    break;
+                }
+            }
+            if ready {
+                continue;
+            }
+            let candidate = if cx.bank.known() {
+                banked_tool
+            } else {
+                first_tool
+            };
+            if let Some(item) = candidate {
+                needs.require(item, 1, MissingKind::Optional, inventory, cx.bank)?;
+            }
+        }
 
         let active_recipe =
             if let Some(need) = needs.acquire.as_ref().filter(|_| needs.blocked.is_none()) {
@@ -271,12 +332,12 @@ impl Provisioner {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
             if !self.coin_drawn {
-                if count_item(inventory, coin.item.id) >= coin.qty {
+                if ops::count_id(inventory, coin.item.id) >= coin.qty {
                     self.set_coin_drawn(true);
                 } else {
                     let fits = !cx.bank.known() || {
-                        let incoming = incoming_slots(
-                            count_item(inventory, coin.item.id),
+                        let incoming = Stock::incoming_slots(
+                            ops::count_id(inventory, coin.item.id),
                             coin.qty,
                             coin.stackable,
                             cx.bank.count(coin.item.id).unwrap_or(0),
@@ -314,12 +375,12 @@ impl Provisioner {
                 if self.carry_drawn & bit != 0 {
                     continue;
                 }
-                if row.qty <= 0 || count_item(inventory, row.item.id) >= row.qty {
+                if row.qty <= 0 || ops::count_id(inventory, row.item.id) >= row.qty {
                     self.set_carry_latch(row.latch_index);
                 } else {
                     let fits = !cx.bank.known() || {
-                        let incoming = incoming_slots(
-                            count_item(inventory, row.item.id),
+                        let incoming = Stock::incoming_slots(
+                            ops::count_id(inventory, row.item.id),
                             row.qty,
                             row.stackable,
                             cx.bank.count(row.item.id).unwrap_or(0),
@@ -366,13 +427,14 @@ impl Provisioner {
             .items
             .iter()
             .filter(|item| item.kind == CompiledItemKind::Acquirable && item.acquire.is_none())
+            .filter(|item| item_due(item, current))
         {
             let target = i32::try_from(item.qty).map_err(|_| {
                 ActionError::Unavailable(Arc::from("compiled item quantity overflow"))
             })?;
             if cx.bank.known() {
-                let pack = count_item(inventory, item.id);
-                let incoming = incoming_slots(
+                let pack = ops::count_id(inventory, item.id);
+                let incoming = Stock::incoming_slots(
                     pack,
                     target,
                     item.stackable,
@@ -462,7 +524,7 @@ impl Provisioner {
                 ProvisionPhase::Spillover,
                 status.map(|need| Arc::clone(&need.item)),
                 status.map_or(deficit, |need| need.need),
-                status.map_or(occupied_slots(inventory), |need| need.pack),
+                status.map_or(ops::occupied(inventory), |need| need.pack),
                 status.and_then(|need| need.bank),
             );
             return Poll::Pending;
@@ -570,6 +632,26 @@ impl Provisioner {
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(_)) => Poll::Ready(Ok(ProvisionEvent::Acquired)),
         }
+    }
+
+    pub(super) fn start_predicate_scan(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        plan: &CompiledProvisioning,
+    ) {
+        if self.bank_run.is_some() || self.acquire_run.is_some() {
+            return;
+        }
+        self.start_bank(
+            cx,
+            plan,
+            BankAction::Scan,
+            ProvisionPhase::Scanning,
+            None,
+            0,
+            0,
+            None,
+        );
     }
 
     #[allow(clippy::too_many_arguments)] // One bank request and its producer-side status receipt.
@@ -687,7 +769,7 @@ impl Needs {
         if target <= 0 {
             return Ok(());
         }
-        let pack = count_item(inventory, item.id);
+        let pack = ops::count_id(inventory, item.id);
         if pack >= target {
             return Ok(());
         }
@@ -1027,16 +1109,17 @@ fn walk_evidence(receipt: crate::native::WalkReceipt) -> Result<(), ActionError>
     receipt.into_arrival().map(|_| ())
 }
 
-fn count_item(inventory: &[ItemView], id: i32) -> i32 {
-    inventory
-        .iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count.max(0))
-        .sum()
+/// Index of the quest's current stage in compiled sequence order.
+/// Unknown (or unlisted) stages resolve to `None`, which keeps gated
+/// items out: an early acquisition must never start on a guess.
+fn stage_index(plan: &CompiledProvisioning, current_stage: Option<&FactKey>) -> Option<usize> {
+    let stage = current_stage?;
+    plan.stages.iter().position(|key| key == stage)
 }
 
-fn occupied_slots(inventory: &[ItemView]) -> i32 {
-    i32::try_from(inventory.iter().filter(|row| row.count > 0).count()).unwrap_or(i32::MAX)
+fn item_due(item: &super::compile::CompiledQuestItem, current: Option<usize>) -> bool {
+    item.from_stage_index
+        .is_none_or(|gate| current.is_some_and(|stage| stage >= gate))
 }
 
 fn safe_deposit_rows(inventory: &[ItemView], keep: &[i32]) -> usize {
@@ -1044,21 +1127,6 @@ fn safe_deposit_rows(inventory: &[ItemView], keep: &[i32]) -> usize {
         .iter()
         .filter(|row| row.count > 0 && !keep.contains(&row.def.id))
         .count()
-}
-
-fn slots_for_count(count: i32, stackable: bool) -> i32 {
-    let count = count.max(0);
-    if stackable {
-        i32::from(count > 0)
-    } else {
-        count
-    }
-}
-
-fn incoming_slots(pack: i32, target: i32, stackable: bool, bank_count: i32) -> i32 {
-    let take = target.saturating_sub(pack).min(bank_count.max(0));
-    slots_for_count(pack.saturating_add(take), stackable)
-        .saturating_sub(slots_for_count(pack, stackable))
 }
 
 fn has_withdrawal(needs: &Needs, id: i32) -> bool {
@@ -1144,7 +1212,7 @@ fn planned_slots(
     include_recipe_inputs: bool,
     include_final_outputs: bool,
 ) -> i32 {
-    let mut slots = occupied_slots(inventory);
+    let mut slots = ops::occupied(inventory);
     if let Some(recipe) = recipe {
         if include_recipe_inputs {
             for id in recipe.consumed_ids.iter().copied() {
@@ -1153,8 +1221,8 @@ fn planned_slots(
                 {
                     continue;
                 }
-                let absent = slots_for_count(
-                    count_item(inventory, id),
+                let absent = Stock::slots_for(
+                    ops::count_id(inventory, id),
                     item_stackable(plan, Some(recipe), inventory, id),
                 );
                 slots = slots.saturating_sub(absent).max(0);
@@ -1165,8 +1233,8 @@ fn planned_slots(
                 if has_other_recipe_state_need(plan, active_need, id) {
                     continue;
                 }
-                let absent = slots_for_count(
-                    count_item(inventory, id),
+                let absent = Stock::slots_for(
+                    ops::count_id(inventory, id),
                     item_stackable(plan, Some(recipe), inventory, id),
                 );
                 slots = slots.saturating_sub(absent).max(0);
@@ -1198,10 +1266,10 @@ fn planned_slots(
                     .map_or(0, |need| need.need.need),
             );
         }
-        let pack = count_item(inventory, withdrawal.id);
+        let pack = ops::count_id(inventory, withdrawal.id);
         let stackable = item_stackable(plan, recipe, inventory, withdrawal.id);
         slots = slots.saturating_add(
-            slots_for_count(target, stackable).saturating_sub(slots_for_count(pack, stackable)),
+            Stock::slots_for(target, stackable).saturating_sub(Stock::slots_for(pack, stackable)),
         );
     }
     if include_recipe_inputs {
@@ -1210,10 +1278,10 @@ fn planned_slots(
                 if has_withdrawal(needs, input.item.id) {
                     continue;
                 }
-                let pack = count_item(inventory, input.item.id);
+                let pack = ops::count_id(inventory, input.item.id);
                 slots = slots.saturating_add(
-                    slots_for_count(input.qty, input.stackable)
-                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                    Stock::slots_for(input.qty, input.stackable)
+                        .saturating_sub(Stock::slots_for(pack, input.stackable)),
                 );
             }
         }
@@ -1228,10 +1296,10 @@ fn planned_slots(
                 {
                     continue;
                 }
-                let pack = count_item(inventory, input.item.id);
+                let pack = ops::count_id(inventory, input.item.id);
                 slots = slots.saturating_add(
-                    slots_for_count(input.qty, input.stackable)
-                        .saturating_sub(slots_for_count(pack, input.stackable)),
+                    Stock::slots_for(input.qty, input.stackable)
+                        .saturating_sub(Stock::slots_for(pack, input.stackable)),
                 );
             }
         }
@@ -1243,10 +1311,10 @@ fn planned_slots(
                 let recipe_target =
                     recipe.map_or(0, |recipe| recipe_peak_target(recipe, need.need.id));
                 let target = recipe_target.max(need.need.need);
-                let pack = count_item(inventory, need.need.id);
+                let pack = ops::count_id(inventory, need.need.id);
                 slots = slots.saturating_add(
-                    slots_for_count(target, stackable)
-                        .saturating_sub(slots_for_count(pack, stackable)),
+                    Stock::slots_for(target, stackable)
+                        .saturating_sub(Stock::slots_for(pack, stackable)),
                 );
             }
         }
@@ -1291,12 +1359,14 @@ mod tests {
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
-    use crate::quester::compile::CompiledQuestItem;
+    use crate::quester::compile::{self, CompiledQuestItem};
     use crate::quester::families::tests::{def, local_player, with_tick};
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_facts::QuestCatalog;
     use api::selected::{ClientRevision, FactKey};
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use api::snapshot::{
+        GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView, WorldStateView,
+    };
     use std::collections::HashMap;
 
     fn quest_catalog() -> QuestCatalog {
@@ -1389,6 +1459,8 @@ mod tests {
             kind,
             acquire: acquire.map(Arc::from),
             stackable: false,
+            from_stage: None,
+            from_stage_index: None,
         }
     }
 
@@ -1404,7 +1476,9 @@ mod tests {
             bank,
             bank_required: false,
             items: Arc::from(items),
+            stages: Arc::from(Vec::new()),
             tools: Arc::from(Vec::new()),
+            gather_tool_needs: Arc::from(Vec::new()),
             keep_ids: Arc::from(Vec::new()),
             coin_float: 0,
             coin: None,
@@ -1438,7 +1512,35 @@ mod tests {
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            provisioner.poll(&mut cx, plan, active_loadout)
+            provisioner.poll(&mut cx, plan, active_loadout, None)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
+    fn poll_once_at(
+        provisioner: &mut Provisioner,
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        tick: u64,
+        plan: &CompiledProvisioning,
+        active_loadout: Option<&str>,
+        stage: Option<&FactKey>,
+        memo: &BankMemo,
+        banks: &Arc<api::named_banks::NamedBankFacts>,
+        quests: &QuestCatalog,
+    ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        with_tick(snapshot, ledger, tick, |native| {
+            let required_after = native.cx.evidence();
+            let mut cx = StepContext {
+                tick: native,
+                quests,
+                progress: &[],
+                required_after,
+                bank: memo,
+                banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
+            };
+            provisioner.poll(&mut cx, plan, active_loadout, stage)
         })
     }
 
@@ -1919,6 +2021,89 @@ mod tests {
     }
 
     #[test]
+    fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let data = Arc::clone(&selected);
+        let _gather_catalog = api::selected::FamilyPreparation::run(move |worker| {
+            api::gather_methods::prepare(&data, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let mut document = compile::decode_cook().unwrap();
+        let mut step = document.roles[0].sequences[0].steps[0].clone();
+        step.id = FactKey::new("gather-normal-logs");
+        step.kind = "gather".into();
+        step.version = 1;
+        step.args = serde_json::json!({
+            "skill": "woodcutting",
+            "resource": "normal",
+            "until": { "obj": { "id": 1511 }, "qty": 3 }
+        });
+        step.advances = Some(false);
+        step.skip_if = crate::quester::path::PredicateDocument::Any(Vec::new());
+        step.settle = crate::quester::path::PredicateDocument::Any(Vec::new());
+        document.roles[0].sequences[0].steps.push(step);
+        let path = compile::compile_uncached_for_test(&document, &selected, &quests).unwrap();
+        let axe_id = selected.item_by_alias("bronze_axe").unwrap().id;
+        assert_eq!(path.provisioning.gather_tool_needs.len(), 1);
+        assert!(path.provisioning.tools.iter().any(|tool| tool.id == axe_id));
+
+        let mut memo = BankMemo::default();
+        memo.update(&BankReceipt {
+            counts: path
+                .provisioning
+                .memo_ids
+                .iter()
+                .map(|&id| crate::native_bank::BankCount {
+                    id,
+                    count: if id == axe_id { 1 } else { 0 },
+                })
+                .collect(),
+            complete: true,
+        });
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 1,
+            base: 1,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_world(WorldStateView {
+            members: true,
+            ..Default::default()
+        });
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let banks = Arc::new(NamedBankFacts::empty());
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        let Some(crate::native_bank::BankAction::WithdrawTo { withdrawals }) =
+            provisioner.bank_run.as_ref().map(|run| &run.action)
+        else {
+            panic!("gather tool did not enter the Quester bank withdrawal path");
+        };
+        assert!(withdrawals
+            .iter()
+            .any(|withdrawal| withdrawal.id == axe_id && withdrawal.target == 1));
+    }
+
+    #[test]
     fn acquirable_without_recipe_defers_to_authored_steps_after_bank_observation() {
         let plan = provisioning(
             vec![compiled_item(
@@ -2283,5 +2468,98 @@ mod tests {
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
         assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn staged_item_waits_for_its_stage_and_skips_the_unknown_bank_scan() {
+        let mut item = compiled_item(
+            42,
+            "Quest token",
+            1,
+            CompiledItemKind::Acquirable,
+            Some("acquire:token"),
+        );
+        item.from_stage = Some(FactKey::new("quest:1"));
+        item.from_stage_index = Some(1);
+        let mut plan = provisioning(vec![item], vec![42], None);
+        plan.stages = Arc::from(vec![FactKey::new("quest:0"), FactKey::new("quest:1")]);
+        plan.recipes.insert(
+            Arc::from("acquire:token"),
+            CompiledAcquireRecipe {
+                steps: Arc::from(Vec::new()),
+                peak_items: Arc::from([]),
+                consumed_ids: Arc::from([]),
+            },
+        );
+        let snapshot = ready_snapshot(Vec::new());
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let early = FactKey::new("quest:0");
+        let gated = FactKey::new("quest:1");
+
+        // Unknown and earlier stages: the item is not due, so the
+        // Unknown bank is never scanned for it.
+        for stage in [None, Some(&early)] {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let memo = BankMemo::default();
+            assert!(
+                matches!(
+                    poll_once_at(
+                        &mut provisioner,
+                        &snapshot,
+                        &mut ledger,
+                        1,
+                        &plan,
+                        None,
+                        stage,
+                        &memo,
+                        &banks,
+                        &quests,
+                    ),
+                    Poll::Ready(Ok(ProvisionEvent::Ready))
+                ),
+                "gated item must produce no need before its stage"
+            );
+            assert!(ledger.is_none());
+        }
+
+        // At the gated stage the missing item scans the Unknown bank.
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memo = BankMemo::default();
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            Some(&gated),
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+
+        // With the bank observed empty the gated item runs its recipe.
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memo = known_empty(42);
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            Some(&gated),
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
     }
 }

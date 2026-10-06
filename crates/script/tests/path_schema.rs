@@ -7,6 +7,7 @@ use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn paths_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289")
@@ -83,6 +84,48 @@ fn path_schema_matches_generator() {
 }
 
 #[test]
+fn gobdip_redberries_recipe_collects_three_ground_spawns() {
+    let value = read_path(&paths_dir().join("gobdip.json"));
+    let steps = value["quest"]["acquire"]["acquire:redberries"]
+        .as_array()
+        .expect("Gobdip redberry recipe");
+    let bank_withdraw = steps
+        .iter()
+        .position(|step| step["kind"] == "bank" && step["args"]["op"] == "withdraw")
+        .expect("bank withdrawal before gathering");
+    assert_eq!(steps[bank_withdraw]["args"]["items"][0]["qty"], json!(3));
+
+    let patch_tile = json!([3271, 3366, 0]);
+    let patch_walk = steps
+        .iter()
+        .position(|step| step["kind"] == "walk" && step["args"]["tile"] == patch_tile)
+        .expect("walk to a redberry patch");
+    assert_eq!(steps[patch_walk]["args"]["radius"], 3);
+
+    let collect = steps
+        .iter()
+        .position(|step| {
+            step["kind"] == "interact"
+                && step["args"]["target"]["ground"] == "redberries"
+                && step["args"]["op"] == "Take"
+        })
+        .expect("take respawning ground redberries");
+    assert!(bank_withdraw < patch_walk && patch_walk < collect);
+    assert_eq!(steps[collect]["args"]["anchor"]["tile"], patch_tile);
+    assert_eq!(steps[collect]["args"]["radius"], 12);
+    assert_eq!(steps[collect]["args"]["wait_if_missing"], true);
+    assert_eq!(
+        steps[collect]["args"]["until"],
+        json!({ "obj": "redberries", "qty": 3 })
+    );
+    assert_eq!(steps[collect]["args"]["settle_ms"], 300000);
+    assert!(
+        steps.iter().all(|step| step["kind"] != "buy"),
+        "redberries must come from ground spawns rather than Wydin's one-stock shop"
+    );
+}
+
+#[test]
 fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     fn assert_no_numeric_formats(value: &Value) {
         match value {
@@ -144,6 +187,11 @@ fn bundled_paths_decode_and_compile() {
     assert_eq!(index.schema, 1, "the release index has its own schema");
 
     let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
     for entry in index.paths {
         // Unavailable rows may keep their authored Path validated here.
         let Some(file) = entry.file else {

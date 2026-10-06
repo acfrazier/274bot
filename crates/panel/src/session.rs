@@ -2484,7 +2484,7 @@ impl Session {
             );
         }
         // Apply run-prepared rewrite (strips mainland/setup cheats) before seed.
-        let scenario = scenario::apply_fixture_mode(scenario, self.fixture_mode)?;
+        let mut scenario = scenario::apply_fixture_mode(scenario, self.fixture_mode)?;
         if matches!(self.fixture_mode, scenario::FixtureMode::RunPrepared)
             && scenario::run_prepared_has_setup_cheats(&scenario)
         {
@@ -2494,6 +2494,7 @@ impl Session {
             ));
         }
         // Copy the view knobs before `scenario` moves into the runner.
+        let script_settings_overrides = scenario.settings.script_settings_overrides.take();
         let view = scenario.settings.clone();
         let scenario_name = scenario.name.to_string();
         let profile_count = scenario.seed.profiles.len();
@@ -2551,6 +2552,11 @@ impl Session {
             LiveCore::Off | LiveCore::Catalog(_) => None,
         };
         let mut inject = scenario::settings_inject_map(view.script_settings_inject);
+        if let Some(overrides) = script_settings_overrides {
+            inject
+                .get_or_insert_with(serde_json::Map::new)
+                .extend(overrides);
+        }
         if pair_case.is_none() {
             if let Some(key) = view.inject_companion_as {
                 if names.len() > 1 {

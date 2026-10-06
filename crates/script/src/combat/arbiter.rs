@@ -18,6 +18,7 @@ pub(crate) enum RowKind {
     Style,
     Retaliate,
     Attack,
+    Pickup,
     Cast,
     Arm,
 }
@@ -35,15 +36,17 @@ impl PlanRow {
         if self.kind == RowKind::Arm && self.aux & ARM_SIDE_TAB_FLAG != 0 {
             return 0;
         }
-        if matches!(self.kind, RowKind::Attack | RowKind::Cast) {
+        if matches!(self.kind, RowKind::Attack | RowKind::Pickup | RowKind::Cast) {
             2
         } else {
             1
         }
     }
     pub fn terminal(self, tables: &CombatTables) -> bool {
-        matches!(self.kind, RowKind::Attack | RowKind::Cast | RowKind::Arm)
-            || self.kind == RowKind::Drink
+        matches!(
+            self.kind,
+            RowKind::Attack | RowKind::Pickup | RowKind::Cast | RowKind::Arm
+        ) || self.kind == RowKind::Drink
             || (self.kind == RowKind::Eat
                 && tables
                     .food(self.id)
@@ -106,13 +109,9 @@ pub(crate) fn stat(frame: &Frame<'_>, index: i32) -> (i32, i32) {
         .find(|row| row.index == index)
         .map_or((0, 0), |row| (row.effective, row.base))
 }
+/// Held count of the exact id on the frame's pack.
 pub(crate) fn count(frame: &Frame<'_>, id: i32) -> i32 {
-    frame
-        .inventory
-        .iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count)
-        .sum()
+    crate::bank::ops::count_id(frame.inventory, id)
 }
 pub(crate) fn potion_id(frame: &Frame<'_>, tables: &CombatTables, kind: PotionKind) -> Option<i32> {
     let family = tables.potion(kind)?;

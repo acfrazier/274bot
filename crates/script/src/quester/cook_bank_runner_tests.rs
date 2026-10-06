@@ -162,6 +162,21 @@ impl CookFixture {
             component_id: 7,
         }
     }
+    fn seed_in_progress(&mut self) {
+        self.snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+    }
+    fn hold(&mut self, alias: &str) {
+        let mut inventory = self.snapshot.inventory().to_vec();
+        inventory.push(self.item(alias, inventory.len() as i32, ItemContainer::Inventory));
+        self.snapshot.seed_inventory(inventory, 28);
+    }
     fn seed_junk(&mut self, rows: usize) {
         let mut inventory = self.snapshot.inventory().to_vec();
         for _ in 0..rows {
@@ -413,8 +428,26 @@ fn real_cook_held_ingredients_do_not_scan_bank_for_optional_tools() {
 }
 
 #[test]
+fn real_cook_not_started_talks_first_without_bank_scan() {
+    let mut fixture = CookFixture::new(false, false);
+    fixture.until_root_begin();
+    assert_eq!(
+        fixture.visits, 0,
+        "gated items must not scan the bank before the start talk"
+    );
+    assert!(fixture
+        .output
+        .logs
+        .iter()
+        .any(|line| line.contains("step start (talk) begin")));
+}
+
+#[test]
 fn real_cook_banked_ingredients_share_one_open_bank_visit() {
     let mut fixture = CookFixture::new(false, true);
+    // Gated items are only due from cook:1, so the banked withdrawal
+    // run happens after the start talk, not before it.
+    fixture.seed_in_progress();
     fixture.until_root_begin();
     assert_eq!(
         fixture.visits, 1,
@@ -425,12 +458,16 @@ fn real_cook_banked_ingredients_share_one_open_bank_visit() {
         .output
         .logs
         .iter()
-        .any(|line| line.contains("step start (talk) begin")));
+        .any(|line| line.contains("step hand-in (talk) begin")));
 }
 
 #[test]
 fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
     let mut fixture = CookFixture::new(false, false);
+    // Flour now leads the acquisition order, so hold it: the test
+    // exercises the ground egg leg that follows.
+    fixture.seed_in_progress();
+    fixture.hold("pot_flour");
     fixture.until_milk();
     assert!(
         fixture.egg_taken,
@@ -452,6 +489,8 @@ fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
 #[test]
 fn real_cook_provisioned_acquisition_emits_child_begin_and_terminal_settle() {
     let mut fixture = CookFixture::new(false, false);
+    fixture.seed_in_progress();
+    fixture.hold("pot_flour");
     fixture.until_milk();
     assert!(
         fixture
@@ -529,6 +568,9 @@ fn real_cook_unrelated_junk_with_enough_slots_makes_no_bank_trip() {
 fn real_cook_unrelated_junk_deposits_only_the_missing_slot() {
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
+    // Gated items are only due from cook:1; at cook:0 this fixture
+    // would talk first and never touch the bank.
+    fixture.seed_in_progress();
     fixture.until_root_begin();
     assert_eq!(
         fixture.visits, 1,
@@ -575,7 +617,9 @@ fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
             QuestStatusView {
                 name: "Cook's Assistant".into(),
                 component_id: 42,
-                colour: 0xf80000,
+                // Gated items are only due from cook:1; at cook:0 the
+                // queued Cook would talk first and never touch the bank.
+                colour: 0xf8f800,
             },
         ]
     };
@@ -821,6 +865,9 @@ fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
     });
     r2_seed_rows(&mut fixture, &[("pot_empty", 8)]);
     r2_seed_bank(&mut fixture, &[("wool", 20)]);
+    // Flour leads the bundled order, so hold it: this test exercises the egg leg.
+    fixture.seed_in_progress();
+    fixture.hold("pot_flour");
 
     r2_until_provision_decision(&mut fixture);
 
@@ -843,7 +890,11 @@ fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
 #[test]
 fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
     let mut fixture = r2_fixture_from_bundled_path("cook", |_| {});
-    r2_seed_rows(&mut fixture, &[("pot_empty", 28)]);
+    // A full pack of preserved tools that overlap no flour peak input:
+    // neither the grain nor the final flour has a slot.
+    r2_seed_rows(&mut fixture, &[("bucket_empty", 28)]);
+    // Gated items are only due from cook:1; at cook:0 this parks nothing and talks instead.
+    fixture.seed_in_progress();
 
     r2_until_provision_decision(&mut fixture);
 
@@ -891,6 +942,8 @@ fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
 #[test]
 fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
     let mut fixture = CookFixture::new(false, true);
+    // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
+    fixture.seed_in_progress();
     fixture.until_root_begin();
     for phase in ["scan", "withdraw"] {
         for outcome in ["begin", "settled"] {
@@ -908,6 +961,8 @@ fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
 fn r1_provisioner_capacity_deposit_is_traced() {
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
+    // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
+    fixture.seed_in_progress();
     fixture.until_root_begin();
     for outcome in ["begin", "settled"] {
         let expected = format!("quester cook: provision bank deposit-capacity {outcome}");
@@ -959,6 +1014,12 @@ fn r1_finish_is_emitted_after_trace_event_cap() {
 
 #[test]
 fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
+    // Bundled gather Paths compile against the prepared catalog; keep it
+    // alive for the whole loop.
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let _gathering =
+        super::super::compile::prepare_for_test(move |worker| selected.prepare_gathering(worker))
+            .expect("289 gather catalog");
     for entry in super::super::registry::BUNDLED_INDEX.paths.iter() {
         let Some(bytes) = super::super::registry::bundled_path(&entry.id) else {
             continue;

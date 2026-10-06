@@ -1,0 +1,1978 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "prince",
+  "display_name": "Prince Ali Rescue",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [
+      {
+        "id": "mining-1",
+        "kind": { "Skill": { "skill": "mining", "level": 1 } },
+        "at": "materials",
+        "source": "scripts/skill_mining/configs/mine.dbrow:10-20,23-34,36-47 (clay, copper and tin rocks require Mining 1)"
+      }
+    ],
+    "items": [
+      {"obj": "princeskey", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "keyprint", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "blondwig", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "plainwig", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "skinpaste", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "pink_skirt", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "rope", "qty": 2, "kind": "acquirable", "acquire": null},
+      {"obj": "beer", "qty": 3, "kind": "acquirable", "acquire": null},
+      {"obj": "bronze_bar", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "copper_ore", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "tin_ore", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "softclay", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "clay", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "yellowdye", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "onion", "qty": 2, "kind": "acquirable", "acquire": null},
+      {"obj": "ball_of_wool", "qty": 3, "kind": "acquirable", "acquire": null},
+      {"obj": "wool", "qty": 3, "kind": "acquirable", "acquire": null},
+      {"obj": "shears", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "redberries", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "pot_flour", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "ashes", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "tinderbox", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "jug_water", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "jug_empty", "qty": 1, "kind": "acquirable", "acquire": null},
+      {"obj": "logs", "qty": 1, "kind": "acquirable", "acquire": null}
+    ],
+    "acquire": {
+      "acquire:best-pickaxe": [
+        {
+          "id": "pickaxe-bank-scan",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "scan", "at": "nearest"},
+          "skip_if": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "settle": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "comment": "Scan before choosing one banked tool, from the gather family's best-first pickaxe order."
+        },
+        {
+          "id": "withdraw-rune-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 41}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "rune_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+          "comment": "Withdraw only the best available owned tier the Mining level can use (rune 41, adamant 31, mithril 21, steel 6: skill_mining/configs/pickaxes.obj:92,127,162,197); once a pickaxe is held or worn, lower-tier withdrawals skip."
+        },
+        {
+          "id": "withdraw-adamant-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "adamant_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 31}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "adamant_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-mithril-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "mithril_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 21}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "mithril_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-steel-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "steel_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 6}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "steel_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-iron-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "iron_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "iron_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-bronze-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "bronze_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "bronze_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+        }
+      ],
+      "acquire:shears": [
+        {
+          "id": "shears-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "shears", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shears"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "shears"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shears"}}}
+        },
+        {
+          "id": "shears-shop",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper1",
+              "anchor": {
+                "tile": [3209, 3247, 0],
+                "source": "C maps/m50_50.jm2:9678; area_lumbridge/configs/lumbridge.npc:199-233; area_lumbridge/configs/lumbridge.inv:26-30"
+              }
+            },
+            "obj": "shears",
+            "qty": 1
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shears"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shears"}}}
+        }
+      ],
+      "acquire:tinderbox": [
+        {
+          "id": "tinderbox-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "tinderbox", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tinderbox"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "tinderbox"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tinderbox"}}}
+        },
+        {
+          "id": "tinderbox-shop",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper1",
+              "anchor": {
+                "tile": [3209, 3247, 0],
+                "source": "C maps/m50_50.jm2:9678; area_lumbridge/configs/lumbridge.npc:199-233; area_lumbridge/configs/lumbridge.inv:26-30"
+              }
+            },
+            "obj": "tinderbox",
+            "qty": 1
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tinderbox"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tinderbox"}}}
+        }
+      ],
+      "acquire:water": [
+        {
+          "id": "water-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "jug_water", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "jug_water"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}}
+        },
+        {
+          "id": "water-jug",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper1",
+              "anchor": {
+                "tile": [3209, 3247, 0],
+                "source": "C maps/m50_50.jm2:9678; area_lumbridge/configs/lumbridge.npc:199-233; area_lumbridge/configs/lumbridge.inv:26-30"
+              }
+            },
+            "obj": "jug_empty",
+            "qty": 1
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_empty"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_empty"}}}
+        },
+        {
+          "id": "water-fill",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "jug_empty",
+            "target": {"loc": "sink"},
+            "anchor": {"tile": [3205, 3215, 0], "source": "C maps/m50_50.jm2:6263; pack/loc.pack:874; general_use/scripts/water_sources.rs2:63-82"},
+            "radius": 4,
+            "product": "jug_water"
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}},
+          "comment": "A jug is fillable at watersource sinks; Shantay is members-only. This source is F2P."
+        }
+      ],
+      "acquire:softclay": [
+        {
+          "id": "softclay-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "softclay", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "softclay"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}}
+        },
+        {
+          "id": "clay-bank-gap",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "clay", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "clay"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "clay"}}}}
+              ]}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "clay"}}}
+        },
+        {
+          "id": "gather-clay-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-clay"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+          ]}
+        },
+        {
+          "id": "clay-water",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:water"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}}
+        },
+        {
+          "id": "soften-clay",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {"item": "jug_water", "target": {"item": "clay"}, "product": "softclay"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}},
+          "comment": "Water softens clay. If neither raw clay nor soft clay is held or banked, the nested Mining 1 gather recipe supplies raw clay from Rimmington."
+        }
+      ],
+      "acquire:rimmington-clay": [
+        {
+          "id": "ensure-pickaxe-for-clay",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
+        {
+          "id": "gather-clay-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "clay",
+            "until": {"obj": "clay", "qty": 1},
+            "anchor": {
+              "tile": [2986, 3239, 0],
+              "source": "maps/m46_50.jm2:6337 (clayrock1 at [2986,3239,0]); pack/loc.pack:2109; scripts/skill_mining/configs/mine.dbrow:10-21"
+            },
+            "radius": 3,
+            "settle_ms": 300000
+          },
+          "comment": "Optional bank withdrawal and the best owned pickaxe are tried first. Five minutes covers the approach walk plus Mining 1 clay gathering; the default 120-second deadline covers the whole step.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "clay", "qty": 1}}}
+        }
+      ],
+      "acquire:rimmington-copper": [
+        {
+          "id": "ensure-pickaxe-for-copper",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
+        {
+          "id": "gather-copper-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "copper",
+            "until": {"obj": "copper_ore", "qty": 1},
+            "anchor": {
+              "tile": [2976, 3247, 0],
+              "source": "maps/m46_50.jm2:6013 (copperrock1 at [2976,3247,0]); pack/loc.pack:2091; scripts/skill_mining/configs/mine.dbrow:23-34"
+            },
+            "radius": 3,
+            "settle_ms": 300000
+          },
+          "comment": "Optional bank withdrawal and the best owned pickaxe are tried first. Five minutes covers the approach walk plus Mining 1 copper gathering; the default 120-second deadline covers the whole step.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+        }
+      ],
+      "acquire:rimmington-tin": [
+        {
+          "id": "ensure-pickaxe-for-tin",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
+        {
+          "id": "gather-tin-rimmington",
+          "kind": "gather",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "skill": "mining",
+            "resource": "tin",
+            "until": {"obj": "tin_ore", "qty": 1},
+            "anchor": {
+              "tile": [2984, 3237, 0],
+              "source": "maps/m46_50.jm2:6266 (tinrock1 at [2984,3237,0]); pack/loc.pack:2095; scripts/skill_mining/configs/mine.dbrow:36-47"
+            },
+            "radius": 3,
+            "settle_ms": 300000
+          },
+          "comment": "Optional bank withdrawal and the best owned pickaxe are tried first. Five minutes covers the approach walk plus Mining 1 tin gathering; the default 120-second deadline covers the whole step.",
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
+        }
+      ],
+      "acquire:bronze": [
+        {
+          "id": "bronze-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "bronze_bar", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "bronze_bar"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}}
+        },
+        {
+          "id": "copper-bank-gap",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "copper_ore", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "copper_ore"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "copper_ore"}}}}
+              ]}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "copper_ore"}}}
+        },
+        {
+          "id": "gather-copper-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-copper"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "copper_ore", "qty": 1}}}
+          ]}
+        },
+        {
+          "id": "tin-bank-gap",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "tin_ore", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tin_ore"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "tin_ore"}}}}
+              ]}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tin_ore"}}}
+        },
+        {
+          "id": "gather-tin-if-needed",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:rimmington-tin"},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
+          ]},
+          "settle": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+            {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tin_ore", "qty": 1}}}
+          ]}
+        },
+        {
+          "id": "smelt-bronze",
+          "kind": "make",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "loc": {"name": "furnace1", "op": "Smelt"},
+            "anchor": {
+              "tile": [3225, 3255, 0],
+              "source": "C maps/m50_50.jm2:7131 loc2781 at [3226,3255,0], rotation1; chosen outside western footprint, legal approach unchecked; skill_smithing/configs/smelting/smelting.loc:1-10"
+            },
+            "product": "bronze_bar",
+            "menu": {"obj": "bronze_bar", "source": "C skill_smithing/scripts/smelting/smelting.rs2:40-56"},
+            "qty": 1,
+            "make_x": false
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}},
+          "comment": "Content smelts one copper ore with one tin ore at Smithing 1. The nested Mining 1 gather recipes supply only any raw-ore deficits left after bank withdrawals."
+        }
+      ],
+      "acquire:ashes": [
+        {
+          "id": "ashes-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "ashes", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "ashes"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}}
+        },
+        {
+          "id": "ashes-tinderbox",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:tinderbox"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tinderbox"}}}
+        },
+        {
+          "id": "ashes-logs",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"ground": "logs"},
+            "op": "Take",
+            "anchor": {"tile": [3089, 3265, 0], "source": "C maps/m48_51.jm2:6523; pack/obj.pack:1512"},
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "logs"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "logs"}}}
+        },
+        {
+          "id": "ashes-fire-site",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3089, 3266, 0],
+            "source": "C maps/m48_51.jm2:6524 logs placement; chosen fire tile at that placement, collision unchecked",
+            "radius": 1
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3089, 3266, 0], "radius": 1}}}
+        },
+        {
+          "id": "ashes-light-logs",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {"item": "tinderbox", "target": {"item": "logs"}, "settle_ms": 120000},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+          "settle": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["The fire catches and the logs begin to burn."]}}},
+          "comment": "C skill_firemaking/scripts/firemaking.rs2:79-132: tinderbox drops/lights logs; ashes appear at the fire after 100-199 ticks. Exact fire tile depends on radius1 walk; Take searches radius2 around this site."
+        },
+        {
+          "id": "ashes-take",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"ground": "ashes"},
+            "op": "Take",
+            "anchor": {
+              "tile": [3089, 3266, 0],
+              "source": "C maps/m48_51.jm2:6524 chosen fire site; skill_firemaking/scripts/firemaking.rs2:126-132 ashes at fire coordinate"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}}
+        }
+      ],
+      "acquire:wig": [
+        {
+          "id": "wig-blond-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "blondwig", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "blondwig"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+        },
+        {
+          "id": "wig-plain-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "plainwig", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+                  {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "plainwig"}}}}
+                ]
+              },
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}}
+        },
+        {
+          "id": "wig-shears",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:shears"},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shears"}}}
+        },
+        {
+          "id": "wig-wool-balls-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "ball_of_wool", "qty": 3}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}},
+                  {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}}}
+                ]
+              },
+              {
+                "Any": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+                ]
+              }
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}}
+        },
+        {
+          "id": "wig-shear",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "shears",
+            "target": {"npc": "sheepunsheered"},
+            "anchor": {"tile": [3197, 3269, 0], "source": "C maps/m49_51.jm2:6331; pack/npc.pack:44; general_use/scripts/shear_sheep.rs2:5-23"},
+            "radius": 8,
+            "product": "wool",
+            "until": {"obj": "wool", "qty": 3},
+            "no_product": {
+              "Fact": {"kind": "message", "version": 1, "args": {"any": ["The sheep manages to get away from you!", "This sheep has already been shorn."]}}
+            },
+            "settle_ms": 240000
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+                ]
+              },
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}},
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "wool", "qty": 3}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "wool", "qty": 3}}}
+        },
+        {
+          "id": "wig-spin",
+          "kind": "make",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "loc": {"name": "spinningwheel", "op": "Spin"},
+            "anchor": {
+              "tile": [2982, 3315, 0],
+              "source": "C maps/m46_51.jm2:5345 loc2644 at [2981,3314,0], rotation3; skill_crafting/configs/spinning/spinning_wheels.loc:1-5"
+            },
+            "product": "ball_of_wool",
+            "menu": {"obj": "wool", "source": "C skill_crafting/scripts/spinning/spinning.rs2:48-52"},
+            "qty": 3,
+            "make_x": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+                ]
+              },
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "ball_of_wool", "qty": 3}}}
+        },
+        {
+          "id": "wig-ned",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "ned",
+            "anchor": {"tile": [3100, 3258, 0], "source": "C maps/m48_50.jm2:6686; pack/npc.pack:919 (ned)"},
+            "leash": 6,
+            "prefer": ["Ned, could you make other things from wool?", "How about some sort of wig?", "I have that now. Please, make me a wig."],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "plainwig"}}},
+          "comment": "C area_draynor/scripts/ned.rs2:34-51,104-123: 3 balls of wool, not 1."
+        },
+        {
+          "id": "wig-dye-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "yellowdye", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {
+                "Any": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yellowdye"}}},
+                  {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "yellowdye"}}}}
+                ]
+              },
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yellowdye"}}}
+        },
+        {
+          "id": "wig-pick-onions",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"loc": "onion"},
+            "op": "Pick",
+            "anchor": {"tile": [3189, 3267, 0], "source": "C maps/m49_51.jm2:5723 loc3366; general_use/scripts/pickables.rs2:30-40"},
+            "radius": 4,
+            "until": {"obj": "onion", "qty": 2}
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yellowdye"}}},
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "onion", "qty": 2}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "onion", "qty": 2}}}
+        },
+        {
+          "id": "wig-yellow-dye",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "aggie",
+            "anchor": {"tile": [3086, 3259, 0], "source": "C maps/m48_50.jm2:6681; pack/npc.pack:923 (aggie)"},
+            "leash": 6,
+            "prefer": ["Can you make dyes for me please?", "What do you need to make yellow dye?", "Okay, make me some yellow dye please."],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yellowdye"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yellowdye"}}},
+          "comment": "C area_draynor/scripts/aggie.rs2:71-102: 2 onions + 5gp."
+        },
+        {
+          "id": "wig-dye",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {"item": "yellowdye", "target": {"item": "plainwig"}, "product": "blondwig"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+          "comment": "C quests/quest_prince/scripts/quest_prince.rs2:1-12."
+        }
+      ],
+      "acquire:paste": [
+        {
+          "id": "paste-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "skinpaste", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "skinpaste"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}}
+        },
+        {
+          "id": "paste-flour",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "wydin",
+              "anchor": {
+                "tile": [3014, 3204, 0],
+                "source": "C maps/m47_50.jm2:10005; area_port_sarim/configs/port_sarim.npc:181; area_port_sarim/configs/port_sarim.inv:105-118"
+              }
+            },
+            "obj": "pot_flour",
+            "qty": 1
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pot_flour"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pot_flour"}}}
+        },
+        {
+          "id": "paste-redberries",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "wydin",
+              "anchor": {
+                "tile": [3014, 3204, 0],
+                "source": "C maps/m47_50.jm2:10005; area_port_sarim/configs/port_sarim.npc:181; area_port_sarim/configs/port_sarim.inv:105-118"
+              }
+            },
+            "obj": "redberries",
+            "qty": 1
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "redberries"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "redberries"}}}
+        },
+        {
+          "id": "paste-ashes",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:ashes"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ashes"}}}
+        },
+        {
+          "id": "paste-water",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:water"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "jug_water"}}}
+        },
+        {
+          "id": "paste-aggie",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "aggie",
+            "anchor": {"tile": [3086, 3259, 0], "source": "C maps/m48_50.jm2:6681; pack/npc.pack:923 (aggie)"},
+            "leash": 6,
+            "prefer": ["Could you think of a way to make skin paste?", "Yes please. Mix me some skin paste."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+          "comment": "C area_draynor/scripts/aggie.rs2:24-34,140-155: redberries + flour + water + ashes; no fee."
+        }
+      ],
+      "acquire:skirt": [
+        {
+          "id": "skirt-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "pink_skirt", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "pink_skirt"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+        },
+        {
+          "id": "skirt-shop",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "thessalia",
+              "anchor": {
+                "tile": [3204, 3417, 0],
+                "source": "C maps/m50_53.jm2:12897; area_varrock/configs/varrock.npc:291; area_varrock/configs/varrock.inv:158-171"
+              }
+            },
+            "obj": "pink_skirt",
+            "qty": 1
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+        }
+      ],
+      "acquire:disguise": [
+        {
+          "id": "disguise-wig",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:wig"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}}
+        },
+        {
+          "id": "disguise-paste",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:paste"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}}
+        },
+        {
+          "id": "disguise-skirt",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:skirt"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+        }
+      ],
+      "acquire:ropes": [
+        {
+          "id": "ropes-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rope", "qty": 2}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "rope", "qty": 2}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}}
+        },
+        {
+          "id": "rope-ned-1",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "ned",
+            "anchor": {"tile": [3100, 3258, 0], "source": "C maps/m48_50.jm2:6686; pack/npc.pack:919 (ned)"},
+            "leash": 6,
+            "prefer": ["Yes, I would like some rope.", "Okay, please sell me some rope."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rope"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rope"}}},
+          "comment": "C area_draynor/scripts/ned.rs2:53-71: 15gp per coil; second coil is for a respawned Keli."
+        },
+        {
+          "id": "rope-ned-2",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "ned",
+            "anchor": {"tile": [3100, 3258, 0], "source": "C maps/m48_50.jm2:6686; pack/npc.pack:919 (ned)"},
+            "leash": 6,
+            "prefer": ["Yes, I would like some rope.", "Okay, please sell me some rope."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+          "comment": "C area_draynor/scripts/ned.rs2:53-71: 15gp per coil; second coil is for a respawned Keli."
+        }
+      ],
+      "acquire:beers": [
+        {
+          "id": "beers-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "beer", "qty": 3}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "beer", "qty": 3}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}}
+        },
+        {
+          "id": "beer-buy-1",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "rustyanchor_bartender",
+            "anchor": {"tile": [3045, 3257, 0], "source": "C maps/m47_50.jm2:10014; pack/npc.pack:735; area_port_sarim/scripts/bartender.rs2:31-41"},
+            "leash": 6,
+            "prefer": ["Could I buy a beer please?"],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "beer"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "beer"}}}
+        },
+        {
+          "id": "beer-buy-2",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "rustyanchor_bartender",
+            "anchor": {"tile": [3045, 3257, 0], "source": "C maps/m47_50.jm2:10014; pack/npc.pack:735; area_port_sarim/scripts/bartender.rs2:31-41"},
+            "leash": 6,
+            "prefer": ["Could I buy a beer please?"],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 2}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 2}}}
+        },
+        {
+          "id": "beer-buy-3",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "rustyanchor_bartender",
+            "anchor": {"tile": [3045, 3257, 0], "source": "C maps/m47_50.jm2:10014; pack/npc.pack:735; area_port_sarim/scripts/bartender.rs2:31-41"},
+            "leash": 6,
+            "prefer": ["Could I buy a beer please?"],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}}
+        }
+      ],
+      "acquire:jail-approach": [
+        {
+          "id": "jail-exit-to-pray",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3113, 3263, 0],
+            "source": "C maps/m48_50.jm2:6689 Leela placement, outside the jail envelope",
+            "radius": 1,
+            "cross": ["draynor-jail-guards"],
+            "guard": "protect"
+          },
+          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "jail"}}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3113, 3263, 0], "radius": 1}}}
+        },
+        {
+          "id": "jail-pray",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"loc": "altar"},
+            "op": "Pray-at",
+            "anchor": {"tile": [3243, 3206, 0], "source": "C maps/m50_50.jm2:7797 loc409 at [3243,3205,0], rotation2; pack/loc.pack:410; skill_prayer/configs/altars.loc:11-18; north adjacent stand unchecked"},
+            "radius": 3
+          },
+          "skip_if": {"Any": []},
+          "settle": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["You recharge your prayer points.", "You already have full prayer points.", "You boost your prayer points."]}}},
+          "comment": "C skill_prayer/scripts/altar.rs2:1-19 restores current prayer to base. Genuine F2P altar top-up before a jail approach; member-only boost/restoration potions are not in this loadout."
+        },
+        {
+          "id": "jail-enter",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3123, 3245, 0],
+            "source": "C maps/m48_50.jm2:6693; pack/npc.pack:917 (joe)",
+            "radius": 1,
+            "cross": ["draynor-jail-guards"],
+            "guard": "protect"
+          },
+          "skip_if": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 1}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 1}}}
+        },
+        {
+          "id": "jail-clear-guards",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"npc": "jailguard", "not_targeting_others": true, "pick": "nearest"},
+            "tactic": {"kind": "open", "style": "melee", "engage_radius": 20, "auto_retaliate": true, "fallback": "abort"},
+            "loadout": "melee",
+            "stand": {"tile": [3123, 3245, 0], "source": "C maps/m48_50.jm2:6693; pack/npc.pack:917 (joe)"},
+            "cross": ["draynor-jail-guards"],
+            "guard": "protect",
+            "lost_radius": 24,
+            "kill_budget_ticks": 400,
+            "until": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+          },
+          "skip_if": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}},
+          "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}},
+          "comment": "C maps/m48_50.jm2:6688,6690-6694; area_draynor/configs/draynor.npc:152-195: four level26 aggressive guards, huntrange5, respawn60. Clearing is a finite approach attempt, not a guarantee of a combat-free Keli scene."
+        }
+      ],
+      "acquire:key": [
+        {
+          "id": "key-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "princeskey", "qty": 1}], "partial_ok": false},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "princeskey"}}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}}
+        },
+        {
+          "id": "key-leela-advice-or-replacement",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "leela",
+            "anchor": {"tile": [3113, 3263, 0], "source": "C maps/m48_50.jm2:6689; pack/npc.pack:916 (leela)"},
+            "leash": 6,
+            "prefer": ["I hoped to get him drunk.", "I will go and get the rest of the escape equipment."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3113, 3263, 0], "radius": 6}}},
+          "comment": "C area_draynor/scripts/leela.rs2:10-59: a genuine advice visit also collects an already-made key or replaces a lost claimed key for 15gp. Do this before making a new imprint so interruption after Osman hand-in is recoverable."
+        },
+        {
+          "id": "key-clay",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:softclay"},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "softclay"}}}
+        },
+        {
+          "id": "key-bronze",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:bronze"},
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_bar"}}}
+        },
+        {
+          "id": "key-jail-approach",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:jail-approach"},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+        },
+        {
+          "id": "key-keli-imprint",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "lady_keli",
+            "anchor": {"tile": [3128, 3244, 0], "source": "C maps/m48_50.jm2:6695; pack/npc.pack:920 (lady_keli)"},
+            "leash": 6,
+            "prefer": [
+              "Heard of you? You are famous in RuneScape!",
+              "What is your latest plan then?",
+              "Can you be sure they will not try to get him out?",
+              "Could I see the key please?",
+              "Could I touch the key for a moment?"
+            ],
+            "strict": true
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}},
+          "comment": "C area_draynor/scripts/lady_keli.rs2:11-18,56-60,75-103: imprint only at stage20 with softclay."
+        },
+        {
+          "id": "key-leave-jail",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3113, 3263, 0],
+            "source": "C maps/m48_50.jm2:6689; pack/npc.pack:916 (leela)",
+            "radius": 1,
+            "cross": ["draynor-jail-guards"],
+            "guard": "protect"
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3113, 3263, 0], "radius": 1}}}
+        },
+        {
+          "id": "key-osman-forge",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "osman",
+            "anchor": {"tile": [3286, 3180, 0], "source": "C maps/m51_49.jm2:8991; pack/npc.pack:925 (osman)"},
+            "leash": 6,
+            "prefer": ["Thank you. I will try to find the other items."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}},
+          "comment": "C area_alkharid/scripts/osman.rs2:88-95: consumes imprint + bronze, makes key for Leela; no furnace is used for the duplicate."
+        },
+        {
+          "id": "key-leela-collect",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "leela",
+            "anchor": {"tile": [3113, 3263, 0], "source": "C maps/m48_50.jm2:6689; pack/npc.pack:916 (leela)"},
+            "leash": 6,
+            "prefer": ["I hoped to get him drunk.", "I will go and get the rest of the escape equipment."],
+            "strict": true
+          },
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+          "comment": "C area_draynor/scripts/leela.rs2:10-16,35-37: collecting with disguise can also advance stage20 to30."
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 1000,
+    "loadouts": {
+      "melee": {
+        "worn": {"hat": "rune_full_helm", "torso": "rune_chainbody", "legs": "rune_platelegs", "lefthand": "rune_kiteshield", "righthand": "rune_scimitar"},
+        "carry": [
+          {"item": "lobster", "qty": 6}
+        ]
+      }
+    },
+    "areas": {
+      "jail": {
+        "boxes": [[3096, 3224, 3140, 3262, 0]],
+        "source": "C maps/m48_50.jm2:6688-6695 guard and quest NPC placements; crates/nav/src/zones/curated.rs:26-37 draynor-jail-guards crossing envelope"
+      },
+      "cell": {
+        "boxes": [[3122, 3240, 3124, 3243, 0]],
+        "source": "C maps/m48_50.jm2:5820-5947 room boundary locs and :5871 door; :6692 prince at [3123,3242,0]; boundary tiles unchecked for navigation"
+      }
+    },
+    "tools": ["obj:coins", "obj:shears", "obj:tinderbox", "obj:rune_pickaxe", "obj:adamant_pickaxe", "obj:mithril_pickaxe", "obj:steel_pickaxe", "obj:iron_pickaxe", "obj:bronze_pickaxe"],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:prince",
+      "progress": {
+        "colour": {"not_started": "prince:0", "in_progress": "prince:20", "complete": "prince:110"},
+        "rules": [
+          {"stage": "prince:110", "all": ["quest complete!"], "varp": 110},
+          {"stage": "prince:100", "all": ["i then used a wig, a skirt and some skin paste"], "varp": 100},
+          {"stage": "prince:50", "all": ["i used my rope to tie up lady"], "varp": 50},
+          {"stage": "prince:40", "all": ["i also had to prevent the guard"], "varp": 40},
+          {"stage": "prince:30", "all": ["i need to deal with the"], "varp": 30},
+          {"stage": "prince:20", "all": ["for advice"], "varp": 20},
+          {"stage": "prince:10", "all": ["i should go and speak to"], "varp": 10},
+          {"stage": "prince:0", "all": ["i can start this quest by speaking to"], "varp": 0}
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "cell-exit-before-bank",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {"loc": "alidoor"},
+            "op": "Open",
+            "anchor": {"tile": [3123, 3243, 0], "source": "C maps/m48_50.jm2:5871; scripts/_unpack/225/all.loc:13652-13656; quests/quest_prince/scripts/quest_prince.rs2:46-52 permits exit from the south"},
+            "radius": 4
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:110"]}}},
+              {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coins", "qty": 150}}}
+              ]}
+            ]
+          },
+          "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}}},
+          "comment": "Use the real exit operation before a restarted bank scan or coin refill; never ask an ungranted bank walk to cross the prison."
+        },
+        {
+          "id": "jail-exit-before-bank",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3113, 3263, 0],
+            "source": "C maps/m48_50.jm2:6689 Leela placement, outside the authored jail envelope",
+            "radius": 1,
+            "cross": ["draynor-jail-guards"],
+            "guard": "protect"
+          },
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:110"]}}},
+              {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "jail"}}}},
+              {"All": [
+                {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+                {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coins", "qty": 150}}}
+              ]}
+            ]
+          },
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3113, 3263, 0], "radius": 1}}}
+        },
+        {
+          "id": "scan-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "scan", "at": "nearest"},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:110"]}}},
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}}
+        },
+        {
+          "id": "coin-float",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "coins", "qty": 1000}]},
+          "skip_if": {
+            "Any": [
+              {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:110"]}}},
+              {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coins", "qty": 150}}}
+            ]
+          },
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coins", "qty": 150}}}
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "prince:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "0-start-hassan",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "hassan",
+                "anchor": {"tile": [3302, 3163, 0], "source": "C maps/m51_49.jm2:9000; pack/npc.pack:924 (hassan)"},
+                "leash": 6,
+                "prefer": ["Can I help you? You must need some help here in the desert."],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:10"]}}}
+            }
+          ]
+        },
+        {
+          "stage": "prince:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "10-osman-brief",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "osman",
+                "anchor": {"tile": [3286, 3180, 0], "source": "C maps/m51_49.jm2:8991; pack/npc.pack:925 (osman)"},
+                "leash": 6,
+                "prefer": ["Okay, I better go find some things.", "What is the second thing you need?"],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:20"]}}},
+              "comment": "C area_alkharid/scripts/osman.rs2:25-74: exit outranks the looping explanation."
+            }
+          ]
+        },
+        {
+          "stage": "prince:20",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "20-rescue-loadout",
+              "kind": "loadout",
+              "version": 1,
+              "args": {"loadout": "melee", "at": "nearest"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+                ]
+              },
+              "settle": {"Fact": {"kind": "loadout_ready", "version": 1, "args": {"loadout": "melee", "at": "nearest"}}}
+            },
+            {
+              "id": "20-disguise",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:disguise"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              },
+              "settle": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              }
+            },
+            {
+              "id": "20-ropes",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:ropes"},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}}
+            },
+            {
+              "id": "20-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:key"},
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}}
+            },
+            {
+              "id": "20-leela-ready",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "leela",
+                "anchor": {"tile": [3113, 3263, 0], "source": "C maps/m48_50.jm2:6689; pack/npc.pack:916 (leela)"},
+                "leash": 6,
+                "prefer": ["I hoped to get him drunk.", "I will go and get the rest of the escape equipment."],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:30"]}}}
+            }
+          ]
+        },
+        {
+          "stage": "prince:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "30-rescue-loadout",
+              "kind": "loadout",
+              "version": 1,
+              "args": {"loadout": "melee", "at": "nearest"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+                ]
+              },
+              "settle": {"Fact": {"kind": "loadout_ready", "version": 1, "args": {"loadout": "melee", "at": "nearest"}}}
+            },
+            {
+              "id": "30-recover-disguise",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:disguise"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              },
+              "settle": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              }
+            },
+            {
+              "id": "30-recover-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:key"},
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}}
+            },
+            {
+              "id": "30-ropes",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:ropes"},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}}
+            },
+            {
+              "id": "30-beers",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:beers"},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "beer", "qty": 3}}}
+            },
+            {
+              "id": "30-jail",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:jail-approach"},
+              "skip_if": {"All": [
+                {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 6}}},
+                {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+              ]},
+              "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+            },
+            {
+              "id": "30-joe-beer",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "joe",
+                "anchor": {"tile": [3123, 3245, 0], "source": "C maps/m48_50.jm2:6693; pack/npc.pack:917 (joe)"},
+                "leash": 6,
+                "prefer": ["I have some beer here, fancy one?"],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:40"]}}},
+              "comment": "C area_draynor/scripts/joe_guard.rs2:19-46 consumes 1 then 2 beers in the same conversation."
+            }
+          ]
+        },
+        {
+          "stage": "prince:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "40-rescue-loadout",
+              "kind": "loadout",
+              "version": 1,
+              "args": {"loadout": "melee", "at": "nearest"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}},
+                  {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+                ]
+              },
+              "settle": {"Fact": {"kind": "loadout_ready", "version": 1, "args": {"loadout": "melee", "at": "nearest"}}}
+            },
+            {
+              "id": "40-recover-disguise",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:disguise"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              },
+              "settle": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              }
+            },
+            {
+              "id": "40-recover-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:key"},
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}}
+            },
+            {
+              "id": "40-ropes",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:ropes"},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}}
+            },
+            {
+              "id": "40-jail",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:jail-approach"},
+              "skip_if": {"All": [
+                {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 6}}},
+                {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+              ]},
+              "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+            },
+            {
+              "id": "40-tie-keli",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "rope",
+                "target": {"npc": "lady_keli"},
+                "anchor": {"tile": [3128, 3244, 0], "source": "C maps/m48_50.jm2:6695; pack/npc.pack:920 (lady_keli)"},
+                "radius": 6,
+                "dialogue": "continue"
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:50"]}}},
+              "comment": "C quests/quest_prince/scripts/quest_prince.rs2:14-32: Continue must finish before rope removal, Keli deletion and stage50. Prior observation reported combat interruption here; do not talk to her or invent a retry."
+            }
+          ]
+        },
+        {
+          "stage": "prince:50",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "50-rescue-loadout",
+              "kind": "loadout",
+              "version": 1,
+              "args": {"loadout": "melee", "at": "nearest"},
+              "skip_if": {
+                "Any": [
+                  {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+                  {
+                    "All": [
+                      {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}},
+                      {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}},
+                      {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}},
+                      {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}},
+                      {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+                    ]
+                  }
+                ]
+              },
+              "settle": {"Fact": {"kind": "loadout_ready", "version": 1, "args": {"loadout": "melee", "at": "nearest"}}}
+            },
+            {
+              "id": "50-recover-disguise",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:disguise"},
+              "skip_if": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              },
+              "settle": {
+                "All": [
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blondwig"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "skinpaste"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pink_skirt"}}}
+                ]
+              }
+            },
+            {
+              "id": "50-recover-key",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:key"},
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "princeskey"}}}
+            },
+            {
+              "id": "50-spare-rope",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:ropes"},
+              "skip_if": {
+                "Any": [
+                  {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+                  {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rope"}}}
+                ]
+              },
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "rope", "qty": 2}}}
+            },
+            {
+              "id": "50-jail",
+              "kind": "acquire",
+              "version": 1,
+              "args": {"recipe": "acquire:jail-approach"},
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+                {"All": [
+                  {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 6}}},
+                  {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+                ]}
+              ]},
+              "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+            },
+            {
+              "id": "50-retie-keli",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "rope",
+                "target": {"npc": "lady_keli"},
+                "anchor": {"tile": [3128, 3244, 0], "source": "C maps/m48_50.jm2:6695; pack/npc.pack:920 (lady_keli)"},
+                "radius": 6,
+                "dialogue": "continue"
+              },
+              "skip_if": {
+                "Any": [
+                  {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+                  {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "lady_keli"}}}
+                ]
+              },
+              "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "lady_keli"}}},
+              "comment": "C quests/quest_prince/scripts/quest_prince.rs2:19-32 permits retying before saved. A respawned Keli blocks unlocking within10 tiles; never talk to her after stage50 (lady_keli.rs2:1-9 calls guards)."
+            },
+            {
+              "id": "50-north-door",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3123, 3245, 0],
+                "source": "C maps/m48_50.jm2:6693; pack/npc.pack:917 (joe)",
+                "radius": 1,
+                "cross": ["draynor-jail-guards"],
+                "guard": "protect"
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+                {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 1}}}
+              ]},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3123, 3245, 0], "radius": 1}}}
+            },
+            {
+              "id": "50-unlock-cell",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "princeskey",
+                "target": {"loc": "alidoor"},
+                "anchor": {"tile": [3123, 3243, 0], "source": "C maps/m48_50.jm2:5871; pack/loc.pack:2882; quests/quest_prince/scripts/quest_prince.rs2:34-44"},
+                "radius": 3
+              },
+              "skip_if": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "cell"}}},
+              "comment": "Use from north: player z must exceed door z3243. Walk destination3245/radius1 stays north. Door script moves the player into the cell; key is not consumed here."
+            },
+            {
+              "id": "50-rescue-prince",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "prince_ali_prison",
+                "anchor": {"tile": [3123, 3242, 0], "source": "C maps/m48_50.jm2:6692; pack/npc.pack:921; area_draynor/scripts/prince_ali.rs2:7-23"},
+                "leash": 6,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "stage_in", "version": 1, "args": {"quest": "prince", "any": ["prince:100"]}}}
+            }
+          ]
+        },
+        {
+          "stage": "prince:100",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "100-leave-jail",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3113, 3263, 0],
+                "source": "C maps/m48_50.jm2:6689; pack/npc.pack:916 (leela)",
+                "radius": 1,
+                "cross": ["draynor-jail-guards"],
+                "guard": "protect"
+              },
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "jail"}}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3113, 3263, 0], "radius": 1}}}
+            },
+            {
+              "id": "100-hassan-reward",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "hassan",
+                "anchor": {"tile": [3302, 3163, 0], "source": "C maps/m51_49.jm2:9000; pack/npc.pack:924 (hassan)"},
+                "leash": 6,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {"Any": []},
+              "settle": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "prince", "is": "complete"}}}
+            }
+          ]
+        },
+        {"stage": "prince:110", "required": [], "terminal": true, "recovery_entry": null, "steps": []}
+      ]
+    }
+  ]
+}

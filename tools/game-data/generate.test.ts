@@ -64,7 +64,9 @@ fs.writeFileSync(path.join(pack, 'param.pack'), [
     '0=next_obj_stage', '1=decant_potion_enum', '2=dose_count',
     '3=stabattack_anim', '4=slashattack_anim', '5=crushattack_anim',
     '6=rangeattack_anim', '7=proj_launch', '8=proj_travel', '9=attackrate',
+    '10=levelrequire', '11=attackrange',
 ].join('\n') + '\n');
+fs.writeFileSync(path.join(pack, 'obj.pack'), '50=ogre_bow\n62=bronze_bow\n63=bronze_arrow\n');
 fs.writeFileSync(path.join(consumeScript, 'consume.rs2'), `[opheld1,_food]
 def_int $eat_delay = 2;
 def_int $skill_delay = 3;
@@ -334,7 +336,7 @@ fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
     '8=fireblast_travel', '9=fireblast_impact',
     '10=fire_impact', '11=crumble_test_impact',
 ].join('\n') + '\n');
-fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n');
+fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n22=arrows\n');
 fs.writeFileSync(npcSource, `[test_npc]
 name=Test NPC
 op1=Attack
@@ -440,6 +442,9 @@ fs.writeFileSync(path.join(modeConfigDir, 'combat_damagestyles.constant'), [
     '^style_melee_aggressive = 1',
     '^style_melee_defensive = 2',
     '^style_melee_controlled = 3',
+    '^style_ranged_accurate = 4',
+    '^style_ranged_rapid = 5',
+    '^style_ranged_longrange = 6',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(modeConfigDir, 'combat.dbtable'), '[combat_style_table]\ncolumn=damagestyle,int,LIST\n');
 const meleeStyleRow = (name: string, styles: string[]) =>
@@ -551,7 +556,7 @@ fs.appendFileSync(interfacePackPath, [
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(content, 'pack/varp.pack'), '43=com_mode\n');
 const styleObjects = [
-    { id: 50, category: 10, params: new Map([[6, 'shared_seq'], [7, 'arrow_launch'], [8, 'arrow_travel'], [9, 5]]) },
+    { id: 50, category: 10, params: new Map([[6, 'shared_seq'], [7, 'arrow_launch'], [8, 'arrow_travel'], [9, 5], [10, 1], [11, 10]]) },
     { id: 51, category: 11, params: new Map([[3, 'staff_seq'], [9, 7]]) },
     { id: 52, category: 12, params: new Map([[3, 'shared_seq'], [9, 4]]) },
     { id: 53, category: 13, params: new Map([[3, 'shared_seq'], [9, 4]]) },
@@ -559,10 +564,12 @@ const styleObjects = [
     { id: 55, category: 15, params: new Map([[3, 'shared_seq'], [9, 4]]) },
     { id: 56, category: 16, params: new Map([[3, 'shared_seq'], [9, 4]]) },
     { id: 57, category: 17, params: new Map([[3, 'shared_seq'], [9, 4]]) },
-    { id: 58, category: 18, params: new Map([[3, 'shared_seq'], [9, 4]]) },
-    { id: 59, category: 19, params: new Map([[3, 'shared_seq'], [9, 4]]) },
-    { id: 60, category: 20, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 58, category: 18, params: new Map([[3, 'shared_seq'], [9, 4], [10, 1], [11, 10]]) },
+    { id: 59, category: 19, params: new Map([[3, 'shared_seq'], [9, 4], [11, 4]]) },
+    { id: 60, category: 20, params: new Map([[3, 'shared_seq'], [9, 4], [10, 30], [11, 5]]) },
     { id: 61, category: 21, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 62, category: 10, params: new Map([[9, 4], [10, 20], [11, 10]]) },
+    { id: 63, category: 22, params: new Map([[10, 1]]) },
 ];
 const extractStyleFacts = () => extractCombatStyleFacts(content, styleObjects, npcFacts.combatNpcs, combatScripts);
 const styleFacts = extractStyleFacts();
@@ -581,11 +588,18 @@ assert.deepEqual(styleFacts.weapon_styles.map((row) => [
     [53, 1, 4, 0, 1], [54, 1, 4, 0, 6], [55, 1, 4, 0, 9],
     [56, 1, 4, 0, null], [57, 1, 4, 0, 0], [58, 2, 4, 2, 13],
     [59, 2, 4, 3, 14], [60, 2, 4, 4, 14], [61, 1, 4, 0, null],
+    [62, 2, 4, 1, 12],
 ]);
 assert.deepEqual(styleFacts.combat_tabs.map((row) => [row.tab, row.root_id]), [
     [0, 904], [1, 901], [6, 902], [9, 903], [12, 900], [13, 910], [14, 911], [15, 328],
 ]);
 
+const rangedModeRowsFor = (facts: typeof styleFacts, tab: number) => facts.ranged_modes
+    .filter((row) => row.tab === tab)
+    .map((row) => [row.slot, row.mode, row.button]);
+assert.deepEqual(rangedModeRowsFor(styleFacts, 12), [
+    [0, 0, 20031], [1, 1, 20032], [2, 2, 20033],
+]);
 const modeRowsFor = (facts: typeof styleFacts, tab: number) => facts.melee_modes
     .filter((row) => row.tab === tab)
     .map((row) => [row.slot, row.mode, row.button]);
@@ -597,6 +611,17 @@ assert.deepEqual(modeRowsFor(styleFacts, 6), [
 ]);
 assert.equal(modeRowsFor(styleFacts, 12).length, 0, 'ranged modes are not melee mode choices');
 assert.equal(styleFacts.melee_mode_varp, 43);
+assert.equal(rangedModeRowsFor(styleFacts, 1).length, 0, 'melee modes are not ranged mode choices');
+assert.equal(styleFacts.ranged_mode_varp, 43);
+assert.deepEqual(styleFacts.ranged_weapons.map((row) => [
+    row.obj_id, row.attackrange, row.levelrequire, row.ammo_family,
+]), [
+    [50, 10, 1, 'ogre_arrow'], [58, 10, 1, 'bolt'], [59, 4, 0, 'thrown'],
+    [60, 5, 30, 'javelin'], [62, 10, 20, 'arrow'],
+]);
+assert.deepEqual(styleFacts.ranged_ammo.map((row) => [row.obj_id, row.levelrequire, row.family]), [
+    [63, 1, 'arrow'],
+]);
 
 const interfacePackOriginal = fs.readFileSync(interfacePackPath);
 fs.writeFileSync(

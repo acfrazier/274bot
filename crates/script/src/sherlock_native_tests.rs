@@ -224,6 +224,7 @@ impl World {
         let local = LocalPlayerView {
             player: PlayerView {
                 index: 1,
+                network: stand,
                 actor: actor(stand),
                 combat_level: 60,
                 skill_level: 0,

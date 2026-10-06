@@ -99,6 +99,7 @@ impl WalkSpec {
             evidence: None,
             cross: Box::default(),
             protect: false,
+            food_guard: false,
             allow: Default::default(),
         }
     }

@@ -1,15 +1,32 @@
 use crate::{render_betty_views, scenarios, Scenario};
 
 type ScenarioFactory = fn() -> Scenario;
+type FallibleScenarioFactory = fn() -> Result<Scenario, String>;
+
+#[derive(Clone, Copy)]
+enum Factory {
+    Infallible(ScenarioFactory),
+    Fallible(FallibleScenarioFactory),
+}
 
 struct Entry {
     name: &'static str,
-    factory: ScenarioFactory,
+    factory: Factory,
 }
 
 impl Entry {
     const fn new(name: &'static str, factory: ScenarioFactory) -> Self {
-        Self { name, factory }
+        Self {
+            name,
+            factory: Factory::Infallible(factory),
+        }
+    }
+
+    const fn fallible(name: &'static str, factory: FallibleScenarioFactory) -> Self {
+        Self {
+            name,
+            factory: Factory::Fallible(factory),
+        }
     }
 }
 
@@ -427,6 +444,7 @@ const REGISTRY: &[Entry] = &[
         "quester_romeo_and_juliet",
         scenarios::quester_romeo_and_juliet_scenario,
     ),
+    Entry::fallible("quester_path", scenarios::quester_path_scenario),
     Entry::new("quester_queue", scenarios::quester_queue_scenario),
     Entry::new("sherlock_talk", scenarios::sherlock_talk_scenario),
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),
@@ -438,12 +456,27 @@ const REGISTRY: &[Entry] = &[
     Entry::new("jive_kq_four", scenarios::jive_kq_four_scenario),
 ];
 
-/// The registered scenario with this name, `None` when unknown.
+/// The registered scenario with this name, `None` when unknown or when a
+/// fallible factory cannot satisfy its runtime inputs.
 pub fn get(name: &str) -> Option<Scenario> {
-    REGISTRY
-        .iter()
-        .find(|entry| entry.name == name)
-        .map(|entry| (entry.factory)())
+    try_get(name).ok().flatten()
+}
+
+/// Resolve a scenario and preserve startup errors from runtime-selected
+/// factories such as `quester_path`.
+pub fn try_get(name: &str) -> Result<Option<Scenario>, String> {
+    let Some(entry) = REGISTRY.iter().find(|entry| entry.name == name) else {
+        return Ok(None);
+    };
+    match entry.factory {
+        Factory::Infallible(factory) => Ok(Some(factory())),
+        Factory::Fallible(factory) => factory().map(Some),
+    }
+}
+
+/// Whether a scenario name is registered without constructing it.
+pub fn is_registered(name: &str) -> bool {
+    REGISTRY.iter().any(|entry| entry.name == name)
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
@@ -466,4 +499,17 @@ fn bone_burier_v2_ts_scenario() -> Scenario {
 
 fn bone_burier_v2_js_scenario() -> Scenario {
     scenarios::bone_burier_v2_scenario("bone_burier_v2_js", "bone_burier_v2.js")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_selected_quester_path_is_registered_without_building() {
+        assert!(is_registered("quester_path"));
+        assert!(names().contains(&"quester_path"));
+        assert!(!is_registered("quester_not_a_path"));
+        assert!(matches!(try_get("quester_not_a_path"), Ok(None)));
+    }
 }

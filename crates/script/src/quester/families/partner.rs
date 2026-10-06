@@ -4,6 +4,7 @@ use super::super::compile::{
     StepOutcome, StepPlan, StepRun,
 };
 use super::super::pair::*;
+use crate::bank::ops;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
@@ -601,18 +602,18 @@ struct TradeMachine {
     requested: bool,
     cancelled: bool,
 }
-fn count(rows: &[ItemView], id: i32) -> i32 {
-    rows.iter()
-        .filter(|row| row.def.id == id && !row.def.noted)
-        .fold(0i32, |total, row| total.saturating_add(row.count))
-}
 fn exact(rows: &[ItemView], wanted: &[Item]) -> bool {
-    subset(rows, wanted) && wanted.iter().all(|item| count(rows, item.id) == item.qty)
+    subset(rows, wanted)
+        && wanted
+            .iter()
+            .all(|item| ops::count_id(rows, item.id) == item.qty)
 }
 fn subset(rows: &[ItemView], wanted: &[Item]) -> bool {
     rows.iter().all(|row| {
         !row.def.noted && row.count > 0 && wanted.iter().any(|item| item.id == row.def.id)
-    }) && wanted.iter().all(|item| count(rows, item.id) <= item.qty)
+    }) && wanted
+        .iter()
+        .all(|item| ops::count_id(rows, item.id) <= item.qty)
 }
 fn failure(message: &'static str) -> ActionError {
     ActionError::Blocked(Arc::from(message))
@@ -849,7 +850,7 @@ impl NativeMachine for TradeMachine {
         let mut begin_error = None;
         for (rows, giving) in [(&args.give, true), (&args.take, false)] {
             for item in rows.iter() {
-                let before = count(inventory.value, item.id);
+                let before = ops::count_id(inventory.value, item.id);
                 if giving && before < item.qty {
                     begin_error = Some(failure("partner handoff quest item is missing"));
                     break;
@@ -980,7 +981,7 @@ impl NativeMachine for TradeMachine {
                         .args
                         .give
                         .iter()
-                        .find(|item| count(&trade.value.my_offer, item.id) < item.qty)
+                        .find(|item| ops::count_id(&trade.value.my_offer, item.id) < item.qty)
                     {
                         let row = trade
                             .value
@@ -1111,7 +1112,7 @@ impl NativeMachine for TradeMachine {
                         && inventory.stamp != self.before
                         && self.checks[..self.check_len]
                             .iter()
-                            .all(|check| count(inventory.value, check.id) == check.after)
+                            .all(|check| ops::count_id(inventory.value, check.id) == check.after)
                     {
                         return Poll::Ready(Ok(StepOutcome {
                             progress: None,

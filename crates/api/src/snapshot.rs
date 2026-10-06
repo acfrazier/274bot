@@ -23,7 +23,9 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
-/// Maximum locally relevant projectiles; incoming threats retain priority.
+/// Maximum number of projectiles retained per snapshot. Incoming local-target
+/// threats and candidates sourced from the local tile are included; incoming
+/// threats retain priority over local-source candidates.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
@@ -936,6 +938,12 @@ impl GameSnapshot {
     /// Worn-items views from the last equipment rebuild, in slot order.
     pub fn equipment(&self) -> &[ItemView] {
         &self.equipment
+    }
+
+    /// Whether the worn component has posted its slot data this session;
+    /// an observed empty worn set is posted, a pre-login frame is not.
+    pub fn equipment_posted(&self) -> bool {
+        self.equipment_available
     }
 
     /// Bank item views from the last bank rebuild (the open main modal's

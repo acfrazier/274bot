@@ -4,6 +4,7 @@ pub use obj_names::{ItemDefView, LocDefView, LocDefs, ObjNames};
 pub use random::{DetectedRandom, RandomClaim, RandomKind};
 pub use snapshot::{LocalTile, WorldTile};
 
+pub mod bank_memory;
 pub mod cake_stall;
 pub mod clue_facts;
 pub mod clue_logic;
@@ -34,3 +35,4 @@ pub mod selected;
 pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;
+pub mod stock;

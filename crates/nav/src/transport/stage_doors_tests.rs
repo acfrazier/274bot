@@ -1536,3 +1536,114 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         "witnesses bind every edge field"
     );
 }
+
+// quest_death/scripts/quest_death.rs2:159-177, verbatim. Unlike the
+// scouting ridge, these east-side rocks require strictly worn climbing boots.
+const DEATH_ROCK_HANDLERS: &str = r#"
+[oploc1,death_climbingrocks_top]
+if(inv_total(worn, death_climbingboots) = 0) {
+    mes("You need climbing boots to negotiate these rocks.");
+    return;
+}
+p_delay(0);
+sound_synth(climbing_loop, 4, 10);
+~agility_exactmove(death_human_climbing_down, 10, 2, coord, movecoord(coord, 0, 0, -3), 10, 90, ^exact_north, false);
+anim(null, 0);
+
+[oploc1,death_climbingrocks_bottom]
+if(inv_total(worn, death_climbingboots) = 0) {
+    mes("You need climbing boots to negotiate these rocks.");
+    return;
+}
+p_delay(0);
+sound_synth(climbing_loop, 4, 0);
+~agility_force_move(0, human_climbing, movecoord(coord, 0, 0, 2));
+p_teleport(movecoord(coord, 0, 0, 1));
+"#;
+
+#[test]
+fn death_plateau_rocks_cross_only_with_strictly_worn_climbing_boots() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write(
+        "scripts/skill_agility/scripts/agility.rs2",
+        include_str!("engine_forced_procs.rs2"),
+    );
+    fx.write(
+        "pack/loc.pack",
+        "3722=death_climbingrocks_top\n3723=death_climbingrocks_bottom\n",
+    );
+    fx.write(
+        "pack/obj.pack",
+        "3105=death_climbingboots\n3107=death_spikedboots\n",
+    );
+    fx.write("scripts/boots.obj", "[death_climbingboots]\nwearpos=feet\n");
+    fx.write("scripts/rocks.constant", "^exact_north = 0\n");
+    fx.write(
+        "scripts/rocks.loc",
+        "[death_climbingrocks_top]\nop1=Climb\n[death_climbingrocks_bottom]\nop1=Climb\n",
+    );
+    fx.write("scripts/rocks.rs2", DEATH_ROCK_HANDLERS);
+    let mut map = String::from("==== MAP ====\n");
+    for x in 0..64 {
+        map.push_str(&format!("0 {x} 10: f1\n"));
+    }
+    map.push_str("==== LOC ====\n0 0 10: 3723 22\n0 0 11: 3722 22\n");
+    fx.write("maps/m45_56.jm2", &map);
+    let defs = loc_defs(&[(3722, 1, 1), (3723, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.loc_id, 3722 | 3723))
+        .collect();
+    for id in [3722, 3723] {
+        assert!(
+            edges.iter().any(|edge| edge.loc_id == id),
+            "missing Climb edge for {id}"
+        );
+    }
+    let mut worn = WorldState::empty();
+    worn.worn.insert(3105);
+    for edge in &edges {
+        assert_eq!(edge.kind, TransportKind::AgilityShortcut);
+        assert_eq!(edge.option, 1);
+        assert_eq!(edge.worn_all_req, [3105]);
+        assert!(
+            edge.worn_req.is_empty(),
+            "routing must not auto-equip boots"
+        );
+        let start = edge.takeoff.expect("exact operation stand");
+        assert_eq!(edge.to.x, start.x);
+        assert_eq!(
+            edge.to.z - start.z,
+            if edge.loc_id == 3722 { -3 } else { 3 }
+        );
+        assert_eq!(edge.ticks, if edge.loc_id == 3722 { 5 } else { 4 });
+        assert!(worn.allows(edge));
+        for state in [
+            WorldState::empty(),
+            WorldState {
+                inv: HashMap::from([(3105, 1)]),
+                ..WorldState::empty()
+            },
+            WorldState {
+                worn: HashSet::from([3107]),
+                ..WorldState::empty()
+            },
+        ] {
+            assert!(
+                !state.allows(edge),
+                "missing, carried, or spiked boots cannot authorize Climb"
+            );
+        }
+    }
+    let (south, north) = (tile(2880, 3593), tile(2880, 3596));
+    assert!(crosses(&graph, &collision, south, north, &worn, 3723).unwrap());
+    assert!(crosses(&graph, &collision, north, south, &worn, 3722).unwrap());
+    assert!(matches!(
+        crosses(&graph, &collision, south, north, &WorldState::empty(), 3723),
+        Err(RouteError::NoPath)
+    ));
+}

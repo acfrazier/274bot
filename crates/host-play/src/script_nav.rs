@@ -412,7 +412,7 @@ impl ScriptWalkArm {
             return false;
         }
         let protect = request.protect;
-        let guard = if protect {
+        let guard = if protect || request.food_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
                 EvidenceStamp {
@@ -421,7 +421,12 @@ impl ScriptWalkArm {
                     sequence: 0,
                 },
             );
-            match script::combat::WalkGuard::begin(&request, &view) {
+            let admission = if protect {
+                script::combat::WalkGuard::begin(&request, &view)
+            } else {
+                script::combat::WalkGuard::begin_food_only(&request, &view)
+            };
+            match admission {
                 Ok(guard) => Some(guard),
                 Err(_) => {
                     self.refuse_native(authority);

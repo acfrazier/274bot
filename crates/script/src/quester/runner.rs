@@ -752,6 +752,7 @@ impl Quester {
             &mut cx,
             &self.path.provisioning,
             self.active_loadout.as_deref(),
+            self.stage.as_ref(),
         );
         while let Some(event) = self.provisioner.take_trace_event() {
             self.trace_step_event(tick.output, event);
@@ -800,6 +801,9 @@ impl Quester {
             Poll::Ready(Ok(ProvisionEvent::Ready)) => true,
             Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt))) => {
                 self.bank.update(&receipt);
+                if let Some(step) = self.step.as_mut() {
+                    step.bank_scan_completed();
+                }
                 self.dirty = true;
                 false
             }
@@ -834,6 +838,33 @@ impl Quester {
                 false
             }
         }
+    }
+
+    fn start_predicate_bank_scan(&mut self, tick: &mut NativeTick<'_>) {
+        let required_after = tick.cx.evidence();
+        {
+            let mut cx = StepContext {
+                tick,
+                quests: &self.quests,
+                progress: self
+                    .progress
+                    .as_deref()
+                    .map(std::slice::from_ref)
+                    .unwrap_or(&[]),
+                required_after,
+                bank: &self.bank,
+                banks: &self.banks,
+                choices: &self.choices,
+            };
+            self.provisioner
+                .start_predicate_scan(&mut cx, &self.path.provisioning);
+        }
+        self.dirty = true;
+        self.trace.record(
+            tick.output,
+            api::hostlog::Level::Info,
+            format_args!("quester {}: provision bank scan begin", self.path.id.0),
+        );
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
@@ -2294,12 +2325,13 @@ impl Script for Quester {
                         sel.prelude,
                         Arc::clone(&sel.step.id.0),
                         Arc::clone(&sel.step.skip_if_summary),
+                        sel.step.skip_if.requires_bank(),
                     )),
                 }
             };
             let selected = match selected {
                 Ok(selected) => selected,
-                Err((index, prelude, id, predicate)) => {
+                Err((index, prelude, id, predicate, requires_bank)) => {
                     let stage = self
                         .stage
                         .as_ref()
@@ -2312,6 +2344,12 @@ impl Script for Quester {
                             self.path.id.0
                         ),
                     );
+                    if requires_bank && !self.bank.known() {
+                        self.start_predicate_bank_scan(tick);
+                        self.selection_since = None;
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
                     let since = self.selection_since.get_or_insert(tick.cx.active_now());
                     if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
                         self.parked = true;
@@ -2449,6 +2487,22 @@ impl Script for Quester {
             }
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
+        }
+        let needs_bank_scan = self
+            .step
+            .as_ref()
+            .is_some_and(|step| step.needs_bank_scan());
+        let bank_scan_active = self.provisioner.bank_phase().is_some();
+        let bank_scan_status =
+            self.step.is_some() && self.provisioner.status().phase == ProvisionPhase::Scanning;
+        if (needs_bank_scan && !self.bank.known()) || bank_scan_active || bank_scan_status {
+            if needs_bank_scan && !self.bank.known() && !bank_scan_active {
+                self.start_predicate_bank_scan(tick);
+            }
+            if !self.poll_provision(tick) {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
         }
         let required_after = tick.cx.evidence();
         let poll = {
@@ -5301,6 +5355,356 @@ mod tests {
             script.blocked_failure().message.as_ref(),
             "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts"
         );
+    }
+    struct BankSkipFixture {
+        script: Quester,
+        snapshot: api::snapshot::GameSnapshot,
+        ledger: Option<Box<crate::native::ledger::Ledger>>,
+        bank: api::named_banks::NamedBank,
+        bank_tile: api::snapshot::WorldTile,
+        stock: Vec<api::snapshot::ItemView>,
+        selected_bank: bool,
+        opened_bank: bool,
+    }
+
+    impl BankSkipFixture {
+        fn drive(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
+            let flow = super::super::families::tests::with_tick_output(
+                &self.snapshot,
+                &mut self.ledger,
+                tick,
+                output,
+                |native| self.script.tick(native).unwrap(),
+            );
+            let bank_pick_pending = self.ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(&action.effect, crate::native::HostEffect::BankPick(_))
+                })
+            });
+            let open_stand_pending = self.ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::OpenStand { .. }
+                        )
+                    )
+                })
+            });
+            if bank_pick_pending {
+                let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                self.ledger.as_mut().unwrap().complete_bank_pick(
+                    &authority,
+                    crate::bank::BankPickReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        selected: crate::bank::SelectedBank {
+                            bank_index: 0,
+                            access_tile: self.bank_tile,
+                            kind: crate::bank::PickKind::Reachable,
+                            access: Some(Arc::new(crate::bank::BankStandAccess {
+                                bank: self.bank,
+                                stand_tile: self.bank_tile,
+                                kind: crate::bank::AccessKind::Booth,
+                                stand_op: 1,
+                                name: None,
+                                choose: None,
+                            })),
+                        },
+                    },
+                );
+                self.selected_bank = true;
+            } else if open_stand_pending {
+                let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                self.ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                self.snapshot
+                    .seed_bank_observation(1, tick, Some(self.stock.clone()), Vec::new());
+                self.opened_bank = true;
+            } else if self
+                .ledger
+                .as_ref()
+                .is_some_and(|ledger| !ledger.outbox.is_empty())
+            {
+                panic!("unexpected bank-scan action");
+            }
+            flow
+        }
+    }
+
+    fn bank_skip_fixture(bank_count: i32, nested_recipe: bool) -> BankSkipFixture {
+        use super::super::path::PredicateDocument;
+        use api::snapshot::{ItemActionFamily, ItemContainer, LocLayer, LocView, WorldTile};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let bank_has = PredicateDocument::Fact {
+            kind: "bank_has".into(),
+            version: 1,
+            args: serde_json::json!({"obj":"logs","qty":1}),
+        };
+        let nested_bank_has = PredicateDocument::All(vec![PredicateDocument::Any(vec![bank_has])]);
+        let wait = serde_json::json!({"until":{"Any":[]},"max_ticks":1000});
+        let bank_skip_steps = vec![
+            test_step(
+                "skip-if-bank-has-logs",
+                "wait",
+                wait.clone(),
+                nested_bank_has,
+                PredicateDocument::All(vec![]),
+            ),
+            test_step(
+                "fallback-if-bank-has-logs",
+                "wait",
+                wait,
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            ),
+        ];
+        if nested_recipe {
+            document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .insert("test:bank-skip".to_owned(), bank_skip_steps);
+            document.roles[0].sequences[0].steps = vec![test_step(
+                "root-bank-skip-acquire",
+                "acquire",
+                serde_json::json!({"recipe":"test:bank-skip"}),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            )];
+        } else {
+            document.roles[0].sequences[0].steps = bank_skip_steps;
+        }
+        let (mut script, mut snapshot) = status_fixture(document);
+        let bank_tile = WorldTile {
+            x: 3092,
+            z: 3242,
+            level: 0,
+        };
+        let bank = api::named_banks::NamedBank::new("Runner predicate bank", bank_tile);
+        script.banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+        let logs = script.selected.item_by_alias("logs").unwrap();
+        let stock = if bank_count > 0 {
+            vec![api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: logs.id,
+                    name: Some("Logs".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Bank,
+                action_family: ItemActionFamily::Component,
+                slot: 0,
+                count: bank_count,
+                actions: vec![Some("Withdraw-1".into())],
+                component_id: 7,
+            }]
+        } else {
+            Vec::new()
+        };
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_local_player(super::super::families::tests::local_player(bank_tile));
+        snapshot.seed_locs(vec![LocView {
+            id: 2213,
+            name: Some("Bank booth".into()),
+            actions: vec![Some("Use-quickly".into())],
+            tile: bank_tile,
+            distance: 0,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer: LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        BankSkipFixture {
+            script,
+            snapshot,
+            ledger: None,
+            bank,
+            bank_tile,
+            stock,
+            selected_bank: false,
+            opened_bank: false,
+        }
+    }
+
+    #[test]
+    fn nested_bank_has_skip_starts_real_scan_and_receipt_selects_step() {
+        for (bank_count, expected_step) in [
+            (0, "skip-if-bank-has-logs"),
+            (1, "fallback-if-bank-has-logs"),
+        ] {
+            let mut fixture = bank_skip_fixture(bank_count, false);
+            let mut output = StatusCapture::default();
+            assert!(!fixture.script.bank.known());
+
+            fixture.drive(1, &mut output);
+            assert_eq!(
+                fixture.script.provisioner.status().phase,
+                super::super::provision::ProvisionPhase::Scanning,
+                "unknown nested bank_has must start scanning immediately"
+            );
+            assert!(output
+                .0
+                .iter()
+                .any(|status| status_text(status, "provision") == "Scanning"));
+            assert!(!fixture.script.parked);
+
+            for tick in 2..=64 {
+                fixture.drive(tick, &mut output);
+                if fixture.script.bank.known() && fixture.script.step.is_some() {
+                    break;
+                }
+            }
+
+            assert!(fixture.selected_bank, "the real scan selects a bank");
+            assert!(
+                fixture.opened_bank,
+                "the real scan opens the selected stand"
+            );
+            assert!(fixture.script.bank.known(), "the scan publishes a receipt");
+            let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
+            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(
+                fixture.script.current_step().map(|step| step.id.0.as_ref()),
+                Some(expected_step),
+                "the observed bank receipt resolves the nested skip predicate"
+            );
+            assert!(!fixture.script.parked);
+        }
+    }
+
+    #[test]
+    fn nested_acquire_bank_has_skip_starts_real_scan_and_receipt_selects_child() {
+        for (bank_count, expected_step) in [
+            (0, "skip-if-bank-has-logs"),
+            (1, "fallback-if-bank-has-logs"),
+        ] {
+            let mut fixture = bank_skip_fixture(bank_count, true);
+            let mut output = StatusCapture::default();
+            for tick in 1..=3 {
+                fixture.drive(tick, &mut output);
+            }
+
+            assert_eq!(
+                fixture.script.provisioner.status().phase,
+                super::super::provision::ProvisionPhase::Scanning,
+                "an unknown nested acquisition bank_has must start scanning"
+            );
+            assert!(output
+                .0
+                .iter()
+                .any(|status| status_text(status, "provision") == "Scanning"));
+
+            for tick in 4..=64 {
+                fixture.drive(tick, &mut output);
+                let status = output.0.last().unwrap();
+                if fixture.script.bank.known()
+                    && status_text(status, "child_step_id") == expected_step
+                {
+                    break;
+                }
+            }
+
+            assert!(fixture.selected_bank, "the child scan selects a real bank");
+            assert!(
+                fixture.opened_bank,
+                "the child scan opens the selected stand"
+            );
+            assert!(
+                fixture.script.bank.known(),
+                "the child scan publishes a receipt"
+            );
+            let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
+            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(
+                status_text(output.0.last().unwrap(), "child_step_id"),
+                expected_step,
+                "the observed receipt selects the expected acquisition child"
+            );
+            assert!(!fixture.script.parked);
+        }
+    }
+
+    #[test]
+    fn non_bank_unknown_skip_keeps_waiting_without_starting_bank_scan() {
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        document.roles[0].sequences[0].steps = vec![test_step(
+            "wait-for-inventory-evidence",
+            "wait",
+            serde_json::json!({"until":{"Any":[]},"max_ticks":100}),
+            PredicateDocument::All(vec![PredicateDocument::Fact {
+                kind: "has_item".into(),
+                version: 1,
+                args: serde_json::json!({"obj":"egg"}),
+            }]),
+            PredicateDocument::All(vec![]),
+        )];
+        let (mut script, snapshot) = status_fixture(document);
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        for tick in 1..=32 {
+            super::super::families::tests::with_tick_output(
+                &snapshot,
+                &mut ledger,
+                tick,
+                &mut output,
+                |native| {
+                    script.tick(native).unwrap();
+                },
+            );
+            if script.parked {
+                break;
+            }
+        }
+        assert!(script.parked, "non-bank evidence retains the bounded park");
+        assert_eq!(script.park_reason, "skip predicate evidence unavailable");
+        assert_eq!(
+            script.provisioner.status().phase,
+            super::super::provision::ProvisionPhase::Ready
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 }
 

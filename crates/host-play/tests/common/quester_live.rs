@@ -32,6 +32,14 @@
 //! `LIVE_EVIDENCE_DIR` (outside the throwaway HOME).
 //! Paired cells also require `BOT_LIVE_PARTNER_NAME_PREFIX` for role 1. Both
 //! prefixes are 1–4 bytes, and both names retain the same invocation token.
+//!
+//! The generic Path smoke (`tests/quester_path_live.rs`) additionally takes
+//! `QUESTER_PATH` (content quest id), `QUESTER_SEEDS` (small JSON file with
+//! the stage, stand, loadout, extra items, explicit stage seeds, pre-relog
+//! cheats and expected stages) and optional `QUESTER_PATH_DIR` (an absolute
+//! folder served through the existing `FolderSource` registry, shadowing the
+//! embedded release index). It runs with the Base40 qualification profile
+//! under a fixed deadline.
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -2607,7 +2615,8 @@ fn run_cells(
 /// extras, the stand tile, and Start with the fixture's own settings. The
 /// fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
 pub struct PathCell<'a> {
-    /// Content quest id; the Path body comes from the release index.
+    /// Content quest id; the Path body comes from the release index, or from
+    /// the folder the `FolderSource` registry currently serves.
     pub quest: &'static str,
     /// Selected quest-tab display (checked against the identity row).
     pub display: &'static str,
@@ -2616,6 +2625,10 @@ pub struct PathCell<'a> {
     pub stage: &'a str,
     pub loadout: Option<scenario::quester::FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
+    /// Explicit operator seeds for hint-less stages (released Cook: the stage
+    /// varp and value, recorded like every other cheat). See
+    /// `scenario::quester::quester_stage_with_seeds`.
+    pub seed_vars: &'a [(&'a str, i32)],
     pub stand: WorldTile,
     pub mode: Mode,
     /// Auxiliary pre-Start setup (bank stock, prerequisite quest flags),
@@ -2624,47 +2637,27 @@ pub struct PathCell<'a> {
 }
 
 pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
-    let bytes = script::quester::compile::path_bytes(spec.quest)
-        .ok_or_else(|| format!("{} is not an embedded release Path", spec.quest))?;
-    let path: script::quester::path::PathDocument =
-        serde_json::from_slice(bytes).map_err(|error| format!("{}: {error}", spec.quest))?;
+    let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
-    let identity = selected
-        .quest_identity()
-        .and_then(|table| table.rows.iter().find(|row| row.id == spec.quest))
-        .ok_or_else(|| format!("no quest identity row for {}", spec.quest))?;
-    if identity.display != spec.display {
-        return Err(format!(
-            "{} displays as {:?}, not {:?}",
-            spec.quest, identity.display, spec.display
-        ));
-    }
-    let fixture = scenario::quester::quester_stage(scenario::quester::QuesterStage {
-        name: spec.quest,
-        quest_display: spec.display,
-        path: &path,
-        identity,
-        selected: &selected,
-        stage: spec.stage,
-        loadout: spec.loadout,
-        extra_items: spec.extra_items,
-        stand: spec.stand,
-    })?;
-    let mut scenario = fixture.scenario;
-    if !spec.before_relog.is_empty() {
-        let relog = scenario
-            .steps
-            .iter()
-            .rposition(|step| matches!(step.kind, scenario::StepKind::Relog))
-            .ok_or("fixture has no relog")?;
-        scenario.steps.splice(relog..relog, spec.before_relog);
-    }
+    let fixture =
+        scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
+            name: spec.quest,
+            quest_display: spec.display,
+            path: &path,
+            selected: &selected,
+            stage: Some(spec.stage),
+            loadout: spec.loadout,
+            extra_items: spec.extra_items,
+            seed_vars: spec.seed_vars,
+            stand: spec.stand,
+            before_relog: spec.before_relog,
+        })?;
     let seed = fixture.seed;
     Ok(Cell {
         quest: spec.quest,
         display: spec.display,
         label: spec.label,
-        scenario,
+        scenario: fixture.scenario,
         start_settings: fixture.start_settings,
         mode: spec.mode,
         observe_start: Some(Box::new(move |snapshot| seed.observe_start(snapshot))),
