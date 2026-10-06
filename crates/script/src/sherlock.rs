@@ -1468,6 +1468,7 @@ mod tests {
                 compiled: crate::CompiledTick {
                     selected,
                     reach: None,
+                    bank_memory: None,
                     hold: self.hold,
                     interacts: Some(Vec::new()),
                 },
