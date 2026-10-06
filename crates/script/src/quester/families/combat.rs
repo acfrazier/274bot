@@ -8,14 +8,17 @@ use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::reach::{self, Reach, ReachArgs, ReachKind};
 use super::{compile_dialogue_options, DialogueOptionsDocument, LineRuleDocument};
 use crate::combat::{
-    AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, RangedMode,
-    SpellRef, Style, Tactic, Target,
+    AbortReason, ActorRef, Allowances, Combat, CombatEnd, CombatReport, CombatRequest,
+    CombatTables, CompiledKit, Fallback, GuardOp, GuardRefusal, IntruderPolicy, MeleeMode, Pick,
+    PrayerMode, RaisedPrayers, RangedMode, SpellRef, Style, Tactic, Target, WalkGuard,
 };
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
+use crate::native::{
+    ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkAllow, WalkReceipt,
+};
+use crate::shim::InteractReq;
 use api::gather_methods::SceneRegionInput;
 use api::selected::Truth;
 use serde::Deserialize;
@@ -33,6 +36,17 @@ static COMBAT_FINISH_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat finish dialogue failed"));
 static COMBAT_FINISH_INTERRUPTED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat interrupted the post-transform dialogue"));
+static ABORT_HOLD_SAFE: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
+    Arc::from(
+            "combat abort guarded hold ended because the attacker disengaged or HP cleared the guard food line",
+        )
+});
+static ABORT_HOLD_BOUND: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat abort guarded hold reached its 12-tick bound"));
+static ABORT_HOLD_UNAVAILABLE: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
+    Arc::from("combat abort safety hold could not start its food guard")
+});
+const ABORT_HOLD_MAX_TICKS: u16 = 12;
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -40,6 +54,45 @@ fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     } else {
         (a.x - b.x).abs().max((a.z - b.z).abs())
     }
+}
+
+#[derive(Clone, Copy)]
+struct AbortThreat {
+    actor: ActorRef,
+    npc_type: i32,
+    tile: api::WorldTile,
+    weight: i32,
+}
+
+fn targeting_local_player(
+    target: Option<api::snapshot::ActorTargetView>,
+    in_combat: bool,
+    local_index: usize,
+) -> bool {
+    in_combat
+        && target.is_some_and(|target| {
+            target.kind == api::snapshot::ActorKind::Player && target.index == local_index
+        })
+}
+
+fn has_live_attacker(snapshot: &api::snapshot::SnapshotView<'_>) -> Option<bool> {
+    let local_index = snapshot.local_player()?.value.player.index;
+    let npcs = snapshot.npcs();
+    let players = snapshot.players();
+    if npcs.is_none() && players.is_none() {
+        return None;
+    }
+    let npc_attacker = npcs.as_ref().is_some_and(|rows| {
+        rows.value
+            .iter()
+            .any(|npc| targeting_local_player(npc.target, npc.in_combat, local_index))
+    });
+    let player_attacker = players.as_ref().is_some_and(|rows| {
+        rows.value.iter().any(|player| {
+            targeting_local_player(player.actor.target, player.actor.in_combat, local_index)
+        })
+    });
+    Some(npc_attacker || player_attacker)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -731,6 +784,7 @@ enum Phase {
     Combat,
     ReturningToStand,
     WalkingOutAfterAbort,
+    HoldingAfterAbort,
     Loot,
     FinishWait,
     FinishDialogue,
@@ -743,6 +797,7 @@ enum Phase {
 enum Action {
     Combat(ActionHandle<Combat>),
     Walk(ActionHandle<Walk>),
+    AbortHold(ActionHandle<AbortHold>),
     Loot(ActionHandle<Reach>),
     Dialogue(ActionHandle<Dialogue>),
 }
@@ -754,6 +809,204 @@ enum ActionPoll {
     Walk(WalkReceipt),
     Loot(bool),
     Dialogue(DialogueOutcome),
+}
+struct AbortHoldArgs {
+    tables: Arc<CombatTables>,
+    allow_prayer: bool,
+    started_at: u64,
+}
+
+struct AbortHold {
+    guard: Option<WalkGuard>,
+    started_at: u64,
+    terminal_reason: Option<Arc<str>>,
+    cleanup: [i32; 2],
+    cleanup_len: u8,
+    cleanup_index: u8,
+    cleanup_pending: Option<(u64, u64)>,
+    cleanup_retries: u8,
+}
+
+impl NativeMachine for AbortHold {
+    type Args = AbortHoldArgs;
+    type Output = ();
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let snapshot = cx.snapshot();
+        let here = snapshot
+            .here()
+            .map(|row| row.value)
+            .unwrap_or(api::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            });
+        let mut request = reach::walk_request(here, 0, None, cx.evidence());
+        request.protect = true;
+        request.allow = WalkAllow {
+            prayer: args.allow_prayer,
+            food: true,
+        };
+        let guard = if args.allow_prayer {
+            match WalkGuard::begin_with(&request, &snapshot, Arc::clone(&args.tables)) {
+                Ok(guard) => guard,
+                Err(GuardRefusal::PrayerTooLow | GuardRefusal::PrayerDisallowed) => {
+                    WalkGuard::begin_food_only_with(&request, &snapshot, Arc::clone(&args.tables))
+                        .map_err(|_| ActionError::Blocked(Arc::clone(&ABORT_HOLD_UNAVAILABLE)))?
+                }
+                Err(_) => {
+                    return Err(ActionError::Blocked(Arc::clone(&ABORT_HOLD_UNAVAILABLE)));
+                }
+            }
+        } else {
+            WalkGuard::begin_food_only_with(&request, &snapshot, Arc::clone(&args.tables))
+                .map_err(|_| ActionError::Blocked(Arc::clone(&ABORT_HOLD_UNAVAILABLE)))?
+        };
+        Ok(Self {
+            guard: Some(guard),
+            started_at: args.started_at,
+            terminal_reason: None,
+            cleanup: [0; 2],
+            cleanup_len: 0,
+            cleanup_index: 0,
+            cleanup_pending: None,
+            cleanup_retries: 0,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if self.terminal_reason.is_some() {
+            return self.poll_cleanup(cx);
+        }
+
+        let snapshot = cx.snapshot();
+        let live_attacker = has_live_attacker(&snapshot);
+        if live_attacker == Some(false) {
+            self.begin_end(Arc::clone(&ABORT_HOLD_SAFE));
+            return self.poll_cleanup(cx);
+        }
+
+        if let Some(guard) = self.guard.as_mut() {
+            if let Some(op) = guard.tick(&snapshot) {
+                if let Some(request) = guard_interaction(&op) {
+                    match cx.emit(request) {
+                        Ok(_) => guard.admitted(&op, &snapshot),
+                        Err(
+                            ActionError::BudgetExhausted | ActionError::Busy | ActionError::Held,
+                        ) => {
+                            return Poll::Pending;
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+            }
+            if guard.safe_to_stop(&snapshot) {
+                self.begin_end(Arc::clone(&ABORT_HOLD_SAFE));
+                return self.poll_cleanup(cx);
+            }
+        }
+
+        if cx.evidence().tick.saturating_sub(self.started_at) >= u64::from(ABORT_HOLD_MAX_TICKS) {
+            self.begin_end(Arc::clone(&ABORT_HOLD_BOUND));
+            return self.poll_cleanup(cx);
+        }
+        Poll::Pending
+    }
+
+    fn cancel(&mut self) {
+        self.guard = None;
+    }
+}
+
+impl AbortHold {
+    fn begin_end(&mut self, reason: Arc<str>) {
+        self.terminal_reason = Some(reason);
+        let Some(guard) = self.guard.take() else {
+            return;
+        };
+        let (op, fallback) = guard.end();
+        if let GuardOp::IfButton { component } = op {
+            self.push_cleanup(component);
+        }
+        if let Some(component) = fallback {
+            self.push_cleanup(component);
+        }
+    }
+
+    fn push_cleanup(&mut self, component: i32) {
+        if component > 0 && usize::from(self.cleanup_len) < self.cleanup.len() {
+            self.cleanup[usize::from(self.cleanup_len)] = component;
+            self.cleanup_len += 1;
+        }
+    }
+
+    fn poll_cleanup(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        if let Some((request_id, sent_tick)) = self.cleanup_pending {
+            if let Some(receipt) = cx.interaction_receipt(request_id) {
+                self.cleanup_pending = None;
+                if receipt.accepted || self.cleanup_retries >= 1 {
+                    self.cleanup_index += 1;
+                    self.cleanup_retries = 0;
+                } else {
+                    self.cleanup_retries += 1;
+                }
+            } else if cx.evidence().tick.saturating_sub(sent_tick) >= 2 {
+                self.cleanup_pending = None;
+                if self.cleanup_retries >= 1 {
+                    self.cleanup_index += 1;
+                    self.cleanup_retries = 0;
+                } else {
+                    self.cleanup_retries += 1;
+                }
+            } else {
+                return Poll::Pending;
+            }
+        }
+
+        if self.cleanup_index < self.cleanup_len {
+            let component = self.cleanup[usize::from(self.cleanup_index)];
+            match cx.emit(InteractReq::IfButton {
+                component_id: component,
+            }) {
+                Ok(request_id) => {
+                    self.cleanup_pending = Some((request_id, cx.evidence().tick));
+                    return Poll::Pending;
+                }
+                Err(ActionError::BudgetExhausted | ActionError::Busy | ActionError::Held) => {
+                    return Poll::Pending;
+                }
+                Err(error) => return Poll::Ready(Err(error)),
+            }
+        }
+
+        Poll::Ready(Err(ActionError::Blocked(
+            self.terminal_reason
+                .as_ref()
+                .map(Arc::clone)
+                .unwrap_or_else(|| Arc::clone(&ABORT_HOLD_UNAVAILABLE)),
+        )))
+    }
+}
+
+fn guard_interaction(op: &GuardOp) -> Option<InteractReq> {
+    match op {
+        GuardOp::IfButton { component } => Some(InteractReq::IfButton {
+            component_id: *component,
+        }),
+        GuardOp::Drink { name } => Some(InteractReq::Held {
+            name: name.to_string(),
+            action: "Drink".to_owned(),
+            slot: None,
+            target_item_id: None,
+        }),
+        GuardOp::Eat { name } => Some(InteractReq::Held {
+            name: name.to_string(),
+            action: "Eat".to_owned(),
+            slot: None,
+            target_item_id: None,
+        }),
+        GuardOp::Locked { .. } | GuardOp::Unprotectable { .. } => None,
+    }
 }
 
 enum LootStart {
@@ -898,6 +1151,108 @@ impl CombatRun {
         Ok(())
     }
 
+    fn abort_reference(
+        &self,
+        report: CombatReport,
+        snapshot: &api::snapshot::SnapshotView<'_>,
+    ) -> Option<AbortThreat> {
+        if let Some(engaged) = report.engaged {
+            return match engaged.kind {
+                api::snapshot::ActorKind::Npc => {
+                    let index = usize::from(engaged.index);
+                    let npc_type = report.engaged_npc_type;
+                    let kind = usize::try_from(npc_type).ok()?;
+                    snapshot
+                        .npcs()?
+                        .value
+                        .iter()
+                        .find(|npc| npc.index == index && npc.r#type == Some(kind))
+                        .map(|npc| AbortThreat {
+                            actor: engaged,
+                            npc_type,
+                            tile: npc.tile,
+                            weight: 0,
+                        })
+                }
+                api::snapshot::ActorKind::Player => snapshot
+                    .players()?
+                    .value
+                    .iter()
+                    .find(|player| player.index == usize::from(engaged.index))
+                    .map(|player| AbortThreat {
+                        actor: engaged,
+                        npc_type: -1,
+                        tile: player.actor.tile,
+                        weight: 0,
+                    }),
+            };
+        }
+        self.heaviest_live_attacker(snapshot)
+    }
+
+    fn heaviest_live_attacker(
+        &self,
+        snapshot: &api::snapshot::SnapshotView<'_>,
+    ) -> Option<AbortThreat> {
+        let local_index = snapshot.local_player()?.value.player.index;
+        let mut heaviest: Option<AbortThreat> = None;
+        if let Some(npcs) = snapshot.npcs() {
+            for npc in npcs.value.iter() {
+                if !targeting_local_player(npc.target, npc.in_combat, local_index) {
+                    continue;
+                }
+                let Some(npc_type) = npc.r#type.and_then(|kind| i32::try_from(kind).ok()) else {
+                    continue;
+                };
+                let Ok(index) = u16::try_from(npc.index) else {
+                    continue;
+                };
+                let weight = self
+                    .tables
+                    .selected()
+                    .npc_name(npc_type)
+                    .and_then(crate::combat::facts::npc_max_hit)
+                    .map_or(0, |max_hit| i32::from(max_hit) * 10);
+                let candidate = AbortThreat {
+                    actor: ActorRef {
+                        kind: api::snapshot::ActorKind::Npc,
+                        index,
+                    },
+                    npc_type,
+                    tile: npc.tile,
+                    weight,
+                };
+                if heaviest.is_none_or(|current| weight > current.weight) {
+                    heaviest = Some(candidate);
+                }
+            }
+        }
+        if let Some(players) = snapshot.players() {
+            for player in players.value.iter() {
+                if !targeting_local_player(player.actor.target, player.actor.in_combat, local_index)
+                {
+                    continue;
+                }
+                let Ok(index) = u16::try_from(player.index) else {
+                    continue;
+                };
+                let candidate = AbortThreat {
+                    actor: ActorRef {
+                        kind: api::snapshot::ActorKind::Player,
+                        index,
+                    },
+                    npc_type: -1,
+                    tile: player.actor.tile,
+                    weight: player.combat_level.max(0),
+                };
+                if heaviest.is_none_or(|current| candidate.weight > current.weight) {
+                    heaviest = Some(candidate);
+                }
+            }
+        }
+        heaviest
+    }
+
     fn abort_walk_destination(
         &self,
         report: CombatReport,
@@ -905,39 +1260,19 @@ impl CombatRun {
     ) -> Option<api::WorldTile> {
         let snapshot = cx.tick.cx.snapshot();
         let here = snapshot.here()?.value;
-        let target = report.engaged.and_then(|engaged| match engaged.kind {
-            api::snapshot::ActorKind::Npc => {
-                let index = usize::from(engaged.index);
-                let kind = usize::try_from(report.engaged_npc_type).ok()?;
-                snapshot
-                    .npcs()?
-                    .value
-                    .iter()
-                    .find(|npc| npc.index == index && npc.r#type == Some(kind))
-                    .map(|npc| npc.tile)
-            }
-            api::snapshot::ActorKind::Player => snapshot
-                .players()?
-                .value
-                .iter()
-                .find(|player| player.index == usize::from(engaged.index))
-                .map(|player| player.actor.tile),
-        });
-        let Some(target) = target else {
+        let Some(reference) = self.abort_reference(report, &snapshot) else {
             return self.request.stand;
         };
+        let target = reference.tile;
         // The engine drops a melee NPC's target only once the player is more
         // than `maxrange + 1` from the NPC's spawn, which the client never
         // sees, and the NPC itself may be up to `maxrange` from that spawn.
         // Measured from the NPC's current tile, the chase envelope is
         // therefore up to `2 * maxrange + attackrange` (Npc.ts:652-667).
-        let chase_range = if report
-            .engaged
-            .is_some_and(|actor| actor.kind == api::snapshot::ActorKind::Npc)
-        {
+        let chase_range = if reference.actor.kind == api::snapshot::ActorKind::Npc {
             self.tables
                 .selected()
-                .npc_name(report.engaged_npc_type)
+                .npc_name(reference.npc_type)
                 .map(|npc| {
                     npc.maxrange
                         .saturating_mul(2)
@@ -985,11 +1320,68 @@ impl CombatRun {
             .ok_or_else(|| ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))?;
         let mut request = reach::walk_request(destination, 1, None, cx.required_after);
         request.cross = self.cross.iter().cloned().collect();
-        request.protect = self.protect;
+        request.protect = true;
+        request.allow = WalkAllow {
+            prayer: self.protect,
+            food: true,
+        };
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::WalkingOutAfterAbort;
         self.action = Some(Action::Walk(handle));
         Ok(())
+    }
+
+    fn begin_abort_hold(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        let handle = match cx.tick.actions.begin::<AbortHold>(
+            AbortHoldArgs {
+                tables: Arc::clone(&self.tables),
+                allow_prayer: self.protect,
+                started_at: cx.tick.cx.evidence().tick,
+            },
+            &mut cx.tick.cx,
+        ) {
+            Ok(handle) => handle,
+            Err(
+                error @ (ActionError::UserInput
+                | ActionError::Cancelled
+                | ActionError::NeedsEvidence(_)),
+            ) => {
+                return Poll::Ready(Err(error));
+            }
+            Err(_) => {
+                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                    &ABORT_HOLD_UNAVAILABLE,
+                ))));
+            }
+        };
+        self.phase = Phase::HoldingAfterAbort;
+        self.action = Some(Action::AbortHold(handle));
+        Poll::Pending
+    }
+
+    fn begin_abort_safety_walk(
+        &mut self,
+        report: CombatReport,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        match self.begin_abort_walk(report, cx) {
+            Ok(()) => Poll::Pending,
+            Err(error @ (ActionError::UserInput | ActionError::Cancelled)) => {
+                Poll::Ready(Err(error))
+            }
+            Err(error @ ActionError::NeedsEvidence(_))
+                if has_live_attacker(&cx.tick.cx.snapshot()) != Some(true) =>
+            {
+                Poll::Ready(Err(error))
+            }
+            Err(_) if has_live_attacker(&cx.tick.cx.snapshot()) == Some(true) => {
+                self.begin_abort_hold(cx)
+            }
+            Err(_) => Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))),
+        }
     }
 
     fn on_return_walk(
@@ -1002,13 +1394,31 @@ impl CombatRun {
         self.rebegin_combat(cx, true)
     }
 
-    fn on_abort_walk(&mut self, receipt: WalkReceipt) -> Poll<Result<StepOutcome, ActionError>> {
+    fn on_abort_walk(
+        &mut self,
+        receipt: WalkReceipt,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
+        let has_attacker = {
+            let snapshot = cx.tick.cx.snapshot();
+            has_live_attacker(&snapshot) == Some(true)
+        };
         let error = match receipt.into_arrival() {
             Ok(_) => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
+            Err(error @ (ActionError::UserInput | ActionError::Cancelled)) => {
+                return Poll::Ready(Err(error));
+            }
+            Err(error @ ActionError::NeedsEvidence(_)) if !has_attacker => {
+                return Poll::Ready(Err(error));
+            }
             Err(error) => error,
         };
-        Poll::Ready(Err(error))
+        if has_attacker {
+            self.begin_abort_hold(cx)
+        } else {
+            Poll::Ready(Err(error))
+        }
     }
 
     fn on_combat_report(
@@ -1057,21 +1467,14 @@ impl CombatRun {
             }
             CombatEnd::Died => self.finish(cx),
             CombatEnd::Aborted(AbortReason::Unattackable)
-                if matches!(&self.request.target, Target::Attacker { .. }) =>
+                if matches!(&self.request.target, Target::Attacker { .. })
+                    && has_live_attacker(&cx.tick.cx.snapshot()) != Some(true) =>
             {
-                // M4's caller owns the walk-out after this observed report
-                // (design-combat-s3.md §5.1).
+                // Preserve the caller-owned walk-out when no live attacker
+                // remains; otherwise use the same guarded escape as other aborts.
                 self.finish(cx)
             }
-            CombatEnd::Aborted(_) => match self.begin_abort_walk(report, cx) {
-                Ok(()) => Poll::Pending,
-                Err(
-                    error @ (ActionError::UserInput
-                    | ActionError::Cancelled
-                    | ActionError::NeedsEvidence(_)),
-                ) => Poll::Ready(Err(error)),
-                Err(_) => Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))),
-            },
+            CombatEnd::Aborted(_) => self.begin_abort_safety_walk(report, cx),
         }
     }
 
@@ -1326,7 +1729,7 @@ impl StepRun for CombatRun {
         }
         if !matches!(
             self.phase,
-            Phase::Loot | Phase::FinishWait | Phase::FinishDialogue
+            Phase::Loot | Phase::HoldingAfterAbort | Phase::FinishWait | Phase::FinishDialogue
         ) && self.should_stop(cx)
         {
             return self.finish(cx);
@@ -1342,6 +1745,15 @@ impl StepRun for CombatRun {
                 Poll::Ready(Ok(receipt)) => ActionPoll::Walk(receipt),
                 Poll::Ready(Err(error)) => ActionPoll::Failed(error),
             },
+            Some(Action::AbortHold(handle)) => {
+                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                    Poll::Pending => ActionPoll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        ActionPoll::Failed(ActionError::Blocked(Arc::clone(&ABORT_HOLD_SAFE)))
+                    }
+                    Poll::Ready(Err(error)) => ActionPoll::Failed(error),
+                }
+            }
             Some(Action::Loot(handle)) => match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => ActionPoll::Pending,
                 Poll::Ready(Ok(taken)) => ActionPoll::Loot(taken),
@@ -1357,13 +1769,17 @@ impl StepRun for CombatRun {
         match polled {
             ActionPoll::Pending => Poll::Pending,
             ActionPoll::Failed(error) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
-                if matches!(
-                    error,
-                    ActionError::UserInput | ActionError::Cancelled | ActionError::NeedsEvidence(_)
-                ) {
+                if matches!(&error, ActionError::UserInput | ActionError::Cancelled) {
                     Poll::Ready(Err(error))
                 } else {
-                    Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
+                    self.action = None;
+                    if has_live_attacker(&cx.tick.cx.snapshot()) == Some(true) {
+                        self.begin_abort_hold(cx)
+                    } else if matches!(&error, ActionError::NeedsEvidence(_)) {
+                        Poll::Ready(Err(error))
+                    } else {
+                        Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
+                    }
                 }
             }
             ActionPoll::Failed(ActionError::Blocked(_)) if matches!(&self.phase, Phase::Loot) => {
@@ -1387,7 +1803,7 @@ impl StepRun for CombatRun {
             }
             ActionPoll::Combat(report) => self.on_combat_report(report, cx),
             ActionPoll::Walk(receipt) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
-                self.on_abort_walk(receipt)
+                self.on_abort_walk(receipt, cx)
             }
             ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {

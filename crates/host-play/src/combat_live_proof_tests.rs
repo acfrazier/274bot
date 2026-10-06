@@ -47,6 +47,24 @@ const WARLORD_ANCHOR: WorldTile = WorldTile {
     z: 3302,
     level: 0,
 };
+const WARLORD_WANDER_RANGE: i32 = 9;
+const RANGED_STAGE_DISTANCE: i32 = 9;
+const RANGED_START_DISTANCE_MIN: i32 = RANGED_STAGE_DISTANCE - 1;
+const RANGED_START_DISTANCE_MAX: i32 = RANGED_STAGE_DISTANCE + 1;
+const WARLORD_RESPAWN_TICKS: u32 = 300;
+const WARLORD_RESPAWN_MARGIN_TICKS: u32 = 50;
+const RANGED_NATURAL_WARLORD_WAIT_TICKS: u32 = WARLORD_RESPAWN_TICKS + WARLORD_RESPAWN_MARGIN_TICKS;
+const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
+// Selected R289 data: Protect from Melee requires base Prayer 43.
+const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
+const RANGED_ABORTED_COMBAT_STEP_REASON: &str = "combat aborted; caller must handle the failure";
+const RANGED_ABORT_WALK_FAILED_REASON: &str = "combat abort walk did not reach a safe tile";
+const RANGED_ABORT_HOLD_SAFE_REASON: &str =
+    "combat abort guarded hold ended because the attacker disengaged or HP cleared the guard food line";
+const RANGED_ABORT_HOLD_BOUND_REASON: &str = "combat abort guarded hold reached its 12-tick bound";
+const RANGED_ABORT_HOLD_UNAVAILABLE_REASON: &str =
+    "combat abort safety hold could not start its food guard";
+
 // Outside every nearby static tree's one-tile hunt range. The fixture's first
 // native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
 const TREE_APPROACH: WorldTile = WorldTile {
@@ -1456,9 +1474,9 @@ fn ranged_natural_actor_observed_step(
 ) -> Step {
     let ready_capture = Arc::clone(&capture);
     Step {
-        name: "observe the natural Khazard Warlord at its map spawn",
+        name: "wait up to 350 game ticks for the natural Khazard Warlord row at its map spawn",
         kind: StepKind::Await {
-            evidence: "natural Warlord identity and quiet encounter area",
+            evidence: "natural Khazard Warlord row within its nine-tile map spawn radius",
             ready: Box::new(move |snapshot| {
                 let mut capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
                 if capture.invalid_reason.is_some() || ranged_spawn_event(&capture).is_some() {
@@ -1474,11 +1492,11 @@ fn ranged_natural_actor_observed_step(
                 if varp(AUTO_RETALIATE_VARP) != Some(1) {
                     return false;
                 }
-                // The map actor wanders up to nine tiles (selected content's
-                // khazard_warlord.wanderrange); its anchor is not its live tile.
+                // The map actor wanders up to nine network tiles from its
+                // selected-content anchor; its anchor is not its live tile.
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
                     npc.r#type == Some(WARLORD_NPC_ID)
-                        && tile_distance(npc.tile, WARLORD_ANCHOR) <= 9
+                        && tile_distance(npc.network, WARLORD_ANCHOR) <= WARLORD_WANDER_RANGE
                 }) else {
                     return false;
                 };
@@ -1488,7 +1506,7 @@ fn ranged_natural_actor_observed_step(
                     "natural_npc": "khazard_warlord",
                     "npc_type": WARLORD_NPC_ID,
                     "npc_anchor": tile_value(WARLORD_ANCHOR),
-                    "spawn_tile": tile_value(npc.tile),
+                    "spawn_tile": tile_value(npc.network),
                     "approach_tile": tile_value(approach),
                     "stand_tile": null,
                     "spawned_index": npc.index,
@@ -1513,8 +1531,14 @@ fn ranged_natural_actor_observed_step(
             }),
         },
         wait: Wait {
-            arm: Proof::IngameScene2,
-            budget_ticks: 120,
+            arm: Proof::NpcNameNear {
+                name: "Khazard warlord",
+                x: WARLORD_ANCHOR.x,
+                z: WARLORD_ANCHOR.z,
+                level: WARLORD_ANCHOR.level,
+                radius: WARLORD_WANDER_RANGE,
+            },
+            budget_ticks: RANGED_NATURAL_WARLORD_WAIT_TICKS,
         },
     }
 }
@@ -1706,9 +1730,10 @@ fn ranged_dialogue_settled_step(case: Case, capture: Arc<Mutex<CombatCapture>>) 
 fn ranged_tele_observed_step(capture: Arc<Mutex<CombatCapture>>) -> Step {
     let ready_capture = Arc::clone(&capture);
     Step {
-        name: "observe the natural Warlord at the exact five-tile ranged stand",
+        name: "observe the natural Warlord at the eight-to-ten-tile ranged stand",
         kind: StepKind::Await {
-            evidence: "settled dialogue, live Warlord identity, and five-tile stand",
+            evidence:
+                "settled dialogue, live Warlord identity, and eight-to-ten-tile network staging",
             ready: Box::new(move |snapshot| {
                 let mut capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
                 if capture.invalid_reason.is_some() {
@@ -1746,8 +1771,13 @@ fn ranged_tele_observed_step(capture: Arc<Mutex<CombatCapture>>) -> Step {
                     .find(|row| row.index == AUTO_RETALIATE_VARP)
                     .is_some_and(|row| row.value == 1);
                 let arrived = snapshot.tile() == Some((stand.x, stand.z, stand.level));
-                if arrived && retaliation_off && tile_distance(npc.tile, stand) == 5 {
-                    event["spawn_tile"] = tile_value(npc.tile);
+                let network_distance = tile_distance(npc.network, stand);
+                if arrived
+                    && retaliation_off
+                    && (RANGED_START_DISTANCE_MIN..=RANGED_START_DISTANCE_MAX)
+                        .contains(&network_distance)
+                {
+                    event["spawn_tile"] = tile_value(npc.network);
                     event["retaliate_off_at_stand"] = json!(true);
                     event["tele_observed"] = json!(true);
                     true
@@ -1765,7 +1795,7 @@ fn ranged_tele_observed_step(capture: Arc<Mutex<CombatCapture>>) -> Step {
 
 fn ranged_tele_step(stands: Vec<WorldTile>, capture: Arc<Mutex<CombatCapture>>) -> Step {
     Step {
-        name: "teleport exactly five tiles from the natural Warlord",
+        name: "teleport nine tiles from the natural Warlord",
         kind: StepKind::Perform {
             send: Box::new(move |client, snapshot| {
                 let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
@@ -1805,8 +1835,7 @@ fn ranged_tele_step(stands: Vec<WorldTile>, capture: Arc<Mutex<CombatCapture>>) 
                 let Some(stand) = stands
                     .iter()
                     .copied()
-                    .filter(|stand| tile_distance(npc.tile, *stand) == 5)
-                    .min_by_key(|stand| tile_distance(*stand, WARLORD_ANCHOR))
+                    .find(|stand| tile_distance(npc.network, *stand) == RANGED_STAGE_DISTANCE)
                 else {
                     return false;
                 };
@@ -1816,7 +1845,7 @@ fn ranged_tele_step(stands: Vec<WorldTile>, capture: Arc<Mutex<CombatCapture>>) 
                     client::CheatSend::Sent
                 );
                 if sent {
-                    event["spawn_tile"] = tile_value(npc.tile);
+                    event["spawn_tile"] = tile_value(npc.network);
                     event["stand_tile"] = tile_value(stand);
                     event["tele_command"] = json!(command);
                 }
@@ -1950,11 +1979,12 @@ fn ranged_placement(case: Case, world: &nav::world::NavWorld) -> Result<RangedPl
         return Err("ranged placement requested for a non-ranged case".to_owned());
     }
     let spawn = standable_neighbor(world, WARLORD_ANCHOR)?;
-    // Cover the content's nine-tile wander plus the five-tile firing offset.
+    // Cover the content's nine-tile wander plus the nine-tile firing offset.
     // Only the account moves; the natural NPC is never repositioned.
-    let stands: Vec<_> = (-14..=14)
+    let stand_radius = WARLORD_WANDER_RANGE + RANGED_STAGE_DISTANCE;
+    let stands: Vec<_> = (-stand_radius..=stand_radius)
         .flat_map(|dx| {
-            (-14..=14).map(move |dz| WorldTile {
+            (-stand_radius..=stand_radius).map(move |dz| WorldTile {
                 x: WARLORD_ANCHOR.x + dx,
                 z: WARLORD_ANCHOR.z + dz,
                 ..WARLORD_ANCHOR
@@ -2215,16 +2245,16 @@ fn ranged_start_preflight(
             "ranged Start fixture lacks its natural Warlord identity or stand tile".to_owned(),
         );
     };
-    let Some(player_tile) = value_tile(&baseline["local_player"]["tile"]) else {
-        return Some("ranged Start baseline has no local world tile".to_owned());
+    let Some(player_tile) = value_tile(&baseline["local_player"]["network"]) else {
+        return Some("ranged Start baseline has no local network tile".to_owned());
     };
     let target = baseline["nearby_npcs"].as_array().and_then(|npcs| {
         npcs.iter().find(|npc| {
             npc["index"] == json!(spawned_index) && npc["type"] == json!(WARLORD_NPC_ID)
         })
     });
-    let Some(target_tile) = target.and_then(|npc| value_tile(&npc["tile"])) else {
-        return Some("ranged Start baseline lost the natural Warlord target".to_owned());
+    let Some(target_tile) = target.and_then(|npc| value_tile(&npc["network"])) else {
+        return Some("ranged Start baseline lost the natural Warlord network tile".to_owned());
     };
     let other_player_targets_warlord = target.is_some_and(|npc| {
         npc["target"]["kind"] == json!("Player")
@@ -2237,13 +2267,13 @@ fn ranged_start_preflight(
         ));
     }
     if spawn_event["tele_observed"] != true
-        || tile_distance(spawn, stand) != 5
-        || target_tile != spawn
-        || tile_distance(target_tile, player_tile) != 5
+        || tile_distance(spawn, stand) != RANGED_STAGE_DISTANCE
+        || !(RANGED_START_DISTANCE_MIN..=RANGED_START_DISTANCE_MAX)
+            .contains(&tile_distance(target_tile, player_tile))
         || player_tile != stand
     {
         return Some(
-            "ranged Start did not preserve the natural Warlord identity and observed five-tile staging stand"
+            "ranged Start did not preserve the natural Warlord identity and observed eight-to-ten-tile network staging"
                 .to_owned(),
         );
     }
@@ -2745,6 +2775,16 @@ fn ranged_pickup_count(action: &Value, after: &Value, ammo_id: i32) -> Option<i6
     };
     let before = stacks(&action["snapshot"])?;
     let after = stacks(after)?;
+    if before == after {
+        let requested_take = request["op"] == json!("obj")
+            && request["action"]
+                .as_str()
+                .is_some_and(|action| action.eq_ignore_ascii_case("take"))
+            && request["name"]
+                .as_str()
+                .is_some_and(|name| !name.trim().is_empty());
+        return requested_take.then_some(0);
+    }
     // One Take removes one stack, not every same-ID stack on its tile.
     // Compare independent ground observations; do not infer units from inventory.
     if before.len() != after.len() + 1 {
@@ -2886,11 +2926,11 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
         .collect::<Vec<_>>();
     let pickup_counts_valid = pickup_counts
         .iter()
-        .all(|count| count.is_some_and(|count| count > 0));
+        .all(|count| count.is_some_and(|count| count >= 0));
     let swept_units = pickup_counts
         .iter()
         .try_fold(0_i64, |total, count| total.checked_add((*count)?));
-    let pickup_plan_valid = pickups.iter().all(|action| {
+    let pickup_plan_shape_valid = pickups.iter().all(|action| {
         action["request"]["op"] == json!("obj")
             && action["request"]["action"] == json!("Take")
             && action["batch"].as_u64().is_some_and(|batch| batch > 0)
@@ -2903,7 +2943,7 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
                         .zip(take_wire)
                         .all(|(actual, expected)| *actual == expected)
             })
-    }) && pickup_counts_valid;
+    });
     let expected_final = swept_units.map(|swept| ammo_start - launches.len() as i64 + swept);
     let count_matches_launches = expected_final == Some(ammo_final);
     let pickup_limit = pickups.len() <= 4;
@@ -2916,7 +2956,8 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
         && pickup_limit
         && sweep_observed
         && pickup_after_kill
-        && pickup_plan_valid
+        && pickup_counts_valid
+        && pickup_plan_shape_valid
         && dart_count_per_launch;
     json!({
         "ammo_obj_id": ammo_id,
@@ -2924,15 +2965,15 @@ fn ranged_ammo_receipt(case: Case, capture: &CombatCapture, report: &Value) -> V
         "start_count": ammo_start,
         "launches": launches.len(),
         "pickup_actions": pickups,
-        "pickup_count": pickups.len(),
-        "pickup_limit_valid": pickup_limit,
-        "sweep_observed": sweep_observed,
+        "pickup_action_count": pickups.len(),
+        "pickup_action_limit_valid": pickup_limit,
         "corpse_tick": killed_tick,
         "held_count_at_kill": ammo_at_kill,
         "pickup_stack_counts": pickup_counts,
         "swept_units": swept_units,
         "all_pickups_after_kill": pickup_after_kill,
-        "one_row_pickup_plans": pickup_plan_valid,
+        "pickup_count_observations_valid": pickup_counts_valid,
+        "pickup_plan_shape_valid": pickup_plan_shape_valid,
         "final_count": ammo_final,
         "expected_final_count": expected_final,
         "count_matches_launches_and_sweeps": count_matches_launches,
@@ -2946,11 +2987,6 @@ fn ranged_wrong_ammo_ready(capture: &CombatCapture) -> bool {
     let Some(report) = report_with_end(capture, "Aborted(PrepFailed(Ammo))") else {
         return false;
     };
-    // `combat_proof::status_value` stores `ScriptStatus.failure` with `Debug`.
-    let blocked_reason = "ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }";
-    let quester_blocked = capture.statuses.iter().any(|status| {
-        status["phase"] == json!("Blocked") && status["failure"].as_str() == Some(blocked_reason)
-    });
     let no_attack = !capture.actions.iter().any(is_npc_attack);
     let probes = ranged_probes(capture).collect::<Vec<_>>();
     let no_projectile = !probes.is_empty()
@@ -2960,9 +2996,245 @@ fn ranged_wrong_ammo_ready(capture: &CombatCapture) -> bool {
                 .is_some_and(|projectiles| projectiles.is_empty())
         });
     report["fields"]["combat_end"] == json!("Aborted(PrepFailed(Ammo))")
-        && quester_blocked
         && no_attack
         && no_projectile
+        && ranged_abort_safety_receipt(capture, report)["valid"] == json!(true)
+}
+
+fn ranged_abort_terminal_kind(capture: &CombatCapture) -> Option<&'static str> {
+    let status = capture.statuses.last()?;
+    if status["phase"] != json!("Blocked") {
+        return None;
+    }
+    match status["failure"].as_str()? {
+        failure if failure.contains(RANGED_ABORT_HOLD_SAFE_REASON) => Some("hold_safe"),
+        failure if failure.contains(RANGED_ABORT_HOLD_BOUND_REASON) => Some("hold_bound"),
+        failure if failure.contains(RANGED_ABORT_HOLD_UNAVAILABLE_REASON) => Some("unavailable"),
+        failure if failure.contains(RANGED_ABORT_WALK_FAILED_REASON) => Some("walk_failed"),
+        failure if failure.contains(RANGED_ABORTED_COMBAT_STEP_REASON) => Some("walk_completed"),
+        _ => None,
+    }
+}
+
+fn ranged_live_attacker(frame: &Value, spawned_index: i64) -> Option<bool> {
+    let local_index = frame["self_slot"].as_i64()?;
+    let warlord_type = i64::try_from(WARLORD_NPC_ID).ok()?;
+    let npcs = frame["nearby_npcs"].as_array()?;
+    if !npcs.iter().any(|npc| {
+        npc["index"].as_i64() == Some(spawned_index) && npc["type"].as_i64() == Some(warlord_type)
+    }) {
+        return None;
+    }
+    let mut live = false;
+    for npc in npcs {
+        let in_combat = npc["in_combat"].as_bool()?;
+        let target = npc.get("target")?;
+        let targets_local = if target.is_null() {
+            false
+        } else {
+            let target_kind = target["kind"].as_str()?;
+            let target_index = target["index"].as_i64()?;
+            target_kind == "Player" && target_index == local_index
+        };
+        live |= in_combat && targets_local;
+    }
+    Some(live)
+}
+
+fn ranged_abort_walk_action(
+    action: &Value,
+    report_tick: i64,
+    horizon_end: i64,
+) -> Option<(i64, WorldTile, i32)> {
+    if action["kind"] != json!("walk") {
+        return None;
+    }
+    let tick = action["tick"].as_i64()?;
+    if !(report_tick + 1..=horizon_end).contains(&tick) {
+        return None;
+    }
+    let target = value_tile(&action["request"]["target"])?;
+    let radius = i32::try_from(action["request"]["radius"].as_i64()?)
+        .ok()
+        .filter(|radius| *radius >= 0)?;
+    Some((tick, target, radius))
+}
+
+fn ranged_abort_walk_observed(capture: &CombatCapture, report_tick: i64, horizon_end: i64) -> bool {
+    capture
+        .actions
+        .iter()
+        .any(|action| ranged_abort_walk_action(action, report_tick, horizon_end).is_some())
+}
+
+fn ranged_abort_route_arrived(capture: &CombatCapture, report_tick: i64, horizon_end: i64) -> bool {
+    capture.actions.iter().any(|action| {
+        let Some((walk_tick, target, radius)) =
+            ranged_abort_walk_action(action, report_tick, horizon_end)
+        else {
+            return false;
+        };
+        let Some(start) = value_tile(&action["snapshot"]["local_player"]["network"]) else {
+            return false;
+        };
+        tile_distance(start, target) > radius
+            && capture.frames.iter().any(|frame| {
+                frame["tick"]
+                    .as_i64()
+                    .is_some_and(|tick| (walk_tick..=horizon_end).contains(&tick))
+                    && value_tile(&frame["local_player"]["network"])
+                        .is_some_and(|tile| tile_distance(tile, target) <= radius)
+            })
+    })
+}
+
+fn ranged_abort_protect_action_at(capture: &CombatCapture, tick: i64, component: i64) -> bool {
+    capture.actions.iter().any(|action| {
+        action["kind"] == json!("guard")
+            && action["op"] == json!("if-button")
+            && action["component_id"].as_i64() == Some(component)
+            && action["accepted"] == json!(true)
+            && action["tick"].as_i64() == Some(tick)
+    })
+}
+
+fn ranged_abort_food_guard_seen(capture: &CombatCapture, report_tick: i64, tick: i64) -> bool {
+    capture.actions.iter().any(|action| {
+        action["kind"] == json!("guard")
+            && matches!(action["op"].as_str(), Some("eat" | "drink"))
+            && action["accepted"] == json!(true)
+            && action["tick"]
+                .as_i64()
+                .is_some_and(|action_tick| (report_tick + 1..=tick).contains(&action_tick))
+    })
+}
+
+fn ranged_abort_safety_receipt(capture: &CombatCapture, report: &Value) -> Value {
+    let Some(report_tick) = integer(report, "combat_evidence_tick") else {
+        return json!({"valid": false, "error": "abort report tick missing"});
+    };
+    let Some(horizon_start) = report_tick.checked_add(1) else {
+        return json!({"valid": false, "error": "abort report tick overflow"});
+    };
+    let Some(horizon_end) = report_tick.checked_add(RANGED_ABORT_SURVIVAL_TICKS) else {
+        return json!({"valid": false, "error": "abort survival horizon overflow"});
+    };
+    let Some(spawned_index) = ranged_spawned_index(capture) else {
+        return json!({"valid": false, "error": "natural Warlord identity missing"});
+    };
+    let Some(protect_component) = prayer_component(capture, "Protect from Melee") else {
+        return json!({"valid": false, "error": "Protect from Melee component missing"});
+    };
+    let Some(protect_varp) = prayer_varp_for_name(capture, "Protect from Melee") else {
+        return json!({"valid": false, "error": "Protect from Melee varp missing"});
+    };
+    let Some(report_hp) = capture
+        .frames
+        .iter()
+        .rev()
+        .find(|frame| frame["tick"].as_i64() == Some(report_tick))
+        .and_then(|frame| stat_effective(frame, "hitpoints"))
+    else {
+        return json!({"valid": false, "error": "abort-frame hitpoints missing"});
+    };
+
+    let terminal_kind = ranged_abort_terminal_kind(capture);
+    let mut observed_ticks = 0;
+    let mut complete = true;
+    let mut positive_hitpoints = true;
+    let mut no_hitpoint_loss_under_threat = true;
+    let mut guarded_while_threatened = true;
+    let mut live_threat_seen = false;
+    let mut no_threat_at_horizon_end = true;
+    let mut horizon_end_seen = false;
+    let mut previous_hp = report_hp;
+    for tick in horizon_start..=horizon_end {
+        let mut found_tick = false;
+        for frame in capture
+            .frames
+            .iter()
+            .filter(|frame| frame["tick"].as_i64() == Some(tick))
+        {
+            found_tick = true;
+            if frame["ingame"] != json!(true) {
+                complete = false;
+            }
+            let Some(hitpoints) = stat_effective(frame, "hitpoints") else {
+                positive_hitpoints = false;
+                continue;
+            };
+            if hitpoints <= 0 {
+                positive_hitpoints = false;
+            }
+            let Some(live_attacker) = ranged_live_attacker(frame, spawned_index) else {
+                complete = false;
+                continue;
+            };
+            if live_attacker && hitpoints < previous_hp {
+                no_hitpoint_loss_under_threat = false;
+            }
+            if live_attacker {
+                live_threat_seen = true;
+                let Some((prayer_level, prayer_points)) = stat_pair(frame, "prayer") else {
+                    guarded_while_threatened = false;
+                    previous_hp = hitpoints;
+                    continue;
+                };
+                let protected = prayer_varp(frame, protect_varp) == Some(1)
+                    || ranged_abort_protect_action_at(capture, tick, protect_component);
+                if prayer_level >= RANGED_ABORT_MIN_PROTECT_LEVEL && prayer_points > 0 {
+                    guarded_while_threatened &= protected;
+                } else {
+                    guarded_while_threatened &= protected
+                        || ranged_abort_food_guard_seen(capture, report_tick, tick)
+                        || terminal_kind == Some("hold_safe");
+                }
+            }
+            if tick == horizon_end {
+                horizon_end_seen = true;
+                no_threat_at_horizon_end &= !live_attacker;
+            }
+            previous_hp = hitpoints;
+        }
+        if found_tick {
+            observed_ticks += 1;
+        } else {
+            complete = false;
+        }
+    }
+    let walk_observed = ranged_abort_walk_observed(capture, report_tick, horizon_end);
+    let route_arrived = ranged_abort_route_arrived(capture, report_tick, horizon_end);
+    let safe_escape = route_arrived && horizon_end_seen && no_threat_at_horizon_end;
+    let terminal_valid = match terminal_kind {
+        Some("hold_safe") => true,
+        Some("hold_bound") => live_threat_seen,
+        Some("walk_completed") => safe_escape,
+        _ => false,
+    };
+    let route_valid = !live_threat_seen || walk_observed;
+    let valid = complete
+        && positive_hitpoints
+        && no_hitpoint_loss_under_threat
+        && guarded_while_threatened
+        && route_valid
+        && terminal_valid;
+    json!({
+        "spawned_index": spawned_index,
+        "report_tick": report_tick,
+        "horizon_start": horizon_start,
+        "horizon_end": horizon_end,
+        "ticks_observed": observed_ticks,
+        "expected_ticks": RANGED_ABORT_SURVIVAL_TICKS,
+        "positive_hitpoints": positive_hitpoints,
+        "no_hitpoint_loss_under_live_threat": no_hitpoint_loss_under_threat,
+        "live_threat_seen": live_threat_seen,
+        "guarded_while_live_threat": guarded_while_threatened,
+        "walk_after_abort": walk_observed,
+        "route_arrived": route_arrived,
+        "safe_escape": safe_escape,
+        "terminal": terminal_kind.unwrap_or("missing_or_unaccepted"),
+        "valid": valid,
+    })
 }
 
 fn ranged_ready(case: Case, capture: &CombatCapture) -> bool {
@@ -3024,6 +3296,10 @@ fn ranged_receipt(case: Case, capture: &CombatCapture) -> Value {
         .unwrap_or(Value::Null);
     let fixture = ranged_spawn_event(capture).cloned().unwrap_or(Value::Null);
     if case == Case::R2 {
+        let abort_safety = report_with_end(capture, "Aborted(PrepFailed(Ammo))").map_or_else(
+            || json!({"valid": false, "error": "wrong-ammo abort report missing"}),
+            |report| ranged_abort_safety_receipt(capture, report),
+        );
         let local_projectiles = ranged_probes(capture)
             .flat_map(|probe| probe["projectiles"].as_array().into_iter().flatten())
             .filter(|projectile| projectile["local_launch"] == true)
@@ -3035,6 +3311,7 @@ fn ranged_receipt(case: Case, capture: &CombatCapture) -> Value {
             "protect_timing": protection_timing_receipt(capture),
             "no_melee_offensive_prayers": no_melee_offensive_prayers(capture),
             "protection_valid": magic_protection_timing_ok(capture),
+            "abort_safety": abort_safety,
             "ready": ranged_ready(case, capture),
             "attack_requests": capture.actions.iter().filter(|action| is_npc_attack(action)).count(),
             "local_projectiles": local_projectiles,
@@ -5302,6 +5579,71 @@ fn first_prayer_action<'a>(capture: &'a CombatCapture, name: &str) -> Option<&'a
         .find(|action| prayer_action(action, component))
 }
 
+fn protect_action_is_in_fight(capture: &CombatCapture, protect_index: usize) -> bool {
+    let Some(protect_tick) = capture.actions[protect_index]["tick"].as_i64() else {
+        return false;
+    };
+    capture
+        .actions
+        .iter()
+        .enumerate()
+        .take(protect_index)
+        .any(|(engage_index, engage)| {
+            if !accepted(engage) {
+                return false;
+            }
+            let request = &engage["request"];
+            let starts_npc_engagement = is_npc_attack(engage)
+                || (request["op"] == json!("use-widget-on") && request["kind"] == json!("npc"));
+            let Some(npc_index) = starts_npc_engagement
+                .then(|| request["index"].as_i64())
+                .flatten()
+            else {
+                return false;
+            };
+            let Some(engage_tick) = engage["tick"].as_i64() else {
+                return false;
+            };
+            if engage_tick >= protect_tick {
+                return false;
+            }
+            capture.frames.iter().any(|frame| {
+                frame["tick"].as_i64().is_some_and(|tick| {
+                    tick > engage_tick
+                        && tick <= protect_tick
+                        && npc_targets_local_player(frame, npc_index)
+                })
+            }) || capture.actions[engage_index + 1..=protect_index]
+                .iter()
+                .any(|action| {
+                    let snapshot = &action["snapshot"];
+                    let tick = snapshot["tick"]
+                        .as_i64()
+                        .or_else(|| action["snapshot_tick"].as_i64())
+                        .or_else(|| action["tick"].as_i64());
+                    tick.is_some_and(|tick| {
+                        tick > engage_tick
+                            && tick <= protect_tick
+                            && npc_targets_local_player(snapshot, npc_index)
+                    })
+                })
+        })
+}
+
+fn npc_targets_local_player(frame: &Value, npc_index: i64) -> bool {
+    let Some(self_slot) = frame["self_slot"].as_i64() else {
+        return false;
+    };
+    frame["nearby_npcs"].as_array().is_some_and(|npcs| {
+        npcs.iter().any(|npc| {
+            npc["index"].as_i64() == Some(npc_index)
+                && npc["in_combat"] == json!(true)
+                && npc["target"]["kind"] == json!("Player")
+                && npc["target"]["index"].as_i64() == Some(self_slot)
+        })
+    })
+}
+
 fn protect_plan_ends_with_terminal(capture: &CombatCapture) -> bool {
     let Some(component) = prayer_component(capture, "Protect from Melee") else {
         return false;
@@ -5312,19 +5654,23 @@ fn protect_plan_ends_with_terminal(capture: &CombatCapture) -> bool {
     capture
         .actions
         .iter()
-        .filter(|action| prayer_action(action, component))
-        .all(|action| match prayer_varp(&action["snapshot"], varp) {
-            Some(1) => true, // WindDown deactivation owes no restoring attack.
-            // S3 §5.1 G1 P4 restores after protect; G2 forbids Attack and
-            // requires the §3.3(d) targeted Cast terminal instead.
-            Some(0) => plan_rows(capture, action).last().is_some_and(|last| {
-                is_npc_attack(last)
-                    || is_drink(last)
-                    || (last["request"]["op"] == "use-widget-on"
-                        && last["request"]["kind"] == "npc")
-            }),
-            _ => false,
-        })
+        .enumerate()
+        .filter(|(_, action)| prayer_action(action, component))
+        .all(
+            |(index, action)| match prayer_varp(&action["snapshot"], varp) {
+                Some(1) => true, // WindDown deactivation owes no restoring attack.
+                Some(0) if !protect_action_is_in_fight(capture, index) => true,
+                // Only Fight rows create the restore obligation. Prep and Engage
+                // may turn Protect on while wearing kit or opening the encounter.
+                Some(0) => plan_rows(capture, action).last().is_some_and(|last| {
+                    is_npc_attack(last)
+                        || is_drink(last)
+                        || (last["request"]["op"] == "use-widget-on"
+                            && last["request"]["kind"] == "npc")
+                }),
+                _ => false,
+            },
+        )
 }
 
 // Magic and ranged cells share the same fail-closed N1 and protection oracles.
@@ -5472,10 +5818,16 @@ fn no_onset_evidence(capture: &CombatCapture) -> NoOnsetEvidence {
         }) else {
             return NoOnsetEvidence::MissingData;
         };
-        let Some(distance) = npc["distance"].as_i64() else {
+        let Some(player_tile) = value_tile(&frame["local_player"]["network"]) else {
             return NoOnsetEvidence::MissingData;
         };
-        if distance <= 1 {
+        let Some(npc_tile) = value_tile(&npc["network"]) else {
+            return NoOnsetEvidence::MissingData;
+        };
+        if player_tile.level != npc_tile.level {
+            return NoOnsetEvidence::MissingData;
+        }
+        if tile_distance(player_tile, npc_tile) <= 1 {
             return NoOnsetEvidence::Unsafe;
         }
         let Some(hitpoints) = stat_effective(frame, "hitpoints") else {
@@ -5532,7 +5884,7 @@ fn protection_timing_receipt(capture: &CombatCapture) -> Value {
 }
 
 // P4 remains strict when an onset exists; positive no-onset is not proof.
-// Every Protect-on plan still needs its restoring terminal, even on N/A.
+// Only Fight-emitted Protect activations require a restoring terminal.
 
 fn magic_protection_timing_ok(capture: &CombatCapture) -> bool {
     let timing = protection_timing_receipt(capture);
@@ -6757,6 +7109,17 @@ fn run_case(case: Case) {
             thread::sleep(Duration::from_millis(50));
             continue;
         }
+        let ranged_abort_horizon_end = if case == Case::R2 {
+            report_with_end(&capture_snapshot, "Aborted(PrepFailed(Ammo))")
+                .and_then(|report| integer(report, "combat_evidence_tick"))
+                .and_then(|tick| tick.checked_add(RANGED_ABORT_SURVIVAL_TICKS))
+        } else {
+            None
+        };
+        let last_capture_tick = capture_snapshot
+            .frames
+            .last()
+            .and_then(|frame| frame["tick"].as_i64());
         drop(capture_snapshot);
         let state = state.lock().unwrap_or_else(|e| e.into_inner());
         match state.runner.status() {
@@ -6765,10 +7128,24 @@ fn run_case(case: Case) {
                 break;
             }
             RunnerStatus::Failed(error) => {
-                writer.scenario_status = format!("Failed({error})");
-                terminal_error = Some(format!("ScenarioRunner failed: {error}"));
-                writer.outcome = "FAIL".to_owned();
-                break;
+                if !writer.scenario_status.starts_with("Failed(") {
+                    writer.scenario_status = format!("Failed({error})");
+                }
+                terminal_error.get_or_insert_with(|| format!("ScenarioRunner failed: {error}"));
+                if case == Case::R2 && ranged_abort_horizon_end.is_some() {
+                    // The blocked Quester ends the scenario step, not the
+                    // observer: keep sampling until the post-abort horizon.
+                    if ranged_abort_horizon_end.is_some_and(|horizon_end| {
+                        last_capture_tick.is_some_and(|tick| tick >= horizon_end)
+                    }) {
+                        break;
+                    }
+                    // Leave RUNNING so the final receipt, not Blocked alone,
+                    // decides whether this expected abort is accepted.
+                } else {
+                    writer.outcome = "FAIL".to_owned();
+                    break;
+                }
             }
             _ => {}
         }
@@ -6968,7 +7345,10 @@ fn corpse_identity_and_terminal_prayer_off_are_checked_in_their_own_shapes() {
     ];
     assert!(protect_plan_ends_with_terminal(&capture));
     capture.actions.remove(1);
-    assert!(!protect_plan_ends_with_terminal(&capture));
+    assert!(
+        protect_plan_ends_with_terminal(&capture),
+        "without a Fight action, a Prep protect row has no restore obligation"
+    );
     capture.actions.remove(0);
     assert!(protect_plan_ends_with_terminal(&capture));
     capture.actions[0]["snapshot"]["prayer_varps"][0]["value"] = Value::Null;
@@ -7103,12 +7483,23 @@ fn manual_protect_terminal_rejects_non_npc_widget_and_protect_alone() {
     }));
     capture.actions = vec![
         json!({
-            "kind": "interaction", "tick": 8, "batch": 1,
-            "request": {"op": "if-button", "component_id": 5623},
-            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+            "kind": "interaction", "tick": 7, "batch": 1, "accepted": true,
+            "request": {"op": "npc", "name": "Khazard Warlord", "index": 7, "action": "Attack"}
         }),
         json!({
-            "kind": "interaction", "tick": 8, "batch": 1,
+            "kind": "interaction", "tick": 8, "batch": 2, "accepted": true,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {
+                "tick": 8, "self_slot": 1,
+                "prayer_varps": [{"index": 97, "value": 0}],
+                "nearby_npcs": [{
+                    "index": 7, "type": 477, "in_combat": true,
+                    "target": {"kind": "Player", "index": 1}
+                }]
+            }
+        }),
+        json!({
+            "kind": "interaction", "tick": 8, "batch": 2,
             "request": {"op": "use-widget-on", "kind": "obj", "index": 9}
         }),
     ];
@@ -7121,6 +7512,80 @@ fn manual_protect_terminal_rejects_non_npc_widget_and_protect_alone() {
         !protect_plan_ends_with_terminal(&capture),
         "a manual capture with Protect alone has no restoring terminal"
     );
+}
+#[test]
+fn ranged_prep_protect_with_two_wears_is_legal_but_late_protect_is_not() {
+    let mut prep = magic_protection_capture(50, 110, 62);
+    prep.actions = vec![
+        json!({
+            "kind": "interaction", "sequence": 1, "tick": 62, "batch": 1,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+        }),
+        json!({
+            "kind": "interaction", "sequence": 2, "tick": 62, "batch": 1,
+            "request": {"op": "wear", "name": "Maple shortbow"}
+        }),
+        json!({
+            "kind": "interaction", "sequence": 3, "tick": 62, "batch": 1,
+            "request": {"op": "wear", "name": "Steel arrow"}
+        }),
+        json!({
+            "kind": "interaction", "sequence": 4, "tick": 63, "batch": 2,
+            "request": {"op": "npc", "name": "Khazard Warlord", "action": "Attack"}
+        }),
+    ];
+    assert!(protect_plan_ends_with_terminal(&prep));
+    assert!(
+        magic_protection_timing_ok(&prep),
+        "Prep [protect, wear, wear] has no Fight restore obligation"
+    );
+
+    let mut late = magic_protection_capture(50, 110, 62);
+    late.actions = vec![
+        json!({
+            "kind": "interaction", "sequence": 1, "tick": 60, "batch": 1, "accepted": true,
+            "request": {"op": "npc", "name": "Khazard Warlord", "index": 7, "action": "Attack"}
+        }),
+        json!({
+            "kind": "interaction", "sequence": 2, "tick": 62, "batch": 2,
+            "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}
+        }),
+    ];
+    set_magic_warlord_field(&mut late, 58, "animation", json!(401));
+    assert!(!protect_plan_ends_with_terminal(&late));
+    assert_eq!(protection_timing_receipt(&late), json!(false));
+}
+
+#[test]
+fn no_onset_distance_uses_network_tiles_not_rendered_actor_tiles() {
+    let mut capture = magic_protection_capture(50, 110, 62);
+    for frame in &mut capture.frames {
+        frame["nearby_npcs"][0]["tile"]["x"] = json!(101);
+        frame["nearby_npcs"][0]["distance"] = json!(1);
+        frame["nearby_npcs"][0]["network"]["x"] = json!(107);
+    }
+    assert_eq!(no_onset_evidence(&capture), NoOnsetEvidence::Proven);
+
+    for frame in &mut capture.frames {
+        frame["nearby_npcs"][0]["tile"]["x"] = json!(107);
+        frame["nearby_npcs"][0]["distance"] = json!(7);
+        frame["nearby_npcs"][0]["network"]["x"] = json!(101);
+    }
+    assert_eq!(no_onset_evidence(&capture), NoOnsetEvidence::Unsafe);
+
+    capture.frames[0]["nearby_npcs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("network");
+    assert_eq!(no_onset_evidence(&capture), NoOnsetEvidence::MissingData);
+    capture.frames[0]["nearby_npcs"][0]["network"] = json!({"x": 101, "z": 100, "level": 0});
+    capture.frames[0]["local_player"]
+        .as_object_mut()
+        .unwrap()
+        .remove("network");
+    assert_eq!(no_onset_evidence(&capture), NoOnsetEvidence::MissingData);
 }
 
 fn magic_protection_capture(begin_tick: i64, report_tick: i64, protect_tick: i64) -> CombatCapture {
@@ -7154,8 +7619,17 @@ fn magic_protection_capture(begin_tick: i64, report_tick: i64, protect_tick: i64
         .map(|tick| {
             json!({
                 "tick": tick,
+                "ingame": true,
+                "tile": [100, 100, 0],
+                "local_player": {
+                    "tile": {"x": 100, "z": 100, "level": 0},
+                    "network": {"x": 100, "z": 100, "level": 0}
+                },
                 "self_slot": 1,
-                "stats": [{"name": "hitpoints", "base": 40, "effective": 40}],
+                "stats": [
+                    {"name": "hitpoints", "base": 40, "effective": 40},
+                    {"name": "prayer", "base": 40, "effective": 30}
+                ],
                 "prayer_varps": [
                     {"index": 93, "value": 0},
                     {"index": 94, "value": 0},
@@ -7165,6 +7639,8 @@ fn magic_protection_capture(begin_tick: i64, report_tick: i64, protect_tick: i64
                     "name": "Khazard Warlord",
                     "index": 7,
                     "type": 477,
+                    "tile": {"x": 107, "z": 100, "level": 0},
+                    "network": {"x": 107, "z": 100, "level": 0},
                     "distance": 7,
                     "health": if tick == report_tick { 0 } else { 170 },
                     "total_health": 170,
@@ -7216,8 +7692,10 @@ fn repeated_tick_frames_preserve_all_no_onset_and_prayer_evidence() {
     );
     assert!(no_melee_offensive_prayers(&capture));
     capture.frames[21]["nearby_npcs"][0]["distance"] = json!(1);
+    capture.frames[21]["nearby_npcs"][0]["network"]["x"] = json!(101);
     assert_eq!(protection_timing_receipt(&capture), json!(false));
     capture.frames[21]["nearby_npcs"][0]["distance"] = json!(7);
+    capture.frames[21]["nearby_npcs"][0]["network"]["x"] = json!(107);
     capture.frames[21]["prayer_varps"][0]["value"] = json!(1);
     assert!(!no_melee_offensive_prayers(&capture));
     capture.frames.swap(21, 22);
@@ -7249,15 +7727,15 @@ fn magic_protection_timing_unit_controls_a_b_g_and_i() {
     assert_eq!(protection_timing_receipt(&late_onset), json!(true));
     assert!(magic_protection_timing_ok(&late_onset));
 
-    // (i) removing the restoring Attack terminal must fail even when timing
-    // itself is safely not applicable.
+    // (i) a protect before Fight has no restore obligation; a later control
+    // rejects a genuinely late protect after Attack.
     let mut no_terminal = magic_protection_capture(50, 110, 62);
     no_terminal.actions.pop();
     assert_eq!(
         protection_timing_receipt(&no_terminal),
         json!("not_applicable_no_onset")
     );
-    assert!(!magic_protection_timing_ok(&no_terminal));
+    assert!(magic_protection_timing_ok(&no_terminal));
 }
 
 #[test]
@@ -7266,6 +7744,12 @@ fn magic_no_onset_controls_c_through_f_require_positive_complete_evidence() {
     // at distance 1 on any frame.
     let mut missed_onset = magic_protection_capture(50, 110, 62);
     set_magic_warlord_field(&mut missed_onset, 70, "distance", json!(1));
+    set_magic_warlord_field(
+        &mut missed_onset,
+        70,
+        "network",
+        json!({"x": 101, "z": 100, "level": 0}),
+    );
     assert_eq!(protection_timing_receipt(&missed_onset), json!(false));
 
     // (d) both a missing interval frame and a missing exact actor are INVALID,
@@ -7286,6 +7770,12 @@ fn magic_no_onset_controls_c_through_f_require_positive_complete_evidence() {
     // (e) any adjacent frame refuses N/A.
     let mut adjacent = magic_protection_capture(50, 110, 62);
     set_magic_warlord_field(&mut adjacent, 90, "distance", json!(1));
+    set_magic_warlord_field(
+        &mut adjacent,
+        90,
+        "network",
+        json!({"x": 101, "z": 100, "level": 0}),
+    );
     assert_eq!(protection_timing_receipt(&adjacent), json!(false));
 
     // (f) an observed HP drop fails the no-onset branch rather than becoming
@@ -7339,6 +7829,9 @@ fn magic_no_melee_offensive_prayer_control_h_gates_every_magic_case() {
 #[test]
 fn ranged_wrong_ammo_safety_uses_observed_fixture_before_engagement() {
     let mut capture = magic_protection_capture(50, 110, 62);
+    for frame in &mut capture.frames {
+        frame["stats"][1]["base"] = json!(43);
+    }
     capture.actions.clear();
     capture.statuses[0]["fields"]["combat_end"] = json!("Aborted(PrepFailed(Ammo))");
     capture.statuses[0]["fields"]["combat_engaged_kind"] = Value::Null;
@@ -7353,12 +7846,231 @@ fn ranged_wrong_ammo_safety_uses_observed_fixture_before_engagement() {
         json!({"kind": "RangedNaturalDialogue", "spawned_index": 7, "npc_type": 477}),
         json!({"kind": "RangedProbe", "projectiles": []}),
     ]);
+    capture.frames.last_mut().unwrap()["nearby_npcs"][0]["health"] = json!(170);
+    for tick in 111..=122 {
+        let mut frame = capture.frames.last().unwrap().clone();
+        frame["tick"] = json!(tick);
+        frame["ingame"] = json!(true);
+        frame["nearby_npcs"][0]["health"] = json!(170);
+        capture.frames.push(frame);
+    }
+    assert!(
+        !ranged_ready(Case::R2, &capture),
+        "Blocked immediately after abort is not survival or safety ownership"
+    );
+
+    capture
+        .statuses
+        .retain(|status| status["phase"] != json!("Blocked"));
+    let walk_snapshot = capture
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(111))
+        .unwrap()
+        .clone();
+    capture.actions.push(json!({
+        "kind": "walk", "tick": 111,
+        "request": {"target": {"x": 90, "z": 100, "level": 0}, "radius": 1},
+        "snapshot": walk_snapshot
+    }));
+    let mut protect_snapshot = capture
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(112))
+        .unwrap()
+        .clone();
+    protect_snapshot["prayer_varps"][2]["value"] = json!(0);
+    capture.actions.push(json!({
+        "kind": "guard", "tick": 112, "op": "if-button", "component_id": 5623,
+        "accepted": true, "snapshot": protect_snapshot
+    }));
+    capture.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": "ScriptFailure { code: \"parked\", message: \"combat abort guarded hold reached its 12-tick bound\" }"
+    }));
+    for frame in capture
+        .frames
+        .iter_mut()
+        .filter(|frame| frame["tick"] == json!(112))
+    {
+        frame["prayer_varps"][2]["value"] = json!(0);
+    }
+    for frame in capture
+        .frames
+        .iter_mut()
+        .filter(|frame| frame["tick"].as_i64().is_some_and(|tick| tick > 112))
+    {
+        frame["prayer_varps"][2]["value"] = json!(1);
+    }
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["terminal"],
+        json!("hold_bound")
+    );
+    assert!(
+        ranged_ready(Case::R2, &capture),
+        "the abort owner walks, protects while the Warlord targets us, and survives 12 ticks"
+    );
+
+    let live_threat_tick = capture
+        .frames
+        .iter()
+        .position(|frame| frame["tick"] == json!(117))
+        .unwrap();
+    capture.frames[live_threat_tick]["stats"][0]["effective"] = json!(39);
+    assert!(
+        !ranged_ready(Case::R2, &capture),
+        "declining HP under the live attacker fails the post-abort survival horizon"
+    );
+    capture.frames[live_threat_tick]["stats"][0]["effective"] = json!(40);
+    let last_horizon_frame = capture.frames.pop().unwrap();
+    assert!(
+        !ranged_ready(Case::R2, &capture),
+        "eleven observed ticks do not satisfy a twelve-tick survival horizon"
+    );
+    capture.frames.push(last_horizon_frame);
     assert!(ranged_ready(Case::R2, &capture));
+    let observed_warlord = capture.frames[live_threat_tick].clone();
+    capture.frames[live_threat_tick]["nearby_npcs"] = json!([]);
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["valid"],
+        json!(false),
+        "an absent natural Warlord row is unknown, not evidence of no live threat"
+    );
+    capture.frames[live_threat_tick] = observed_warlord;
+    let observed_target = capture.frames[live_threat_tick]["nearby_npcs"][0]["target"].clone();
+    capture.frames[live_threat_tick]["nearby_npcs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("target");
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["valid"],
+        json!(false),
+        "a missing target view is not evidence of no live threat"
+    );
+    capture.frames[live_threat_tick]["nearby_npcs"][0]["target"] = observed_target;
+
+    capture.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": format!(
+            "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
+            RANGED_ABORT_HOLD_SAFE_REASON
+        )
+    }));
+    for frame in capture
+        .frames
+        .iter_mut()
+        .filter(|frame| frame["tick"].as_i64().is_some_and(|tick| tick > 112))
+    {
+        frame["nearby_npcs"][0]["target"] = Value::Null;
+        frame["nearby_npcs"][0]["in_combat"] = json!(false);
+    }
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["terminal"],
+        json!("hold_safe")
+    );
+    assert!(
+        ranged_ready(Case::R2, &capture),
+        "a hold that ends after the threat disengages remains valid through the full survival horizon"
+    );
+    capture.statuses.pop();
+
+    capture.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": "ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }"
+    }));
+    for frame in capture
+        .frames
+        .iter_mut()
+        .filter(|frame| frame["tick"].as_i64().is_some_and(|tick| tick >= 113))
+    {
+        frame["tile"] = json!([90, 100, 0]);
+        frame["local_player"]["tile"] = json!({"x": 90, "z": 100, "level": 0});
+        frame["local_player"]["network"] = json!({"x": 90, "z": 100, "level": 0});
+        frame["nearby_npcs"][0]["distance"] = json!(10);
+        frame["nearby_npcs"][0]["target"] = Value::Null;
+        frame["nearby_npcs"][0]["in_combat"] = json!(false);
+    }
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["terminal"],
+        json!("walk_completed")
+    );
+    assert!(
+        ranged_ready(Case::R2, &capture),
+        "Blocked after a demonstrated safe escape remains a valid terminal"
+    );
+    capture.statuses.last_mut().unwrap()["failure"] = json!(format!(
+        "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
+        RANGED_ABORT_HOLD_SAFE_REASON
+    ));
+    assert_eq!(
+        ranged_abort_safety_receipt(&capture, &capture.statuses[0])["terminal"],
+        json!("hold_safe")
+    );
+    assert!(ranged_ready(Case::R2, &capture));
+
     capture.frames[20]["prayer_varps"][0]["value"] = json!(1);
     assert!(!ranged_ready(Case::R2, &capture));
     capture.frames[20]["prayer_varps"][0]["value"] = json!(0);
     capture.frames[20]["nearby_npcs"] = json!([]);
     assert!(!ranged_ready(Case::R2, &capture));
+}
+
+#[test]
+fn ranged_wrong_ammo_uses_food_guard_when_melee_protect_is_unavailable() {
+    let mut capture = magic_protection_capture(50, 110, 62);
+    capture.actions.clear();
+    capture.statuses[0]["fields"]["combat_end"] = json!("Aborted(PrepFailed(Ammo))");
+    capture.statuses[0]["fields"]["combat_engaged_kind"] = Value::Null;
+    capture.statuses[0]["fields"]["combat_engaged_index"] = Value::Null;
+    capture.statuses[0]["fields"]["combat_engaged_npc_type"] = json!(-1);
+    capture.random_events.extend([
+        json!({"kind": "RangedSelectedFacts", "case": "R2"}),
+        json!({"kind": "RangedNaturalDialogue", "spawned_index": 7, "npc_type": 477}),
+        json!({"kind": "RangedProbe", "projectiles": []}),
+    ]);
+    for frame in &mut capture.frames {
+        frame["stats"][1]["base"] = json!(42);
+        frame["stats"][1]["effective"] = json!(0);
+        frame["prayer_varps"][2]["value"] = json!(0);
+    }
+    capture.frames.last_mut().unwrap()["nearby_npcs"][0]["health"] = json!(170);
+    for tick in 111..=122 {
+        let mut frame = capture.frames.last().unwrap().clone();
+        frame["tick"] = json!(tick);
+        frame["ingame"] = json!(true);
+        frame["nearby_npcs"][0]["health"] = json!(170);
+        capture.frames.push(frame);
+    }
+    let walk_snapshot = capture
+        .frames
+        .iter()
+        .find(|frame| frame["tick"] == json!(111))
+        .unwrap()
+        .clone();
+    capture.actions.push(json!({
+        "kind": "walk", "tick": 111,
+        "request": {"target": {"x": 90, "z": 100, "level": 0}, "radius": 1},
+        "snapshot": walk_snapshot
+    }));
+    capture.actions.push(json!({
+        "kind": "guard", "tick": 111, "op": "eat", "accepted": true
+    }));
+    capture.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": format!(
+            "ScriptFailure {{ code: \"parked\", message: \"{}\" }}",
+            RANGED_ABORT_HOLD_BOUND_REASON
+        )
+    }));
+
+    let safety = ranged_abort_safety_receipt(&capture, &capture.statuses[0]);
+    assert_eq!(safety["terminal"], json!("hold_bound"));
+    assert_eq!(safety["guarded_while_live_threat"], json!(true));
+    assert_eq!(safety["ticks_observed"], json!(RANGED_ABORT_SURVIVAL_TICKS));
+    assert!(
+        ranged_ready(Case::R2, &capture),
+        "food guard keeps the bot alive when prayer level is below Protect from Melee's requirement"
+    );
 }
 
 #[test]
@@ -7406,7 +8118,15 @@ fn ranged_protection_controls_a_through_i_gate_every_cell() {
                         frame["prayer_varps"][2]["value"] = json!(0);
                     }
                 }
-                "c" | "e" => set_magic_warlord_field(&mut mutant, 70, "distance", json!(1)),
+                "c" | "e" => {
+                    set_magic_warlord_field(&mut mutant, 70, "distance", json!(1));
+                    set_magic_warlord_field(
+                        &mut mutant,
+                        70,
+                        "network",
+                        json!({"x": 101, "z": 100, "level": 0}),
+                    );
+                }
                 "d-frame" => mutant.frames.retain(|frame| frame["tick"] != 80),
                 "d-actor" => mutant.frames[20]["nearby_npcs"] = json!([]),
                 "f" => mutant.frames[40]["stats"][0]["effective"] = json!(39),
@@ -7416,7 +8136,13 @@ fn ranged_protection_controls_a_through_i_gate_every_cell() {
                 })),
                 "h-93" => mutant.frames[20]["prayer_varps"][0]["value"] = json!(1),
                 "h-94" => mutant.frames[20]["prayer_varps"][1]["value"] = json!(1),
-                "i" => { mutant.actions.pop(); }
+                "i" => {
+                    // Exercise the Fight-only restore obligation, not a
+                    // pre-Fight Protect activation.
+                    mutant.actions[1]["tick"] = json!(61);
+                    mutant.actions[1]["request"]["index"] = json!(7);
+                    mutant.actions.swap(0, 1);
+                }
                 _ => unreachable!(),
             }
             let receipt = ranged_receipt(case, &mutant);
@@ -7983,7 +8709,10 @@ fn ranged_darts_decrease_once_per_observed_projectile() {
 #[test]
 fn ranged_ammo_sweep_counts_targeted_ground_stack_units() {
     let action = json!({
-        "request": {"x": 2638, "z": 3224, "level": 0},
+        "request": {
+            "op": "obj", "x": 2638, "z": 3224, "level": 0,
+            "name": "Arrow", "action": "Take"
+        },
         "snapshot": {"ground_items": [
             {"id": 882, "count": 3, "tile": {"x": 2638, "z": 3224, "level": 0}},
             {"id": 883, "count": 7, "tile": {"x": 2638, "z": 3224, "level": 0}},
@@ -7995,8 +8724,8 @@ fn ranged_ammo_sweep_counts_targeted_ground_stack_units() {
         {"id": 882, "count": 5, "tile": {"x": 2639, "z": 3224, "level": 0}}
     ]});
     assert_eq!(ranged_pickup_count(&action, &after, 882), Some(3));
-    assert_eq!(ranged_pickup_count(&action, &after, 883), None);
-    assert_eq!(ranged_pickup_count(&action, &after, 884), None);
+    assert_eq!(ranged_pickup_count(&action, &after, 883), Some(0));
+    assert_eq!(ranged_pickup_count(&action, &after, 884), Some(0));
 }
 
 #[test]
@@ -8007,12 +8736,36 @@ fn ranged_ammo_sweep_does_not_double_count_same_tile_stacks() {
         })
     };
     let mut action = json!({
-        "request": {"x": 2600, "z": 3372, "level": 0},
+        "request": {
+            "op": "obj", "x": 2600, "z": 3372, "level": 0,
+            "name": "Steel arrow", "action": "Take"
+        },
         "snapshot": {"ground_items": [stack(24), stack(22)]}
     });
     let after = json!({"ground_items": [stack(22)]});
     assert_eq!(ranged_pickup_count(&action, &after, 886), Some(24));
-    assert_eq!(ranged_pickup_count(&action, &action["snapshot"], 886), None);
+    assert_eq!(
+        ranged_pickup_count(&action, &action["snapshot"], 886),
+        Some(0)
+    );
+    let mut invalid_take = action.clone();
+    invalid_take["request"]["action"] = json!("Examine");
+    assert_eq!(
+        ranged_pickup_count(&invalid_take, &invalid_take["snapshot"], 886),
+        None
+    );
+    invalid_take["request"]["op"] = json!("npc");
+    invalid_take["request"]["action"] = json!("Take");
+    assert_eq!(
+        ranged_pickup_count(&invalid_take, &invalid_take["snapshot"], 886),
+        None
+    );
+    invalid_take["request"]["op"] = json!("obj");
+    invalid_take["request"]["name"] = Value::Null;
+    assert_eq!(
+        ranged_pickup_count(&invalid_take, &invalid_take["snapshot"], 886),
+        None
+    );
     assert_eq!(
         ranged_pickup_count(&action, &json!({"ground_items": []}), 886),
         None
@@ -8028,19 +8781,29 @@ fn ranged_ammo_sweep_does_not_double_count_same_tile_stacks() {
 fn ranged_sweep_requires_pickups_and_uses_the_observed_corpse_baseline() {
     let mut capture = CombatCapture::default();
     capture.start_baseline = Some(json!({"tick": 10, "inventory": [{"id": 882, "count": 20}]}));
-    capture.random_events.push(json!({
-        "kind": "RangedSelectedFacts", "ammo_obj_id": 882
-    }));
+    capture.random_events.extend([
+        json!({"kind": "RangedSelectedFacts", "ammo_obj_id": 882}),
+        json!({"kind": "RangedNaturalDialogue", "spawned_index": 7, "npc_type": 81}),
+        json!({
+            "kind": "RangedProbe", "tick": 11, "snapshot_tick": 11, "loop_cycle": 1000,
+            "projectiles": [{
+                "spotanim": 10, "t1": 1000, "t2": 1010, "distance": 1,
+                "local_launch": true, "target": {"kind": "Npc", "index": 7}
+            }]
+        }),
+    ]);
     let corpse = json!({
-        "tick": 12,
+        "tick": 12, "snapshot_tick": 11,
         "inventory": [{"id": 882, "count": 19}],
         "nearby_npcs": [{"index": 7, "type": 81, "health": 0, "total_health": 10}],
         "ground_items": [{"id": 882, "count": 1}]
     });
     capture.frames.extend([
+        json!({"snapshot_tick": 10, "inventory": [{"id": 882, "count": 20}]}),
         corpse.clone(),
         json!({
-            "tick": 15, "inventory": [{"id": 882, "count": 19}], "nearby_npcs": []
+            "tick": 15, "snapshot_tick": 15,
+            "inventory": [{"id": 882, "count": 19}], "nearby_npcs": []
         }),
     ]);
     let report = json!({"fields": {
@@ -8049,36 +8812,145 @@ fn ranged_sweep_requires_pickups_and_uses_the_observed_corpse_baseline() {
     assert_eq!(ranged_corpse_frame(&capture, &report), Some(&corpse));
     for case in [Case::R1, Case::R3] {
         let receipt = ranged_ammo_receipt(case, &capture, &report);
+        assert_eq!(receipt["launches"], json!(1));
         assert_eq!(receipt["corpse_tick"], json!(12));
         assert_eq!(receipt["held_count_at_kill"], json!(19));
-        assert_eq!(receipt["pickup_count"], json!(0));
-        assert_eq!(receipt["sweep_observed"], json!(false));
+        assert_eq!(receipt["pickup_action_count"], json!(0));
+        assert_eq!(receipt["swept_units"], json!(0));
+        assert_eq!(receipt["pickup_action_limit_valid"], json!(true));
+        assert_eq!(receipt["pickup_count_observations_valid"], json!(true));
+        assert_eq!(receipt["pickup_plan_shape_valid"], json!(true));
+        assert_eq!(receipt["final_count"], json!(19));
+        assert_eq!(receipt["expected_final_count"], json!(19));
+        assert_eq!(receipt["count_matches_launches_and_sweeps"], json!(true));
+        assert_eq!(receipt["all_pickups_after_kill"], json!(true));
+        assert_eq!(receipt["dart_count_per_launch"], json!(true));
         assert_eq!(receipt["valid"], json!(false));
     }
-    capture.frames[0]["nearby_npcs"][0]["type"] = json!(82);
+    capture.frames[1]["nearby_npcs"][0]["type"] = json!(82);
     assert!(ranged_corpse_frame(&capture, &report).is_none());
+}
+#[test]
+fn ranged_sweep_sums_observed_gains_and_accepts_a_content_voided_take() {
+    use client::io::ClientProt289;
+
+    let stack = |count| {
+        json!({
+            "id": 886, "count": count,
+            "tile": {"x": 2456, "z": 3302, "level": 0}
+        })
+    };
+    let stacks = |counts: &[i64]| counts.iter().map(|count| stack(*count)).collect::<Vec<_>>();
+    let take = |tick, batch, counts: &[i64]| {
+        json!({
+            "kind": "interaction", "tick": tick, "batch": batch, "accepted": true,
+            "wire_decoded": true,
+            "wire_opcodes": [
+                i64::from(ClientProt289::MOVE_OPCLICK.id),
+                i64::from(ClientProt289::OPOBJ3.id)
+            ],
+            "request": {
+                "op": "obj", "x": 2456, "z": 3302, "level": 0,
+                "name": "Steel arrow", "action": "Take"
+            },
+            "snapshot": {"ground_items": stacks(counts)}
+        })
+    };
+
+    let mut capture = CombatCapture::default();
+    capture.start_baseline = Some(json!({
+        "tick": 10, "inventory": [{"id": 886, "count": 150}], "equipment": []
+    }));
+    capture.random_events.extend([
+        json!({"kind": "RangedSelectedFacts", "case": "R1", "ammo_obj_id": 886}),
+        json!({"kind": "RangedNaturalDialogue", "spawned_index": 7, "npc_type": 477}),
+        json!({
+            "kind": "RangedProbe", "tick": 11, "snapshot_tick": 11, "loop_cycle": 1000,
+            "projectiles": [{
+                "spotanim": 10, "t1": 1000, "t2": 1010, "distance": 1,
+                "local_launch": true, "target": {"kind": "Npc", "index": 7}
+            }]
+        }),
+    ]);
+    let corpse = json!({
+        "tick": 12,
+        "inventory": [{"id": 886, "count": 149}],
+        "equipment": [],
+        "nearby_npcs": [{"index": 7, "type": 477, "health": 0, "total_health": 170}],
+        "ground_items": [stack(28), stack(11)]
+    });
+    capture.frames.extend([
+        corpse,
+        json!({
+            "tick": 20, "inventory": [{"id": 886, "count": 188}], "equipment": [],
+            "nearby_npcs": [], "ground_items": []
+        }),
+    ]);
+    capture.actions = vec![
+        take(13, 1, &[28, 11]),
+        take(14, 2, &[28, 11]),
+        take(15, 3, &[11]),
+        take(16, 4, &[]),
+    ];
+    let report = json!({
+        "fields": {
+            "combat_engaged_index": 7, "combat_engaged_npc_type": 477,
+            "combat_evidence_tick": 20
+        }
+    });
+
+    let receipt = ranged_ammo_receipt(Case::R1, &capture, &report);
+    assert_eq!(receipt["pickup_stack_counts"], json!([0, 28, 11, 0]));
+    assert_eq!(receipt["pickup_action_count"], json!(4));
+    assert_eq!(receipt["pickup_action_limit_valid"], json!(true));
+    assert_eq!(receipt["swept_units"], json!(39));
+    assert_eq!(receipt["pickup_count_observations_valid"], json!(true));
+    assert_eq!(receipt["pickup_plan_shape_valid"], json!(true));
+    assert_eq!(receipt["count_matches_launches_and_sweeps"], json!(true));
+    assert_eq!(receipt["valid"], json!(true));
+
+    let mut duplicate_row = capture.actions[0].clone();
+    duplicate_row["sequence"] = json!(99);
+    capture.actions.insert(1, duplicate_row);
+    let malformed_plan = ranged_ammo_receipt(Case::R1, &capture, &report);
+    assert_eq!(
+        malformed_plan["pickup_count_observations_valid"],
+        json!(true)
+    );
+    assert_eq!(malformed_plan["pickup_plan_shape_valid"], json!(false));
+    assert_eq!(malformed_plan["valid"], json!(false));
+
+    capture.actions.remove(1);
+    capture.frames.last_mut().unwrap()["ground_items"] = Value::Null;
+    let missing_count = ranged_ammo_receipt(Case::R1, &capture, &report);
+    assert_eq!(
+        missing_count["pickup_count_observations_valid"],
+        json!(false)
+    );
+    assert_eq!(missing_count["pickup_plan_shape_valid"], json!(true));
 }
 
 #[test]
-fn ranged_wrong_ammo_requires_a_blocked_abort_and_no_projectile() {
+fn ranged_wrong_ammo_requires_survival_and_no_projectile() {
     let mut capture = CombatCapture::default();
     capture.statuses.push(json!({
         "phase": "Blocked",
         "failure": "ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }",
     }));
     capture.statuses.push(json!({
-        "fields": {"combat_end": "Aborted(PrepFailed(Ammo))"},
+        "fields": {
+            "combat_end": "Aborted(PrepFailed(Ammo))",
+            "combat_evidence_tick": 110
+        },
     }));
     capture.random_events.push(json!({
         "kind": "RangedProbe",
         "projectiles": [],
     }));
-    assert!(ranged_wrong_ammo_ready(&capture));
-    capture.statuses[0]["failure"] =
-        json!("\"extra: combat aborted; caller must handle the failure\"");
-    assert!(!ranged_wrong_ammo_ready(&capture));
-    capture.statuses[0]["failure"] = json!("ScriptFailure { code: \"parked\", message: \"combat aborted; caller must handle the failure\" }");
-    assert!(ranged_wrong_ammo_ready(&capture));
+    assert!(
+        !ranged_wrong_ammo_ready(&capture),
+        "an abort followed immediately by Blocked has no post-abort survival proof"
+    );
 
     capture.actions.push(json!({
         "kind": "interaction",
@@ -8097,7 +8969,7 @@ fn ranged_scenario_requires_the_natural_warlord_dialogue_before_the_firing_stand
         ..WARLORD_ANCHOR
     };
     let stand = WorldTile {
-        x: WARLORD_ANCHOR.x - 5,
+        x: WARLORD_ANCHOR.x - 9,
         ..WARLORD_ANCHOR
     };
     let scenario = scenario_for(
@@ -8126,10 +8998,12 @@ fn ranged_scenario_requires_the_natural_warlord_dialogue_before_the_firing_stand
     );
     assert!(
         position("stand at the quest start")
-            < position("observe the natural Khazard Warlord at its map spawn")
+            < position(
+                "wait up to 350 game ticks for the natural Khazard Warlord row at its map spawn"
+            )
     );
     assert!(
-        position("observe the natural Khazard Warlord at its map spawn")
+        position("wait up to 350 game ticks for the natural Khazard Warlord row at its map spawn")
             < position("talk to the natural Khazard Warlord")
     );
     assert!(
@@ -8142,14 +9016,41 @@ fn ranged_scenario_requires_the_natural_warlord_dialogue_before_the_firing_stand
     );
     assert!(
         position("observe the settled Warlord dialogue before ranged Start")
-            < position("teleport exactly five tiles from the natural Warlord")
+            < position("teleport nine tiles from the natural Warlord")
     );
+    let spawn_wait = scenario
+        .steps
+        .iter()
+        .find(|step| step.name.contains("350 game ticks"))
+        .unwrap();
+    let StepKind::Await { evidence, .. } = &spawn_wait.kind else {
+        panic!("natural Warlord deadline is an observation wait");
+    };
+    assert!(spawn_wait.name.contains("Khazard Warlord row"));
+    assert!(evidence.contains("Khazard Warlord row"));
+    let Proof::NpcNameNear {
+        name,
+        x,
+        z,
+        level,
+        radius,
+    } = spawn_wait.wait.arm
+    else {
+        panic!("the bounded wait names the missing natural Warlord row");
+    };
+    assert_eq!(name, "Khazard warlord");
+    assert_eq!(
+        (x, z, level, radius),
+        (WARLORD_ANCHOR.x, WARLORD_ANCHOR.z, WARLORD_ANCHOR.level, 9)
+    );
+    assert_eq!(spawn_wait.wait.budget_ticks, 350);
+    assert_eq!(scenario.settings.deadline, Duration::from_secs(300));
     let start = scenario
         .steps
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
-    assert!(position("observe the natural Warlord at the exact five-tile ranged stand") < start);
+    assert!(position("observe the natural Warlord at the eight-to-ten-tile ranged stand") < start);
     assert!(!scenario
         .steps
         .iter()
@@ -8194,7 +9095,7 @@ fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord(
         ..spawn
     };
     let stand = WorldTile {
-        x: spawn.x - 5,
+        x: spawn.x - 9,
         ..spawn
     };
     let mut capture = CombatCapture::default();
@@ -8221,9 +9122,15 @@ fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord(
     let mut baseline = json!({
         "ingame": true, "scene_state": 2, "self_slot": 7,
         "tile": [stand.x, stand.z, stand.level],
-        "local_player": {"tile": tile_value(stand)},
-        "nearby_npcs": [{"index": 42, "type": WARLORD_NPC_ID,
-            "tile": tile_value(spawn), "target": null}],
+        "local_player": {
+            "tile": tile_value(stand),
+            "network": tile_value(stand)
+        },
+        "nearby_npcs": [{
+            "index": 42, "type": WARLORD_NPC_ID,
+            "tile": tile_value(spawn), "network": tile_value(spawn),
+            "distance": 9, "target": null
+        }],
         "stats": [
             {"name": "ranged", "base": 70, "effective": 70},
             {"name": "defence", "base": 40, "effective": 40},
@@ -8241,6 +9148,40 @@ fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord(
         ranged_start_preflight(Case::R2, &baseline, &selected, &capture),
         None
     );
+    baseline["local_player"]["tile"] = tile_value(WorldTile {
+        x: stand.x + 8,
+        ..stand
+    });
+    baseline["nearby_npcs"][0]["tile"] = tile_value(WorldTile {
+        x: stand.x + 7,
+        ..stand
+    });
+    baseline["nearby_npcs"][0]["distance"] = json!(1);
+    assert_eq!(
+        ranged_start_preflight(Case::R2, &baseline, &selected, &capture),
+        None,
+        "network distance, not rendered actor distance, gates ranged Start"
+    );
+    for distance in [8, 10] {
+        baseline["nearby_npcs"][0]["network"] = tile_value(WorldTile {
+            x: stand.x + distance,
+            ..stand
+        });
+        assert_eq!(
+            ranged_start_preflight(Case::R2, &baseline, &selected, &capture),
+            None,
+            "a natural Warlord moving one tile during staging remains in the accepted range"
+        );
+    }
+    baseline["nearby_npcs"][0]["network"] = tile_value(WorldTile {
+        x: stand.x + 1,
+        ..stand
+    });
+    assert!(ranged_start_preflight(Case::R2, &baseline, &selected, &capture).is_some());
+    baseline["nearby_npcs"][0]["network"] = tile_value(spawn);
+    baseline["local_player"]["tile"] = tile_value(stand);
+    baseline["nearby_npcs"][0]["tile"] = tile_value(spawn);
+    baseline["nearby_npcs"][0]["distance"] = json!(9);
     baseline["stats"][2]["effective"] = json!(31);
     assert_eq!(
         ranged_start_preflight(Case::R2, &baseline, &selected, &capture),
@@ -8256,7 +9197,7 @@ fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord(
     capture.random_events[0]["interference"] = json!({"player_index": 9});
     assert!(ranged_start_preflight(Case::R2, &baseline, &selected, &capture).is_some());
     capture.random_events[0]["interference"] = Value::Null;
-    baseline["local_player"]["tile"] = Value::Null;
+    baseline["local_player"]["network"] = Value::Null;
     assert!(ranged_start_preflight(Case::R2, &baseline, &selected, &capture).is_some());
 }
 

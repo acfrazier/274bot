@@ -64,6 +64,7 @@ pub enum GuardOp {
 pub enum GuardRefusal {
     PrayerTooLow,
     PrayerDisallowed,
+    FoodDisallowed,
     Snapshot,
     Tables,
 }
@@ -94,8 +95,11 @@ const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
 const FLAG_FOOD_ALLOWED: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
+const FLAG_FOOD_ONLY: u8 = 16;
 
-const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
+// Pickup expands the shared Schedule to nine slots and u16 masks; the merged
+// food guard needs 264 bytes without adding any guard fields for abort upkeep.
+const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 264);
 
 static TABLES: LazyLock<Option<Arc<CombatTables>>> = LazyLock::new(|| {
     api::game_data::for_revision(ClientRevision::R289)
@@ -167,7 +171,25 @@ impl WalkGuard {
         if base < LOWEST_PROTECT {
             return Err(GuardRefusal::PrayerTooLow);
         }
-        Ok(Self {
+        Ok(Self::new(tables, request.allow.food, false))
+    }
+
+    /// Begin abort-hold upkeep when only food is allowed or protect is too
+    /// high-level. This never observes or toggles prayers.
+    pub fn begin_food_only_with(
+        request: &WalkRequest,
+        snapshot: &SnapshotView<'_>,
+        tables: Arc<CombatTables>,
+    ) -> Result<Self, GuardRefusal> {
+        if !request.allow.food {
+            return Err(GuardRefusal::FoodDisallowed);
+        }
+        Frame::borrow(*snapshot).ok_or(GuardRefusal::Snapshot)?;
+        Ok(Self::new(tables, true, true))
+    }
+
+    fn new(tables: Arc<CombatTables>, food_allowed: bool, food_only: bool) -> Self {
+        Self {
             threats: ThreatSet::default(),
             tables,
             schedule: Schedule::default(),
@@ -178,18 +200,15 @@ impl WalkGuard {
             raised_prayers: RaisedPrayers::default(),
             prayer_admission_tick: 0,
             unprotectable: 0,
-            flags: if request.allow.food {
-                FLAG_FOOD_ALLOWED
-            } else {
-                0
-            },
+            flags: if food_allowed { FLAG_FOOD_ALLOWED } else { 0 }
+                | if food_only { FLAG_FOOD_ONLY } else { 0 },
             drink_points: 0,
             drink_doses: 0,
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
             eat_admission_tick: 0,
-        })
+        }
     }
 
     /// Previous drink lock or protect click still covers `tick`: the route
@@ -324,8 +343,10 @@ impl WalkGuard {
             });
         }
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
-        self.observe_protect(&frame);
-        self.settle_drink(&frame, tick, points);
+        if self.flags & FLAG_FOOD_ONLY == 0 {
+            self.observe_protect(&frame);
+            self.settle_drink(&frame, tick, points);
+        }
         let danger = self
             .threats
             .danger(&frame, &self.tables, tick, false, false);
@@ -349,6 +370,9 @@ impl WalkGuard {
             if let Some(eat) = self.eat_op(&frame, eat_choice) {
                 return Some(eat);
             }
+        }
+        if self.flags & FLAG_FOOD_ONLY != 0 {
+            return self.eat_op(&frame, eat_choice);
         }
         let Some(wanted) =
             policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
@@ -403,6 +427,17 @@ impl WalkGuard {
         Some(GuardOp::IfButton {
             component: wanted.button_com,
         })
+    }
+    /// Whether the current observed HP exceeds the guard's food line for its
+    /// current live danger estimate. Unknown danger is never considered safe.
+    pub fn safe_to_stop(&self, snapshot: &SnapshotView<'_>) -> bool {
+        let Some(frame) = Frame::borrow(*snapshot) else {
+            return false;
+        };
+        let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
+        self.threats
+            .danger(&frame, &self.tables, frame.tick, false, false)
+            .is_some_and(|danger| hp > select::lines(Some(danger), hp_max).eat)
     }
 
     /// Retire the admitted protect and, while a switch is pending, the distinct
@@ -859,7 +894,7 @@ mod tests {
 
     #[test]
     fn driver_fits_the_per_route_budget() {
-        assert!(std::mem::size_of::<WalkGuard>() <= 256);
+        assert!(std::mem::size_of::<WalkGuard>() <= 264);
     }
 
     #[test]

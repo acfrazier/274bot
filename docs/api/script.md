@@ -379,8 +379,9 @@ Protection timing is tri-state: an observed enemy onset requires timely
 protection; `not_applicable_no_onset` requires a complete report-bounded capture
 with the exact enemy continuously present beyond melee distance, no attack
 animation targeting the player, and no player HP decrease. Missing evidence
-cannot establish that outcome. Protect plans still require their restoring
-terminal. Ranged live qualification uses the natural Warlord and his dialogue
+cannot establish that outcome. Only Fight rows create a restore-terminal
+obligation; a Prep `[protect, wear, wear]` plan is legal. Ranged live
+qualification uses the natural Warlord and his dialogue
 after account-only quest-state staging; it does not create the target NPC.
 The server-only `treequest` seed is acknowledged by its cheat response, not a
 client varp publication. The natural actor can wander nine tiles from its map
@@ -559,14 +560,25 @@ current visible staff tab's selected-spell label exactly matches the chosen
 spell and the armed-mode varp agrees. Missing, hidden, stale, or different spell
 evidence retains the serial arming sequence.
 
-The retained-receipt oracle gates every available magic cell on the absence of
-melee offensive prayers; native ranged cells are not yet available in this slice.
-Magic protection timing is conditional on an observed enemy
+Ranged Wear dispatch retains its slot-specific four-tick observation window.
+If a stack leaves inventory before the equipment frame arrives, preparation
+waits for that frame instead of treating the stack as exhausted. Protection and
+food upkeep continue, but attacks do not resume while either ranged slot is
+pending. Exhausting the existing settle/retry bounds remains a preparation
+failure: bow ammunition reports `Ammo`, while a thrown weapon reports `Weapon`.
+
+The retained-receipt oracle gates every magic and ranged cell on the absence of
+melee offensive prayers. Protection timing is conditional on an observed enemy
 melee onset: a continuously observed engagement with the same NPC always outside
 melee distance and no player HP drop may record `not_applicable_no_onset`.
 Missing frames or NPC observations cannot establish that exemption. Restoration
-after each protection plan and the Killed/corpse/WindDown checks remain required;
+after Fight protection plans and the Killed/corpse/WindDown checks remain required;
 the exemption is not evidence of timely protection against a melee attack.
+Both launch and no-onset distance evidence use network tiles and the NPC
+footprint, not the interpolated rendered pose. Pickup receipts distinguish
+single-row plan shape from stack accounting: an accepted Take with no observed
+gain is not recovered ammunition. Start/end counts must reconcile observed
+consumption and actual pickup gains, including content-voided Takes.
 Offline magic replay stops at the same first full readiness predicate as the live
 harness and also reports the verdict over the entire retained capture. Later
 timeout-tail activity is not erased or relabelled as a fresh live pass.
@@ -601,16 +613,29 @@ the normal talk outcome; `expect_combat` does not fabricate a fight.
 
 A `combat` step may declare `cross: ["danger-zone-id"]` and
 `guard: "protect"`, with the same meaning as the `walk` arguments.
-The combat step's return-to-stand and abort walks retain these permissions.
+The combat step's return-to-stand walks retain these permissions.
 The crossing scope and protection mode are independent.
 Crossing permissions do not enable protection.
 Protection does not grant crossing permissions.
-Omitted, null, or empty `guard` means no protection. Other guard modes are rejected.
-Omission keeps the existing empty crossing scope and unprotected walk.
+Omitted, null, or empty `guard` means no authored protection. Other guard modes
+are rejected. Omission keeps the empty crossing scope and unprotected ordinary
+return-to-stand walk.
 An earlier `walk` step does not grant permissions to the combat step.
 The regression matrix decodes authored combat arguments, compiles and begins
 the plan, then drives native `TargetGone` and `Aborted` reports to assert the
 emitted walks' crossing scope and protection independently.
+
+An abort with a live attacker retains a safety owner rather than immediately
+parking the step. Abort walks request the shared protection-and-food guard
+without expanding crossing permissions. If no engaged actor was recorded,
+retreat geometry uses the heaviest observed live attacker targeting the player.
+An abort walk that fails or arrives while an attacker remains transfers into
+a guarded hold. The hold uses the shared food policy, ends when the attacker
+disengages or HP clears the guard food line, and otherwise reaches a twelve-tick
+bound with an explicit blocked reason. Prayer-disallowed or low-prayer holds
+use food-only upkeep; ordinary protected-walk admission is unchanged, so such
+walks may be refused and fall back to that hold. This bounded fallback is not
+a general escape guarantee.
 
 ### Quester journal reads
 
