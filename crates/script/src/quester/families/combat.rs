@@ -867,6 +867,7 @@ impl NativeMachine for AbortHold {
         request.allow = WalkAllow {
             prayer: args.allow_prayer,
             food: true,
+            escape: true,
         };
         let (guard, protect_unavailable) = if args.allow_prayer {
             match WalkGuard::begin_with(&request, &snapshot, Arc::clone(&args.tables)) {
@@ -1447,6 +1448,7 @@ impl CombatRun {
         request.allow = WalkAllow {
             prayer: allow_prayer,
             food: true,
+            escape: true,
         };
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::WalkingOutAfterAbort;
@@ -1496,6 +1498,7 @@ impl CombatRun {
         request.allow = WalkAllow {
             prayer: false,
             food: false,
+            escape: true,
         };
         let handle = match cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx) {
             Ok(handle) => handle,

@@ -809,24 +809,12 @@ impl TuiSession {
             let Some(here) = player_here_tile(c) else {
                 return;
             };
-            // Guardian hold freezes WalkArm follow; the armed route
-            // stays latched and resumes when hold lifts.
-            if !WalkArm::may_follow(hold) {
-                return;
-            }
             // Step the armed walk route one leg per player-info tick
             // (the panel's `tick_latch` pattern — a hop is sent once
             // per server tick, not re-sent every 20 ms frame).
             let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
                 return;
             };
-            {
-                let mut latch = tick_latch.lock().unwrap();
-                if latch.get(name) == Some(&(c.gens.player, here)) {
-                    return;
-                }
-                latch.insert(name.to_string(), (c.gens.player, here));
-            }
             let finished = {
                 let snapshots = snapshots.lock().unwrap();
                 let Some(snap) = snapshots.get(name) else {
@@ -834,6 +822,33 @@ impl TuiSession {
                 };
                 let mut arm = arm.lock().unwrap();
                 let world = nav_world.lock().unwrap().clone();
+                let refused = world.as_deref().is_some_and(|world| {
+                    host_play::observe_walk_arm_admission(
+                        snap,
+                        &mut arm,
+                        world,
+                        map_members,
+                        Some(name),
+                    )
+                });
+                if refused
+                    || !frontend_core::walk_permissions::manual_walk_may_follow(
+                        hold,
+                        frame.host_move_owned,
+                    )
+                {
+                    if refused {
+                        walk_clear.store(true, Ordering::Relaxed);
+                    }
+                    return;
+                }
+                {
+                    let mut latch = tick_latch.lock().unwrap();
+                    if latch.get(name) == Some(&(c.gens.player, here)) {
+                        return;
+                    }
+                    latch.insert(name.to_string(), (c.gens.player, here));
+                }
                 host_play::step_walk_arm_follow(
                     c,
                     snap,
@@ -1205,6 +1220,20 @@ impl TuiSession {
             .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
+    fn walk_risk_input(&self, name: Option<&str>) -> host_play::admission::RiskInput {
+        name.and_then(|name| {
+            self.snapshots.lock().unwrap().get(name).map(|snapshot| {
+                host_play::admission::capture(
+                    snapshot,
+                    self.map_members(),
+                    Default::default(),
+                    false,
+                )
+            })
+        })
+        .unwrap_or_else(|| host_play::admission::unavailable(self.map_members()))
+    }
+
     fn map_context(&self, app: &TuiApp) -> Result<MapContext, ActionError> {
         let name = app.focused_name().ok_or(ActionError::NoFocus)?;
         let focus = self.core.play().and_then(|play| play.map_focus(&name));
@@ -1433,7 +1462,8 @@ impl TuiSession {
                 })
                 .unwrap_or_default();
             let destination = command.destination();
-            let route = play.map_walk(command, &context, &state, &bank, &self.travellers)?;
+            let input = self.walk_risk_input(name.as_deref());
+            let route = play.map_walk(command, &context, &state, &bank, input, &self.travellers)?;
             app.walk_dest = Some(destination);
             Ok(route)
         });
@@ -1475,6 +1505,12 @@ impl TuiSession {
             app.map_find_options(),
             &state,
             &bank,
+            host_play::admission::Admission::manual(
+                app.map_find_options(),
+                self.walk_risk_input(name.as_deref()),
+                0,
+                app.walk_permissions.globals,
+            ),
             &self.travellers,
             name.as_deref(),
         );
@@ -1564,6 +1600,7 @@ impl TuiSession {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
+                risk_input: self.walk_risk_input(Some(name)),
             },
         );
         if report.done_count() > 0 {
@@ -2103,6 +2140,7 @@ impl TuiSession {
         let after = frontend_core::WalkGlobalsView {
             globals: app.nav,
             script_scope_notice_ack: app.script_scope_notice_ack,
+            survivable_routing_notice_ack: app.survivable_routing_notice_ack,
         };
         let preferences = std::mem::take(&mut app.nav_preferences_dirty);
         let path = app

@@ -2790,6 +2790,29 @@ fn find_bounded_impl(
     result
 }
 
+/// Count actual kernel invocations in a request, including endpoint and
+/// diagnostic passes. Thread-local scope follows the route worker, not a
+/// process-wide counter affected by other bots. Production has no counter.
+#[cfg(any(test, feature = "test-support"))]
+pub fn count_kernel_searches<T>(work: impl FnOnce() -> T) -> (T, usize) {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            KERNEL_SEARCHES.with(|count| count.set(self.0));
+        }
+    }
+    let restore = Restore(KERNEL_SEARCHES.with(|count| count.replace(Some(0))));
+    let result = work();
+    let searches = KERNEL_SEARCHES.with(|count| count.get().unwrap_or(0));
+    drop(restore);
+    (result, searches)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static KERNEL_SEARCHES: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 /// The Dijkstra kernel shared by every search shape. `relax` is
 /// [`Relax::Strict`] for every routing search; the diagnosis arms relax
 /// only the carry/wear and `Unknown` stage gates a session can supply, so a
@@ -2815,6 +2838,12 @@ fn search_kernel(
     goals: &mut Goals<'_>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
+    #[cfg(any(test, feature = "test-support"))]
+    KERNEL_SEARCHES.with(|count| {
+        if let Some(value) = count.get() {
+            count.set(Some(value + 1));
+        }
+    });
     match ResourceBudget::new(graph, state, use_teleports, relax) {
         Ok(Some(resources)) => search_kernel_budget(
             collision,

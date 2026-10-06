@@ -65,6 +65,24 @@ impl From<Option<bool>> for WalkBit {
         }
     }
 }
+/// Walk-local override for survivable-risk admission, mapped directly from
+/// `WalkOptions::allow_danger_zones`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskPolicy {
+    Inherit,
+    Proceed,
+    Avoid,
+}
+
+impl From<WalkBit> for RiskPolicy {
+    fn from(value: WalkBit) -> Self {
+        match value {
+            WalkBit::Inherit => Self::Inherit,
+            WalkBit::Allow => Self::Proceed,
+            WalkBit::Forbid => Self::Avoid,
+        }
+    }
+}
 
 /// Native navigation permissions attached to one request. Native fetch is
 /// intentionally absent; it is not available to compiled scripts.
@@ -464,11 +482,12 @@ pub struct QuietReadLease {
 
 /// Owner allowances for a followed walk. Prayer must be allowed or
 /// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`;
-/// food defaults to allowed.
+/// food and escape default to allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkAllow {
     pub prayer: bool,
     pub food: bool,
+    pub escape: bool,
 }
 
 impl Default for WalkAllow {
@@ -476,6 +495,7 @@ impl Default for WalkAllow {
         Self {
             prayer: true,
             food: true,
+            escape: true,
         }
     }
 }
@@ -507,6 +527,47 @@ pub struct WalkRequest {
     /// when the owner disallows prayer.
     pub allow: WalkAllow,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkRefusal {
+    NoRouteWithinBounds {
+        tried: u8,
+        last: Option<crate::combat::risk::Verdict>,
+    },
+    Unsurvivable,
+    FixableWith,
+    Unknown(crate::combat::risk::UnknownWhy),
+    EscapeInProgress,
+}
+
+impl std::fmt::Display for WalkRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoRouteWithinBounds { tried, last } => {
+                write!(f, "no route within bounds after {tried} search attempts")?;
+                if let Some(last) = last {
+                    write!(f, " (last risk verdict: {last:?})")?;
+                }
+                Ok(())
+            }
+            Self::Unsurvivable => f.write_str("route is unsurvivable"),
+            Self::FixableWith => f.write_str("route needs additional supplies"),
+            Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
+            Self::EscapeInProgress => f.write_str("escape in progress"),
+        }
+    }
+}
+
+/// Correlated advisory result from a compute-only walk assessment.
+#[derive(Debug, Clone)]
+pub struct AssessReceipt {
+    pub request_id: u64,
+    pub evidence: EvidenceStamp,
+    pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
+    pub refusal: Option<WalkRefusal>,
+    pub detail: Option<Arc<str>>,
+    pub route_ticks: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
@@ -515,6 +576,7 @@ pub enum WalkEnd {
     Refused,
     Blocked,
     Failed,
+    Aborted,
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
 }
@@ -525,23 +587,45 @@ pub struct WalkReceipt {
     pub end: WalkEnd,
     pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
+    pub refusal: Option<WalkRefusal>,
+    pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
+    pub escape: Option<crate::combat::guard::Escape>,
 }
 impl WalkReceipt {
+    /// Prefer host-supplied detail, then the advisory's model reason, then a
+    /// typed refusal description. Callers use this before generic fallbacks.
+    pub fn failure_detail(&self) -> Option<Arc<str>> {
+        self.detail
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| {
+                self.assessment
+                    .as_ref()
+                    .map(|assessment| Arc::clone(&assessment.reason))
+            })
+            .or_else(|| {
+                self.refusal
+                    .as_ref()
+                    .map(|refusal| Arc::from(refusal.to_string()))
+            })
+    }
+
     /// Accept a walk only when the adapter proved its requested arrival.
     /// Route completion alone does not satisfy an area or reach goal.
     pub fn into_arrival(self) -> Result<EvidenceStamp, ActionError> {
+        let failure_detail = self.failure_detail();
         match self.end {
             WalkEnd::Arrived => Ok(self.evidence),
             WalkEnd::UserInput => Err(ActionError::UserInput),
             WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
             WalkEnd::Cancelled => Err(ActionError::Cancelled),
-            WalkEnd::RouteEnded => Err(ActionError::Blocked(self.detail.unwrap_or_else(|| {
+            WalkEnd::RouteEnded => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                 static REASON: LazyLock<Arc<str>> =
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));
                 Arc::clone(&REASON)
             }))),
-            WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
-                Err(ActionError::Blocked(self.detail.unwrap_or_else(|| {
+            WalkEnd::Aborted | WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
+                Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                     static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
                     Arc::clone(&REASON)
                 })))
@@ -715,6 +799,94 @@ mod walk_permission_tests {
                 allow_wilderness: WalkBit::Inherit,
                 allow_danger_zones: WalkBit::Inherit,
             }
+        );
+    }
+
+    #[test]
+    fn risk_policy_is_the_existing_walk_tri_state_projection() {
+        assert_eq!(RiskPolicy::from(WalkBit::Inherit), RiskPolicy::Inherit);
+        assert_eq!(RiskPolicy::from(WalkBit::Allow), RiskPolicy::Proceed);
+        assert_eq!(RiskPolicy::from(WalkBit::Forbid), RiskPolicy::Avoid);
+    }
+
+    #[test]
+    fn walk_allow_defaults_enable_food_and_escape() {
+        let allow = WalkAllow::default();
+        assert!(allow.prayer);
+        assert!(allow.food);
+        assert!(allow.escape);
+    }
+
+    #[test]
+    fn refusal_variants_preserve_distinct_typed_kinds() {
+        let refusals = [
+            WalkRefusal::NoRouteWithinBounds {
+                tried: 2,
+                last: Some(crate::combat::risk::Verdict::Unsurvivable),
+            },
+            WalkRefusal::Unsurvivable,
+            WalkRefusal::FixableWith,
+            WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts),
+            WalkRefusal::EscapeInProgress,
+        ];
+        for left in 0..refusals.len() {
+            for right in left + 1..refusals.len() {
+                assert_ne!(refusals[left], refusals[right]);
+            }
+        }
+    }
+
+    #[test]
+    fn aborted_walk_maps_to_blocked_with_the_escape_detail() {
+        let receipt = WalkReceipt {
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Aborted,
+            blocked: None,
+            detail: Some(Arc::from("retreated from the danger zone")),
+            refusal: None,
+            assessment: None,
+            escape: None,
+        };
+        assert_eq!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(Arc::from(
+                "retreated from the danger zone"
+            )))
+        );
+    }
+
+    #[test]
+    fn typed_refusal_supplies_a_reason_when_host_detail_is_absent() {
+        let receipt = WalkReceipt {
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: None,
+            refusal: Some(WalkRefusal::EscapeInProgress),
+            assessment: None,
+            escape: None,
+        };
+        assert_eq!(
+            receipt.failure_detail().as_deref(),
+            Some("escape in progress")
         );
     }
 

@@ -379,8 +379,9 @@ pub struct TuiApp {
     pub walk_send: WalkSendState,
     /// The focused slot's observed world tile.
     pub here: Option<WorldTile>,
-    /// The armed walk route whose remaining tiles paint `*`.
-    pub route: Option<Route>,
+    /// The armed walk route whose remaining tiles paint `*`. Shared with the
+    /// arm, so each observe is a reference-count bump, not a route copy.
+    pub route: Option<Arc<Route>>,
     /// Armed Walk dest after the host accepts. Refused Walks leave this unset.
     pub walk_dest: Option<Tile>,
     /// Chat pane state (focused option row).
@@ -398,6 +399,8 @@ pub struct TuiApp {
     pub map_route_through_zones: bool,
     /// The shared one-time script-scope notice was dismissed.
     pub script_scope_notice_ack: bool,
+    /// The shared one-time danger-routing migration notice was dismissed.
+    pub survivable_routing_notice_ack: bool,
     /// Shared settings writes queued one nested nav preference at a time.
     pub nav_preferences_dirty: Vec<NavPreference>,
     pub settings_state: SettingsState,
@@ -537,6 +540,7 @@ impl TuiApp {
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
             script_scope_notice_ack: false,
+            survivable_routing_notice_ack: false,
             nav_preferences_dirty: Vec::new(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
@@ -614,12 +618,14 @@ impl TuiApp {
             WalkGlobalsView {
                 globals: self.nav,
                 script_scope_notice_ack: self.script_scope_notice_ack,
+                survivable_routing_notice_ack: self.survivable_routing_notice_ack,
             },
             WalkGlobalsView::read_at,
         );
         self.walk_permissions = view;
         self.nav = view.globals;
         self.script_scope_notice_ack = view.script_scope_notice_ack;
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
         if !view.danger_this_walk(true) {
             self.map_route_through_zones = false;
         }
@@ -2006,6 +2012,10 @@ impl TuiApp {
         .with_native_status(
             self.focused_detail()
                 .and_then(|detail| detail.native_status.as_deref()),
+        )
+        .with_walk_risk(
+            self.focused_detail()
+                .and_then(|detail| detail.walk_risk.as_deref()),
         );
         frame.render_widget(pane, area);
     }

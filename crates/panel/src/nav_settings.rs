@@ -15,10 +15,14 @@ pub struct NavSettings {
     pub allow_wilderness: bool,
     /// Durable global permission for manual WalkTo to use BankBudget fetch.
     pub allow_bank_fetch: bool,
-    /// Durable global permission for every walk to enter danger zones.
+    /// Durable global override for every walk to route through danger zones.
     pub allow_danger_zones: bool,
-    /// The shared one-time explanation was dismissed.
+    /// Allow admission of survivable crossings once the runtime net is available.
+    pub survivable_routing: bool,
+    /// The shared one-time script-scope explanation was dismissed.
     pub script_scope_notice_ack: bool,
+    /// The one-time danger-routing migration explanation was dismissed.
+    pub survivable_routing_notice_ack: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     /// 11px default; the settings UI clamps writes to 8..=28.
@@ -51,7 +55,9 @@ impl Default for NavSettings {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
+            survivable_routing: true,
             script_scope_notice_ack: false,
+            survivable_routing_notice_ack: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -80,20 +86,30 @@ impl NavSettings {
             allow_wilderness: self.allow_wilderness,
             allow_bank_fetch: self.allow_bank_fetch,
             allow_danger_zones: self.allow_danger_zones,
+            survivable_routing: self.survivable_routing,
         }
     }
 
-    pub fn refresh_walk_globals_at(&mut self, path: &std::path::Path) -> std::io::Result<()> {
-        let globals = host_play::WalkGlobals::read_at(path)?;
-        self.allow_teleports = globals.allow_teleports;
-        self.allow_wilderness = globals.allow_wilderness;
-        self.allow_bank_fetch = globals.allow_bank_fetch;
+    pub fn danger_level(&self) -> frontend_core::DangerLevel {
+        self.walk_globals().danger_level()
+    }
+
+    pub fn set_danger_level(&mut self, level: frontend_core::DangerLevel) {
+        let mut globals = self.walk_globals();
+        globals.set_danger_level(level);
         self.allow_danger_zones = globals.allow_danger_zones;
-        self.script_scope_notice_ack = frontend_core::nav_preference_at(
-            path,
-            frontend_core::NavPreference::ScriptScopeNoticeAck,
-            None,
-        )?;
+        self.survivable_routing = globals.survivable_routing;
+    }
+
+    pub fn refresh_walk_globals_at(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        let view = frontend_core::WalkGlobalsView::read_at(path);
+        self.allow_teleports = view.globals.allow_teleports;
+        self.allow_wilderness = view.globals.allow_wilderness;
+        self.allow_bank_fetch = view.globals.allow_bank_fetch;
+        self.allow_danger_zones = view.globals.allow_danger_zones;
+        self.survivable_routing = view.globals.survivable_routing;
+        self.script_scope_notice_ack = view.script_scope_notice_ack;
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
         Ok(())
     }
 }
@@ -233,6 +249,33 @@ mod tests {
         assert_eq!(back, s);
     }
 
+    #[test]
+    fn danger_level_round_trips_through_both_stored_booleans_and_migrates_old_nav() {
+        use frontend_core::DangerLevel;
+
+        assert_eq!(
+            NavSettings::default().danger_level(),
+            DangerLevel::WhenSurvivable
+        );
+        let old: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
+        assert!(old.survivable_routing);
+        assert_eq!(old.danger_level(), DangerLevel::WhenSurvivable);
+        assert!(!old.survivable_routing_notice_ack);
+
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
+            let mut settings = NavSettings::default();
+            settings.set_danger_level(level);
+            assert_eq!(settings.danger_level(), level);
+            let saved = serde_json::to_vec(&settings).unwrap();
+            let loaded: NavSettings = serde_json::from_slice(&saved).unwrap();
+            assert_eq!(loaded.danger_level(), level);
+            assert_eq!(loaded, settings);
+        }
+    }
     #[test]
     fn effective_without_live_force_is_saved_unchanged() {
         let saved = NavSettings {

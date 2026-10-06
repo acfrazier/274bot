@@ -226,6 +226,30 @@ fn walk_ticks(tiles: usize) -> Result<i32, UnknownWhy> {
         .ok_or(UnknownWhy::Overflow)
 }
 
+fn in_envelope(
+    tile: WorldTile,
+    index: u16,
+    zones: &ZoneTable,
+    risks: &RiskTables,
+    input: &RiskInput,
+) -> Result<bool, UnknownWhy> {
+    let zone = &zones.zones()[usize::from(index)];
+    let kind = &zones.kinds()[usize::from(zone.kind)];
+    let risk = risks.kind(zone.kind).ok_or(UnknownWhy::MissingFacts)?;
+    Ok(
+        if zone.shape != NO_SHAPE
+            || kind.npc_id < 0
+            || risk.unknown_for(input.map_members).is_some()
+        {
+            zones.at(tile).any(|candidate| candidate == index)
+        } else {
+            tile.level == i32::from(zone.level)
+                && (i64::from(tile.x) - i64::from(zone.spawn_x)).abs() <= i64::from(risk.r)
+                && (i64::from(tile.z) - i64::from(zone.spawn_z)).abs() <= i64::from(risk.r)
+        },
+    )
+}
+
 fn interval(
     path: RoutePath<'_>,
     zones: &ZoneTable,
@@ -233,6 +257,7 @@ fn interval(
     input: &RiskInput,
     index: u16,
     a: u16,
+    start: u16,
 ) -> Result<ZoneInterval, UnknownWhy> {
     let zone = &zones.zones()[usize::from(index)];
     let kind = &zones.kinds()[usize::from(zone.kind)];
@@ -240,23 +265,19 @@ fn interval(
     let mut envelope_first = None;
     let mut envelope_last = None;
     let mut last_after = None;
-    for i in 0..path.len() {
+    for i in usize::from(start)..path.len() {
         let i = i as u16;
         let tile = path.point(i).ok_or(UnknownWhy::Overflow)?.tile;
-        let exact = zone.shape != NO_SHAPE || kind.npc_id < 0;
-        let in_envelope = if exact || risk.unknown_for(input.map_members).is_some() {
-            zones.at(tile).any(|candidate| candidate == index)
-        } else {
-            tile.level == i32::from(zone.level)
-                && (i64::from(tile.x) - i64::from(zone.spawn_x)).abs() <= i64::from(risk.r)
-                && (i64::from(tile.z) - i64::from(zone.spawn_z)).abs() <= i64::from(risk.r)
-        };
-        if in_envelope {
+        if in_envelope(tile, index, zones, risks, input)? {
             envelope_first.get_or_insert(i);
             envelope_last = Some(i);
             if i >= a {
                 last_after = Some(i);
             }
+        } else if a == 0 && envelope_first.is_some() {
+            // Bound the origin's escape at its first exit. An entering
+            // interval keeps the existing conservative exposure envelope.
+            break;
         }
     }
     let e = envelope_first.unwrap_or(a);
@@ -295,7 +316,7 @@ pub fn build_plan(
     input: &RiskInput,
 ) -> Result<RoutePlan, UnknownWhy> {
     let mut count = 0usize;
-    acquired(path, zones, wilderness, input, |_, _| {
+    acquired(path, zones, risks, wilderness, input, |_| {
         count += 1;
         Ok(())
     })?;
@@ -303,8 +324,8 @@ pub fn build_plan(
         return Err(UnknownWhy::Overflow);
     }
     let mut intervals = Vec::with_capacity(count);
-    acquired(path, zones, wilderness, input, |index, a| {
-        intervals.push(interval(path, zones, risks, input, index, a)?);
+    acquired(path, zones, risks, wilderness, input, |row| {
+        intervals.push(row);
         Ok(())
     })?;
     intervals.sort_unstable_by_key(|row| (row.a, row.b, row.zone));
@@ -313,6 +334,7 @@ pub fn build_plan(
     let mut crossings = Vec::with_capacity(crossing_count);
     crossing_runs(path, &intervals, |row| crossings.push(row))?;
     Ok(RoutePlan {
+        complete: true,
         intervals: intervals.into_boxed_slice(),
         crossings: crossings.into_boxed_slice(),
     })
@@ -322,9 +344,10 @@ pub fn build_plan(
 fn acquired(
     path: RoutePath<'_>,
     zones: &ZoneTable,
+    risks: &RiskTables,
     wilderness: &WildernessRules,
     input: &RiskInput,
-    mut visit: impl FnMut(u16, u16) -> Result<(), UnknownWhy>,
+    mut visit: impl FnMut(ZoneInterval) -> Result<(), UnknownWhy>,
 ) -> Result<(), UnknownWhy> {
     let mut seen = [0u64; 1024];
     for i in 0..path.len() {
@@ -341,7 +364,37 @@ fn acquired(
             let bit = 1u64 << (index % 64);
             if active && seen[word] & bit == 0 {
                 seen[word] |= bit;
-                visit(index, i)?;
+                // `i` is the first acquisition index. It is 0 only when the
+                // origin is engaged (inside A_z and active), the router's own
+                // origin predicate. A fringe origin inside E_z but outside A_z
+                // that walks into A_z enters the zone: a judged crossing.
+                let mut next = i;
+                let mut start = 0;
+                loop {
+                    let row = interval(path, zones, risks, input, index, next, start)?;
+                    visit(row)?;
+                    if !row.escaping() {
+                        break;
+                    }
+                    let mut reentry = None;
+                    for candidate in usize::from(row.b) + 1..path.len() {
+                        let candidate = candidate as u16;
+                        let tile = path.point(candidate).ok_or(UnknownWhy::Overflow)?.tile;
+                        if zones.at(tile).any(|zone| zone == index)
+                            && (zone.class == ZoneClass::Always
+                                || input
+                                    .combat
+                                    .is_none_or(|combat| u16::from(combat) <= zone.cap)
+                                || wilderness.contains(tile))
+                        {
+                            reentry = Some(candidate);
+                            break;
+                        }
+                    }
+                    let Some(candidate) = reentry else { break };
+                    next = candidate;
+                    start = row.b.checked_add(1).ok_or(UnknownWhy::Overflow)?;
+                }
             }
         }
     }
@@ -352,7 +405,13 @@ fn crossing_runs(
     intervals: &[ZoneInterval],
     mut emit: impl FnMut(CrossingGeom),
 ) -> Result<usize, UnknownWhy> {
-    let mut start = 0usize;
+    // Retain origin exposure for observation/replay, but never make leaving
+    // it an admission crossing. Re-entering after its exit has a later `a`.
+    // `ZoneInterval::new` enforces `e <= a`, so every `a = 0` row is escaping
+    // and, sorted by `a`, escaping rows are exactly the prefix. (An engaged
+    // origin outside its own envelope fails as `Unknown(Overflow)` instead.)
+    debug_assert!(intervals.iter().all(|row| row.escaping() == (row.a == 0)));
+    let mut start = intervals.partition_point(|row| row.escaping());
     let mut count = 0usize;
     while start < intervals.len() {
         let first = intervals[start].a;

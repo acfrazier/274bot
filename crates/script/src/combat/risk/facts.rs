@@ -306,6 +306,16 @@ pub(super) fn build_count_for_test() -> usize {
 }
 
 impl RiskTables {
+    /// Legacy grids have no engaged zone rows, but retain selected poison facts.
+    pub fn without_zones(combat: &CombatTables) -> Self {
+        Self {
+            kinds: Box::new([]),
+            poison_unknown_v: poison_unknown_v(combat),
+            rows_by_kind: Box::new([]),
+            row_indices: Box::new([]),
+        }
+    }
+
     /// Build once from all zone kinds and the full selected NPC extract.
     pub fn build(zones: &ZoneTable, combat: &CombatTables) -> Self {
         #[cfg(test)]

@@ -679,19 +679,43 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
+    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
+    app.script_scope_notice_ack = true;
+    app.survivable_routing_notice_ack = true;
     app.settings_state.row = 6;
     let rows = draw(&mut app, 60, 14);
-    let (col, row) = find(&rows, "Route through danger zones:")
+    let (col, row) = find(&rows, "Danger routing:")
         .expect("the selected global remains visible in a compact terminal");
     app.on_click(col, row + 1);
-    assert!(
-        app.nav.allow_danger_zones,
-        "the wrapped continuation belongs to the danger setting"
+    assert_eq!(
+        app.nav.danger_level(),
+        frontend_core::DangerLevel::Never,
+        "the wrapped continuation cycles the danger setting"
     );
     assert!(
         app.pause_script_on_manual_walk_abort,
         "a continuation never activates the next setting"
     );
+}
+
+#[test]
+fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projection() {
+    let mut app = TuiApp::new("274bot headless");
+    app.settings_state.open = true;
+    app.script_scope_notice_ack = true;
+    assert!(find(
+        &draw(&mut app, 100, 24),
+        "Danger routing now has three levels"
+    )
+    .is_some());
+    assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
+    assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
+    assert!(app.walk_permissions.survivable_routing_notice_ack);
+    assert!(find(
+        &draw(&mut app, 100, 24),
+        "Danger routing now has three levels"
+    )
+    .is_none());
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out

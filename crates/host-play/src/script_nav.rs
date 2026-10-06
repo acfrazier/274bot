@@ -102,10 +102,24 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
+    pub(crate) compat_v1: bool,
+    /// The held runtime-net setting was reported during this session.
+    pub(crate) runtime_gate_logged: bool,
+    pub(crate) admission: Option<Box<crate::admission::Admission>>,
+    pub(crate) assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    pub(crate) last_assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    pub(crate) route_basis: Option<Arc<crate::admission::RouteBasis>>,
+    pub(crate) admission_pending: bool,
+    pub(crate) risk_refusal: Option<Box<(u64, script::native::WalkRefusal)>>,
+    pub(crate) assess_result:
+        Option<Box<(script::native::HostAuthority, script::native::AssessReceipt)>>,
+    pub(crate) assess_worker: Option<Arc<()>>,
+    pub(crate) manual_arm: Option<std::sync::Weak<Mutex<crate::WalkArm>>>,
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
     pub(crate) route_worker: Option<Arc<()>>,
-    pub(crate) pending_route: Option<ScriptRouteRequest>,
+    pub(crate) pending_route: Option<Box<ScriptRouteRequest>>,
+    pub(crate) pending_assess: Option<Box<PendingAdvisoryAssess>>,
     /// Native ownership survives worker handoff, but not action revocation.
     pub(crate) native_walk: Option<script::native::HostAuthority>,
     pub(crate) native_receipt_seq: u64,
@@ -115,6 +129,7 @@ pub(crate) struct NavBot {
     /// host refusal, or a Pause / displacement / abort that ended its follow.
     /// Delivered once to its still-live owner by the next observation.
     pub(crate) native_end: Option<(script::native::HostAuthority, script::native::WalkEnd)>,
+    pub(crate) native_end_risk: Option<Box<NativeEndRisk>>,
     /// Evidence retained with the published route, not a newer pending retarget.
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
@@ -128,7 +143,7 @@ pub(crate) struct NavBot {
     /// Request exclusions retained for reconnect carry and retransmission gates.
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
-    pub(crate) route: Option<Route>,
+    pub(crate) route: Option<Arc<Route>>,
     /// The walk request id `publish_route` installed `route` for. A retarget
     /// moves `walk_request_id` / `requested_route` to the new walk while the
     /// old route is still followed; only a route end whose owner is the
@@ -191,6 +206,13 @@ pub(crate) struct NavBot {
     pub(crate) walk_guard_events: Vec<(script::native::HostAuthority, script::native::WalkEvent)>,
     /// Latest terminal script generation whose navigation state was reset.
     pub(crate) terminal_nav_reset_generation: Option<u64>,
+}
+
+pub(crate) struct NativeEndRisk {
+    pub assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    pub refusal: Option<script::native::WalkRefusal>,
+    pub escape: Option<script::combat::guard::Escape>,
+    pub blocked: Option<Arc<[ZoneKey]>>,
 }
 
 /// A held script walk or its identity across a watchdog-owned replacement.
@@ -391,6 +413,208 @@ pub(crate) fn resolve_route_exclusions(
 }
 
 impl ScriptWalkArm {
+    /// Advisory routing shares normalization, hard authority and assessment,
+    /// but owns neither a follow route nor the native walk/event budget.
+    pub(crate) fn queue_native_assess(
+        mut self,
+        snapshot: &GameSnapshot,
+        request: script::native::WalkRequest,
+        authority: script::native::HostAuthority,
+        evidence: api::quest_progress::EvidenceStamp,
+    ) {
+        if !authority.live() {
+            return;
+        }
+        let refusal = |detail: &str| {
+            let receipt = script::native::AssessReceipt {
+                request_id: authority.request_id().get(),
+                evidence,
+                assessment: None,
+                route_ticks: 0,
+                refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None,
+                }),
+                detail: Some(Arc::from(detail)),
+            };
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(self.name.clone()).or_default();
+            if let Some(pending) = bot.pending_assess.take() {
+                pending.request.completion.signal();
+            }
+            bot.assess_worker = None;
+            bot.assess_result = Some(Box::new((authority.clone(), receipt)));
+        };
+        let (Some(world), Some((x, z, level))) = (self.world.as_ref(), self.here) else {
+            refusal("Advisory route unavailable: no navigation world or observed player");
+            return;
+        };
+        if request.required_after.run != authority.run()
+            || request.arrival == ArrivalKind::Area && request.loc_id.is_some()
+        {
+            refusal("Advisory route request has invalid evidence or arrival authority");
+            return;
+        }
+        if request.protect {
+            let view = SnapshotView::new(Some(snapshot), evidence);
+            if let Err(reason) = script::combat::WalkGuard::begin(&request, &view) {
+                refusal(&format!("Walk protection: {reason:?}"));
+                return;
+            }
+        }
+        if let (Some(provider), Some(family)) = (request.evidence, world.graph.quest_family) {
+            self.state
+                .get_or_insert_with(Default::default)
+                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
+                provider,
+                family,
+                request.required_after,
+            ));
+        }
+        let from = WorldTile { x, z, level };
+        let (options, policy, enforce) =
+            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        let (options, exclusions) = match resolve_route_exclusions(
+            options,
+            world,
+            from,
+            request.target,
+            state,
+            ScriptRouteExclusions {
+                cross: request.cross.to_vec(),
+                ..Default::default()
+            },
+        ) {
+            Ok(resolved) => resolved,
+            Err(detail) => {
+                refusal(&detail);
+                return;
+            }
+        };
+        let mut input = crate::admission::capture(
+            snapshot,
+            state.map_members,
+            script::combat::risk::PoisonState::default(),
+            false,
+        );
+        let admission = {
+            let navs = self.navs.lock().unwrap();
+            let bot = navs.get(&self.name);
+            input.off_debt = bot.is_some_and(|bot| bot.walk_guard_off.is_some());
+            crate::admission::Admission {
+                policy,
+                enforce: enforce || !request.cross.is_empty(),
+                grants: options.zones,
+                allow: request.allow,
+                input,
+                generation: authority.request_id().get(),
+                compat_v1: false,
+                escape: None,
+            }
+        };
+        let radius = i32::from(request.radius);
+        let live_candidates = if radius > 0 {
+            request
+                .loc_id
+                .and_then(|id| loc_target_approach_tiles(snapshot, request.target, radius, id))
+        } else {
+            None
+        };
+        let request = ScriptRouteRequest {
+            generation: admission.generation,
+            request_id: authority.request_id().get(),
+            world: Arc::clone(world),
+            from,
+            to: request.target,
+            radius,
+            loc_id: request.loc_id,
+            arrival: request.arrival,
+            opts: options,
+            admission,
+            state: self.state,
+            bank: self.bank,
+            live_candidates,
+            exclusions: (!exclusions.is_empty()).then(|| Arc::new(exclusions)),
+            completion: RouteCompletion::default(),
+        };
+        let token = Arc::new(());
+        let worker_token = {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(self.name.clone()).or_default();
+            bot.assess_worker = Some(Arc::clone(&token));
+            bot.assess_result = None;
+            bot.pending_assess = Some(Box::new(PendingAdvisoryAssess {
+                request: Box::new(request),
+                authority: authority.clone(),
+                evidence,
+                token: Arc::clone(&token),
+            }));
+            if bot.route_worker.is_some() {
+                None
+            } else {
+                let worker_token = Arc::new(());
+                bot.route_worker = Some(Arc::clone(&worker_token));
+                Some(worker_token)
+            }
+        };
+        let Some(worker_token) = worker_token else {
+            return;
+        };
+        if spawn_route_worker(
+            Arc::clone(&self.navs),
+            self.name.clone(),
+            Arc::clone(&worker_token),
+        ) {
+            return;
+        }
+        let mut navs = self.navs.lock().unwrap();
+        let Some(bot) = navs.get_mut(&self.name) else {
+            return;
+        };
+        if !bot
+            .route_worker
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &worker_token))
+        {
+            return;
+        }
+        bot.route_worker = None;
+        if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+            bot.note_failure(
+                bot.route_generation,
+                bot.walk_request_id,
+                to,
+                radius,
+                allow_teleports,
+            );
+        }
+        if let Some(request) = bot.pending_route.take() {
+            request.completion.signal();
+        }
+        bot.requested_route = None;
+        if let Some(pending) = bot.pending_assess.take() {
+            pending.request.completion.signal();
+            if pending.authority.live()
+                && bot
+                    .assess_worker
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
+            {
+                bot.assess_worker = None;
+                bot.assess_result = Some(Box::new((
+                    pending.authority.clone(),
+                    advisory_refusal(
+                        &pending.authority,
+                        pending.evidence,
+                        "Advisory route worker could not start",
+                    ),
+                )));
+            }
+        }
+    }
+
     pub(crate) fn queue_native_route(
         mut self,
         snapshot: &GameSnapshot,
@@ -411,6 +635,23 @@ impl ScriptWalkArm {
             );
             return false;
         }
+        {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(self.name.clone()).or_default();
+            if let Some(escape) = bot.slot_escape() {
+                bot.refuse_native_with_detail(
+                    authority,
+                    Some(Arc::from(crate::admission::escape_reason(escape))),
+                );
+                bot.native_end_risk = Some(Box::new(NativeEndRisk {
+                    assessment: None,
+                    refusal: Some(script::native::WalkRefusal::EscapeInProgress),
+                    escape: Some(escape),
+                    blocked: None,
+                }));
+                return false;
+            }
+        }
         let protect = request.protect;
         let guard = if protect || request.food_guard {
             let view = SnapshotView::new(
@@ -428,13 +669,39 @@ impl ScriptWalkArm {
             };
             match admission {
                 Ok(guard) => Some(guard),
-                Err(_) => {
-                    self.refuse_native(authority);
+                Err(reason) => {
+                    self.refuse_native_with_detail(
+                        authority,
+                        Some(Arc::from(format!("Walk protection: {reason:?}"))),
+                    );
                     return false;
                 }
             }
         } else {
             None
+        };
+        let (options, policy, enforce) =
+            super::walk_permissions::native_admission(&self.navs, &self.name, request.options);
+        let off_debt = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .is_some_and(|bot| bot.walk_guard_off.is_some());
+        let admission = crate::admission::Admission {
+            policy,
+            enforce: enforce || !request.cross.is_empty(),
+            grants: options.zones,
+            allow: request.allow,
+            input: crate::admission::capture(
+                snapshot,
+                self.state.as_ref().is_some_and(|state| state.map_members),
+                script::combat::risk::PoisonState::default(),
+                off_debt,
+            ),
+            generation: 0,
+            compat_v1: false,
+            escape: None,
         };
         if let (Some(provider), Some(family)) = (
             request.evidence,
@@ -458,7 +725,7 @@ impl ScriptWalkArm {
             request.target.x,
             request.target.z,
             request.target.level,
-            super::walk_permissions::native_options(&self.navs, &self.name, request.options),
+            options,
             i32::from(request.radius),
             true,
             authority.request_id().get(),
@@ -468,6 +735,7 @@ impl ScriptWalkArm {
             Some(authority),
             request.loc_id,
             request.arrival,
+            Some(admission),
         );
         if queued {
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
@@ -507,6 +775,7 @@ impl ScriptWalkArm {
             authority,
             loc_id,
             arrival,
+            None,
         )
     }
 
@@ -605,6 +874,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            None,
         )
     }
 
@@ -643,13 +913,15 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            None,
         )
     }
 
     /// Queue a walk with the request's frozen avoid rectangles and zone names.
     #[allow(clippy::too_many_arguments)] // route queue plus the walk's exclusions
-    pub(crate) fn queue_route_avoiding(
+    pub(crate) fn queue_fixed_route_in_snapshot_avoiding(
         &self,
+        snapshot: &GameSnapshot,
         x: i32,
         z: i32,
         level: i32,
@@ -665,12 +937,13 @@ impl ScriptWalkArm {
             0,
             false,
             request_id,
-            None,
+            Some(snapshot),
             RouteCompletion::default(),
             exclusions,
             None,
             None,
             ArrivalKind::Reach,
+            None,
         )
     }
 
@@ -701,6 +974,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            None,
         )
     }
 
@@ -733,6 +1007,7 @@ impl ScriptWalkArm {
             None,
             loc_id,
             ArrivalKind::Reach,
+            None,
         )
         .then_some(receiver)
     }
@@ -830,6 +1105,7 @@ impl ScriptWalkArm {
         authority: Option<script::native::HostAuthority>,
         loc_id: Option<i32>,
         arrival: ArrivalKind,
+        request_admission: Option<crate::admission::Admission>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -882,11 +1158,50 @@ impl ScriptWalkArm {
             z: hz,
             level: hl,
         };
-        let empty = WorldState::empty();
-        let route_state = self.state.as_ref().unwrap_or(&empty);
-        let (mut opts, exclusions) =
+        let original_key = (
+            to,
+            radius,
+            opts.allow_teleports,
+            opts.allow_wilderness,
+            opts.allow_bank_fetch,
+            opts.zones,
+        );
+        let frozen = {
+            let navs = self.navs.lock().unwrap();
+            navs.get(&self.name).and_then(|bot| {
+                let same_owner = bot
+                    .native_walk
+                    .as_ref()
+                    .zip(authority.as_ref())
+                    .is_some_and(|(old, new)| {
+                        old.run() == new.run() && old.request_id() == new.request_id()
+                    })
+                    || (authority.is_none()
+                        && bot.native_walk.is_none()
+                        && bot.walk_request_id == request_id
+                        && bot.requested_route == Some(original_key));
+                same_owner
+                    .then(|| {
+                        bot.route_basis
+                            .as_ref()
+                            .map(|basis| (Arc::clone(basis), bot.requested_exclusions.clone()))
+                    })
+                    .flatten()
+            })
+        };
+        let mut state = self.state.clone();
+        let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
+            let state = state.get_or_insert_with(WorldState::empty);
+            state.quest_evidence = basis.quest_evidence.clone();
+            (basis.options, exclusions)
+        } else {
+            let empty = WorldState::empty();
+            let route_state = state.as_ref().unwrap_or(&empty);
             match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
-                Ok(resolved) => resolved,
+                Ok((opts, exclusions)) => {
+                    let exclusions = (!exclusions.is_empty()).then(|| Arc::new(exclusions));
+                    (opts, exclusions)
+                }
                 Err(reason) => {
                     log_walk_arm(&self.name, || {
                         format!("queue_route refused {reason} dest={to:?} request_id={request_id}")
@@ -901,11 +1216,7 @@ impl ScriptWalkArm {
                     }
                     return false;
                 }
-            };
-        let exclusions = if exclusions.is_empty() {
-            None
-        } else {
-            Some(Arc::new(exclusions))
+            }
         };
         let key = (
             to,
@@ -933,6 +1244,18 @@ impl ScriptWalkArm {
                 return result;
             }
         }
+        let captured_input = request_admission
+            .map(|admission| admission.input)
+            .or_else(|| {
+                snapshot.map(|snapshot| {
+                    crate::admission::capture(
+                        snapshot,
+                        self.state.as_ref().is_some_and(|state| state.map_members),
+                        Default::default(),
+                        false,
+                    )
+                })
+            });
         // Resolve live-scene geometry only after this request passes the
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
@@ -974,21 +1297,65 @@ impl ScriptWalkArm {
             if let Some(ess) = bot.traveller.essence() {
                 opts.essence = Some(ess);
             }
-            bot.route_generation = bot.route_generation.wrapping_add(1);
-            bot.manual_walk_cancelled_detail = false;
-            bot.walk_request_id = request_id;
-            // A geometry refresh keeps the same live action and correlation;
-            // only a genuinely replacing request cancels the previous owner.
+            // Refresh retains its original policy and corridor; a new request
+            // derives its own policy instead of borrowing the previous override.
             let same_owner = bot
                 .native_walk
                 .as_ref()
                 .zip(authority.as_ref())
                 .is_some_and(|(old, new)| {
                     old.run() == new.run() && old.request_id() == new.request_id()
+                })
+                || (authority.is_none()
+                    && bot.native_walk.is_none()
+                    && bot.walk_request_id == request_id
+                    && bot.requested_route == Some(key));
+            let mut admission = request_admission
+                .or_else(|| {
+                    same_owner
+                        .then(|| bot.admission.as_deref().copied())
+                        .flatten()
+                })
+                .unwrap_or_else(|| crate::admission::Admission {
+                    policy: if bot.compat_v1 || opts.zones.is_all() {
+                        script::native::RiskPolicy::Proceed
+                    } else {
+                        script::native::RiskPolicy::Avoid
+                    },
+                    enforce: super::walk_permissions::NET_AVAILABLE
+                        || opts.zones != ZoneExempt::NONE,
+                    grants: opts.zones,
+                    allow: script::native::WalkAllow {
+                        prayer: !bot.compat_v1,
+                        food: !bot.compat_v1,
+                        escape: !bot.compat_v1,
+                    },
+                    input: Default::default(),
+                    generation: 0,
+                    compat_v1: bot.compat_v1,
+                    escape: None,
                 });
+            if let Some(mut input) = captured_input {
+                input.poison = admission.input.poison;
+                admission.input = input;
+            }
             if !same_owner {
                 bot.end_native_walk(script::native::WalkEnd::Cancelled);
+                bot.route_basis = None;
+                bot.assessment = None;
+                bot.risk_refusal = None;
+                bot.admission_pending = false;
             }
+            admission.input.off_debt = bot.walk_guard_off.is_some();
+            admission.grants = opts.zones;
+            admission.generation = bot.route_generation.wrapping_add(1);
+            match bot.admission.as_deref_mut() {
+                Some(pending) => *pending = admission,
+                None => bot.admission = Some(Box::new(admission)),
+            }
+            bot.route_generation = admission.generation;
+            bot.manual_walk_cancelled_detail = false;
+            bot.walk_request_id = request_id;
             bot.native_walk_blocked = None;
             bot.walk_outcome_detail = None;
             bot.requested_route = Some(key);
@@ -998,7 +1365,7 @@ impl ScriptWalkArm {
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
             bot.native_walk_failure = None;
-            bot.pending_route = Some(ScriptRouteRequest {
+            bot.pending_route = Some(Box::new(ScriptRouteRequest {
                 generation: bot.route_generation,
                 request_id,
                 world: Arc::clone(world),
@@ -1008,12 +1375,13 @@ impl ScriptWalkArm {
                 loc_id,
                 arrival,
                 opts,
-                state: self.state.clone(),
+                admission,
+                state,
                 bank: self.bank.clone(),
                 live_candidates,
                 exclusions,
                 completion,
-            });
+            }));
             if bot.route_worker.is_some() {
                 log_walk_arm(&self.name, || {
                     format!(
@@ -1033,9 +1401,6 @@ impl ScriptWalkArm {
             bot.route_worker = Some(Arc::clone(&token));
             token
         };
-        let navs = Arc::clone(&self.navs);
-        let name = self.name.clone();
-        let worker_token = Arc::clone(&token);
         log_walk_arm(&self.name, || {
             format!(
                 "queue_route spawned dest={to:?} r={radius} request_id={request_id} from={from:?} \
@@ -1050,32 +1415,106 @@ impl ScriptWalkArm {
                 }
             )
         });
-        let spawned = thread::Builder::new()
-            .name(format!("nav-find-{name}"))
-            .spawn(move || loop {
-                let (request, authority) = {
-                    let mut all = navs.lock().unwrap();
-                    let Some(bot) = all.get_mut(&name) else {
-                        log_walk_arm(&name, || "worker exit bot-gone".to_string());
-                        return;
-                    };
-                    if !bot
-                        .route_worker
-                        .as_ref()
-                        .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
-                    {
-                        log_walk_arm(&name, || {
-                            "worker discard stale-token before dequeue".to_string()
-                        });
-                        return;
+        let spawned = spawn_route_worker(
+            Arc::clone(&self.navs),
+            self.name.clone(),
+            Arc::clone(&token),
+        );
+        if !spawned {
+            log_walk_arm(&self.name, || {
+                format!("queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}")
+            });
+            if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
+                if bot
+                    .route_worker
+                    .as_ref()
+                    .is_some_and(|t| Arc::ptr_eq(t, &token))
+                {
+                    if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+                        bot.note_failure(
+                            bot.route_generation,
+                            bot.walk_request_id,
+                            to,
+                            radius,
+                            allow_teleports,
+                        );
                     }
-                    let Some(request) = bot.pending_route.take() else {
-                        bot.route_worker = None;
-                        log_walk_arm(&name, || "worker exit no-pending-route".to_string());
-                        return;
-                    };
-                    (request, bot.native_walk.clone())
+                    bot.route_worker = None;
+                    if let Some(request) = bot.pending_route.take() {
+                        request.completion.signal();
+                    }
+                    bot.requested_route = None;
+                    if let Some(pending) = bot.pending_assess.take() {
+                        pending.request.completion.signal();
+                        if bot
+                            .assess_worker
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
+                        {
+                            bot.assess_worker = None;
+                            if pending.authority.live() {
+                                bot.assess_result = Some(Box::new((
+                                    pending.authority.clone(),
+                                    advisory_refusal(
+                                        &pending.authority,
+                                        pending.evidence,
+                                        "Shared route worker could not start",
+                                    ),
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        spawned
+    }
+}
+
+enum RouteWorkerTask {
+    Route(
+        Box<ScriptRouteRequest>,
+        Option<script::native::HostAuthority>,
+    ),
+    Assess(Box<PendingAdvisoryAssess>),
+}
+fn spawn_route_worker(
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    name: String,
+    token: Arc<()>,
+) -> bool {
+    let worker_token = Arc::clone(&token);
+    let spawned = thread::Builder::new()
+        .name(format!("nav-find-{name}"))
+        .spawn(move || loop {
+            let task = {
+                let mut all = navs.lock().unwrap();
+                let Some(bot) = all.get_mut(&name) else {
+                    log_walk_arm(&name, || "worker exit bot-gone".to_string());
+                    return;
                 };
+                if !bot
+                    .route_worker
+                    .as_ref()
+                    .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
+                {
+                    log_walk_arm(&name, || {
+                        "worker discard stale-token before dequeue".to_string()
+                    });
+                    return;
+                }
+                if let Some(request) = bot.pending_route.take() {
+                    RouteWorkerTask::Route(request, bot.native_walk.clone())
+                } else if let Some(pending) = bot.pending_assess.take() {
+                    RouteWorkerTask::Assess(pending)
+                } else {
+                    bot.route_worker = None;
+                    log_walk_arm(&name, || "worker exit no-pending-work".to_string());
+                    return;
+                }
+            };
+            match task {
+                RouteWorkerTask::Route(request, authority) => {
                 if authority.as_ref().is_some_and(|owner| !owner.live()) {
                     request.completion.signal();
                     continue;
@@ -1094,7 +1533,9 @@ impl ScriptWalkArm {
                     });
                 }
                 let started = debug.then(Instant::now);
-                let (outcome, targets) = request.calculate();
+                let (admitted, targets) = request.calculate_admitted();
+                let crate::admission::RouteAdmission { outcome, assessment, refusal, blocked, tried: _ } = admitted;
+                let outcome = if refusal.is_some() { RouteOutcome::NoPath } else { outcome };
                 if debug {
                     let elapsed_ms = started.unwrap().elapsed().as_millis();
                     log_walk_arm(&name, || {
@@ -1107,9 +1548,7 @@ impl ScriptWalkArm {
                         )
                     });
                 }
-                let blocked = request
-                    .blocking_zones(&outcome, &targets)
-                    .filter(|keys| !keys.is_empty());
+                let blocked = (!blocked.is_empty()).then(|| blocked.into_vec());
                 let route_detail = blocked
                     .as_ref()
                     .and_then(|keys| {
@@ -1128,6 +1567,8 @@ impl ScriptWalkArm {
                             .is_none()
                             .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
                     });
+                let route_detail = assessment.as_ref().filter(|_| refusal.is_some())
+                    .map(|assessment| assessment.reason.to_string()).or(route_detail);
                 let mut route_detail = if authority.is_some()
                     && matches!(&outcome, &RouteOutcome::NoPath)
                 {
@@ -1153,9 +1594,10 @@ impl ScriptWalkArm {
                         compat_zone_no_route_line(table, keys)
                     );
                 }
-                let native_failure = request.native_failure(&outcome, blocked.as_deref(), &targets);
-                let native_refused =
-                    native_failure == Some(script::native::WalkEnd::Refused);
+                let native_failure = if refusal.is_some() {
+                    Some(script::native::WalkEnd::Refused)
+                } else { request.native_failure(&outcome, blocked.as_deref(), &targets) };
+                let native_refused = native_failure == Some(script::native::WalkEnd::Refused);
                 let mut all = navs.lock().unwrap();
                 let Some(bot) = all.get_mut(&name) else {
                     log_walk_arm(&name, || "worker exit bot-gone after calculate".to_string());
@@ -1179,7 +1621,7 @@ impl ScriptWalkArm {
                     request.completion.signal();
                     continue;
                 }
-                let missing = request.missing_carry(&outcome);
+                let missing = if refusal.is_some() { Vec::new() } else { request.missing_carry(&outcome) };
                 if !missing.is_empty() {
                     let empty_state = WorldState::empty();
                     let state = request.state.as_ref().unwrap_or(&empty_state);
@@ -1197,6 +1639,16 @@ impl ScriptWalkArm {
                     }
                 }
 
+                if bot.route_generation == request.generation && bot.walk_request_id == request.request_id {
+                    bot.risk_refusal = refusal.map(|refusal| Box::new((request.request_id, refusal)));
+                    bot.assessment = assessment;
+                    if let Some(assessment) = bot.assessment.as_ref() {
+                        crate::admission::log(Some(&name), assessment, request.admission.compat_v1);
+                        if bot.risk_refusal.is_some() {
+                            bot.last_assessment = Some(Arc::clone(assessment));
+                        }
+                    }
+                }
                 // Only a route this publish installs carries its evidence; a
                 // newer request's NoPath leaves the followed route's own.
                 if bot.route_generation == request.generation
@@ -1208,12 +1660,35 @@ impl ScriptWalkArm {
                         .as_ref()
                         .and_then(|state| state.quest_evidence.clone());
                 }
+                let has_route = matches!(
+                    &outcome,
+                    RouteOutcome::Routed(_) | RouteOutcome::BankSession { .. }
+                );
                 bot.publish_route(
                     request.generation,
                     request.request_id,
                     request.opts.allow_teleports,
                     outcome,
                 );
+                if bot.route_generation == request.generation
+                    && bot.walk_request_id == request.request_id
+                    && has_route
+                {
+                    if bot.route_basis.is_none() {
+                        if let Some(route) = bot.route.as_ref() {
+                            bot.route_basis = Some(Arc::new(crate::admission::RouteBasis {
+                                route: Arc::clone(route),
+                                options: request.opts,
+                                avoid: Arc::from(request.avoid()),
+                                quest_evidence: request
+                                    .state
+                                    .as_ref()
+                                    .and_then(|state| state.quest_evidence.clone()),
+                            }));
+                        }
+                    }
+                    bot.admission_pending = true;
+                }
                 // The diagnosis lands under the same lock as the outcome it
                 // belongs to, so the packer can never read a list beside
                 // another failure. A discarded publish (stale generation)
@@ -1232,37 +1707,99 @@ impl ScriptWalkArm {
                     };
                 }
                 request.completion.signal();
-            })
-            .is_ok();
-        if !spawned {
-            log_walk_arm(&self.name, || {
-                format!("queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}")
-            });
-            if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
-                if bot
-                    .route_worker
-                    .as_ref()
-                    .is_some_and(|t| Arc::ptr_eq(t, &token))
-                {
-                    if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
-                        bot.note_failure(
-                            bot.route_generation,
-                            bot.walk_request_id,
-                            to,
-                            radius,
-                            allow_teleports,
-                        );
+                }
+                RouteWorkerTask::Assess(pending) => {
+                    if !pending.authority.live() {
+                        let mut all = navs.lock().unwrap();
+                        if let Some(bot) = all.get_mut(&name) {
+                            if bot
+                                .assess_worker
+                                .as_ref()
+                                .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
+                            {
+                                bot.assess_worker = None;
+                            }
+                        }
+                        drop(all);
+                        pending.request.completion.signal();
+                        continue;
                     }
-                    bot.route_worker = None;
-                    bot.pending_route = None;
-                    bot.requested_route = None;
+                    let (admitted, _) = pending.request.calculate_admitted();
+                    let route_ticks = match &admitted.outcome {
+                        RouteOutcome::Routed(route) | RouteOutcome::BankSession { route, .. } => {
+                            script::combat::risk::RoutePath::new(route)
+                                .ok()
+                                .and_then(|path| u32::try_from(path.ticks()).ok())
+                                .unwrap_or(0)
+                        }
+                        RouteOutcome::NoPath => 0,
+                    };
+                    let detail = admitted
+                        .assessment
+                        .as_ref()
+                        .map(|assessment| Arc::clone(&assessment.reason))
+                        .or_else(|| {
+                            matches!(&admitted.outcome, RouteOutcome::NoPath).then(|| {
+                                Arc::from("No route within the request's hard constraints")
+                            })
+                        });
+                    let receipt = script::native::AssessReceipt {
+                        request_id: pending.authority.request_id().get(),
+                        evidence: pending.evidence,
+                        assessment: admitted.assessment,
+                        refusal: admitted.refusal.or_else(|| {
+                            matches!(&admitted.outcome, RouteOutcome::NoPath).then_some(
+                                script::native::WalkRefusal::NoRouteWithinBounds {
+                                    tried: admitted.tried,
+                                    last: None,
+                                },
+                            )
+                        }),
+                        detail,
+                        route_ticks,
+                    };
+                    let mut all = navs.lock().unwrap();
+                    let Some(bot) = all.get_mut(&name) else {
+                        pending.request.completion.signal();
+                        return;
+                    };
+                    if !bot
+                        .route_worker
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &worker_token))
+                    {
+                        pending.request.completion.signal();
+                        return;
+                    }
+                    if !pending.authority.live() {
+                        if bot
+                            .assess_worker
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
+                        {
+                            bot.assess_worker = None;
+                        }
+                        pending.request.completion.signal();
+                        continue;
+                    }
+                    if bot
+                        .assess_worker
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
+                    {
+                        bot.assess_worker = None;
+                        bot.assess_result = Some(Box::new((
+                            pending.authority.clone(),
+                            receipt,
+                        )));
+                    }
+                    pending.request.completion.signal();
                 }
             }
-        }
-        spawned
-    }
+            })
+        .is_ok();
+    spawned
 }
-
 /// Legal full-footprint stands for the caller's explicitly identified live loc.
 /// Do not filter by the scene flood: the baked graph can cross a shut door.
 fn loc_target_approach_tiles(
@@ -1332,6 +1869,31 @@ pub(crate) fn approach_tiles(
     tiles
 }
 
+pub(crate) struct PendingAdvisoryAssess {
+    request: Box<ScriptRouteRequest>,
+    authority: script::native::HostAuthority,
+    evidence: api::quest_progress::EvidenceStamp,
+    token: Arc<()>,
+}
+
+fn advisory_refusal(
+    authority: &script::native::HostAuthority,
+    evidence: api::quest_progress::EvidenceStamp,
+    detail: &'static str,
+) -> script::native::AssessReceipt {
+    script::native::AssessReceipt {
+        request_id: authority.request_id().get(),
+        evidence,
+        assessment: None,
+        refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
+            tried: 0,
+            last: None,
+        }),
+        detail: Some(Arc::from(detail)),
+        route_ticks: 0,
+    }
+}
+
 pub(crate) struct ScriptRouteRequest {
     pub(crate) generation: u64,
     pub(crate) request_id: u64,
@@ -1343,6 +1905,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
+    pub(crate) admission: crate::admission::Admission,
     pub(crate) bank: Vec<(i32, i32)>,
     /// Explicit live-loc footprint goals; otherwise use the request's tile-area rule.
     pub(crate) live_candidates: Option<Vec<WorldTile>>,
@@ -1579,6 +2142,7 @@ impl ScriptRouteRequest {
         stands: &[WorldTile],
         tiles: &[WorldTile],
         state: &WorldState,
+        opts: FindOptions,
     ) -> RouteOutcome {
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
@@ -1589,7 +2153,7 @@ impl ScriptRouteRequest {
             self.from,
             stands,
             tiles,
-            self.opts,
+            opts,
             state,
             self.avoid(),
         );
@@ -1626,7 +2190,7 @@ impl ScriptRouteRequest {
             (Err(_), tile) => tile,
         };
 
-        let fetchable = fetchable_facts(&self.world, self.opts, state, &self.bank);
+        let fetchable = fetchable_facts(&self.world, opts, state, &self.bank);
         let mut fetch_tiles = None;
         if let Some(fetchable) = &fetchable {
             // A strict route to a tile beats a session to one, so a routed
@@ -1640,7 +2204,7 @@ impl ScriptRouteRequest {
                 self.from,
                 stands,
                 tiles,
-                self.opts,
+                opts,
                 state,
                 fetchable,
                 &self.bank,
@@ -1658,7 +2222,7 @@ impl ScriptRouteRequest {
                 &self.world.graph,
                 self.from,
                 tiles,
-                self.opts,
+                opts,
                 state,
                 self.avoid(),
             )
@@ -1676,7 +2240,7 @@ impl ScriptRouteRequest {
                 self.from,
                 tiles,
                 fetch_tiles,
-                self.opts,
+                opts,
                 state,
                 fetchable,
                 &self.bank,
@@ -1702,6 +2266,7 @@ impl ScriptRouteRequest {
         candidates: &[WorldTile],
         state: &WorldState,
         label: &str,
+        opts: FindOptions,
     ) -> RouteOutcome {
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
@@ -1719,7 +2284,7 @@ impl ScriptRouteRequest {
                 &self.world,
                 self.from,
                 target,
-                self.opts,
+                opts,
                 state,
                 &self.bank,
                 self.avoid(),
@@ -1740,12 +2305,34 @@ impl ScriptRouteRequest {
         RouteOutcome::NoPath
     }
 
+    fn calculate_admitted(&self) -> (crate::admission::RouteAdmission, Vec<WorldTile>) {
+        let targets = self.targets();
+        let result = crate::admission::route(
+            &self.world,
+            &self.admission,
+            self.opts,
+            |opts| self.calculate_targets_with_options(&targets, opts),
+            || self.blocking_zones(&RouteOutcome::NoPath, &targets),
+        );
+        (result, targets)
+    }
+
+    #[cfg(test)]
     pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
         let targets = self.targets();
         (self.calculate_targets(&targets), targets)
     }
 
+    #[cfg(test)]
     fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
+        self.calculate_targets_with_options(targets, self.opts)
+    }
+
+    fn calculate_targets_with_options(
+        &self,
+        targets: &[WorldTile],
+        opts: FindOptions,
+    ) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         if self.radius <= 0 {
@@ -1753,20 +2340,20 @@ impl ScriptRouteRequest {
                 &self.world,
                 self.from,
                 self.to,
-                self.opts,
+                opts,
                 state,
                 &self.bank,
                 self.avoid(),
             );
         }
         if self.arrival == ArrivalKind::Area {
-            return self.calculate_solid(targets, &[], state);
+            return self.calculate_solid(targets, &[], state, opts);
         }
 
         // Only explicitly identified live footprints use operable stands.
         // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
         if let Some(stands) = self.live_candidates.as_ref() {
-            return self.calculate_solid(stands.as_slice(), &[], state);
+            return self.calculate_solid(stands.as_slice(), &[], state, opts);
         }
         if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
             let mut stands = [self.to; 4];
@@ -1786,9 +2373,9 @@ impl ScriptRouteRequest {
                 stands[len] = stand;
                 len += 1;
             }
-            return self.calculate_solid(&stands[..len], targets, state);
+            return self.calculate_solid(&stands[..len], targets, state, opts);
         }
-        self.calculate_in_order(targets, state, "approach estimate")
+        self.calculate_in_order(targets, state, "approach estimate", opts)
     }
 }
 impl NavBot {
@@ -1800,17 +2387,64 @@ impl NavBot {
         }
     }
 
+    pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
+        self.native_walk.as_ref().is_some_and(|owner| owner.live())
+            || self.route.is_some()
+            || self.bank_fetch.is_some()
+            || self.slot_escape().is_some()
+            || self
+                .walk_guard_off
+                .as_ref()
+                .is_some_and(|off| off.blocks_nav(tick))
+            || self.combat_prayer_off.is_some()
+    }
+
+    pub(crate) fn slot_escape(&self) -> Option<script::combat::guard::Escape> {
+        self.admission
+            .as_deref()
+            .and_then(|admission| admission.escape)
+            .filter(|escape| crate::admission::escape_live(*escape))
+            .or_else(|| {
+                self.manual_arm
+                    .as_ref()?
+                    .upgrade()?
+                    .lock()
+                    .ok()?
+                    .admission
+                    .as_deref()?
+                    .escape
+                    .filter(|escape| crate::admission::escape_live(*escape))
+            })
+    }
+
     /// End the native walk this bot follows: its still-live owner gets `end`
     /// on the next observation; a revoked owner is owed nothing.
     pub(crate) fn end_native_walk(&mut self, end: script::native::WalkEnd) {
         super::script_walk::owe_walk_guard_off(self);
         if let Some(owner) = self.native_walk.take() {
             self.native_walk_failure = None;
-            self.native_walk_blocked = None;
             self.walk_outcome_detail = None;
             if owner.live() {
+                self.native_end_risk = Some(Box::new(NativeEndRisk {
+                    assessment: self.assessment.clone(),
+                    refusal: self
+                        .risk_refusal
+                        .as_deref()
+                        .filter(|(request, _)| *request == owner.request_id().get())
+                        .map(|(_, refusal)| *refusal),
+                    escape: self
+                        .admission
+                        .as_deref()
+                        .and_then(|admission| admission.escape),
+                    blocked: self
+                        .native_walk_blocked
+                        .as_ref()
+                        .filter(|(request, _)| *request == owner.request_id().get())
+                        .map(|(_, keys)| Arc::clone(keys)),
+                }));
                 self.native_end = Some((owner, end));
             }
+            self.native_walk_blocked = None;
         }
     }
 
@@ -1824,6 +2458,7 @@ impl NavBot {
         self.walk_outcome_detail = None;
         if owner.live() {
             let request_id = owner.request_id().get();
+            self.native_end_risk = None;
             self.native_end = Some((owner, script::native::WalkEnd::Refused));
             if self
                 .native_end
@@ -2170,7 +2805,7 @@ impl NavBot {
                         self.walk_request_id, route.dest
                     )
                 });
-                (route, None)
+                (Arc::new(route), None)
             }
             RouteOutcome::BankSession { pending, route } => {
                 log_walk_arm_bot(|| {
@@ -2183,7 +2818,7 @@ impl NavBot {
                         pending.dest
                     )
                 });
-                (route, Some(pending))
+                (Arc::new(route), Some(pending))
             }
             RouteOutcome::NoPath => {
                 log_walk_arm_bot(|| {
@@ -2206,7 +2841,7 @@ impl NavBot {
             }
         };
         self.traveller.clear();
-        self.route = Some(route);
+        self.route = Some(Arc::clone(&route));
         self.map_route_generation = crate::walk_map::next_map_route_generation();
         self.route_request_id = request_id;
         self.bank_fetch = pending;
@@ -2231,6 +2866,7 @@ pub(crate) fn reset_script_nav(
             return;
         }
         end_route_follow(nav);
+        nav.runtime_gate_logged = false;
         nav.reset_walk_outcome();
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
@@ -2392,6 +3028,7 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.route_generation = nav.route_generation.wrapping_add(1);
     nav.route_worker = None;
     nav.pending_route = None;
+    nav.pending_assess = None;
     nav.requested_route = None;
     nav.traveller.clear();
     nav.route = None;
@@ -2400,6 +3037,20 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.route_quest_evidence = None;
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
+    nav.admission_pending = false;
+    nav.assess_worker = None;
+    nav.assess_result = None;
+    nav.risk_refusal = None;
+    if nav
+        .admission
+        .as_deref()
+        .and_then(|admission| admission.escape)
+        .is_none_or(|escape| !crate::admission::escape_live(escape))
+    {
+        nav.admission = None;
+        nav.assessment = None;
+        nav.route_basis = None;
+    }
 }
 
 #[cfg(test)]
@@ -2430,6 +3081,12 @@ mod diagnostic_tests {
             Vec::new(),
         );
         let mut request = ScriptRouteRequest {
+            admission: crate::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                1,
+                crate::WalkGlobals::default(),
+            ),
             generation: 1,
             request_id: 1,
             world: Arc::new(world),

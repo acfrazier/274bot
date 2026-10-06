@@ -97,6 +97,7 @@ fn describe(ledger: &Option<Box<ledger::Ledger>>) -> String {
         HostEffect::Walk(request) => format!("walk to {:?} r{}", request.target, request.radius),
         HostEffect::Interaction(request) => format!("{request:?}"),
         HostEffect::BankPick(_) => "bank pick".into(),
+        HostEffect::AssessWalk(request) => format!("assess walk to {:?}", request.target),
     }
 }
 
