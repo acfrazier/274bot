@@ -940,6 +940,12 @@ impl GameSnapshot {
         &self.equipment
     }
 
+    /// Whether the worn component has posted its slot data this session;
+    /// an observed empty worn set is posted, a pre-login frame is not.
+    pub fn equipment_posted(&self) -> bool {
+        self.equipment_available
+    }
+
     /// Bank item views from the last bank rebuild (the open main modal's
     /// withdraw component).
     pub fn bank(&self) -> &[ItemView] {

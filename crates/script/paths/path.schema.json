@@ -2532,7 +2532,7 @@
         "qty": {
           "type": "integer",
           "default": 1,
-          "description": "Requested quantity; omitted uses 1 and values below 1 are rejected.",
+          "description": "Held target for `withdraw`: the final backpack count, not a count to\ntake, so items already held are not withdrawn again and a backpack at\nor above it completes without a withdrawal. Ignored by `deposit`, which\ndeposits every held row of the item. Omitted uses 1 and values below 1\nare rejected.",
           "minimum": 1
         }
       },
@@ -2597,7 +2597,7 @@
         "qty": {
           "type": "integer",
           "minimum": 1,
-          "description": "Number of items to buy; must be at least 1."
+          "description": "Held target: the final backpack count, not a count to buy, so items\nalready held are not bought again; must be at least 1."
         },
         "est_gp": {
           "type": "integer",

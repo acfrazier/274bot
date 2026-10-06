@@ -7,6 +7,7 @@ publish = false
 [features]
 debug-catalog = []
 path-schema = ["dep:schemars"]
+test-hooks = []
 
 [dependencies]
 client = { workspace = true }
