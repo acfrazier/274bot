@@ -1,6 +1,8 @@
 use super::*;
 use crate::native::WalkEnd;
-use crate::quester::compile::{compile_path, CompileContext, PredicateContext, StepOutcome};
+use crate::quester::compile::{
+    compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
+};
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
 use api::game_data::SelectedGameData;
@@ -98,17 +100,417 @@ fn ranged_tactic_rejects_a_melee_mode() {
     assert!(validate_style_options(Style::Melee, Some(MeleeMode::Accurate)).is_ok());
 }
 
+#[test]
+fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:mage_mapper"),
+        role: None,
+        colour_not_started: FactKey::new("mage_mapper:0"),
+        colour_in_progress: FactKey::new("mage_mapper:1"),
+        colour_complete: FactKey::new("mage_mapper:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("mage_mapper");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let mut args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "mage", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "spells": ["fire_bolt", "Wind Strike"],
+        "fallback_spells": true,
+        "cross": ["draynor-jail-guards"],
+        "guard": "protect",
+        "finish": {"npc": "delrith_weakened", "prefer": ["Gabindo"], "max_ticks": 100},
+        "loot": [{"obj": "bones", "qty": 25}],
+        "until": {"Any": []},
+        "win": {"All": []}
+    });
+    compile(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    let plan = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert_eq!(plan.request.style, Style::Mage);
+    assert!(plan.request.fallback_spells);
+    let order = plan.request.spells.as_ref().unwrap();
+    assert_eq!(order.len(), 2);
+    assert_eq!(order[0].alias.as_ref(), "magic_spell_fire_bolt");
+    assert_eq!(order[1].alias.as_ref(), "magic_spell_wind_strike");
+    assert_eq!(plan.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+    assert!(plan.protect);
+    assert!(plan.until.is_some());
+    assert!(plan.win.is_some());
+    let finish = plan.finish.as_ref().unwrap();
+    assert_eq!(
+        finish.npc_type,
+        data.npc_by_config("delrith_weakened").unwrap().id
+    );
+    assert_eq!(finish.options.prefer[0].as_ref(), "Gabindo");
+    assert_eq!(finish.max_ticks, 100);
+    assert_eq!(plan.loot.len(), 1);
+    assert_eq!(plan.loot[0].id, data.item_by_alias("bones").unwrap().id);
+    assert_eq!(plan.loot[0].qty, 25);
+
+    args["spells"] = serde_json::Value::Null;
+    args.as_object_mut().unwrap().remove("fallback_spells");
+    let automatic = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert!(automatic.request.spells.is_none());
+    assert!(!automatic.request.fallback_spells);
+    args["spells"] = serde_json::json!([]);
+    assert_eq!(
+        compile(serde_json::from_value(args.clone()).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "invalid-combat-spells"
+    );
+    args["spells"] = serde_json::json!(["not_a_selected_spell"]);
+    assert_eq!(
+        compile(serde_json::from_value(args.clone()).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "unresolved-combat-spell"
+    );
+    args["spells"] = serde_json::json!(["fire_bolt"]);
+    args["tactic"]["style"] = serde_json::json!("melee");
+    assert_eq!(
+        compile(serde_json::from_value(args).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "unsupported-combat-spells"
+    );
+}
+
+#[test]
+fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_walk_policy"),
+        role: None,
+        colour_not_started: FactKey::new("combat_walk_policy:0"),
+        colour_in_progress: FactKey::new("combat_walk_policy:1"),
+        colour_complete: FactKey::new("combat_walk_policy:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_walk_policy");
+    let cx = CompileContext {
+        path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
+        progress: &progress,
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        bank: None,
+        bank_required: false,
+        bank_items: &[],
+        keep_ids: &[],
+        areas: &areas,
+        loadouts: &loadouts,
+        recipes: &recipes,
+    };
+    let stand = api::WorldTile {
+        x: 3125,
+        z: 3246,
+        level: 0,
+    };
+    let args = serde_json::json!({
+        "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+        "stand": {"tile": [3125, 3246, 0], "source": "native Prince live return-walk regression"},
+        "lost_radius": 16,
+        "kill_budget_ticks": 400,
+        "until": {"Any": []},
+        "cross": ["draynor-jail-guards"],
+        "guard": "protect"
+    });
+    for cross in [false, true] {
+        for guard in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!("")),
+            Some(serde_json::json!("protect")),
+        ] {
+            let protect = guard
+                .as_ref()
+                .is_some_and(|value| value.as_str() == Some("protect"));
+            let mut input = args.clone();
+            if !cross {
+                input.as_object_mut().unwrap().remove("cross");
+            }
+            if let Some(guard) = guard {
+                input["guard"] = guard;
+            } else {
+                input.as_object_mut().unwrap().remove("guard");
+            }
+            let plan = compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
+            for aborted in [false, true] {
+                // Drive the real compiled plan and native combat machine, not
+                // a CombatRun with its permission fields assigned by the test.
+                let mut snapshot = GameSnapshot::new();
+                snapshot.seed_ingame(2);
+                snapshot.seed_world(api::snapshot::WorldStateView::default());
+                snapshot.seed_local_player(super::super::tests::local_player(stand));
+                snapshot.seed_inventory(vec![], 28);
+                snapshot.seed_equipment(vec![]);
+                snapshot.seed_players(vec![]);
+                snapshot.seed_projectiles(vec![]);
+                snapshot.seed_chat_lines(vec![]);
+                snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+                    marks: [api::snapshot::HitmarkView {
+                        value: 0,
+                        kind: 0,
+                        cycle: 0,
+                    }; 4],
+                    loop_cycle: 0,
+                });
+                snapshot.seed_varps(
+                    (0..api::prayer::PRAYER_COUNT)
+                        .map(|index| api::snapshot::VarpView {
+                            index: api::prayer::PRAYER_VARP0 + index as i32,
+                            value: 0,
+                        })
+                        .chain([api::snapshot::VarpView {
+                            index: crate::combat::OPTION_NODEF,
+                            value: 0,
+                        }])
+                        .collect(),
+                );
+                snapshot.seed_stats(
+                    (0..25)
+                        .map(|index| api::snapshot::StatView {
+                            index,
+                            name: String::new(),
+                            effective: if aborted && index == 3 { 1 } else { 40 },
+                            base: 40,
+                            xp: 0,
+                            used: api::snapshot::stat_used(index as usize),
+                        })
+                        .collect(),
+                );
+                let row = data.npc_by_config("jailguard").unwrap();
+                let at = api::WorldTile {
+                    x: stand.x + 1,
+                    ..stand
+                };
+                snapshot.seed_npcs(vec![api::snapshot::NpcView {
+                    index: 7,
+                    r#type: Some(row.id as usize),
+                    name: row.display.clone(),
+                    actions: vec![Some("Attack".into())],
+                    tile: at,
+                    distance: 1,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: -1,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: aborted.then_some(api::snapshot::ActorTargetView {
+                        kind: api::snapshot::ActorKind::Player,
+                        index: 0,
+                    }),
+                    moving: false,
+                    running: false,
+                    in_combat: aborted,
+                    level: 1,
+                    size: 1,
+                    network: at,
+                    x: 0,
+                    z: 0,
+                    yaw: 0,
+                }]);
+                let mut ledger = None;
+                let mut run =
+                    with_step_context(&snapshot, &mut ledger, 1, |cx| plan.begin(cx).unwrap());
+                if !aborted {
+                    snapshot.seed_npcs(vec![]);
+                }
+                let expected = if aborted {
+                    CombatEnd::Aborted(AbortReason::Unprotected(crate::combat::Unprotected::NoFood))
+                } else {
+                    CombatEnd::TargetGone
+                };
+                // TargetGone has a three-tick disappearance grace. The
+                // low-HP, empty-inventory attacker fixture aborts immediately.
+                for tick in 2..=if aborted { 2 } else { 5 } {
+                    assert!(
+                        with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx))
+                            .is_pending()
+                    );
+                }
+                let receipt = run
+                    .in_flight_outcome()
+                    .and_then(|outcome| outcome.receipt.as_ref())
+                    .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+                    .expect("native combat must publish its report before the owned walk");
+                assert_eq!(receipt.report.end, expected);
+                let outbox = &ledger.as_ref().unwrap().outbox;
+                assert_eq!(
+                    outbox.len(),
+                    1,
+                    "{expected:?}: cross={cross}, protect={protect}"
+                );
+                let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+                    panic!("the compiled combat transition must submit a native walk");
+                };
+                assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
+                if cross {
+                    assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+                } else {
+                    assert!(request.cross.is_empty(), "{expected:?}: protect={protect}");
+                }
+                if !aborted {
+                    assert_eq!(request.target, stand);
+                }
+                assert_eq!(request.radius, 1);
+            }
+        }
+    }
+    let mut invalid = args;
+    invalid["guard"] = serde_json::json!("off");
+    assert_eq!(
+        compile(decode_args::<CombatArgs>(&invalid).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
+        "invalid-args"
+    );
+}
+
+#[test]
+fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_finish"),
+        role: None,
+        colour_not_started: FactKey::new("combat_finish:0"),
+        colour_in_progress: FactKey::new("combat_finish:1"),
+        colour_complete: FactKey::new("combat_finish:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_finish_loot");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let prefer = "Carlem Aber Camerinthum Purchai Gabindo";
+    let args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "finish": {
+            "npc": "delrith_weakened",
+            "prefer": [prefer],
+            "choose": 4,
+            "line_rules": [{
+                "when_line": "Choose the incantation",
+                "choose": "Option two"
+            }],
+            "strict": true,
+            "max_ticks": 100
+        },
+        "loot": ["white_bead", {"obj": "bones", "qty": 25}]
+    });
+
+    compile_json(&args, &cx).unwrap();
+    let parsed: CombatArgs = decode_args(&args).unwrap();
+    let target = compile_target(parsed.target, &cx).unwrap();
+    let finish = compile_finish(parsed.finish.unwrap(), &target, &cx).unwrap();
+    let loot = compile_loot(&parsed.loot, &cx).unwrap();
+
+    let weakened = data.npc_by_config("delrith_weakened").unwrap();
+    assert_eq!(finish.npc_type, weakened.id);
+    assert_eq!(
+        finish.npc_name.as_ref(),
+        weakened.display.as_deref().unwrap()
+    );
+    assert_eq!(finish.options.prefer[0].as_ref(), prefer);
+    assert_eq!(finish.options.choose, Some(4));
+    assert_eq!(
+        finish.options.line_rules[0].when_line.as_ref(),
+        "Choose the incantation"
+    );
+    assert_eq!(finish.options.line_rules[0].choose.as_ref(), "Option two");
+    assert!(finish.options.strict);
+    assert_eq!(finish.max_ticks, 100);
+
+    let white_bead = data.item_by_alias("white_bead").unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    assert_eq!(loot.len(), 2);
+    assert_eq!((loot[0].id, loot[0].qty), (white_bead.id, 1));
+    assert_eq!(loot[0].name.as_ref(), white_bead.name.as_deref().unwrap());
+    assert_eq!((loot[1].id, loot[1].qty), (bones.id, 25));
+    assert_eq!(loot[1].name.as_ref(), bones.name.as_deref().unwrap());
+
+    for bad_qty in [serde_json::json!(0), serde_json::json!(-1)] {
+        let mut invalid = args.clone();
+        invalid["loot"] = serde_json::json!([{"obj": "bones", "qty": bad_qty}]);
+        assert!(compile_json(&invalid, &cx).is_err());
+    }
+    for bad_choose in [serde_json::json!(0), serde_json::json!(-1)] {
+        let mut invalid = args.clone();
+        invalid["finish"]["choose"] = bad_choose;
+        assert!(compile_json(&invalid, &cx).is_err());
+    }
+    for bad_rule in [
+        serde_json::json!([{"when_line": "", "choose": "Option two"}]),
+        serde_json::json!([{"when_line": "Choose the incantation", "choose": " "}]),
+    ] {
+        let mut invalid = args.clone();
+        invalid["finish"]["line_rules"] = bad_rule;
+        assert!(compile_json(&invalid, &cx).is_err());
+    }
+    let mut invalid = args;
+    invalid["finish"]["max_ticks"] = serde_json::json!(0);
+    assert!(compile_json(&invalid, &cx).is_err());
+}
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,
     progress: &'a CompiledProgress,
     areas: &'a HashMap<String, Vec<[i32; 5]>>,
     loadouts: &'a LoadoutOverlay,
-    recipes: &'a HashMap<String, Vec<crate::quester::families::CompiledAcquireStep>>,
+    recipes: &'a HashMap<String, Arc<[crate::quester::families::CompiledAcquireStep]>>,
     path: &'a FactKey,
 ) -> CompileContext<'a> {
     CompileContext {
         path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress,
         selected: data,
         quests,
@@ -116,10 +518,19 @@ fn fixture_compile_context<'a>(
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids: &[],
         areas,
         loadouts,
         recipes,
     }
+}
+
+fn compile_json(
+    args: &serde_json::Value,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn crate::quester::compile::StepPlan>, crate::quester::compile::CompileError> {
+    let args = decode_args::<CombatArgs>(args)?;
+    compile(args, cx)
 }
 
 #[test]
@@ -154,7 +565,9 @@ fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
         &include_bytes!("../../../paths/289/fixtures/combat_melee_food_only.json")[..],
         &include_bytes!("../../../paths/289/fixtures/combat_unattackable.json")[..],
     ] {
-        let path = compile_path(bytes, &data, &quests).unwrap();
+        let path =
+            compile_uncached_for_test(&serde_json::from_slice(bytes).unwrap(), &data, &quests)
+                .unwrap();
         assert_eq!(
             crate::quester::progress::quest_colour(&path, &quests, view),
             Some(QuestListStatus::NotStarted),
@@ -186,8 +599,11 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
     let cx = fixture_compile_context(
         &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
     );
-    let predicate =
-        compile_end_predicate(&serde_json::json!({ "end": "aborted_unattackable" }), &cx).unwrap();
+    let args = serde_json::from_value::<CombatEndArgs>(
+        serde_json::json!({ "end": "aborted_unattackable" }),
+    )
+    .unwrap();
+    let predicate = compile_end_predicate(args, &cx).unwrap();
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;
@@ -203,6 +619,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
     super::super::tests::with_tick(&snapshot, &mut ledger, 12, |tick| {
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -223,6 +640,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         };
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -233,6 +651,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         assert_eq!(predicate.evaluate(&context), Truth::False);
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -248,8 +667,11 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
 fn unattackable_approach_is_not_reselected_after_observed_arrival() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -270,6 +692,7 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
         super::super::tests::with_tick(&snapshot, &mut ledger, x as u64, |tick| {
             let context = PredicateContext {
                 cx: &tick.cx,
+                pairs: tick.pairs,
                 quests: &quests,
                 progress: &[],
                 required_after: tick.cx.evidence(),
@@ -291,8 +714,11 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
 fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -321,6 +747,7 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
     super::super::tests::with_tick(&snapshot, &mut ledger, 40, |tick| {
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -357,8 +784,11 @@ fn unattackable_outcome() -> StepOutcome {
 fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -379,6 +809,7 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
     super::super::tests::with_tick(&snapshot, &mut ledger, 50, |tick| {
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -403,8 +834,11 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
 fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    let path = compile_path(
-        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
         &data,
         &quests,
     )
@@ -425,6 +859,7 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
     super::super::tests::with_tick(&snapshot, &mut ledger, 60, |tick| {
         let context = PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after: tick.cx.evidence(),
@@ -467,6 +902,8 @@ fn combat_test_run(
     CombatRun {
         request: Arc::new(request),
         tables,
+        cross: Arc::from([]),
+        protect: false,
         until,
         win: None,
         loot: Arc::from(loot),
@@ -478,6 +915,11 @@ fn combat_test_run(
         target_gone_restarts: 0,
         walk_outcome_seq_at_begin: 0,
         raised_prayers: crate::combat::RaisedPrayers::empty(),
+        finish: None,
+        finish_target_index: None,
+        finish_ticks_elapsed: 0,
+        finish_last_tick: None,
+        trace_event: None,
     }
 }
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
@@ -527,6 +969,134 @@ fn imp_target(data: &SelectedGameData) -> Target {
     }
 }
 
+fn finish_test_run(data: &SelectedGameData, max_ticks: u32) -> CombatRun {
+    let original = data.npc_by_config("delrith").unwrap();
+    let weakened = data.npc_by_config("delrith_weakened").unwrap();
+    let mut run = combat_test_run(
+        Target::Npc {
+            types: Arc::from([original.id]),
+            pick: Pick::Nearest,
+            not_targeting_others: true,
+        },
+        None,
+        None,
+        Vec::new(),
+    );
+    run.finish = Some(FinishConfig {
+        npc_type: weakened.id,
+        npc_name: Arc::from(weakened.display.as_deref().unwrap()),
+        original_npc_types: Arc::from([original.id]),
+        options: DialogueOptions {
+            prefer: Arc::from([Arc::from("Carlem Aber Camerinthum Purchai Gabindo")]),
+            choose: Some(4),
+            ..DialogueOptions::default()
+        },
+        max_ticks,
+    });
+    run
+}
+
+fn start_finish_wait(run: &mut CombatRun, tick: u64) {
+    run.phase = Phase::FinishWait;
+    run.finish_target_index = Some(42);
+    run.finish_ticks_elapsed = 0;
+    run.finish_last_tick = Some(tick);
+}
+
+fn finish_npc(index: usize, npc_type: i32) -> api::snapshot::NpcView {
+    api::snapshot::NpcView {
+        index,
+        r#type: usize::try_from(npc_type).ok(),
+        name: None,
+        actions: vec![Some("Attack".into())],
+        tile: api::WorldTile {
+            x: 3254,
+            z: 3401,
+            level: 0,
+        },
+        distance: 1,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 10,
+        total_health: 10,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: true,
+        level: 1,
+        size: 1,
+        network: api::WorldTile {
+            x: 3254,
+            z: 3401,
+            level: 0,
+        },
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+fn seed_finish_target(snapshot: &mut GameSnapshot, index: Option<usize>, in_combat: bool) {
+    let mut local = super::super::tests::local_player(api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    });
+    local.player.actor.in_combat = in_combat;
+    local.player.actor.target = index.map(|index| api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Npc,
+        index,
+    });
+    snapshot.seed_local_player(local);
+}
+
+fn inventory_item(id: i32, name: &str, count: i32) -> api::snapshot::ItemView {
+    api::snapshot::ItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: Some(name.to_owned()),
+            stackable: false,
+            members: false,
+            base_value: 1,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: api::snapshot::ItemContainer::Inventory,
+        action_family: api::snapshot::ItemActionFamily::Held,
+        slot: 0,
+        count,
+        actions: vec![],
+        component_id: 3214,
+    }
+}
+
+fn ground_item(id: i32, name: &str, tile: api::WorldTile, distance: i32) -> GroundItemView {
+    GroundItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: Some(name.to_owned()),
+            stackable: false,
+            members: false,
+            base_value: 1,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile,
+        distance,
+    }
+}
+
 fn with_step_context<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
@@ -556,6 +1126,7 @@ fn with_step_context_at_walk_seq<R>(
             required_after,
             bank: &bank,
             banks: &banks,
+            choices: &crate::quester::choices::QuestChoices::default(),
         })
     })
 }
@@ -733,6 +1304,58 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 }
 
 #[test]
+fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 3125,
+        z: 3246,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(super::super::tests::local_player(api::WorldTile {
+        x: 3112,
+        z: 3242,
+        level: 0,
+    }));
+    for (cross, protect) in [(false, false), (true, false), (false, true), (true, true)] {
+        for end in [
+            CombatEnd::TargetGone,
+            CombatEnd::Aborted(AbortReason::Unprotected(crate::combat::Unprotected::NoFood)),
+        ] {
+            let mut ledger = None;
+            let mut run = combat_test_run(
+                imp_target(&data),
+                Some(stand),
+                Some(Arc::new(NeverStop)),
+                Vec::new(),
+            );
+            if cross {
+                run.cross = Arc::from([Arc::from("draynor-jail-guards")]);
+            }
+            run.protect = protect;
+            assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+                run.on_combat_report(report(end), cx)
+            })
+            .is_pending());
+            let crate::native::HostEffect::Walk(request) =
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+            else {
+                panic!("the combat-owned transition must submit a native walk");
+            };
+            assert_eq!(request.target, stand);
+            assert_eq!(request.radius, 1);
+            assert_eq!(request.protect, protect);
+            if cross {
+                assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+            } else {
+                assert!(request.cross.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
 fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
@@ -866,10 +1489,12 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
             LootItem {
                 id: 1,
                 name: Arc::from("First drop"),
+                qty: 1,
             },
             LootItem {
                 id: 2,
                 name: Arc::from("Second drop"),
+                qty: 1,
             },
         ],
     );
@@ -952,6 +1577,7 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
         vec![LootItem {
             id: item_id,
             name: item_name.clone(),
+            qty: 1,
         }],
     );
     let mut snapshot = GameSnapshot::new();
@@ -994,6 +1620,65 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
 }
 
 #[test]
+fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    let bead = data.item_by_alias("white_bead").unwrap();
+    let bones_name = bones.name.as_deref().unwrap();
+    let bead_name = bead.name.as_deref().unwrap();
+    let bones_tile = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let bead_tile = api::WorldTile {
+        x: 3254,
+        z: 3401,
+        level: 0,
+    };
+
+    for (held_bones, expected_index, expected_tile) in [(1, 1, bones_tile), (25, 2, bead_tile)] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            None,
+            Some(Arc::new(NeverStop)),
+            vec![
+                LootItem {
+                    id: bones.id,
+                    name: Arc::from(bones_name),
+                    qty: 25,
+                },
+                LootItem {
+                    id: bead.id,
+                    name: Arc::from(bead_name),
+                    qty: 1,
+                },
+            ],
+        );
+        run.phase = Phase::Loot;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![inventory_item(bones.id, bones_name, held_bones)], 28);
+        super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+        snapshot.seed_ground_items(vec![
+            ground_item(bones.id, bones_name, bones_tile, 0),
+            ground_item(bead.id, bead_name, bead_tile, 1),
+        ]);
+        let mut ledger = None;
+
+        assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+        assert_eq!(run.loot_index, expected_index);
+        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                x, z, action, ..
+            }) if *x == expected_tile.x && *z == expected_tile.z && action == "Take"
+        ));
+    }
+}
+
+#[test]
 fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
@@ -1024,10 +1709,12 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
             LootItem {
                 id: 1,
                 name: Arc::from("First drop"),
+                qty: 1,
             },
             LootItem {
                 id: 2,
                 name: Arc::from("Second drop"),
+                qty: 1,
             },
         ],
     );
@@ -1149,4 +1836,433 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
             ..
         }) if *x == second_tile.x && *z == second_tile.z && action == "Take"
     ));
+}
+
+#[test]
+fn combat_finish_requires_the_same_local_npc_slot_to_transform() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let original = data.npc_by_config("delrith").unwrap().id;
+    let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
+    let mut run = finish_test_run(&data, 100);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    seed_finish_target(&mut snapshot, Some(42), true);
+    snapshot.seed_npcs(vec![finish_npc(42, original), finish_npc(99, weakened)]);
+    let mut ledger = None;
+
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.finish_target_index, Some(42));
+
+    snapshot.seed_npcs(vec![finish_npc(42, original), finish_npc(99, weakened)]);
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::Combat));
+
+    seed_finish_target(&mut snapshot, None, true);
+    snapshot.seed_npcs(vec![finish_npc(42, weakened), finish_npc(99, weakened)]);
+    ledger.as_mut().unwrap().outbox.clear();
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::FinishWait));
+    assert!(run.action.is_none());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn combat_finish_rebinds_before_accepting_an_old_slot_transform() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let original = data.npc_by_config("delrith").unwrap().id;
+    let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
+    let mut run = finish_test_run(&data, 100);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_npcs(vec![finish_npc(42, original), finish_npc(53, original)]);
+    seed_finish_target(&mut snapshot, Some(42), true);
+    let mut ledger = None;
+    assert!(!with_step_context(&snapshot, &mut ledger, 1, |cx| run
+        .observe_finish_transform(cx)));
+    assert_eq!(run.finish_target_index, Some(42));
+
+    snapshot.seed_npcs(vec![finish_npc(42, weakened), finish_npc(53, original)]);
+    seed_finish_target(&mut snapshot, Some(53), true);
+    assert!(!with_step_context(&snapshot, &mut ledger, 2, |cx| run
+        .observe_finish_transform(cx)));
+    assert_eq!(
+        run.finish_target_index,
+        Some(53),
+        "the old slot is a finish decoy"
+    );
+
+    snapshot.seed_npcs(vec![finish_npc(42, weakened), finish_npc(53, weakened)]);
+    seed_finish_target(&mut snapshot, None, false);
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run
+        .observe_finish_transform(cx)));
+    assert_eq!(
+        run.finish_target_index,
+        Some(53),
+        "same-child target loss preserves its transform proof"
+    );
+}
+
+#[test]
+fn combat_finish_restart_discards_the_previous_child_pin() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let original = data.npc_by_config("delrith").unwrap().id;
+    let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
+    let mut run = finish_test_run(&data, 100);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_npcs(vec![finish_npc(42, original), finish_npc(53, original)]);
+    seed_finish_target(&mut snapshot, Some(42), true);
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+    assert!(!with_step_context(&snapshot, &mut ledger, 2, |cx| run
+        .observe_finish_transform(cx)));
+    assert_eq!(run.finish_target_index, Some(42));
+
+    drop(run.action.take());
+    snapshot.seed_npcs(vec![finish_npc(42, weakened), finish_npc(53, original)]);
+    seed_finish_target(&mut snapshot, None, false);
+    assert!(
+        with_step_context(&snapshot, &mut ledger, 3, |cx| run.rebegin_combat(cx, true))
+            .is_pending()
+    );
+    assert_eq!(run.finish_target_index, None);
+    assert!(!with_step_context(&snapshot, &mut ledger, 4, |cx| run
+        .observe_finish_transform(cx)));
+    seed_finish_target(&mut snapshot, Some(53), true);
+    assert!(!with_step_context(&snapshot, &mut ledger, 5, |cx| run
+        .observe_finish_transform(cx)));
+    assert_eq!(run.finish_target_index, Some(53));
+}
+
+#[test]
+fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 100);
+    start_finish_wait(&mut run, 0);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, true);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+    assert!(
+        run.action.is_none(),
+        "combat must be observed quiet before driving"
+    );
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(run.action.is_none(), "a closed chat is not ready");
+
+    snapshot.seed_chat_modal(4882, vec!["Choose the incantation".into()]);
+    snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Option one".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Option two".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 13,
+                text: "Option three".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 14,
+                text: "Carlem Aber Camerinthum Purchai Gabindo".into(),
+            },
+        ],
+        -1,
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Dialogue(_))));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 4 })
+    ));
+    snapshot.seed_chat_modal(4883, vec!["The demon is weakened.".into()]);
+    snapshot.seed_chat_options(vec![], 4899);
+    assert!(with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 6, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 7, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+            component_id: None
+        })
+    ));
+
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for tick in 8..17 {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "finish must wait for the shared eight-tick dialogue gap"
+        );
+    }
+    let completed = with_step_context(&snapshot, &mut ledger, 17, |cx| run.poll(cx));
+    let Poll::Ready(Ok(outcome)) = completed else {
+        panic!("only a completed shared continuation may settle finish");
+    };
+    let receipt = outcome.receipt.as_ref().unwrap();
+    let finish = receipt.as_any().downcast_ref::<FinishReceipt>().unwrap();
+    assert_eq!(finish.npc_index, 42);
+    assert!(receipt.as_any().downcast_ref::<CombatReceipt>().is_none());
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|row| {
+        matches!(
+            &row.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                action, ..
+            }) if action.eq_ignore_ascii_case("Talk-to")
+        )
+    }));
+}
+
+#[test]
+fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 2);
+    start_finish_wait(&mut run, 0);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, vec!["Open continuation".into()]);
+    snapshot.seed_chat_options(vec![], -1);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Dialogue(_))));
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    let timeout = with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx));
+    assert!(matches!(
+        timeout,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("tick budget")
+    ));
+
+    let mut interrupted = finish_test_run(&data, 100);
+    start_finish_wait(&mut interrupted, 0);
+    snapshot.seed_chat_modal(4882, vec!["Open continuation".into()]);
+    snapshot.seed_chat_options(vec![], -1);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut interrupted_ledger = None;
+    assert!(
+        with_step_context(&snapshot, &mut interrupted_ledger, 1, |cx| {
+            interrupted.poll(cx)
+        })
+        .is_pending()
+    );
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, true);
+    let result = with_step_context(&snapshot, &mut interrupted_ledger, 2, |cx| {
+        interrupted.poll(cx)
+    });
+    assert!(matches!(
+        result,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("interrupted")
+    ));
+}
+
+#[test]
+fn combat_finish_uses_strict_current_page_line_rules() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let make_options = || {
+        super::super::compile_dialogue_options(super::super::DialogueOptionsDocument {
+            prefer: Vec::new(),
+            choose: None,
+            line_rules: vec![super::super::LineRuleDocument {
+                when_line: "Choose the incantation".into(),
+                choose: "Rule answer".into(),
+            }],
+            strict: true,
+        })
+        .unwrap()
+    };
+
+    let mut run = finish_test_run(&data, 100);
+    run.finish.as_mut().unwrap().options = make_options();
+    start_finish_wait(&mut run, 0);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, vec!["Choose the incantation".into()]);
+    snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Fallback answer".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Rule answer".into(),
+            },
+        ],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 2 })
+    ));
+
+    let mut unmatched = finish_test_run(&data, 100);
+    unmatched.finish.as_mut().unwrap().options = make_options();
+    start_finish_wait(&mut unmatched, 0);
+    let mut unmatched_snapshot = GameSnapshot::new();
+    unmatched_snapshot.seed_ingame(2);
+    unmatched_snapshot.seed_chat_modal(4882, vec!["A different current page".into()]);
+    unmatched_snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Fallback answer".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Rule answer".into(),
+            },
+        ],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut unmatched_snapshot, false);
+    let mut unmatched_ledger = None;
+    assert!(
+        with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 1, |cx| {
+            unmatched.poll(cx)
+        })
+        .is_pending()
+    );
+    let failed = with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 2, |cx| {
+        unmatched.poll(cx)
+    });
+    assert!(matches!(
+        failed,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("combat finish dialogue failed")
+    ));
+    assert!(
+        !unmatched_ledger.as_ref().unwrap().outbox.iter().any(|row| {
+            matches!(
+                &row.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { .. })
+            )
+        })
+    );
+}
+
+#[test]
+fn combat_finish_budget_counts_evidence_tick_deltas_across_wait_and_dialogue() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 2);
+    run.finish.as_mut().unwrap().options = DialogueOptions::default();
+    start_finish_wait(&mut run, 10);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_chat_modal(4882, vec!["A continuation page".into()]);
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 11,
+            text: "Continue with this".into(),
+        }],
+        -1,
+    );
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 11, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::FinishDialogue));
+    assert_eq!(run.finish_ticks_elapsed, 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 11, |cx| run.poll(cx)).is_pending());
+    assert_eq!(
+        run.finish_ticks_elapsed, 1,
+        "a repeated poll in the same game tick spends no budget"
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.finish_ticks_elapsed, 2);
+
+    let timeout = with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx));
+    assert!(matches!(
+        timeout,
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("tick budget")
+    ));
+    assert_eq!(
+        run.finish_ticks_elapsed, 5,
+        "a three-tick evidence jump spends all three ticks"
+    );
+}
+
+#[test]
+fn combat_finish_budget_ignores_duplicate_polls_and_counts_tick_jumps() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut run = finish_test_run(&data, 2);
+    run.phase = Phase::FinishWait;
+    run.finish_target_index = Some(42);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    for _ in 0..4 {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending(),
+            "duplicate polls must not spend a game-tick budget"
+        );
+    }
+    assert!(
+        matches!(
+            with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)),
+            Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("tick budget")
+        ),
+        "the jump from game tick 1 to 4 must spend three ticks"
+    );
+}
+
+#[test]
+fn combat_finish_strict_menu_refusals_block_consistently() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    for prefer in [Arc::from([]), Arc::from([Arc::from("Unmatched answer")])] {
+        let mut run = finish_test_run(&data, 100);
+        run.finish.as_mut().unwrap().options = DialogueOptions {
+            prefer,
+            strict: true,
+            ..Default::default()
+        };
+        start_finish_wait(&mut run, 0);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_chat_modal(4882, vec!["Choose an answer.".into()]);
+        snapshot.seed_chat_options(
+            vec![api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Not the authored answer".into(),
+            }],
+            -1,
+        );
+        super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+        let mut ledger = None;
+        assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
+        assert!(
+            matches!(
+                with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)),
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.contains("combat finish dialogue failed")
+            ),
+            "strict refusal must park rather than replay combat"
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
 }

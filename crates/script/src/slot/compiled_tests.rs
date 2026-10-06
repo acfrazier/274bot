@@ -380,6 +380,110 @@ fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
+    FamilyPreparation::run(move |worker| {
+        prepare_config(
+            worker,
+            crate::CompiledId("Sherlock"),
+            revision,
+            Arc::new(
+                serde_json::from_value(serde_json::json!({
+                    "allow_teleports": allow,
+                    "allow_wilderness": allow,
+                    "allow_danger_zones": allow,
+                }))
+                .unwrap(),
+            ),
+            selected(),
+            Arc::default(),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap()
+}
+
+#[test]
+fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
+    let mut alice = SlotScript::new();
+    let mut bob = SlotScript::new();
+    alice.bind_incarnation(81);
+    bob.bind_incarnation(82);
+    let initial = permission_config(1, true);
+    start(&mut alice, initial.bag().clone());
+    start(&mut bob, SettingsBag::new());
+    assert_eq!(settle(&mut alice), StartOutcome::Ready);
+    assert_eq!(settle(&mut bob), StartOutcome::Ready);
+    assert_eq!(
+        alice.native_walk_permissions(),
+        Some(initial.walk_permissions())
+    );
+    assert_eq!(bob.native_walk_permissions(), Some(Default::default()));
+    let revision = permission_config(2, false);
+    let run = alice.native_run().unwrap();
+    assert_eq!(
+        alice.configure_compiled(revision.clone(), run),
+        CompiledDelivery::Applied
+    );
+    assert_eq!(alice.native_walk_permissions(), Some(Default::default()));
+    assert_eq!(
+        bob.configure_compiled(permission_config(2, true), run),
+        CompiledDelivery::Stale
+    );
+    assert_eq!(bob.native_walk_permissions(), Some(Default::default()));
+    alice.compiled.as_mut().unwrap().pending = Some(PendingConfig {
+        config: permission_config(3, true),
+        boundary: false,
+    });
+    restart_and_settle(&mut alice, Instant::now());
+    assert_eq!(
+        alice.native_walk_permissions(),
+        Some(revision.walk_permissions())
+    );
+    // An accepted boundary revision is re-offered through the new instance.
+    alice.compiled.as_mut().unwrap().pending = Some(PendingConfig {
+        config: permission_config(4, true),
+        boundary: true,
+    });
+    restart_and_settle(&mut alice, Instant::now());
+    assert_eq!(
+        alice.native_walk_permissions(),
+        Some(initial.walk_permissions())
+    );
+    alice.stop();
+    assert_eq!(alice.native_walk_permissions(), None);
+}
+
+#[test]
+fn walk_permissions_do_not_apply_before_matching_boundary_acknowledgement() {
+    let (mut slot, acknowledge) = receiver(83, SettingsApply::PendingBoundary);
+    let run = slot.native_run().unwrap();
+    let bag = Arc::new(
+        serde_json::from_value(serde_json::json!({
+            "value": 20,
+            "allow_teleports": true,
+            "allow_wilderness": true,
+            "allow_danger_zones": true,
+        }))
+        .unwrap(),
+    );
+    let config = PreparedConfig::new(crate::CompiledId("test"), 1, 2, bag, 20_u64);
+    let granted = config.walk_permissions();
+    assert_eq!(
+        slot.configure_compiled(config, run),
+        CompiledDelivery::PendingBoundary
+    );
+    assert_eq!(slot.native_walk_permissions(), Some(Default::default()));
+    acknowledge.store(1, Ordering::Relaxed);
+    tick(&mut slot);
+    assert_eq!(slot.native_walk_permissions(), Some(Default::default()));
+    acknowledge.store(2, Ordering::Relaxed);
+    tick(&mut slot);
+    assert_eq!(slot.native_walk_permissions(), Some(granted));
+    assert!(granted.allow_teleports && granted.allow_wilderness && granted.allow_danger_zones);
+}
+
 fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
     slot.restart_from_identity(now).unwrap();
     let deadline = now + Duration::from_secs(10);
@@ -549,7 +653,7 @@ impl Script for Relog {
                     loc_id: None,
                     radius: 0,
                     arrival: nav::arrival::ArrivalKind::Reach,
-                    options: crate::FindOptions::default(),
+                    options: crate::native::WalkOptions::default(),
                     required_after: first,
                     evidence: None,
                     cross: Vec::new().into_boxed_slice(),
@@ -1390,6 +1494,7 @@ mod api_gather_seat {
                 name: "Logs".into(),
                 action: "Drop".into(),
                 slot: None,
+                target_item_id: None,
             },
             InteractReq::RunPolicyOverride {
                 policy: Some(policy_override),
@@ -1780,6 +1885,7 @@ impl crate::native::NativeMachine for StopWork {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(0),
+            target_item_id: None,
         })?;
         Ok(Self {
             _quiet: cx.begin_quiet_read(41)?,

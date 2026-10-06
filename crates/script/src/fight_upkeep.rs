@@ -74,6 +74,7 @@ impl Family for BuryInFight {
                 name: bones.name_or_empty().to_string(),
                 action: op.to_string(),
                 slot: None,
+                target_item_id: None,
             });
             Begin::Run(Self {
                 before,

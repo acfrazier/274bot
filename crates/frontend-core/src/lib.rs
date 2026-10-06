@@ -29,12 +29,14 @@ pub mod profile_form;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
+pub mod quester_paths;
 pub mod resources;
 pub mod scripts;
 pub mod selection;
 pub mod session;
 pub mod surface;
 pub mod views;
+pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use fleet::Fleet;
@@ -54,6 +56,9 @@ pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
+pub use quester_paths::{
+    QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL,
+};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
@@ -66,3 +71,7 @@ pub use session::{
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
+pub use walk_permissions::{
+    WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING,
+    GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, SCRIPT_SCOPE_NOTICE,
+};

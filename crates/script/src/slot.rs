@@ -156,6 +156,8 @@ pub struct SlotScript {
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
+    quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
+    pair_evidence: Option<api::quest_progress::EvidenceStamp>,
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
@@ -280,6 +282,8 @@ impl SlotScript {
             api: None,
             retained: None,
             native_runtime: Default::default(),
+            quest_pairs: None,
+            pair_evidence: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
             control_generation: 0,
@@ -341,6 +345,16 @@ impl SlotScript {
             recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
             #[cfg(all(test, feature = "load"))]
             fail_spawn_for_test: false,
+        }
+    }
+    /// Install this Play's account-bound authority, without taking another slot lock.
+    pub fn bind_quest_pairs(&mut self, port: Arc<dyn crate::quester::pair::QuestPairPort>) {
+        self.quest_pairs = Some(port);
+    }
+
+    pub fn pair_world_changed(&self, host: &str, port: u16) {
+        if let Some(pairs) = &self.quest_pairs {
+            pairs.world_changed(host, port);
         }
     }
 
@@ -1263,6 +1277,11 @@ impl SlotScript {
             && self.has_instance()
             && !self.watchdog.holds_script_actions()
             && !blocked
+            && !self
+                .quest_pairs
+                .as_ref()
+                .zip(self.native_run())
+                .is_some_and(|(pairs, run)| pairs.held(run))
     }
 
     pub fn sync_native_input_gate(&self) {
@@ -1337,6 +1356,12 @@ impl SlotScript {
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartLoadError> {
         let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        if let Some(bag) = bag {
+            let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
+            crate::loadouts_store::resolve_script_loadout_setting(loadouts.loadouts(), wanted)
+                .map(|_| ())
+                .map_err(|error| StartLoadError::Refused(error.to_string()))?;
+        }
         self.start_load_with_loadouts_and_game_data_typed(
             source,
             shape,
@@ -1811,6 +1836,7 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
+        let previous_gameplay = self.watchdog.gameplay_stamp();
         use crate::shim::InteractReq;
         let mut anchor_reply = None;
         for op in lifecycle {
@@ -1841,7 +1867,19 @@ impl SlotScript {
             }
         }
         self.watchdog.on_xp(now, xp);
-        let action = self.watchdog.observe(now, running && self.want_run);
+        if self.watchdog.gameplay_stamp() != previous_gameplay {
+            if let (Some(pairs), Some(evidence)) = (&self.quest_pairs, self.pair_evidence) {
+                pairs.gameplay_progress(evidence.run, evidence, now);
+            }
+        }
+        let pair_wait = self
+            .quest_pairs
+            .as_ref()
+            .zip(self.native_run())
+            .is_some_and(|(pairs, run)| pairs.waiting(run));
+        let action = self
+            .watchdog
+            .observe_with_pair_wait(now, running && self.want_run, pair_wait);
         if action == WatchdogAction::RequestAnchor {
             if let Some(run) = &self.compiled {
                 let anchor = match catch_unwind(AssertUnwindSafe(|| run.script.recovery_anchor())) {
@@ -2058,6 +2096,13 @@ impl SlotScript {
             return;
         }
         #[cfg(feature = "load")]
+        if self.load.is_some() {
+            if let Some(failure) = trapped_failure(ctx) {
+                self.stop_blocked(failure, ctx.tick);
+                return;
+            }
+        }
+        #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             self.tick_api(ctx);
@@ -2083,7 +2128,17 @@ impl SlotScript {
                     .expect("compiled retention")
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                run.tick(ctx, &mut retained, &mut self.native_runtime)
+                self.pair_evidence = Some(api::quest_progress::EvidenceStamp {
+                    run: run.run,
+                    tick: ctx.tick,
+                    sequence: ctx.tick,
+                });
+                run.tick(
+                    ctx,
+                    &mut retained,
+                    &mut self.native_runtime,
+                    self.quest_pairs.as_deref(),
+                )
             }
         };
         if result.is_ok() {
@@ -2142,6 +2197,22 @@ impl SlotScript {
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
     fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
+        #[cfg(feature = "load")]
+        if self.compiled.is_none() {
+            let generation = self.runtime_generation;
+            let reason = format!("{}: {}", failure.code, failure.message);
+            self.stop_with_reason(StopReason::Error, "blocked");
+            self.pending_logs.push(reason.clone());
+            self.last_error = Some(reason.clone());
+            self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                runtime_generation: generation,
+                state: ScriptTerminalState::Failed,
+                tick,
+                reason,
+            });
+            return;
+        }
+
         use crate::native::NativeOutput;
         let run = self.compiled.as_mut().expect("blocked compiled run");
         let status = crate::native::ScriptStatus {
@@ -2367,12 +2438,12 @@ impl Drop for SlotScript {
     }
 }
 
-/// An unheld native run standing on a random event's trap square (the Maze
+/// An unheld running script standing on a random event's trap square (the Maze
 /// or the Mime stage). Only that event's own solution leads off the square,
 /// and an unheld frame means the host guardian is not running one (it gave
-/// up, or random events are off), so the card cannot make progress there:
-/// Blocked with the reason instead of ticking it against a world it was
-/// never placed in.
+/// up, was explicitly ignored, or random events are off). Native and Load
+/// scripts take the same terminal Blocked Stop rather than running against
+/// a world they cannot leave through ordinary work.
 fn trapped_failure(ctx: &ScriptCtx<'_>) -> Option<ScriptFailure> {
     if ctx.compiled.hold {
         return None;

@@ -12,6 +12,7 @@ import { extractQuestIdentityFacts, questIdentityContentFiles } from './extracto
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
+import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -58,6 +59,25 @@ type PublishedTrioGiverRow = { alias: string; id: number; name: string; spawn?: 
 type PublishedTrioGiverCoverage = { class: string; family: string; alias: string; reason: string };
 /** The published trio_givers family object. */
 type PublishedTrioGivers = { rows: PublishedTrioGiverRow[]; coverage: PublishedTrioGiverCoverage[] };
+type PublishedCombatSpell = {
+    name: string; source_row: string; ssb: number; component_id: number;
+    autocast_selectable: boolean; level: number; impact_spotanim: number;
+    runes: { name: string; count: number }[];
+};
+function isPublishedCombatSpell(value: unknown): value is PublishedCombatSpell {
+    return typeof value === 'object' && value !== null
+        && 'name' in value && typeof value.name === 'string'
+        && 'source_row' in value && typeof value.source_row === 'string'
+        && 'ssb' in value && typeof value.ssb === 'number' && Number.isInteger(value.ssb)
+        && 'component_id' in value && typeof value.component_id === 'number' && Number.isInteger(value.component_id)
+        && 'autocast_selectable' in value && typeof value.autocast_selectable === 'boolean'
+        && 'level' in value && typeof value.level === 'number' && Number.isInteger(value.level)
+        && 'impact_spotanim' in value && typeof value.impact_spotanim === 'number' && Number.isInteger(value.impact_spotanim)
+        && 'runes' in value && Array.isArray(value.runes)
+        && value.runes.every((rune: unknown) => typeof rune === 'object' && rune !== null
+            && 'name' in rune && typeof rune.name === 'string'
+            && 'count' in rune && typeof rune.count === 'number' && Number.isInteger(rune.count));
+}
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
@@ -118,7 +138,7 @@ async function verifyRevision(revision: number) {
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
-    const npcNames = extractNpcNamesFacts(pin.contentRoot);
+    const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
     const combatScripts = parseCombatScripts(pin.contentRoot);
     const expectedContentFiles = [...new Set([
         ...baseContentFiles,
@@ -128,11 +148,114 @@ async function verifyRevision(revision: number) {
     ])].sort();
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
+    assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
     assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
     const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
-    const fixed = new Map(payload.consumption.filter((fact: any) => fact.qualification === 'fixed_hp_heal').map((fact: any) => [fact.item.alias, fact.stat_heal[0].base])); for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`); const guard = payload.pickpocket.find((fact: any) => fact.npcs.some((npc: any) => npc.alias === 'guard1')); if (!guard || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`); if (payload.pickpocket.some((fact: any) => fact.npcs.length === 0 || fact.loot.some((loot: any) => loot.min > loot.max))) throw new Error(`${revision}: invalid pickpocket joins`);
+    const isNpc = (value: unknown): value is { alias: string; id: number; name: string } =>
+        typeof value === 'object'
+        && value !== null
+        && !Array.isArray(value)
+        && 'alias' in value
+        && typeof value.alias === 'string'
+        && 'id' in value
+        && typeof value.id === 'number'
+        && 'name' in value
+        && typeof value.name === 'string';
+    type PickpocketCheckRow = {
+        npcs: { alias: string; id: number; name: string }[];
+        kind?: unknown; level?: unknown; source_file?: unknown;
+        target_row?: unknown; source_row?: unknown; loot?: unknown;
+    };
+    const hasPickpocketNpcs = (value: unknown): value is PickpocketCheckRow =>
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+        && 'npcs' in value && Array.isArray(value.npcs)
+        && value.npcs.length > 0 && value.npcs.every(isNpc);
+    const consumption: unknown[] = Array.isArray(payload.consumption) ? payload.consumption : [];
+    const fixed = new Map<string, number>();
+    for (const value of consumption) {
+        if (
+            typeof value !== 'object'
+            || value === null
+            || Array.isArray(value)
+            || !('qualification' in value)
+            || value.qualification !== 'fixed_hp_heal'
+            || !('item' in value)
+            || typeof value.item !== 'object'
+            || value.item === null
+            || Array.isArray(value.item)
+            || !('alias' in value.item)
+            || typeof value.item.alias !== 'string'
+            || !('stat_heal' in value)
+            || !Array.isArray(value.stat_heal)
+        ) continue;
+        const heals: unknown[] = value.stat_heal;
+        const [heal] = heals;
+        if (
+            typeof heal === 'object'
+            && heal !== null
+            && !Array.isArray(heal)
+            && 'base' in heal
+            && typeof heal.base === 'number'
+        ) fixed.set(value.item.alias, heal.base);
+    }
+    for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) {
+        if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`);
+    }
+    const pickpocket: unknown[] = Array.isArray(payload.pickpocket) ? payload.pickpocket : [];
+    const guard = pickpocket.find((value) =>
+        hasPickpocketNpcs(value) && value.npcs.some((npc) => npc.alias === 'guard1'));
+    if (!hasPickpocketNpcs(guard) || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`);
+    const invalidPickpocket = pickpocket.some((value) => {
+        if (!hasPickpocketNpcs(value)) return true;
+        const npcs = value.npcs;
+        if ('kind' in value && value.kind === 'level_only') {
+            return npcs.length !== 1
+                || !('level' in value)
+                || typeof value.level !== 'number'
+                || !Number.isInteger(value.level)
+                || !('source_file' in value)
+                || typeof value.source_file !== 'string'
+                || !('target_row' in value)
+                || typeof value.target_row !== 'string'
+                || !('source_row' in value)
+                || typeof value.source_row !== 'string'
+                || ['experience', 'stun_ticks', 'stun_damage', 'success_chance', 'loot', 'pocket']
+                    .some((key) => Object.hasOwn(value, key));
+        }
+        if ('kind' in value || !('loot' in value) || !Array.isArray(value.loot)) return true;
+        const loot: unknown[] = value.loot;
+        return loot.some((item) => {
+            if (
+                typeof item !== 'object'
+                || item === null
+                || Array.isArray(item)
+                || !('min' in item)
+                || typeof item.min !== 'number'
+                || !('max' in item)
+                || typeof item.max !== 'number'
+            ) return true;
+            return item.min > item.max;
+        });
+    });
+    if (invalidPickpocket) throw new Error(`${revision}: invalid pickpocket joins`);
+    if (revision === 274 || revision === 289) {
+        const expected = [
+            ['digworkman1', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman1] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],
+            ['digworkman2', 25, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', '[opnpc3,digworkman2] @pickpocket_digworkman1;', 'if (stat(thieving) < 25) {'],
+            ['troll_prison_guard1', 30, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', '[opnpc3,troll_prison_guard1]', 'if (stat(thieving) < 30) {'],
+            ['troll_prison_guard2', 30, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', '[opnpc3,troll_prison_guard2]', 'if (stat(thieving) < 30) {'],
+        ] as const;
+        for (const [alias, level, sourceFile, targetRow, sourceRow] of expected) {
+            const fact = pickpocket.find((value) =>
+                hasPickpocketNpcs(value) && value.kind === 'level_only' && value.level === level
+                && value.source_file === sourceFile && value.target_row === targetRow
+                && value.source_row === sourceRow && value.npcs.length === 1
+                && value.npcs[0].alias === alias);
+            if (!fact) throw new Error(`${revision}: missing selected Thieving level row for ${alias}`);
+        }
+    }
     const drops = payload.drop_tables ?? [];
     assertEqual(drops.length, 5, `${revision} bounded drop row count`);
     assertEqual(JSON.stringify(drops.map((row: any) => row.name)), JSON.stringify(['Giant', 'Moss giant', 'Fire giant', 'Green dragon', 'Kalphite Queen']), `${revision} bounded drop target order`);
@@ -150,12 +273,18 @@ async function verifyRevision(revision: number) {
     const greenDrops = drops.find((row: any) => row.name === 'Green dragon');
     if (!greenDrops?.items.some((item: any) => item.alias === 'dragonhide_green' && item.id === 1753 && item.name === 'Dragonhide')) throw new Error(`${revision}: Green dragonhide alias/id evidence`);
     if (greenDrops.display_names.includes('Bones') || !greenDrops.display_names.includes('Dragonhide')) throw new Error(`${revision}: Green dragon invented Bones or missing Dragonhide`);
-    const spells = payload.spells ?? [];
-    if (spells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave') throw new Error(`${revision}: named autocast combat spells`);
-    const wind = spells.find((spell: any) => spell.name === 'Wind Strike');
-    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
-    const fireWave = spells.find((spell: any) => spell.name === 'Fire Wave');
-    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
+    const spellInput: unknown = payload.spells ?? [];
+    if (!Array.isArray(spellInput) || !spellInput.every(isPublishedCombatSpell)) throw new Error(`${revision}: malformed combat spells`);
+    const spells: PublishedCombatSpell[] = spellInput;
+    const selectableSpells = spells.filter(spell => spell.autocast_selectable);
+    if (spells.length !== 21 || selectableSpells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave' || selectableSpells.some((spell, index) => spell.ssb !== index)) throw new Error(`${revision}: named combat spells and 16-row chooser`);
+    const manualSpells = spells.filter(spell => !spell.autocast_selectable);
+    if (JSON.stringify(manualSpells.map(spell => spell.source_row)) !== JSON.stringify(['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast']) || manualSpells.some(spell => spell.ssb !== -1 || spell.component_id < 0)) throw new Error(`${revision}: manual spell identities`);
+    if (payload.failed_spell_impact !== 85 || spells.some(spell => spell.impact_spotanim === payload.failed_spell_impact)) throw new Error(`${revision}: splash must remain distinct from successful spell impacts`);
+    const wind = spells.find(spell => spell.name === 'Wind Strike');
+    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
+    const fireWave = spells.find(spell => spell.name === 'Fire Wave');
+    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
     const staves = payload.staves ?? [];
     if (staves.length !== 14) throw new Error(`${revision}: expected 14 staves`);
     const fireProviders = staves.filter((staff: any) => staff.runes.some((rune: any) => rune.name === 'Fire rune')).map((staff: any) => staff.name).sort();
@@ -164,7 +293,7 @@ async function verifyRevision(revision: number) {
     if (!lava || JSON.stringify(lava.runes.map((rune: any) => rune.name).sort()) !== JSON.stringify(['Earth rune', 'Fire rune'])) throw new Error(`${revision}: lava staff runes`);
     if (staves.some((staff: any) => staff.name === 'Staff of air' && staff.runes.some((rune: any) => rune.name === 'Fire rune'))) throw new Error(`${revision}: Staff of air is not a fire provider`);
     const autocast = payload.autocast;
-    if (!autocast || autocast.staff_tab_root !== 328 || autocast.choose_com !== 353 || autocast.spell_panel_root !== 1829 || autocast.spell_grid_base !== 1830 || autocast.toggle_com !== 349 || autocast.magic_varp !== 108 || autocast.selected_value !== 2 || autocast.armed_value !== 3) throw new Error(`${revision}: autocast controls ${JSON.stringify(autocast)}`);
+    if (!autocast || autocast.staff_tab_root !== 328 || autocast.spell_text_component !== 352 || autocast.choose_com !== 353 || autocast.spell_panel_root !== 1829 || autocast.spell_grid_base !== 1830 || autocast.toggle_com !== 349 || autocast.magic_varp !== 108 || autocast.selected_value !== 2 || autocast.armed_value !== 3) throw new Error(`${revision}: autocast controls ${JSON.stringify(autocast)}`);
     const duel = payload.duel;
     if (!duel || duel.select_modal !== 6575 || duel.confirm_modal !== 6412 || duel.win_modal !== 6733 || duel.select_accept !== 6674 || duel.confirm_accept !== 6520 || duel.select_partner !== 6671 || duel.select_status !== 6684 || duel.confirm_status !== 6571) throw new Error(`${revision}: duel controls ${JSON.stringify(duel)}`);
     const special = payload.special;
@@ -327,7 +456,7 @@ async function verifyRevision(revision: number) {
     }
     const gatherMethod = (id: string) => { const found = gatherFacts.methods.find((each) => each.id === id); if (!found) throw new Error(`${revision}: missing gather method ${id}`); return found; };
     const gatherKnown = <T>(cell: { state: string; value?: T }, label: string): T => { if (cell.state === 'unknown' || cell.value === undefined) throw new Error(`${revision}: ${label} is unknown`); return cell.value; };
-    assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 15 }), `${revision} gather method counts`);
+    assertEqual(JSON.stringify(gathering.summary.methods), JSON.stringify({ woodcutting: 10, mining: 15, fishing: 16 }), `${revision} gather method counts`);
     const rocks = gathering.summary.rocks;
     assertEqual(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted`);
     assertEqual(rocks.resource, 29, `${revision} resource rocks`);
@@ -345,6 +474,17 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(gatherKnown(fly.tools, 'fly tools').map((tool) => aliases.get(`obj:${tool.item}`))), JSON.stringify(['fly_fishing_rod']), `${revision} lure tool`);
     assertEqual(JSON.stringify(gatherKnown(fly.consumes, 'lure bait').map((amount) => [aliases.get(`obj:${amount.item}`), amount.count])), JSON.stringify([['feather', 1]]), `${revision} lure bait`);
     assertEqual(JSON.stringify(gatherKnown(fly.products, 'lure products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['raw_trout', 20], ['raw_salmon', 30]]), `${revision} lure products`);
+    const contest = gatherMethod('fishing.0_41_53_sinisterfishspot.op1');
+    assertEqual(JSON.stringify(contest.resources), JSON.stringify(['raw_giant_carp']), `${revision} Hemenster carp method`);
+    assertEqual(contest.sources.some((source) => source.startsWith('scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2:')), true, `${revision} Hemenster source provenance`);
+    assertEqual(JSON.stringify(contest.op), JSON.stringify({ slot: 1, label: 'Fish' }), `${revision} Hemenster spot operation`);
+    const target = gatherKnown(contest.targets, 'Hemenster carp target')[0]!;
+    assertEqual(JSON.stringify([target.kind, target.id, target.op, target.class, aliases.get(`npc:${target.id}`)]), JSON.stringify(['npc', 234, 1, 'resource', '0_41_53_sinisterfishspot']), `${revision} Hemenster target`);
+    assertEqual(JSON.stringify(gatherKnown(contest.tools, 'Hemenster carp tools').map((tool) => [aliases.get(`obj:${tool.item}`), tool.item])), JSON.stringify([['fishing_rod', 307]]), `${revision} Hemenster rod`);
+    assertEqual(JSON.stringify(gatherKnown(contest.consumes, 'Hemenster carp bait').map((amount) => [aliases.get(`obj:${amount.item}`), amount.item, amount.count])), JSON.stringify([['red_vine_worm', 25, 1]]), `${revision} Hemenster worm`);
+    assertEqual(JSON.stringify(gatherKnown(contest.products, 'Hemenster carp product').map((product) => [aliases.get(`obj:${product.item}`), product.item, product.level])), JSON.stringify([['raw_giant_carp', 338, 10]]), `${revision} Hemenster carp level`);
+    assertEqual(JSON.stringify(contest.requirements.state === 'partial' ? contest.requirements.gaps.map((each) => each.code) : []), JSON.stringify(['varp-gate']), `${revision} Hemenster quest-state gate remains explicit`);
+    assertEqual(JSON.stringify(gatherKnown(contest.requirements, 'Hemenster carp requirements').map((requirement) => requirement.kind === 'skill' ? [requirement.kind, requirement.skill, requirement.level] : [requirement.kind])), JSON.stringify([['skill', 10, 10]]), `${revision} Hemenster skill requirement`);
     const oak = gatherMethod('woodcutting.oak');
     assertEqual(JSON.stringify(gatherKnown(oak.products, 'oak products').map((each) => [aliases.get(`obj:${each.item}`), each.level])), JSON.stringify([['oak_logs', 15]]), `${revision} oak product`);
     if (gathering.summary.placements.rows === 0 || gatherFacts.placements.some((file) => !/^maps\/m\d+_\d+\.jm2$/.test(file.file))) throw new Error(`${revision}: gathering placements are map rows`);
@@ -537,10 +677,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 310 : 307, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 311 : 308, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -609,7 +749,7 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 307, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 308, 'gather_sites shared ids across revisions');
     const extra289 = pinnedSites289.filter((id) => !pinnedSites274.includes(id));
     assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw']), 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');

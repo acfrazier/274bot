@@ -14,7 +14,9 @@ import { consumptionRule, parseConsumeMessageDelays, parseConsumptionEffects } f
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
+import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
+import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -89,6 +91,14 @@ const combatContentFiles = [
     'pack/npc.pack',
 ];
 const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, ...combatContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles, 'maps/labels.txt', 'scripts/skill_fishing/configs/fishing.npc'];
+// Manual spell names resolve through the magic tab interface, so it joins the base input closure.
+contentFiles.push('scripts/skill_magic/interfaces/magic.if');
+contentFiles.push(...dialogueUiContentFiles);
+const thievingLevelOnlySources = [
+    { file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', aliases: ['digworkman1', 'digworkman2'] },
+    { file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', aliases: ['troll_prison_guard1', 'troll_prison_guard2'] },
+] as const;
+contentFiles.push(...thievingLevelOnlySources.map((source) => source.file));
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
@@ -321,26 +331,106 @@ function runeCosts(values: Record<string, string[][]>, rowName: string, itemIds:
     }
     return runes;
 }
+/** staff_spells autocast chooser: spell enum -> ssb index from auto_cast.rs2 button triggers. */
+export function parseAutocastChooser(text: string) {
+    const chooser = new Map<string, number>();
+    const bySsb = new Map<number, string>();
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        const match = /^\[if_button,staff_spells:ssb(\d+)\] @set_autocast_spell\(\^([A-Za-z0-9_]+)\);$/.exec(line);
+        if (!match) continue;
+        const ssb = Number(match[1]);
+        const spell = match[2];
+        if (chooser.has(spell)) throw new Error(`autocast: duplicate chooser spell ^${spell}`);
+        if (bySsb.has(ssb)) throw new Error(`autocast: duplicate chooser ssb${ssb}`);
+        chooser.set(spell, ssb);
+        bySsb.set(ssb, spell);
+    }
+    if (chooser.size === 0) throw new Error('autocast: no staff_spells chooser triggers');
+    return chooser;
+}
+/** magic.if section -> manual cast `action=` label (Crumble undead, Iban blast, god strikes). */
+export function parseMagicActions(text: string) {
+    const out = new Map<string, string>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            continue;
+        }
+        if (!current || !line.startsWith('action=')) continue;
+        const action = line.slice('action='.length);
+        if (!action) throw new Error(`magic.if: empty action in ${current}`);
+        if (out.has(current)) throw new Error(`magic.if: duplicate action section ${current}`);
+        out.set(current, action);
+    }
+    return out;
+}
+/** One pair of dbrow string quotes around a selected message; anything else fails closed. */
+function unquoteDbString(value: string, label: string) {
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
+    throw new Error(`${label}: expected quoted string, got ${value}`);
+}
 export function extractMagicFacts(content: string, items: ObjType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
-    const spells = parseRows(fs.readFileSync(path.join(content, 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow'), 'utf8'))
-        .filter((parsed) => parsed.values.name?.[0]?.[0] && parsed.values.continue_by_autocast?.[0]?.[0] === 'true')
-        .map((parsed, ssb) => {
-            const wornrequired = parsed.values.wornrequired?.[0]?.[0];
-            if (wornrequired !== undefined) namedItem(itemIds, wornrequired, `${parsed.name} required weapon`);
-            return {
-                name: required(parsed.values, 'name', parsed.name),
-                source_row: parsed.name,
-                ssb,
-                spellcom: required(parsed.values, 'spellcom', parsed.name),
-                level: integer(required(parsed.values, 'levelrequired', parsed.name), parsed.name),
-                maxhit: integer(required(parsed.values, 'maxhit', parsed.name), parsed.name),
-                members: boolean(parsed.values, 'members', parsed.name),
-                wornrequired: wornrequired ?? null,
-                continue_by_autocast: true,
-                runes: runeCosts(parsed.values, parsed.name, itemIds),
-            };
+    const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
+    const chooser = parseAutocastChooser(fs.readFileSync(path.join(content, 'scripts/skill_combat/scripts/player/auto_cast.rs2'), 'utf8'));
+    const actions = parseMagicActions(fs.readFileSync(path.join(content, 'scripts/skill_magic/interfaces/magic.if'), 'utf8'));
+    const spotanims = parsePack(fs.readFileSync(path.join(content, 'pack/spotanim.pack'), 'utf8'));
+    const seenSpell = new Set<string>();
+    const seenName = new Set<string>();
+    const spells = [];
+    for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow'), 'utf8'))) {
+        const spellcom = parsed.values.spellcom?.[0]?.[0];
+        if (!spellcom) continue;
+        if (parsed.values.continue_by_autocast?.[0]?.[0] !== 'true') continue;
+        const spellField = required(parsed.values, 'spell', parsed.name);
+        const spell = spellField.startsWith('^') ? spellField.slice(1) : spellField;
+        if (!spell) throw new Error(`${parsed.name}: empty spell`);
+        if (seenSpell.has(spell)) throw new Error(`${parsed.name}: duplicate spell ^${spell}`);
+        seenSpell.add(spell);
+        const action = actions.get(spell);
+        if (!action) throw new Error(`${parsed.name}: missing magic.if action for ^${spell}`);
+        const dbName = parsed.values.name?.[0]?.[0];
+        if (dbName && dbName.toLowerCase() !== action.toLowerCase()) throw new Error(`${parsed.name}: name ${dbName} disagrees with magic.if action ${action}`);
+        const name = dbName ?? action;
+        if (!name) throw new Error(`${parsed.name}: missing spell name`);
+        const folded = name.toLowerCase();
+        if (seenName.has(folded)) throw new Error(`${parsed.name}: duplicate spell name ${name}`);
+        seenName.add(folded);
+        const componentId = interfaces.get(spellcom);
+        if (componentId === undefined) throw new Error(`${parsed.name}: missing interface.pack entry ${spellcom}`);
+        const ssb = chooser.get(spell);
+        const wornrequired = parsed.values.wornrequired?.[0]?.[0];
+        if (wornrequired !== undefined) namedItem(itemIds, wornrequired, `${parsed.name} required weapon`);
+        const wornRaw = parsed.values.worn_reqmessage?.[0]?.[0];
+        if (wornrequired !== undefined && wornRaw === undefined) throw new Error(`${parsed.name}: wornrequired without worn_reqmessage`);
+        // Successful target gfx only. The shared miss splash is published separately
+        // as failed_spell_impact; it and unresolvable aliases remain -1 per spell.
+        const targetRaw = parsed.values.spotanim_target?.[0]?.[0];
+        const targetAlias = targetRaw === undefined ? null : (targetRaw.startsWith('^') ? targetRaw.slice(1) : targetRaw);
+        const impactSpotanim = targetAlias === null || targetAlias === 'failedspell_impact' ? -1 : (spotanims.get(targetAlias) ?? -1);
+        spells.push({
+            name,
+            source_row: parsed.name,
+            ssb: ssb ?? -1,
+            component_id: componentId,
+            autocast_selectable: ssb !== undefined,
+            spellcom,
+            level: integer(required(parsed.values, 'levelrequired', parsed.name), parsed.name),
+            maxhit: integer(required(parsed.values, 'maxhit', parsed.name), parsed.name),
+            members: boolean(parsed.values, 'members', parsed.name),
+            wornrequired: wornrequired ?? null,
+            worn_reqmessage: wornRaw === undefined ? null : unquoteDbString(wornRaw, parsed.name),
+            impact_spotanim: impactSpotanim,
+            continue_by_autocast: true,
+            runes: runeCosts(parsed.values, parsed.name, itemIds),
         });
+    }
+    for (const [spell, ssb] of chooser) {
+        if (!seenSpell.has(spell)) throw new Error(`autocast: chooser ^${spell} (ssb${ssb}) has no combat row`);
+    }
     if (spells[0]?.name !== 'Wind Strike') {
         throw new Error(`expected Wind Strike first, got ${spells[0]?.name}`);
     }
@@ -357,7 +447,9 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
     const staves = [...byStaff.values()]
         .map((staff) => ({ alias: staff.alias, id: staff.id, name: staff.name, runes: [...staff.runes.values()] }))
         .sort((a, b) => a.name.localeCompare(b.name));
-    return { spells, staves };
+    // Shared miss splash as one selected scalar, never duplicated per spell.
+    const failedSpellImpact = spotanims.get('failedspell_impact') ?? null;
+    return { spells, staves, failed_spell_impact: failedSpellImpact };
 }
 
 const EQUIPMENT_FAMILY_ORDER = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs'] as const;
@@ -676,6 +768,7 @@ export function extractAutocastControls(content: string) {
     };
     return {
         staff_tab_root: required(interfaces, 'combat_staff_2'),
+        spell_text_component: required(interfaces, 'combat_staff_2:auto_spell'),
         spell_panel_root: required(interfaces, 'staff_spells'),
         choose_com: required(interfaces, 'combat_staff_2:auto_choose'),
         toggle_com: required(interfaces, 'combat_staff_2:auto_toggle'),
@@ -2351,18 +2444,27 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             dose_count: info.dose_count,
         });
     }
+    type PickpocketNpc = { alias: string; id: number; name: string };
     type PickpocketRow = {
         group: string;
-        npcs: { alias: string; id: number; name: string }[];
+        npcs: PickpocketNpc[];
         level: number;
         experience: number;
         stun_ticks: number;
         stun_damage: number;
         success_chance: { numerator: number; denominator: number };
-        loot: { item: { alias: string; id: number; name: string }; min: number; max: number; weight: number }[];
+        loot: { item: PickpocketNpc; min: number; max: number; weight: number }[];
         pocket: string;
     };
-    const pickpocket: PickpocketRow[] = [];
+    type PickpocketLevelOnlyRow = {
+        kind: 'level_only';
+        source_file: string;
+        target_row: string;
+        source_row: string;
+        npcs: PickpocketNpc[];
+        level: number;
+    };
+    const pickpocket: (PickpocketRow | PickpocketLevelOnlyRow)[] = [];
     for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow'), 'utf8'))) {
         const npc = (parsed.values.npc ?? []).map((value) => {
             const found = npcIds.get(value[0]);
@@ -2394,6 +2496,37 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             loot,
             pocket: required(parsed.values, 'pocket', parsed.name),
         });
+    }
+    for (const source of thievingLevelOnlySources) {
+        const aliases = source.aliases.filter((alias) => npcIds.has(alias));
+        if (aliases.length === 0) continue;
+        const file = path.join(content, source.file);
+        if (!fs.existsSync(file)) throw new Error(`${source.file}: missing selected Thieving level source`);
+        const script = fs.readFileSync(file, 'utf8');
+        const gates = [...script.matchAll(/^\s*if\s*\(\s*stat\s*\(\s*thieving\s*\)\s*<\s*(\d+)\s*\)\s*\{\s*$/gm)];
+        if (gates.length !== 1) throw new Error(`${source.file}: expected one explicit Thieving level gate`);
+        const level = integer(gates[0][1], source.file);
+        if (level < 1) throw new Error(`${source.file}: invalid Thieving level gate`);
+        const targetRows = new Map<string, string[]>();
+        for (const match of script.matchAll(/^\s*\[opnpc3,([a-z0-9_]+)\][^\r\n]*$/gm)) {
+            const rows = targetRows.get(match[1]) ?? [];
+            rows.push(match[0].trim());
+            targetRows.set(match[1], rows);
+        }
+        for (const alias of aliases) {
+            const found = npcIds.get(alias);
+            if (!found?.name) throw new Error(`${source.file}: ${alias} has no selected NPC name`);
+            const rows = targetRows.get(alias);
+            if (!rows || rows.length !== 1) throw new Error(`${source.file}: expected one opnpc3 source row for ${alias}`);
+            pickpocket.push({
+                kind: 'level_only',
+                source_file: source.file,
+                target_row: rows[0],
+                source_row: gates[0][0].trim(),
+                npcs: [{ alias, id: found.id, name: found.name }],
+                level,
+            });
+        }
     }
     return { consumption, pickpocket };
 }
@@ -2795,7 +2928,12 @@ async function generate(spec: Revision) {
     const debugStatPath = DEBUG_STAT_RELATIVE;
     const debugStatText = fs.readFileSync(path.join(spec.engine, debugStatPath), 'utf8');
     const debugCatalog = extractDebugCatalog(spec.content, debugHandlerText, debugStatText, npcModule.default.configs);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs);
+    const selectableSpells = magic.spells.filter((spell) => spell.autocast_selectable);
+    const manualRows = magic.spells.filter((spell) => !spell.autocast_selectable).map((spell) => spell.source_row);
+    if (magic.spells.length !== 21 || magic.spells[15].name !== 'Fire Wave' || selectableSpells.length !== 16 || selectableSpells.some((spell, index) => spell.ssb !== index) || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
+    if (JSON.stringify(manualRows) !== JSON.stringify(['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast'])) throw new Error(`${spec.revision}: manual spell order mismatch ${manualRows.join(',')}`);
+    if (magic.failed_spell_impact !== 85) throw new Error(`${spec.revision}: failedspell_impact mismatch ${magic.failed_spell_impact}`);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs);
     if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
     if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`);
@@ -2829,6 +2967,7 @@ async function generate(spec: Revision) {
     if (!contentId) throw new Error(`${spec.revision}: quest starts require content identity`);
     const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
     Object.assign(facts, { quest_starts: questStarts });
+    Object.assign(facts, { dialogue_ui: extractDialogueUiFacts(spec.content) });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
     const deathRow = questIdentity.rows.find((row) => row.id === 'death');
     if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
@@ -2839,7 +2978,7 @@ async function generate(spec: Revision) {
     }
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
-    const npcNames = extractNpcNamesFacts(spec.content, combatScripts, spellMaxHits);
+    const npcNames = extractNpcNamesFacts(spec.content, spec.revision, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts);
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,
@@ -2855,6 +2994,8 @@ async function generate(spec: Revision) {
     });
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
+    const karamja = extractKaramjaFacts(spec.content, npcNames, locNames, npcPlacements);
+    Object.assign(facts, { karamja: karamja.facts });
     if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
         throw new Error(`${spec.revision}: quest coverage mismatch`);
     }
@@ -2899,6 +3040,7 @@ async function generate(spec: Revision) {
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
     const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
+    Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
     const debugArtifact = buildDebugArtifact(spec.revision, { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs: debugProvenanceInputs(spec.engine), content_inputs: debugCatalog.inputs, cache_identity: spec.cacheIdentity }, debugCatalog);
     const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
     fs.mkdirSync(path.dirname(debugFile), { recursive: true });

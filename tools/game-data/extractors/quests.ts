@@ -1,6 +1,8 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
 import fs from 'node:fs';
 import { integer, parsePack, requireGatherText } from './common.ts';
+import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
+import { parseBody, walkStatements } from './gathering-rs2.ts';
 export const questIdentityContentFiles = [
     'scripts/general/scripts/quests.rs2',
     'scripts/general/configs/quest.constant',
@@ -196,6 +198,39 @@ function parseQuestListEntries(text: string) {
     return entries;
 }
 
+function journalTitle(block: Rs2Block): string | null {
+    const text = block.body.map(({ text }) => stripComment(text)).join('\n');
+    const literal = /~quest_journal\(\s*"([^"]+)"\s*,/.exec(text);
+    if (literal) return literal[1];
+
+    // A local title is constant only when its single, unconditional literal
+    // assignment precedes the call in this script block.
+    const bindings = new Map<string, { order: number } | null>();
+    const journal: { argument: { variable: string; order: number } | null } = { argument: null };
+    let order = 0;
+    walkStatements(parseBody(block.body), (stmt, conditions) => {
+        order += 1;
+        const assignment = /^(?:def_string\s+)?(\$[A-Za-z0-9_]+)\s*=\s*(.+)$/.exec(stmt.text);
+        if (assignment) {
+            const variable = assignment[1];
+            bindings.set(variable, !bindings.has(variable) && conditions.length === 0 && /^"[^"]+"$/.test(assignment[2])
+                ? { order }
+                : null);
+        }
+        const call = /^~quest_journal\(\s*(\$[A-Za-z0-9_]+)\s*,/.exec(stmt.text);
+        if (call && !journal.argument) journal.argument = { variable: call[1], order };
+    });
+    if (!journal.argument) return null;
+    const { variable, order: callOrder } = journal.argument;
+    const binding = bindings.get(variable);
+    if (!binding || binding.order >= callOrder) return null;
+
+    // Keep the literal's original whitespace; the structural reader normalizes
+    // statement text. Ambiguous source matches are not title evidence.
+    const values = [...text.matchAll(new RegExp(`\\${variable}\\s*=\\s*"([^"]+)"\\s*;`, 'g'))];
+    return values.length === 1 ? values[0][1] : null;
+}
+
 function journalIndex(content: string) {
     const titles = new Map<string, { title: string; script: string }>();
     const root = `${content}/scripts/quests`;
@@ -220,10 +255,12 @@ function journalIndex(content: string) {
             }
             if (!name.endsWith('.rs2') || !name.includes('journal')) continue;
             const text = fs.readFileSync(full, 'utf8');
-            const button = /\[if_button,questlist:([A-Za-z0-9_]+)\]/.exec(text);
-            const title = /~quest_journal\("([^"]+)"/.exec(text);
-            if (button && title) {
-                titles.set(button[1], { title: title[1], script: full.slice(content.length + 1) });
+            for (const block of parseRs2Blocks(full.slice(content.length + 1), text)) {
+                if (block.kind !== 'if_button') continue;
+                const button = /^questlist:([A-Za-z0-9_]+)$/.exec(block.name);
+                if (!button) continue;
+                const title = journalTitle(block);
+                if (title) titles.set(button[1], { title, script: block.span.file });
             }
         }
     };

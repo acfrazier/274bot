@@ -100,6 +100,7 @@ impl Delegation {
             ranged_style: Default::default(),
             kit: None,
             spells: None,
+            fallback_spells: false,
             stand: Some(WorldTile {
                 x: self.stand.x,
                 z: self.stand.z,

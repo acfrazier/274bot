@@ -11,6 +11,7 @@ pub enum OpKind {
     Retaliate,
     Attack,
     Style,
+    Cast = 7,
     Pickup = 8,
 }
 impl OpKind {
@@ -113,6 +114,7 @@ impl Schedule {
             OpKind::Attack => Some(
                 u16::from(rate.max(1)) + u16::from(!matches!(effect, InputEffect::RangedAttack)),
             ),
+            OpKind::Cast => Some(5),
         };
         if kind != OpKind::Prayer || matches!(effect, InputEffect::PrayerOn) {
             if let Some(delay) = delay {
@@ -161,6 +163,16 @@ impl Schedule {
                 self.last_attack = tick;
                 self.attack_valid = true;
                 self.restore_owed = false;
+                self.interaction = Interaction::Unknown;
+            }
+            OpKind::Cast => {
+                self.last_attack = tick;
+                self.attack_valid = true;
+                self.restore_owed = false;
+                self.cycle = Cycle {
+                    deadline: tick.wrapping_add(5),
+                    known: true,
+                };
                 self.interaction = Interaction::Unknown;
             }
         }

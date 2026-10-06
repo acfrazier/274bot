@@ -1,11 +1,9 @@
 //! Queue-row eligibility from quest-tab, skill, varp, world and bank evidence.
 use super::bank_memo::BankMemo;
-use super::compile::{CompiledEligibility, CompiledItemKind, CompiledPath};
-use super::path::QuestRequirementDocument;
+use super::compile::{CompiledEligibility, CompiledItemKind, CompiledPath, CompiledRequirement};
 use api::quest_facts::QuestCatalog;
-use api::selected::{ItemAmount, QuestGate, SkillMinimum};
+use api::selected::{QuestGate, RequirementKind, SkillMinimum};
 use api::snapshot::{QuestListStatus, SnapshotView, StatView};
-use serde::Deserialize;
 use std::sync::Arc;
 
 const QUEST_POINTS_VARP: i32 = 101;
@@ -49,15 +47,6 @@ pub struct EligibilityResult {
     pub skill_gates: Vec<SkillGate>,
 }
 
-#[derive(Deserialize)]
-enum RequirementKind {
-    Skill(SkillMinimum),
-    Item(ItemAmount),
-    Quest(QuestGate),
-    QuestPoints(u16),
-    MembersWorld,
-}
-
 /// Evaluate one compiled queue row. A completed quest is terminal before any
 /// requirements; item requirements apply only before the quest starts.
 pub fn evaluate(
@@ -77,15 +66,21 @@ fn evaluate_path(
     bank: &BankMemo,
 ) -> EligibilityResult {
     let mut skills = Vec::new();
-    let Some(status) = tab_status(view, &path.display_name) else {
-        return blocked(
-            vec![reason(
-                "quest-status",
-                "quest-tab status is not observed",
-                None,
-            )],
-            skills,
-        );
+    let status = if path.kind == super::path::PathKind::Miniquest {
+        // Completion is proved by the owned card/guard reader, not a fabricated tab row.
+        QuestListStatus::NotStarted
+    } else {
+        let Some(status) = tab_status(view, &path.display_name) else {
+            return blocked(
+                vec![reason(
+                    "quest-status",
+                    "quest-tab status is not observed",
+                    None,
+                )],
+                skills,
+            );
+        };
+        status
     };
     if status == QuestListStatus::Complete {
         return EligibilityResult {
@@ -118,22 +113,12 @@ fn evaluate_path(
 
     let stats = view.stats().map(|observed| observed.value);
     for requirement in header.requirements.iter() {
-        if !requirement.at.eq_ignore_ascii_case("start") {
+        if !requirement.at_start {
             continue;
         }
-        let kind = match serde_json::from_value::<RequirementKind>(requirement.kind.clone()) {
-            Ok(kind) => kind,
-            Err(_) => {
-                reasons.push(requirement_reason(
-                    requirement,
-                    "requirement kind is malformed or unsupported",
-                ));
-                continue;
-            }
-        };
-        match kind {
+        match &requirement.kind {
             RequirementKind::Skill(minimum) => {
-                check_skill(requirement, minimum, stats, &mut skills, &mut reasons);
+                check_skill(requirement, *minimum, stats, &mut skills, &mut reasons);
             }
             RequirementKind::Item(item) if !started => {
                 check_item(requirement, item.item, item.count, view, bank, &mut reasons);
@@ -141,19 +126,19 @@ fn evaluate_path(
             RequirementKind::Item(_) => {}
             RequirementKind::Quest(gate) => {
                 let id = match gate {
-                    QuestGate::Complete(id) => id.0,
-                    QuestGate::Window(window) => window.quest.0,
+                    QuestGate::Complete(id) => id.0.as_ref(),
+                    QuestGate::Window(window) => window.quest.0.as_ref(),
                 };
-                check_quest(requirement, &id, view, quests, &mut reasons);
+                check_quest(requirement, id, view, quests, &mut reasons);
             }
             RequirementKind::QuestPoints(required) => {
-                check_quest_points(requirement, required, view, &mut reasons);
+                check_quest_points(requirement, *required, view, &mut reasons);
             }
             RequirementKind::MembersWorld => check_membership(
                 view,
                 requirement.id.0.as_ref(),
                 "a members world is required",
-                Some(requirement.source.as_str()),
+                Some(requirement.source.as_ref()),
                 &mut reasons,
             ),
         }
@@ -166,11 +151,11 @@ fn evaluate_path(
             .filter(|item| item.kind == CompiledItemKind::MustHave)
         {
             check_item(
-                &QuestRequirementDocument {
+                &CompiledRequirement {
                     id: api::selected::FactKey::new(&item.name),
-                    kind: serde_json::Value::Null,
-                    at: "Start".into(),
-                    source: String::new(),
+                    at_start: true,
+                    source: Arc::from(""),
+                    kind: RequirementKind::MembersWorld,
                 },
                 item.id,
                 item.qty,
@@ -200,7 +185,7 @@ fn tab_status(view: &SnapshotView<'_>, display: &str) -> Option<QuestListStatus>
 }
 
 fn check_skill(
-    requirement: &QuestRequirementDocument,
+    requirement: &CompiledRequirement,
     minimum: SkillMinimum,
     stats: Option<&[StatView]>,
     skill_gates: &mut Vec<SkillGate>,
@@ -241,7 +226,7 @@ fn check_skill(
 }
 
 fn check_item(
-    requirement: &QuestRequirementDocument,
+    requirement: &CompiledRequirement,
     item_id: i32,
     required: u32,
     view: &SnapshotView<'_>,
@@ -289,7 +274,7 @@ fn check_item(
 }
 
 fn check_quest(
-    requirement: &QuestRequirementDocument,
+    requirement: &CompiledRequirement,
     quest_id: &str,
     view: &SnapshotView<'_>,
     quests: &QuestCatalog,
@@ -316,7 +301,7 @@ fn check_quest(
 }
 
 fn check_quest_points(
-    requirement: &QuestRequirementDocument,
+    requirement: &CompiledRequirement,
     required: u16,
     view: &SnapshotView<'_>,
     reasons: &mut Vec<BlockReason>,
@@ -355,11 +340,11 @@ fn check_membership(
     }
 }
 
-fn requirement_reason(requirement: &QuestRequirementDocument, detail: &str) -> BlockReason {
+fn requirement_reason(requirement: &CompiledRequirement, detail: &str) -> BlockReason {
     reason(
         requirement.id.0.as_ref(),
         detail,
-        Some(requirement.source.as_str()),
+        Some(requirement.source.as_ref()),
     )
 }
 
@@ -382,7 +367,10 @@ fn blocked(reasons: Vec<BlockReason>, skill_gates: Vec<SkillGate>) -> Eligibilit
 mod tests {
     use super::*;
     use crate::quester::compile::{compile_uncached_for_test, decode_cook};
-    use crate::quester::path::QuestItemDocument;
+    use crate::quester::path::{
+        QuestItemDocument, QuestItemKindDocument, QuestRequirementDocument,
+        QuestRequirementKindDocument,
+    };
     use api::quest_progress::EvidenceStamp;
     use api::selected::{ClientRevision, FactKey, RunKey};
     use api::snapshot::{GameSnapshot, QuestStatusView, StatView, VarpView, WorldStateView};
@@ -408,7 +396,7 @@ mod tests {
         (selected, quests, snapshot)
     }
 
-    fn req(id: &str, kind: serde_json::Value) -> QuestRequirementDocument {
+    fn req(id: &str, kind: QuestRequirementKindDocument) -> QuestRequirementDocument {
         QuestRequirementDocument {
             id: FactKey::new(id),
             kind,
@@ -444,7 +432,10 @@ mod tests {
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().requirements.push(req(
             "attack:20",
-            serde_json::json!({"Skill": {"skill": 0, "level": 20}}),
+            QuestRequirementKindDocument::Skill {
+                skill: "attack".into(),
+                level: 20,
+            },
         ));
         snapshot.seed_stats(vec![StatView {
             index: 0,
@@ -481,10 +472,17 @@ mod tests {
         let (selected, quests, mut snapshot) = fixture();
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().requirements.extend([
-            req("qp:20", serde_json::json!({"QuestPoints": 20})),
+            req(
+                "item:egg",
+                QuestRequirementKindDocument::Item {
+                    obj: "egg".into(),
+                    qty: 1,
+                },
+            ),
+            req("qp:20", QuestRequirementKindDocument::QuestPoints(20)),
             req(
                 "quest:runemysteries",
-                serde_json::json!({"Quest": {"Complete": "runemysteries"}}),
+                QuestRequirementKindDocument::Quest("runemysteries".into()),
             ),
         ]);
         snapshot.seed_varps(vec![VarpView {
@@ -507,6 +505,17 @@ mod tests {
             true,
         );
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
+        let egg_id = selected.item_by_alias("egg").expect("egg alias").id;
+        let compiled_egg = path
+            .eligibility
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id.0.as_ref() == "item:egg")
+            .expect("compiled egg requirement");
+        assert!(matches!(
+            &compiled_egg.kind,
+            RequirementKind::Item(item) if item.item == egg_id && item.count == 1
+        ));
         let result = evaluate_snapshot(&path, &quests, &snapshot, &BankMemo::default());
         let Eligibility::Blocked(reasons) = result.state else {
             panic!("unmet quest-point and quest-completion gates must block");
@@ -524,7 +533,7 @@ mod tests {
         document.quest.as_mut().unwrap().items = vec![QuestItemDocument {
             obj: "egg".into(),
             qty: 1,
-            kind: "mustHave".into(),
+            kind: QuestItemKindDocument::MustHave,
             acquire: None,
         }];
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();
@@ -557,7 +566,7 @@ mod tests {
         document.quest.as_mut().unwrap().items = vec![QuestItemDocument {
             obj: "egg".into(),
             qty: 1,
-            kind: "mustHave".into(),
+            kind: QuestItemKindDocument::MustHave,
             acquire: None,
         }];
         let path = compile_uncached_for_test(&document, &selected, &quests).unwrap();

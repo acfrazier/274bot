@@ -5600,6 +5600,8 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
         ticks: 0.0,
     };
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Boat,
         player_delta: None,
         at,
@@ -6255,6 +6257,100 @@ fn script_start_handle_explicit_loadouts_starts() {
     wait_script_state(&play, "alice", script::RunState::Running);
     play.script_stop("alice");
     wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[test]
+fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let start = play.script_start_handle();
+    let rows = [
+        script::Loadout::new("First"),
+        script::Loadout::new("Second"),
+    ];
+    for wanted in ["", " SECOND "] {
+        let mut bag = serde_json::Map::new();
+        bag.insert("loadout".into(), serde_json::json!(wanted));
+        start
+            .start_load_with_loadouts(
+                "alice",
+                "export function tick() {}".into(),
+                script::LoadShape::NativeTick,
+                Some(bag),
+                vec![],
+                &rows,
+            )
+            .unwrap_or_else(|error| panic!("loadout {wanted:?} should start: {error}"));
+        wait_script_state(&play, "alice", script::RunState::Running);
+        play.script_stop("alice");
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+
+    let ambiguous_rows = [
+        script::Loadout::new("First"),
+        script::Loadout::new("Second"),
+        script::Loadout::new("SECOND"),
+    ];
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!(" second "));
+    let ambiguous = start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            Some(bag.clone()),
+            vec![],
+            &ambiguous_rows,
+        )
+        .expect_err("ambiguous case-insensitive selection must refuse at load")
+        .to_string();
+    assert!(ambiguous.contains("\" second \""), "{ambiguous}");
+    assert!(ambiguous.contains("Second"), "{ambiguous}");
+    assert!(ambiguous.contains("SECOND"), "{ambiguous}");
+    assert!(ambiguous.contains("First"), "{ambiguous}");
+
+    bag.insert("loadout".into(), serde_json::json!("missing"));
+    let unknown = start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            Some(bag),
+            vec![],
+            &ambiguous_rows,
+        )
+        .expect_err("unknown selection must refuse at load")
+        .to_string();
+    assert!(unknown.contains("\"missing\""), "{unknown}");
+    assert!(unknown.contains("First"), "{unknown}");
+    assert!(unknown.contains("Second"), "{unknown}");
+    assert!(unknown.contains("SECOND"), "{unknown}");
+
+    let saved = format!("__i2_missing_loadout_{}__", std::process::id());
+    let mut native_bag = serde_json::Map::new();
+    native_bag.insert("loadout".into(), serde_json::json!(saved));
+    let native_error = start
+        .start_compiled("alice", script::CompiledId("Sherlock"), native_bag)
+        .expect_err("native Start must refuse an unknown saved loadout")
+        .to_string();
+    assert!(native_error.contains("loadout setting"), "{native_error}");
+    assert!(native_error.contains(&saved), "{native_error}");
+    assert!(
+        native_error.contains("Available loadouts"),
+        "{native_error}"
+    );
 }
 
 #[test]
@@ -7303,6 +7399,97 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
     assert_eq!(frame(&c, &mut snap), (empty, empty));
     script::observed::on_reset();
+}
+
+/// P-dispatch end to end: two bank-side rows share a name (a noted row
+/// first, then the item). Compat `Bank.deposit(name, 'Deposit-1')` in the
+/// isolate presses the first such row by id, slot and component, and the
+/// host dispatches exactly that row's Deposit-1: no name re-find, never an
+/// All on the other id.
+#[test]
+fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
+    use client::config::ObjType;
+    use client::io::ServerProt289;
+    let mut c = bank_client_289();
+    // A real (loopback) stream so `Interactions` sees an attached client.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    std::mem::forget(listener);
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs.resize(335, ObjType::default());
+        for id in [333, 334] {
+            cache.objs[id].id = id as i32;
+            cache.objs[id].name = "Trout".into();
+        }
+    }
+    // Side grid 701: noted trout (334) ×9 in slot 0, trout (333) ×2 in slot 1.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 2, 1, 79, 9, 1, 78, 2],
+    );
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 89, 0, 1, 0, 2, 5],
+    );
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_loaded(), "the main bank posted its stock");
+    let side: Vec<(i32, i32)> = snap
+        .bank_side()
+        .iter()
+        .map(|item| (item.def.id, item.slot))
+        .collect();
+    assert_eq!(side, vec![(334, 0), (333, 1)], "two same-name side rows");
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        None,
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
+    }
+}
+"#;
+    let iso =
+        script::LoadIsolate::spawn(src.into(), script::LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    let reqs = iso.drain_interacts();
+    let pressed = inv_button_req(334, 0, 701, 1, snap.bank_session_generation());
+    assert_eq!(
+        reqs,
+        vec![pressed.clone()],
+        "the selected row and its label"
+    );
+    iso.join();
+    let rec = dispatch_inv_button(&snap, pressed);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::INV_BUTTON1, 334, 0, 701)],
+        "the host presses that exact row, not the other trout"
+    );
 }
 
 /// Task 7 — the shim's interact requests dispatch through the slot
@@ -8418,12 +8605,15 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Deposit-All reaches the driver");
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_some());
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_bank_op()
+            .is_none(),
+        "the exact-row press arms no host-owned name op"
+    );
     assert_eq!(
         script_slot(&scripts, "alice")
             .unwrap()
@@ -8434,6 +8624,10 @@ export default class T extends LoopingBot {
         "undefined"
     );
 
+    // The server's deposit: the backpack (500) and its bank-side mirror
+    // (701) empty, and the bank holds the bones.
+    let mut empty_pack = Packet::new(vec![1, 244, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_pack);
     let mut empty_side = Packet::new(vec![2, 189, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
     let mut deposited_bank = Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 2, 3]);
@@ -8469,9 +8663,9 @@ export default class T extends LoopingBot {
         .unwrap()
         .pending_bank_op()
         .is_none());
-    // The emptied side view is waited on for the frozen 1.2 s Rust deadline.
-    // Drive ticks until the script observes that transition rather than
-    // assuming one fixed sleep lands on the right isolate schedule.
+    // The pressed id left the pack and the side posted empty with its root
+    // up: the deposit settles without the 1.2 s not-ready wait. Drive ticks
+    // until the script observes it rather than assuming one isolate schedule.
     let before_withdraw = c.out.pos;
     let deadline = empty_side_observed_at + Duration::from_secs(10);
     let mut next_tick = 3;
@@ -8523,10 +8717,6 @@ export default class T extends LoopingBot {
         "the deposited bank snapshot must resolve the wait without reopening or timing out"
     );
     let settle_elapsed = empty_side_observed_at.elapsed();
-    assert!(
-        settle_elapsed >= Duration::from_millis(1_200),
-        "deposit settled before the 1.2 s empty-side deadline: {settle_elapsed:?}"
-    );
     assert!(
         settle_elapsed < Duration::from_secs(3),
         "deposit settlement exceeded the end-to-end 3 s bound: {settle_elapsed:?}"
@@ -10358,7 +10548,27 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
+    assert!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .is_none(),
+        "the exact-row All press arms no host-owned fill"
+    );
+    assert_eq!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("typeof globalThis.__fill_result")
+            .unwrap(),
+        "undefined",
+        "the press is not the load"
+    );
 
+    // Frozen `withdrawLoad`'s posted observation: the row's bank count is 0.
     let mut empty_bank = Packet::new(vec![2, 89, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_bank);
     snap.rebuild(&c);
@@ -10369,43 +10579,7 @@ export default class T extends LoopingBot {
         true,
         2,
         Some((3205, 3205, 0)),
-        Some(&before_inv),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .probe("typeof globalThis.__fill_result")
-            .unwrap(),
-        "undefined",
-        "a vanished stock row alone cannot claim fill progress"
-    );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_withdraw_x()
-        .is_some());
-
-    let filled_inv = [(1, 3), (2, 20)];
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        3,
-        Some((3205, 3205, 0)),
-        Some(&filled_inv),
+        Some(&[(1, 3), (2, 20)]),
         None,
         Some(&snap),
         Some(&names),
@@ -10663,6 +10837,7 @@ fn dispatch_script_interact_sends_held_item_bury() {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             }],
         ),
         "held Bury must dispatch"
@@ -10685,11 +10860,13 @@ fn dispatch_script_interact_sends_held_item_bury() {
                 name: "Bones".into(),
                 action: "Wear".into(),
                 slot: None,
+                target_item_id: None,
             },
             script::shim::InteractReq::Held {
                 name: "Lobster".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             },
         ],
     ));
@@ -10697,6 +10874,104 @@ fn dispatch_script_interact_sends_held_item_bury() {
         c.out.pos, before,
         "a label no held op resolves and an unknown name send nothing"
     );
+}
+
+#[test]
+fn dispatch_held_revalidates_exact_id_and_slot_without_name_fallback() {
+    let mut c = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
+        cache.objs[2].name = "Bones".into();
+        cache.objs[2].iop = [Some("Bury".into()), None, None, None, None];
+    }
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let (navs, world) = empty_nav();
+    let request = |target_item_id, slot| script::shim::InteractReq::Held {
+        name: "Bones".into(),
+        action: "Bury".into(),
+        slot,
+        target_item_id,
+    };
+    let dispatch = |driver: &mut GuardRec, snapshot: &GameSnapshot, target_item_id, slot| {
+        dispatch_script_interact(
+            driver,
+            snapshot,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![request(target_item_id, slot)],
+        )
+    };
+
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            // Actual ids 1 and 2 share the display name but occupy distinct slots.
+            link_obj_type: Some(vec![2, 3]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut exact_snapshot = GameSnapshot::new();
+    exact_snapshot.rebuild(&c);
+    let mut exact = GuardRec::default();
+    assert!(dispatch(&mut exact, &exact_snapshot, Some(1), Some(0)));
+    assert!(exact
+        .menus
+        .iter()
+        .any(|(_, _, id, slot, _)| (*id, *slot) == (1, 0)));
+
+    // The selected id 1 vanished from slot 0; a same-name id 2 now occupies
+    // that exact slot while id 1 remains elsewhere.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 2]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut substituted_snapshot = GameSnapshot::new();
+    substituted_snapshot.rebuild(&c);
+    let mut substituted = GuardRec::default();
+    assert!(!dispatch(
+        &mut substituted,
+        &substituted_snapshot,
+        Some(1),
+        Some(0)
+    ));
+    assert!(substituted.menus.is_empty());
+
+    // Slot 0 is now empty, but the same-name id 2 still exists in slot 1.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 3]),
+            link_obj_number: Some(vec![0, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut disappeared_snapshot = GameSnapshot::new();
+    disappeared_snapshot.rebuild(&c);
+    let mut disappeared = GuardRec::default();
+    assert!(!dispatch(
+        &mut disappeared,
+        &disappeared_snapshot,
+        Some(1),
+        Some(0)
+    ));
+    assert!(disappeared.menus.is_empty());
+
+    let mut incomplete = GuardRec::default();
+    assert!(!dispatch(&mut incomplete, &exact_snapshot, Some(1), None));
+    assert!(incomplete.menus.is_empty());
 }
 
 #[test]
@@ -10732,6 +11007,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
+                target_item_id: None,
             })
             .collect(),
     ));
@@ -10765,6 +11041,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
+                target_item_id: None,
             }],
         ));
     }
@@ -10779,6 +11056,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
             name: "Bones".into(),
             action: "Drop".into(),
             slot: Some(slot),
+            target_item_id: None,
         }))
         .collect();
     assert!(dispatch_script_interact(
@@ -11104,6 +11382,140 @@ fn colocated_wall_flax(wall_first: bool) -> (Client, GameSnapshot) {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     (c, snap)
+}
+
+fn colocated_loc_use_fixture(wall_first: bool) -> (GameSnapshot, api::obj_names::ObjNames) {
+    use client::config::ObjType;
+
+    let (mut client, mut snapshot) = colocated_wall_flax(wall_first);
+    {
+        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        cache.objs.resize(433, ObjType::default());
+        cache.objs[432].id = 432;
+        cache.objs[432].name = "Chest key".into();
+    }
+    client.side_icon[3] = 500;
+    client.set_iface(
+        500,
+        IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![433]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    snapshot.rebuild(&client);
+    assert_eq!(
+        snapshot
+            .inventory()
+            .iter()
+            .map(|item| (item.def.id, item.slot))
+            .collect::<Vec<_>>(),
+        [(432, 0)],
+    );
+    let names = api::obj_names::ObjNames::from_objs(&client.cache.objs);
+    (snapshot, names)
+}
+
+#[test]
+fn dispatch_use_on_loc_honors_co_located_name_and_exact_id() {
+    for wall_first in [true, false] {
+        let (snapshot, names) = colocated_loc_use_fixture(wall_first);
+        let (navs, world) = empty_nav();
+        for (target_name, target_item_id) in [
+            (Some("fLaX"), None),
+            (None, Some(2646)),
+            (Some("Flax"), Some(2646)),
+        ] {
+            let mut rec = GuardRec::default();
+            assert!(dispatch_script_interact(
+                &mut rec,
+                &snapshot,
+                Some(&names),
+                Some((4, 5, 0)),
+                &navs,
+                &world,
+                None,
+                "alice",
+                vec![script::shim::InteractReq::UseOn {
+                    name: "Chest key".into(),
+                    kind: "loc".into(),
+                    target_name: target_name.map(str::to_owned),
+                    x: 5,
+                    z: 6,
+                    level: 0,
+                    index: None,
+                    source_item_id: Some(432),
+                    source_item_slot: Some(0),
+                    target_item_id,
+                    target_item_slot: None,
+                }],
+            ));
+            assert_eq!(
+                rec.menus,
+                [
+                    (0, MiniMenuAction::USEHELD_START, 432, 0, 500),
+                    (
+                        0,
+                        MiniMenuAction::USEHELD_ONLOC,
+                        flax_typecode(&snapshot),
+                        5,
+                        6,
+                    ),
+                ],
+                "requested name/id must beat a co-located wall (wall_first={wall_first})",
+            );
+        }
+    }
+}
+
+#[test]
+fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
+    let (snapshot, names) = colocated_loc_use_fixture(true);
+    let (navs, world) = empty_nav();
+    for (target_name, target_item_id) in [
+        (Some("Missing"), None),
+        (None, Some(9999)),
+        (Some("Flax"), Some(980)),
+    ] {
+        let mut rec = GuardRec::default();
+        assert!(!dispatch_script_interact(
+            &mut rec,
+            &snapshot,
+            Some(&names),
+            Some((4, 5, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::UseOn {
+                name: "Chest key".into(),
+                kind: "loc".into(),
+                target_name: target_name.map(str::to_owned),
+                x: 5,
+                z: 6,
+                level: 0,
+                index: None,
+                source_item_id: Some(432),
+                source_item_slot: Some(0),
+                target_item_id,
+                target_item_slot: None,
+            }],
+        ));
+        assert!(
+            rec.menus.is_empty(),
+            "a missing name/id or identity disagreement must send nothing",
+        );
+    }
 }
 
 fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
@@ -11930,6 +12342,8 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     };
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -12305,6 +12719,7 @@ fn dispatch_script_interact_held_first_match_only() {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
     ));
     let one_op = one.out.pos - before_one;
@@ -12350,6 +12765,7 @@ fn dispatch_script_interact_held_first_match_only() {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
     ));
     assert_eq!(
@@ -12681,6 +13097,8 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -21931,6 +22349,8 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
     c.npc_count = 1;
 
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -22287,7 +22707,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
-                                options: script::FindOptions::default(),
+                                options: script::native::WalkOptions::default(),
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),
@@ -22725,6 +23145,8 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     plant_nav_footprint_loc(&mut client, booth.x, booth.z, 1, 1);
 
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -23131,6 +23553,8 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
 
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -23415,6 +23839,8 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         mark(62, 50, CollisionFlag::SQ_BLOCKED);
     }
     let door = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -23531,6 +23957,8 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
             graph.at.entry(from).or_default().push(index);
             graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
                 kind: TransportKind::Door,
                 player_delta: None,
                 at: from,
@@ -23643,6 +24071,8 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     let mut graph = TransportGraph::default();
     graph.at.entry(from).or_default().push(0);
     graph.edges.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: from,
@@ -23695,12 +24125,12 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
 /// Compare every admitted and rejected candidate, including directed walls
 /// and detours whose distance alone cannot decide the dequeue-rank budget.
 #[test]
-fn real_v15_batched_arrival_matches_every_forward_predicate() {
+fn real_v16_batched_arrival_matches_every_forward_predicate() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v15 pack");
+    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v16 pack");
     let tile = |x, z, level| WorldTile { x, z, level };
     let cases = [
         (tile(3017, 3170, 0), 12),
@@ -23775,16 +24205,16 @@ fn real_v15_batched_arrival_matches_every_forward_predicate() {
 }
 
 /// NAV-ARRIVAL-1: the real Return route and the native snapshot must agree.
-/// Set NAV_ARRIVAL_PACK to a v15 pack; its raw flags sidecar supplies the
+/// Set NAV_ARRIVAL_PACK to a v16 pack; its raw flags sidecar supplies the
 /// endpoint scene without connecting to the game engine.
 #[test]
-fn real_v15_return_radius_endpoint_is_native_arrival() {
+fn real_v16_return_radius_endpoint_is_native_arrival() {
     let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
         eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
         return;
     };
     let path = std::path::PathBuf::from(path);
-    let mut world = NavWorld::load_pack(&path).expect("real v15 pack");
+    let mut world = NavWorld::load_pack(&path).expect("real v16 pack");
     let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
         .expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
@@ -24003,6 +24433,8 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
 /// differ only in `to`, exactly as the bake emits them.
 fn glory_edge() -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -24144,10 +24576,12 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
     };
     let glory = [
         TransportEdge {
+            takeoff: None,
             to: edgeville,
             ..glory_edge()
         },
         TransportEdge {
+            takeoff: None,
             to: karamja,
             ..glory_edge()
         },
@@ -24247,6 +24681,8 @@ fn toll_nav_world() -> NavWorld {
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
     let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -25483,6 +25919,7 @@ mod host_batch_tests {
                     name: "missing food".into(),
                     action: "Eat".into(),
                     slot: Some(0),
+                    target_item_id: None,
                 },
                 script::shim::InteractReq::Npc {
                     name: "Goblin".into(),

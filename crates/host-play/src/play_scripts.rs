@@ -72,6 +72,26 @@ pub(crate) enum StartRequest<'a> {
     },
 }
 
+fn validate_script_loadout_setting(
+    rows: &[script::Loadout],
+    bag: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<(), String> {
+    let wanted = bag.and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
+    script::loadouts_store::resolve_script_loadout_setting(rows, wanted)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn validate_default_script_loadout_setting(
+    bag: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    if !bag.contains_key("loadout") {
+        return Ok(());
+    }
+    let loadouts = script::LoadoutsStore::with_default_path();
+    validate_script_loadout_setting(loadouts.loadouts(), Some(bag))
+}
+
 impl ScriptStartHandle {
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
@@ -101,10 +121,9 @@ impl ScriptStartHandle {
         .map_err(|error| error.to_string())
     }
 
-    /// Harness catalog Start with caller-owned loadouts. Uses the existing
-    /// explicit-loadout isolate start, then posts `settings_bag` on success.
-    /// Does not inspect loadout names and does not affect
-    /// [`Play::script_start_load_typed`].
+    /// Harness catalog Start with caller-owned loadouts. It validates the
+    /// saved setting against those rows before starting, then posts the bag.
+    /// Does not affect [`Play::script_start_load_typed`].
     pub fn start_load_with_loadouts(
         &self,
         name: &str,
@@ -175,21 +194,22 @@ impl ScriptStartHandle {
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
             StartRequest::Compiled { id, bag } => {
-                if script::compiled_card(id).is_none() {
-                    return Err(Refused(format!("not ported: {}", id.0)));
+                if let Err(error) = validate_default_script_loadout_setting(&bag) {
+                    Err(Refused(error))
+                } else if script::compiled_card(id).is_none() {
+                    Err(Refused(format!("not ported: {}", id.0)))
+                } else if let Some(selected) = self.game_data.clone() {
+                    slot.start_compiled(
+                        name,
+                        id,
+                        Arc::new(bag),
+                        selected,
+                        Arc::clone(&self.named_banks),
+                    )
+                    .map_err(|error| Refused(error.to_string()))
+                } else {
+                    Err(Refused("selected game data unavailable".into()))
                 }
-                let selected = self
-                    .game_data
-                    .clone()
-                    .ok_or_else(|| Refused("selected game data unavailable".into()))?;
-                slot.start_compiled(
-                    name,
-                    id,
-                    Arc::new(bag),
-                    selected,
-                    Arc::clone(&self.named_banks),
-                )
-                .map_err(|error| Refused(error.to_string()))
             }
             StartRequest::Load {
                 source,
@@ -199,16 +219,19 @@ impl ScriptStartHandle {
                 loadouts,
             } => {
                 if let Some(loadouts) = loadouts {
-                    let result = slot
-                        .start_load_with_loadouts_and_game_data(
-                            source,
-                            shape,
-                            siblings,
-                            loadouts,
-                            self.game_data.clone(),
-                            Arc::clone(&self.named_banks),
-                        )
-                        .map_err(Refused);
+                    let result = match validate_script_loadout_setting(loadouts, bag.as_ref()) {
+                        Ok(()) => slot
+                            .start_load_with_loadouts_and_game_data(
+                                source,
+                                shape,
+                                siblings,
+                                loadouts,
+                                self.game_data.clone(),
+                                Arc::clone(&self.named_banks),
+                            )
+                            .map_err(Refused),
+                        Err(error) => Err(Refused(error)),
+                    };
                     if result.is_ok() {
                         if let Some(bag) = bag.as_ref() {
                             slot.post_settings_bag(bag);
@@ -238,8 +261,10 @@ impl ScriptStartHandle {
     /// Install a native card fixture through the same SlotScript lifecycle as
     /// a compiled Start. This seam is test-only: it does not add a registry
     /// card or another production start path.
-    #[cfg(test)]
-    pub(crate) fn start_test_script(
+    // Test seam for fixture-only native starts; no production registry path.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script(
         &self,
         name: &str,
         script: Box<dyn script::native::Script>,

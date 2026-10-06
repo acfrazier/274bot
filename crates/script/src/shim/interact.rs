@@ -163,15 +163,18 @@ pub enum InteractReq {
     /// Withdraw-All or the shared Withdraw-X continuation and observes settlement.
     #[serde(rename = "withdraw-load")]
     WithdrawLoad { name: String, bank_generation: u64 },
-    /// Interact with the held item named `name` using the action label
-    /// (`Bury`, `Wear`, …). The host resolves the name through ObjNames
-    /// and dispatches the item's menu op (rs2b0t `Item.interact`).
+    /// Interact with a held inventory item by label. When `target_item_id` is
+    /// present, `slot` is required and both are revalidated; a partial explicit
+    /// id fails closed. Legacy requests without an id use name resolution and
+    /// may constrain that lookup by `slot`.
     #[serde(rename = "held")]
     Held {
         name: String,
         action: String,
         #[serde(default)]
         slot: Option<i32>,
+        #[serde(default)]
+        target_item_id: Option<i32>,
     },
     /// Selected component-item operation (`Input.invButton`). Host
     /// dispatch re-resolves the exact current bank row by id/slot/
@@ -260,9 +263,12 @@ pub enum InteractReq {
         level: i32,
         index: Option<i32>,
     },
-    /// Continue the open chat dialog.
+    /// Continue the open chat dialog or an explicitly selected visible pause button.
     #[serde(rename = "continue")]
-    ContinueDialog,
+    ContinueDialog {
+        #[serde(default)]
+        component_id: Option<i32>,
+    },
     /// Answer the chat modal's `option`-th choice (1-based).
     #[serde(rename = "answer")]
     Answer { option: i32 },

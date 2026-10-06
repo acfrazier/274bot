@@ -1214,3 +1214,120 @@ fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
     );
     assert_eq!(script.solved, 0);
 }
+
+fn start_sherlock_slot(world: &World) -> crate::slot::SlotScript {
+    let mut slot = crate::slot::SlotScript::new();
+    slot.bind_incarnation(1);
+    slot.start_compiled(
+        "alice",
+        CARD.id,
+        Arc::new(SettingsBag::new()),
+        Arc::clone(&world.data),
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+    )
+    .expect("start Sherlock through its compiled-card slot path");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match slot.poll_start() {
+            crate::slot::StartPoll::Settled(crate::slot::StartOutcome::Ready) => break,
+            crate::slot::StartPoll::Pending => {
+                assert!(Instant::now() < deadline, "Sherlock preparation stalled");
+                std::thread::yield_now();
+            }
+            outcome => panic!("unexpected Sherlock Start outcome: {outcome:?}"),
+        }
+    }
+    slot
+}
+
+fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u64) {
+    let mut driver = crate::ctx::test_support::NullDriver::default();
+    slot.on_game_tick(&mut crate::ctx::ScriptCtx {
+        driver: &mut driver,
+        tick,
+        here: Some(world.here),
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(&world.snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick {
+            selected: Some(&world.data),
+            reach: None,
+            hold: world.held,
+            interacts: None,
+        },
+    });
+}
+
+fn settle_sherlock_restart(slot: &mut crate::slot::SlotScript) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while slot.state() == crate::slot::RunState::Starting {
+        assert!(Instant::now() < deadline, "Sherlock recreation stalled");
+        slot.observe_lifecycle();
+        std::thread::yield_now();
+    }
+    assert_eq!(slot.state(), crate::slot::RunState::Running);
+}
+
+#[test]
+fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(10, "Welcome back")]);
+    let mut slot = start_sherlock_slot(&world);
+    tick_sherlock_slot(&mut slot, &world, 1);
+    assert_eq!(
+        slot.native_status().map(|status| status.phase),
+        Some(NativePhase::Working),
+        "the original clue session is live before recreation"
+    );
+    let _ = slot.drain_interacts();
+
+    // The death arrives after the watchdog has dropped the old card but
+    // before the recreated card sees its first frame.
+    slot.restart_from_identity(Instant::now())
+        .expect("watchdog recreation");
+    world.snapshot.seed_chat_lines(vec![
+        chat_line(11, "Oh dear, you are dead!"),
+        chat_line(10, "Welcome back"),
+    ]);
+    settle_sherlock_restart(&mut slot);
+    tick_sherlock_slot(&mut slot, &world, 2);
+    assert!(
+        slot.drain_interacts().is_empty(),
+        "the gap death suppresses work from a restarted clue"
+    );
+    assert_eq!(
+        slot.native_status().map(|status| status.phase),
+        Some(NativePhase::Waiting),
+        "the recreated card observes the death instead of baselining it"
+    );
+
+    tick_sherlock_slot(&mut slot, &world, 3);
+    assert_eq!(
+        slot.native_status().map(|status| status.phase),
+        Some(NativePhase::Working),
+        "the gap death is consumed once and does not suppress later work"
+    );
+    slot.stop();
+}
+
+#[test]
+fn native_sherlock_fresh_start_baselines_stale_death_chat() {
+    crate::clue::on_reset();
+    let mut world = World::new(0);
+    world
+        .snapshot
+        .seed_chat_lines(vec![chat_line(10, "Oh dear, you are dead!")]);
+    let mut slot = start_sherlock_slot(&world);
+    tick_sherlock_slot(&mut slot, &world, 1);
+    assert_eq!(
+        slot.native_status().map(|status| status.phase),
+        Some(NativePhase::Working),
+        "a new Start baselines old chat rather than replaying its death"
+    );
+    slot.stop();
+}

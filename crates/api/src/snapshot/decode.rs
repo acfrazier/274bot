@@ -216,9 +216,9 @@ impl GameSnapshot {
             let base = (client.map_build_base_x, client.map_build_base_z);
             let local_slot = client.self_slot as usize;
             let local_tile = local_world_tile(client);
-            // Keep incoming threats first; candidates whose source tile is local
-            // use remaining capacity. ClientProj carries no firing-player index,
-            // so ranged onset must reject them while another player shares the tile.
+            // Keep incoming threats first; outgoing candidates whose source tile is local
+            // use remaining capacity and never displace them. ClientProj has no firing-player
+            // index, so ranged-onset attribution must reject them when another player shares the tile.
             for incoming in [true, false] {
                 if self.projectiles.len() >= MAX_PROJECTILES_PER_SNAPSHOT {
                     break;

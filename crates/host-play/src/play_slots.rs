@@ -416,6 +416,14 @@ impl Play {
             .lock()
             .unwrap()
             .bind_native_input(slot_input.authority());
+        slot_script
+            .lock()
+            .unwrap()
+            .bind_quest_pairs(self.quest_pairs.seat(
+                &username,
+                self.connection.game_host(),
+                self.connection.game_port(),
+            ));
         self.cheats
             .lock()
             .unwrap()
@@ -426,6 +434,12 @@ impl Play {
             .unwrap()
             .entry(username.clone())
             .or_default();
+        {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(username.clone()).or_default();
+            bot.walk_globals = Some(Arc::clone(&self.walk_globals));
+            bot.walk_globals_store = self.walk_globals_store.clone();
+        }
         let world = world_round.as_ref().and_then(|round| {
             self.connection
                 .profile()
@@ -946,6 +960,9 @@ fn spawn_slot_thread(
                             }
                             clear_startup_progress(&slot_statuses, &username);
                             return;
+                        }
+                        if let Some(slot) = script_slot(&slot_scripts, &username) {
+                            slot.lock().unwrap().pair_world_changed(&client.config.host, client.config.port);
                         }
                         if arm.stop.load(Ordering::Relaxed) {
                             return;

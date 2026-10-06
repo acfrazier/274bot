@@ -26,6 +26,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             name: text_field(step, "name")?.to_string(),
             action: text_field(step, "action")?.to_string(),
             slot: None,
+            target_item_id: None,
         }),
         "loc" => Some(InteractReq::Loc {
             x: i32_field(step, "x")?,
@@ -56,7 +57,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             component: i32_field(step, "component")?,
             generation: step.get("generation").and_then(Value::as_u64)?,
         }),
-        "continue" => Some(InteractReq::ContinueDialog),
+        "continue" => Some(InteractReq::ContinueDialog { component_id: None }),
         "answer" => Some(InteractReq::Answer {
             option: i32_field(step, "option")?,
         }),

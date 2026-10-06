@@ -23,6 +23,9 @@ pub struct JournalModalView<'a> {
 pub struct BankSessionView {
     pub open: bool,
     pub generation: u64,
+    /// `modals().side` (`-1` none): a close is acknowledged once it is
+    /// released or changed.
+    pub side: i32,
 }
 
 /// A journal page borrowed from the currently open main root. The caller
@@ -203,6 +206,7 @@ impl<'a> SnapshotView<'a> {
             value: BankSessionView {
                 open: snapshot.bank_component_id() >= 0,
                 generation: snapshot.bank_session_generation(),
+                side: snapshot.modals().side,
             },
             stamp: self.stamp,
         })
@@ -224,6 +228,15 @@ impl<'a> SnapshotView<'a> {
         let snapshot = self.ingame()?;
         Some(Observed {
             value: snapshot.shop(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Current trade roots, counterpart and posted offer/confirmation containers.
+    pub fn trade(&self) -> Option<Observed<&'a super::TradeView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.trade(),
             stamp: self.stamp,
         })
     }
@@ -254,7 +267,7 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    pub fn widgets(&self) -> Option<Observed<&[super::WidgetView]>> {
+    pub fn widgets(&self) -> Option<Observed<&'a [super::WidgetView]>> {
         let snapshot = self.snapshot?;
         snapshot.ingame().then(|| Observed {
             value: snapshot.widgets(),
@@ -576,6 +589,32 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn trade_view_is_borrowed_and_unready_outside_a_session() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::new();
+        assert!(SnapshotView::new(Some(&snapshot), stamp).trade().is_none());
+        snapshot.seed_ingame(2);
+        snapshot.seed_trade(super::super::TradeView {
+            offer_open: true,
+            partner: Some("configured peer".into()),
+            accept_component_id: 3420,
+            ..Default::default()
+        });
+        let observed = SnapshotView::new(Some(&snapshot), stamp).trade().unwrap();
+        assert!(std::ptr::eq(observed.value, snapshot.trade()));
+        assert_eq!(observed.stamp, stamp);
+        assert_eq!(observed.value.partner.as_deref(), Some("configured peer"));
+    }
 
     #[test]
     fn dialogue_page_fingerprint_tracks_all_texts_and_option_component_text_pairs() {
@@ -1049,5 +1088,15 @@ mod tests {
         assert!(SnapshotView::new(Some(&snapshot), stamp)
             .journal_widgets(10, 11)
             .is_none());
+    }
+
+    #[test]
+    fn posted_player_names_use_the_native_account_identity() {
+        let id = crate::snapshot::player_account_id;
+        assert_eq!(id("livetest_0"), id("Livetest 0"));
+        assert_eq!(id(" Alice_B "), id("Alice B"));
+        assert_ne!(id("livetest_0"), id("Livetest 1"));
+        assert_eq!(id(""), None);
+        assert_eq!(id("___"), None);
     }
 }

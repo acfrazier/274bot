@@ -280,6 +280,7 @@ pub(super) fn apply_members_guards(guards: &MembersGuards, graph: &mut Transport
 pub(crate) fn require_members_guards(
     content_root: &Path,
     graph: &TransportGraph,
+    audit: &VarpGateAudit,
 ) -> Result<(), String> {
     let guards = MembersGuards::from_content(content_root);
     let mut errors = Vec::new();
@@ -302,6 +303,12 @@ pub(crate) fn require_members_guards(
             ));
             continue;
         };
+        // The shared source interpreter proves directional paths as well as
+        // leading guards. Its witness is exact-edge-bound and was recorded
+        // only after observable gate conversion, never guessed from an op name.
+        if audit.proves_member_path(edge) {
+            continue;
+        }
         let reached = guards.reached(source.clone());
         if edge.members_req {
             let pinned_arm = reached.iter().any(|((op, name), handler)| {

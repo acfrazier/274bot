@@ -784,6 +784,7 @@ fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
         name: "Logs".into(),
         action: "Drop".into(),
         slot: None,
+        target_item_id: None,
     };
     let held_op = client::io::ClientProt289::OPHELD5.id as u8;
 

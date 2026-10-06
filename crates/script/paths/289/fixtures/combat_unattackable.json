@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../../path.schema.json",
+  "schema": 3,
   "id": "imp",
   "display_name": "Combat Unattackable Fixture",
   "required": [],
@@ -51,6 +52,7 @@
               "id": "observe-unattackable-attacker",
               "kind": "combat",
               "version": 1,
+              "advances": false,
               "args": {
                 "target": { "attacker": { "npcs": true, "players": false } },
                 "tactic": { "kind": "open", "style": "melee", "engage_radius": 6, "auto_retaliate": true },

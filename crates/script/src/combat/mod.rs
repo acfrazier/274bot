@@ -1,5 +1,5 @@
-//! Shared observed-state melee and ranged combat machine.
-//! Style/flick/PvP slices extend this core rather than adding another planner.
+//! Shared observed-state combat machine with melee, ranged and magic mechanics on one planner.
+//! Flick and PvP slices extend this core rather than adding another planner.
 //!
 //! Ranged PvM uses selected weapon/ammo facts, observes the equipped combat tab
 //! before selecting its mode, and defaults to rapid. Projectile launches drive
@@ -8,6 +8,7 @@
 //! `Unprotected(NoAmmo)`. After an open-tactic kill at zero danger, wind-down
 //! attempts at most four reachable nearby pickups of the selected ammunition.
 mod arbiter;
+pub(crate) mod arm;
 pub mod frame;
 pub mod guard;
 mod machine;
@@ -19,6 +20,7 @@ pub mod select;
 pub mod tables;
 pub mod threats;
 pub mod style {
+    pub mod magic;
     pub mod melee;
     pub mod ranged;
 }

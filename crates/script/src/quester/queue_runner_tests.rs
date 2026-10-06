@@ -5,13 +5,15 @@ use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView};
 use std::sync::LazyLock;
 
 #[derive(Default)]
-struct Capture(Vec<ScriptStatus>);
+struct Capture(Vec<ScriptStatus>, Vec<String>);
 impl NativeOutput for Capture {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
     fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
-    fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+    fn log(&mut self, _: api::hostlog::Level, message: &str) {
+        self.1.push(message.to_owned());
+    }
     fn settings_applied(&mut self, _: u64) {}
 }
 
@@ -135,11 +137,9 @@ fn individually_missing_quest_row_stays_fail_closed() {
 
 #[test]
 fn excluding_the_entire_default_queue_is_an_actionable_block() {
+    let index: ReleaseIndex = serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
     let (mut queued, snapshot) = fixture(QueueSettings {
-        skip: ["cook", "sheep", "runemysteries", "romeojuliet", "imp"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+        skip: index.paths.into_iter().map(|entry| entry.id).collect(),
         ..QueueSettings::default()
     });
     let mut ledger = None;
@@ -202,11 +202,18 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         .expect("selected Cook's Assistant");
     assert_eq!(queued.queue.id(active_index), Some("cook"));
     queued.active_index = Some(active_index);
-    let path = super::super::compile::compile_path(
-        super::super::card::released_path("cook").unwrap(),
-        &selected,
-        &queued.quests,
-    )
+    let path = super::super::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&queued.quests);
+        move |cap| {
+            super::super::compile::compile_path(
+                super::super::registry::bundled_path("cook").unwrap(),
+                &selected,
+                &quests,
+                cap,
+            )
+        }
+    })
     .unwrap();
     let mut ledger = None;
     let mut output = Capture::default();
@@ -274,4 +281,135 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         .iter()
         .any(|field| field.key == "deaths" && matches!(&field.value, StatusValue::Integer(3)));
     assert!(reported_deaths);
+}
+
+#[test]
+fn cached_path_does_not_share_account_choices_between_activations() {
+    use crate::quester::choices::{CrestGauntlets, QuestChoices};
+    let (mut cooking, mut snapshot) = fixture(cook_settings());
+    let (mut goldsmith, _) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    cooking.set_choices(QuestChoices {
+        crest_gauntlets: CrestGauntlets::Cooking,
+    });
+    goldsmith.set_choices(QuestChoices {
+        crest_gauntlets: CrestGauntlets::Goldsmith,
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        cooking.tick(native).unwrap();
+    });
+    let path = cooking.preparing.take().unwrap().join().unwrap().unwrap();
+    // The second account receives the very same compiled document.
+    goldsmith.active_index = Some(0);
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        cooking.activate(native, Arc::clone(&path));
+        goldsmith.activate(native, Arc::clone(&path));
+    });
+    let a = cooking.active.as_ref().unwrap();
+    let b = goldsmith.active.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&a.path, &b.path));
+    assert_eq!(a.choices.crest_gauntlets, CrestGauntlets::Cooking);
+    assert_eq!(b.choices.crest_gauntlets, CrestGauntlets::Goldsmith);
+}
+
+#[test]
+fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() {
+    use crate::quester::registry::{FolderSource, PathRegistry};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    for (id, source) in [("cook", "folder"), ("cook-draft", "draft")] {
+        let folder = std::env::temp_dir().join(format!(
+            "quester-queue-folder-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_slice(crate::quester::compile::cook_bytes()).unwrap();
+        document["id"] = serde_json::json!(id);
+        document["roles"][0]["sequences"][0]["steps"][0]["comment"] =
+            serde_json::json!("folder queue activation witness");
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let digest =
+            crate::quester::registry::digest_text(&crate::quester::compile::digest_bytes(&bytes));
+        std::fs::write(folder.join(format!("{id}.json")), bytes).unwrap();
+        let (mut queued, mut snapshot) = fixture(cook_settings());
+        let selected = Arc::clone(&queued.selected);
+        let quests = Arc::clone(&queued.quests);
+        let source_folder = folder.clone();
+        let registry = api::selected::FamilyPreparation::run(move |worker| {
+            PathRegistry::load(
+                &FolderSource {
+                    enabled: true,
+                    folder: source_folder,
+                },
+                &selected,
+                &quests,
+                worker,
+            )
+            .unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        queued.queue = Queue::from_registry(
+            registry,
+            QueueSettings {
+                quests: vec![id.into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        queued.refresh_fields();
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut output = Capture::default();
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+            queued.tick(tick).unwrap();
+        });
+        let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+        assert_eq!(path.id.0.as_ref(), id);
+        assert_eq!(
+            path.sequences[0].steps[0].comment.as_deref(),
+            Some("folder queue activation witness")
+        );
+        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
+            queued.activate(tick, path);
+            queued.tick(tick).unwrap();
+        });
+        assert!(queued.active.is_some());
+        assert!(queued.fields.iter().any(|field| field.key == "path_source"
+            && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == source)));
+        assert!(output.1.iter().any(|line| {
+            line.contains(&format!("source={source}"))
+                && line.contains(&digest)
+                && line.contains("step_comment=\"folder queue activation witness\"")
+        }));
+        // The run retains its loaded bytes even after the folder is removed.
+        std::fs::remove_dir_all(&folder).unwrap();
+        let bytes = queued
+            .queue
+            .path_bytes(queued.active_index.unwrap())
+            .unwrap();
+        assert!(bytes
+            .as_ref()
+            .windows(b"folder queue activation witness".len())
+            .any(|window| window == b"folder queue activation witness"));
+    }
 }

@@ -13,6 +13,8 @@ use script::{
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParamsState {
     pub open: bool,
+    /// Latest durable permission view for inherited setting rows.
+    pub walk_permissions: frontend_core::WalkGlobalsView,
     pub cursor: usize,
     pub scroll: usize,
     pub editing: bool,
@@ -82,6 +84,22 @@ impl<'a> ParamsPane<'a> {
             self.loadouts,
             self.game_data,
         )
+    }
+
+    fn array_editor_enabled(
+        &self,
+        def: &SettingDef,
+        options: &frontend_core::scripts::ParameterOptions,
+    ) -> bool {
+        def.ty == "string[]"
+            && options.can_edit_array(
+                self.bag
+                    .get(&def.id)
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str),
+            )
     }
 
     /// Centered overlay; leaves the surrounding map/status cells alone.
@@ -208,7 +226,7 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         let opts = self.resolved_options(def);
-        if opts.is_empty() {
+        if opts.is_empty() && !self.array_editor_enabled(def, &opts) {
             self.cancel_edit();
             return ParamsKey::Cancel;
         }
@@ -263,22 +281,11 @@ impl<'a> ParamsPane<'a> {
                 let Some(index) = visible.get(self.state.choice_cursor).copied() else {
                     return ParamsKey::None;
                 };
-                let Some(opt) = opts.values.get(index) else {
-                    return ParamsKey::None;
-                };
-                if self
-                    .state
-                    .choice_selected
-                    .iter()
-                    .any(|value| opts.matches_option(value, opt))
-                {
-                    self.state
-                        .choice_selected
-                        .retain(|value| !opts.matches_option(value, opt));
+                if opts.toggle_array_choice(&mut self.state.choice_selected, index) {
+                    ParamsKey::Toggle
                 } else {
-                    self.state.choice_selected.push(opt.clone());
+                    ParamsKey::None
                 }
-                ParamsKey::Toggle
             }
             _ => ParamsKey::None,
         }
@@ -306,6 +313,9 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         if def.ty == "boolean" {
+            if self.state.walk_permissions.permission_enabled(&def.id) == Some(true) {
+                return ParamsKey::None;
+            }
             let cur = self
                 .bag
                 .get(&def.id)
@@ -318,7 +328,8 @@ impl<'a> ParamsPane<'a> {
             };
         }
         let opts = self.resolved_options(def);
-        if def.options_from.is_some() && opts.is_empty() {
+        let array_editable = self.array_editor_enabled(def, &opts);
+        if def.options_from.is_some() && opts.is_empty() && !array_editable {
             return ParamsKey::None;
         }
         if def.ty == "string" && !opts.is_empty() {
@@ -356,7 +367,7 @@ impl<'a> ParamsPane<'a> {
         if !enter && def.ty != "string[]" {
             return ParamsKey::None;
         }
-        if def.ty == "string[]" && !opts.is_empty() {
+        if def.ty == "string[]" && array_editable {
             self.state.editing = true;
             self.state.multi_select = true;
             self.state.choice_single = false;
@@ -520,6 +531,27 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Wrapped detail for stored quest picks that are no longer choices (an
+/// unavailable quest and its reason), so the narrow row never clips it.
+fn stored_quest_reason<'a>(
+    bag: &'a serde_json::Map<String, serde_json::Value>,
+    def: &SettingDef,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> Option<&'a serde_json::Value> {
+    if !matches!(
+        def.options_from.as_deref(),
+        Some("released-paths" | "released-path-order")
+    ) || options.preserved == 0
+    {
+        return None;
+    }
+    let stored = bag.get(&def.id)?;
+    options
+        .preserved_stored_labels(stored)
+        .next()
+        .map(|_| stored)
+}
+
 fn display_value(
     bag: &serde_json::Map<String, serde_json::Value>,
     def: &SettingDef,
@@ -575,9 +607,20 @@ impl Widget for ParamsPane<'_> {
         let mut lines = Vec::new();
         let mut cursor_line = 0usize;
         let mut unavailable_current = None;
+        let mut site_reason_detail = false;
+        let mut quest_detail = None;
         if self.state.editing && (self.state.multi_select || self.state.choice_single) {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
+                let mut stored_quest = None;
+                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved > 0 {
+                    unavailable_current = Some(display_value(self.bag, def, &opts));
+                    site_reason_detail = true;
+                } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
+                    unavailable_current = None;
+                    site_reason_detail = false;
+                    stored_quest = Some(stored);
+                }
                 let label = def.label.as_deref().unwrap_or(&def.id);
                 lines.push(Line::from(format!("{label} choices")));
                 if self.state.choice_searchable {
@@ -632,8 +675,10 @@ impl Widget for ParamsPane<'_> {
                             .any(|selected| opts.matches_option(selected, opt))
                         {
                             "[x]"
-                        } else {
+                        } else if opts.is_selectable_index(index) {
                             "[ ]"
+                        } else {
+                            "[-]"
                         };
                         lines.push(Line::from(format!(
                             "{mark}{status} {}",
@@ -641,14 +686,32 @@ impl Widget for ParamsPane<'_> {
                         )));
                     }
                 }
+                if let Some(stored) = stored_quest {
+                    quest_detail = Some((opts, stored));
+                }
             }
         } else {
             let mut last_group: Option<&str> = None;
             for (i, def) in rows.iter().enumerate() {
-                if def.group.as_deref() != last_group {
-                    last_group = def.group.as_deref();
-                    if let Some(g) = last_group {
+                let group = if self
+                    .state
+                    .walk_permissions
+                    .permission_enabled(&def.id)
+                    .is_some()
+                {
+                    Some("Walk permissions")
+                } else {
+                    def.group.as_deref()
+                };
+                if group != last_group {
+                    last_group = group;
+                    if let Some(g) = group {
                         lines.push(Line::from(format!("— {g} —")));
+                        if g == "Walk permissions" {
+                            lines.push(Line::from(
+                                "Allow for this script even when the global setting is off.",
+                            ));
+                        }
                     }
                 }
                 if i == self.state.cursor {
@@ -658,24 +721,71 @@ impl Widget for ParamsPane<'_> {
                 let mark = if i == self.state.cursor { "> " } else { "  " };
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
+                } else if let Some(global) = self.state.walk_permissions.permission_enabled(&def.id)
+                {
+                    if global {
+                        "On (inherited globally; script cannot veto)".into()
+                    } else {
+                        let enabled = self
+                            .bag
+                            .get(&def.id)
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                        if enabled {
+                            "On (script opt-in)".into()
+                        } else {
+                            "Off".into()
+                        }
+                    }
                 } else {
                     let options = self.resolved_options(def);
-                    if def.options_from.is_some() && options.is_empty() {
+                    if def.options_from.is_some()
+                        && options.is_empty()
+                        && !self.array_editor_enabled(def, &options)
+                    {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
                         } else if options.preserved > 0 {
                             let current = display_value(self.bag, def, &options);
                             if i == self.state.cursor {
                                 unavailable_current = Some(current);
+                                site_reason_detail =
+                                    def.options_from.as_deref() == Some("gather:sites");
+                                quest_detail = None;
                                 "options unavailable".to_string()
                             } else {
+                                if !self.state.editing
+                                    && def.options_from.as_deref() == Some("gather:sites")
+                                {
+                                    unavailable_current = Some(current.clone());
+                                    site_reason_detail = true;
+                                    quest_detail = None;
+                                }
                                 format!("options unavailable · {current}")
                             }
                         } else {
                             "options unavailable".to_string()
                         }
                     } else {
-                        display_value(self.bag, def, &options)
+                        let current = display_value(self.bag, def, &options);
+                        if !self.state.editing
+                            && def.options_from.as_deref() == Some("gather:sites")
+                            && options.preserved > 0
+                        {
+                            unavailable_current = Some(current.clone());
+                            site_reason_detail = true;
+                            quest_detail = None;
+                        } else if !self.state.editing
+                            && (i == self.state.cursor
+                                || (unavailable_current.is_none() && quest_detail.is_none()))
+                        {
+                            if let Some(stored) = stored_quest_reason(self.bag, def, &options) {
+                                unavailable_current = None;
+                                site_reason_detail = false;
+                                quest_detail = Some((options, stored));
+                            }
+                        }
+                        current
                     }
                 };
                 lines.push(Line::from(format!("{mark}{label}: {value}")));
@@ -683,9 +793,25 @@ impl Widget for ParamsPane<'_> {
         }
 
         let (hint, reserve) = if let Some(current) = unavailable_current {
-            // Keep the disabled row in a small scrollable context window and give
-            // its retained identity/reason the remaining wrapped detail area.
-            (current, inner.height.saturating_sub(5).max(1))
+            // Keep the full saved detail visible beneath the row or picker.
+            let reserve = if site_reason_detail {
+                inner.height.min(3)
+            } else {
+                inner.height.saturating_sub(5).max(1)
+            };
+            (Some(current), reserve)
+        } else if let Some((options, stored)) = quest_detail.as_ref() {
+            // Reserve space for each borrowed label in the existing wrapped renderer.
+            let width = usize::from(inner.width.max(1));
+            let rows = options
+                .preserved_stored_labels(stored)
+                .map(|label| label.chars().count().div_ceil(width).saturating_add(1))
+                .fold(0usize, usize::saturating_add);
+            let reserve = u16::try_from(rows)
+                .unwrap_or(u16::MAX)
+                .min(inner.height / 2)
+                .max(1);
+            (None, reserve)
         } else {
             let hint = self.hint();
             let reserve = if hint.chars().count() > inner.width as usize {
@@ -693,7 +819,7 @@ impl Widget for ParamsPane<'_> {
             } else {
                 1u16
             };
-            (hint, reserve)
+            (Some(hint), reserve)
         };
         let content_h = inner.height.saturating_sub(reserve) as usize;
         if cursor_line < self.state.scroll {
@@ -723,9 +849,34 @@ impl Widget for ParamsPane<'_> {
             height: inner.height - list.height,
             ..inner
         };
-        Paragraph::new(hint)
-            .wrap(ratatui::widgets::Wrap { trim: true })
-            .render(hint_area, buf);
+        if let Some(hint) = hint {
+            Paragraph::new(hint)
+                .wrap(ratatui::widgets::Wrap { trim: true })
+                .render(hint_area, buf);
+        } else if let Some((options, stored)) = quest_detail.as_ref() {
+            let mut y = hint_area.y;
+            let bottom = hint_area.y.saturating_add(hint_area.height);
+            let width = usize::from(hint_area.width.max(1));
+            for label in options.preserved_stored_labels(stored) {
+                let remaining = bottom.saturating_sub(y);
+                if remaining == 0 {
+                    break;
+                }
+                let rows = label.chars().count().div_ceil(width).saturating_add(1);
+                let height = u16::try_from(rows).unwrap_or(u16::MAX).min(remaining);
+                Paragraph::new(label)
+                    .wrap(ratatui::widgets::Wrap { trim: true })
+                    .render(
+                        Rect {
+                            y,
+                            height,
+                            ..hint_area
+                        },
+                        buf,
+                    );
+                y = y.saturating_add(height);
+            }
+        }
     }
 }
 
@@ -842,6 +993,110 @@ mod tests {
         };
         assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
+    }
+
+    #[test]
+    fn global_walk_permission_is_inherited_and_script_additive_when_off() {
+        let dir = temp_dir("walk-permissions");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = vec![SettingDef {
+            group: Some("Quester".into()),
+            ..setting(
+                "allow_teleports",
+                "boolean",
+                Some("false"),
+                Some("Allow teleports"),
+                &[],
+            )
+        }];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", &schema, None);
+        assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(false)));
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            walk_permissions: frontend_core::WalkGlobalsView {
+                globals: host_play::WalkGlobals {
+                    allow_teleports: true,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    allow_danger_zones: false,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::None);
+            assert_eq!(
+                pane.bag.get("allow_teleports"),
+                Some(&serde_json::json!(false)),
+                "a script cannot veto a global allow"
+            );
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut read_only,
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Walk permissions"), "{text:?}");
+        assert!(
+            text.contains("Allow for this script even when the global setting is off."),
+            "{text:?}"
+        );
+        assert!(
+            text.contains("On (inherited globally; script cannot veto)"),
+            "{text:?}"
+        );
+
+        state.walk_permissions = frontend_core::WalkGlobalsView {
+            globals: host_play::WalkGlobals {
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                allow_danger_zones: false,
+            },
+            ..Default::default()
+        };
+        let outcome = {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            pane.on_key(KeyCode::Char(' '))
+        };
+        assert_eq!(outcome, ParamsKey::Toggle);
+        assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(true)));
     }
 
     #[test]
@@ -1840,6 +2095,123 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
+        let dir = temp_dir("site-reason-with-choices");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let schema = script::gatherer::settings::schema();
+        let willow = data
+            .gather_option("woodcutting", "willow")
+            .expect("Willow resolves to a selected gathering key");
+        let saved_site = data
+            .gather_sites_for("woodcutting")
+            .find(|site| !site.keys.iter().any(|key| key.key == willow.key))
+            .expect("a named site does not offer Willow");
+        let saved_site_id = saved_site.id.clone();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
+        bag.insert("skill".into(), serde_json::json!("Woodcutting"));
+        bag.insert("woodcuttingResources".into(), serde_json::json!(["willow"]));
+        bag.insert("location".into(), serde_json::json!("Site"));
+        bag.insert("site".into(), serde_json::json!(saved_site_id));
+        let site_index = schema
+            .iter()
+            .position(|field| field.id == "site")
+            .expect("Gatherer schema includes the named site setting");
+        let visible_cursor = schema
+            .iter()
+            .filter(|field| script::setting_visible(field.show_if.as_deref(), &bag))
+            .position(|field| field.id == "site")
+            .expect("the Site setting is visible in Site mode");
+        let options = frontend_core::scripts::resolve_parameter_options(
+            &schema[site_index],
+            &bag,
+            &loadouts,
+            Some(data.as_ref()),
+        );
+        assert!(!options.is_empty(), "Willow has alternate named sites");
+        assert_eq!(options.preserved, 1);
+        let expected = options.label_for(&saved_site_id).to_owned();
+        let expected_compact = expected
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        assert_ne!(visible_cursor, 0, "the site row is not the first field");
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        let compact = text
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        assert!(compact.contains(&expected_compact), "{text:?}");
+
+        state.cursor = visible_cursor;
+
+        {
+            let mut pane = ParamsPane {
+                schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert!(pane.state.choice_single);
+        }
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        let compact = text
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        assert!(text.contains("site choices"), "{text:?}");
+        assert!(compact.contains(&expected_compact), "{text:?}");
+    }
+
+    #[test]
     fn quester_picker_keeps_unknown_path_visible_and_removable() {
         let dir = temp_dir("quest-unknown");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
@@ -1912,6 +2284,112 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_quest_is_never_added_by_the_real_picker() {
+        let dir = temp_dir("quest-unavailable-add");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let quests_row = schema
+            .iter()
+            .position(|field| field.id == "quests")
+            .unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        let mut state = ParamsState {
+            open: true,
+            cursor: quests_row,
+            ..Default::default()
+        };
+        let mut pane = ParamsPane {
+            schema,
+            bag: &mut bag,
+            commit: &mut store_commit(&mut store, "Quester"),
+            loadouts: &loadouts,
+            game_data: None,
+            state: &mut state,
+        };
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        let options = pane.resolved_options(&schema[quests_row]);
+        pane.state.choice_cursor = options
+            .values
+            .iter()
+            .position(|value| value == "hauntedmine")
+            .unwrap();
+        pane.on_key(KeyCode::Char(' '));
+        assert_eq!(pane.state.choice_selected, ["cook"]);
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+        assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!(["cook"])));
+    }
+
+    #[test]
+    fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
+        let dir = temp_dir("quest-unavailable-reason");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
+        let full = format!("Haunted Mine — {reason}")
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        let quests_row = schema
+            .iter()
+            .position(|field| field.id == "quests")
+            .unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: quests_row,
+            ..Default::default()
+        };
+
+        let render = |bag: &mut serde_json::Map<String, serde_json::Value>,
+                      state: &mut ParamsState,
+                      store: &mut ScriptSettingsStore| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema,
+                        bag,
+                        commit: &mut store_commit(store, "Quester"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+        };
+        bag.insert("quests".into(), serde_json::json!(["cook", "hauntedmine"]));
+        let rows = render(&mut bag, &mut state, &mut store);
+        assert!(rows.contains(&full), "rows view clips the reason: {rows}");
+        {
+            let mut pane = ParamsPane {
+                schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        }
+        let picker = render(&mut bag, &mut state, &mut store);
+        assert!(picker.contains(&full), "picker clips the reason: {picker}");
+    }
+
+    #[test]
     fn empty_loadout_source_shows_a_clear_disabled_state() {
         let dir = temp_dir("empty-loadout-options");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
@@ -1962,5 +2440,141 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(text.contains("no loadouts available"), "{text:?}");
+    }
+    #[test]
+    fn preserved_only_priority_array_opens_and_removal_is_persisted() {
+        for (label, open_key) in [("enter", KeyCode::Enter), ("space", KeyCode::Char(' '))] {
+            let dir = temp_dir(&format!("preserved-priority-{label}"));
+            let path = dir.join("script-settings.json");
+            let mut store = ScriptSettingsStore::at(path.clone());
+            store.set_value(
+                ScriptSource::Catalog,
+                "Quester",
+                "quests",
+                serde_json::json!(["hauntedmine"]),
+            );
+            store.set_value(
+                ScriptSource::Catalog,
+                "Quester",
+                "order_override",
+                serde_json::json!(["hauntedmine"]),
+            );
+            store.save().unwrap();
+
+            let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+            let schema = (script::quester::card::CARD.schema)();
+            let row = schema
+                .iter()
+                .position(|field| field.id == "order_override")
+                .unwrap();
+            let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+            let mut state = ParamsState {
+                open: true,
+                cursor: row,
+                ..Default::default()
+            };
+
+            {
+                let mut pane = ParamsPane {
+                    schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                assert_eq!(
+                    pane.on_key(open_key),
+                    ParamsKey::Edit,
+                    "{label} should open the removal-only picker"
+                );
+                assert!(pane.state.multi_select);
+                assert_eq!(pane.state.choice_selected, ["hauntedmine"]);
+
+                let options = pane.resolved_options(&schema[row]);
+                let visible = pane.choice_indices(&options);
+                pane.state.choice_cursor = visible
+                    .iter()
+                    .position(|index| options.values[*index] == "hauntedmine")
+                    .expect("the saved unavailable priority stays visible");
+                assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+                assert!(pane.state.choice_selected.is_empty());
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+                assert_eq!(pane.bag.get("order_override"), Some(&serde_json::json!([])));
+            }
+
+            let reloaded = ScriptSettingsStore::at(path);
+            let persisted = reloaded.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+            assert_eq!(
+                persisted.get("order_override"),
+                Some(&serde_json::json!([])),
+                "{label} removal is durable"
+            );
+            assert_eq!(
+                persisted.get("quests"),
+                Some(&serde_json::json!(["hauntedmine"])),
+                "removing the priority does not rewrite the quest selection"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_removable_preserved_array_shows_its_value_and_reason() {
+        let dir = temp_dir("preserved-priority-closed-row");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = (script::quester::card::CARD.schema)();
+        let row = schema
+            .iter()
+            .position(|field| field.id == "order_override")
+            .unwrap();
+        let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", schema, None);
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let mut state = ParamsState {
+            open: true,
+            cursor: row,
+            ..Default::default()
+        };
+        for (width, height) in [(80, 24), (120, 40)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema,
+                        bag: &mut bag,
+                        commit: &mut store_commit(&mut store, "Quester"),
+                        loadouts: &loadouts,
+                        game_data: None,
+                        state: &mut state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                !text.contains("Order override: options unavailable"),
+                "{width}x{height}: a removable row is painted as disabled: {text}"
+            );
+            let compact = text
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            let detail = format!("Haunted Mine — {reason}")
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            assert!(
+                compact.contains(&detail),
+                "{width}x{height}: the saved row's reason is missing: {text}"
+            );
+        }
     }
 }

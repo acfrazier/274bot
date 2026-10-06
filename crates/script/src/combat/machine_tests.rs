@@ -612,12 +612,11 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 }
 
 #[test]
-fn fail_closed_later_slices_have_no_host_work() {
+fn fail_closed_flick_and_pvp_modes_have_no_host_work() {
     let scene = Scene::new("imp");
-    for change in [1, 2, 3] {
+    for change in [2, 3] {
         let mut request = scene.request();
         match change {
-            1 => request.style = Style::Mage,
             2 => request.prayer_mode = PrayerMode::Flick,
             _ => {
                 request.target = Target::Player {
@@ -1197,7 +1196,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         loc_id: None,
         radius: 1,
         arrival: nav::arrival::ArrivalKind::Reach,
-        options: crate::FindOptions::default(),
+        options: crate::native::WalkOptions::default(),
         required_after: evidence,
         evidence: None,
         cross: Vec::new().into_boxed_slice(),
@@ -3848,3 +3847,5 @@ fn ranged_stacked_shooter_uses_rate_clock_then_resumes_launch_evidence() {
         33 + u16::from(rate)
     );
 }
+#[path = "magic_machine_tests.rs"]
+mod magic_tests;

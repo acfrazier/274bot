@@ -302,7 +302,9 @@ impl FollowRun {
         // poll. Once sent, the crossing is not rechecked; aborting it would
         // report a physically completed crossing as unproven.
         if let (Some(_), Leg::Transport { edge }) = (&hop.approach, &hop.leg) {
-            if let Some(outcome) = self.check_transport_gate(edge, here, options.quest_evidence) {
+            if let Some(outcome) =
+                self.check_transport_gate(edge, here, snapshot, options.quest_evidence)
+            {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 return Poll::Terminal(outcome);
             }
@@ -669,7 +671,7 @@ impl FollowRun {
             }
             let mut ix = Interactions::new(snapshot, d);
             if snapshot.chat_continue_component_id() != -1 {
-                match ix.continue_dialog() {
+                match ix.continue_dialog(None) {
                     SendResult::Sent { .. } => {
                         api::host_log!(
                             Category::NavEvent,
@@ -773,9 +775,9 @@ impl FollowRun {
         }
         let close_enough = self.close_enough;
         let hop_dialog_started = hop.npc_recovery.dialog_started;
-        let arrived_arm: Evidence<'static> = if edge.kind == TransportKind::Door
-            && edge.dir.is_some()
-        {
+        let arrived_arm: Evidence<'static> = if edge.takeoff.is_some() {
+            arrived(edge.to, 0)
+        } else if edge.kind == TransportKind::Door && edge.dir.is_some() {
             Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
                 let Some(here) = now.world_tile() else {
                     return false;
@@ -1029,8 +1031,12 @@ impl FollowRun {
             Leg::Walk { .. } => unreachable!("transport approach holds a transport leg"),
         };
         let at = approach.at;
-        let ready = loc_transport_ready(snapshot, edge, here)
-            .unwrap_or(here.level == at.level && cheb(here, at) <= 1);
+        let ready = if let Some(takeoff) = edge.takeoff {
+            here == takeoff && loc_transport_ready(snapshot, edge, here) == Some(true)
+        } else {
+            loc_transport_ready(snapshot, edge, here)
+                .unwrap_or(here.level == at.level && cheb(here, at) <= 1)
+        };
         if approach.retry_pending && !ready {
             let mut ix = Interactions::new(snapshot, d);
             let result = ix.walk(approach.tile);

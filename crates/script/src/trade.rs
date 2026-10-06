@@ -18,9 +18,6 @@ use serde_json::{json, Value};
 
 /// Frozen `Input.interactPlayer` op slot: `set_player_op("Trade with", 4)`.
 pub const TRADE_OP: usize = 4;
-/// Frozen tradeside:inv component (`OFFER_INV`).
-#[allow(dead_code)]
-pub const OFFER_INV: i32 = 3322;
 /// Frozen trademain:inv component (`MY_OFFER_INV`).
 #[allow(dead_code)]
 pub const MY_OFFER_INV: i32 = 3415;

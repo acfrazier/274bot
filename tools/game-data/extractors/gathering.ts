@@ -1028,6 +1028,127 @@ function regionOf(ctx: Ctx, alias: string): Know<RegionWire | null> {
     if (coords.length === 0 || new Set(coords.map((coord) => coord.plane)).size !== 1) return unknown('movement-enum-shape', [spanRef(section.span)]);
     return known({ min_x: Math.min(...coords.map((c) => c.x)), min_z: Math.min(...coords.map((c) => c.z)), max_x: Math.max(...coords.map((c) => c.x)), max_z: Math.max(...coords.map((c) => c.z)), level: coords[0].plane });
 }
+// The Hemenster competition spot uses quest-owned direct inventory grants rather than fish_roll.
+const HEMENSTER_FISHING_SCRIPT = 'scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2';
+const HEMENSTER_COMP_CONSTANTS = 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant';
+const HEMENSTER_NORTH_SPOT = '0_41_53_sinisterfishspot';
+const HEMENSTER_CARP_METHOD = `fishing.${HEMENSTER_NORTH_SPOT}.op1`;
+
+/**
+ * Prove the one quest-owned carp case from its exact dispatch, bait choice, catch branch and completion gate.
+ * The normal fishing closure intentionally does not model direct quest yields or quest-state requirements.
+ */
+function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
+    const npc = ctx.idx.npc.get(HEMENSTER_NORTH_SPOT);
+    const label = npc?.props.get('op1')?.[0];
+    const headers = ctx.idx.headers.get(`opnpc1,${HEMENSTER_NORTH_SPOT}`) ?? [];
+    const header = headers.length === 1 ? headers[0] : undefined;
+    if (!npc || npc.span.file !== FISHING_NPC || !label || label.toLowerCase() === 'hidden' || !header || header.span.file !== HEMENSTER_FISHING_SCRIPT) return null;
+
+    const dispatch = ctx.idx.blocks(HEMENSTER_FISHING_SCRIPT).find((block) => block.kind === 'opnpc1' && block.name === HEMENSTER_NORTH_SPOT && block.span.first === header.span.first);
+    const sourceBlock = (kind: string, name: string) => {
+        const block = uniqueBlock(ctx, kind, name);
+        return block?.span.file === HEMENSTER_FISHING_SCRIPT ? block : null;
+    };
+    const attempt = sourceBlock('label', 'attempt_fish_hemenster');
+    const baitChoice = sourceBlock('proc', 'get_hemenster_bait');
+    const catchFish = sourceBlock('label', 'hemenster_catch');
+    const inCompetition = sourceBlock('proc', 'in_hemenster_comp');
+    const paidFee = ctx.idx.constants.get('hemenster_comp_paidfee');
+    const allFishCaught = ctx.idx.constants.get('hemenster_comp_all_fish_caught');
+    if (!dispatch || codeText(dispatch) !== '@attempt_fish_hemenster;' || !attempt || !baitChoice || !catchFish || !inCompetition
+        || !paidFee || !allFishCaught || paidFee.span.file !== HEMENSTER_COMP_CONSTANTS || allFishCaught.span.file !== HEMENSTER_COMP_CONSTANTS
+        || Number(paidFee.value) !== 1 || Number(allFishCaught.value) !== 4) return null;
+
+    const attemptShape = flatten(attempt);
+    const attemptConditions = conditions(attemptShape.nodes);
+    const levelGuards = attemptConditions.map((condition) => LEVEL_LT.exec(condition)).filter((match): match is RegExpExecArray => match !== null);
+    const levelGuard = levelGuards[0];
+    if (levelGuards.length !== 1 || !levelGuard || Number(levelGuard[1]) !== 10) return null;
+    const levelCondition = `stat(fishing) < ${levelGuard[1]}`;
+    const returnsUnder = (flat: Flat[], condition: string) => flat.some(({ stmt, path }) =>
+        /^return\b/.test(stmt.text) && path.some((each) => each.polarity && each.cond === condition));
+    const hasRequiredConditions = (found: string[], required: string[]) => required.every((condition) => found.includes(condition));
+    if (!returnsUnder(attemptShape.flat, levelCondition)
+        || !hasRequiredConditions(attemptConditions, [
+            '%fishingcompo >= ^fishingcompo_won_comp',
+            '~in_hemenster_comp = false',
+            'inv_total(inv, fishing_rod) < 1 & inv_total(inv, $bait) < 1',
+            'inv_total(inv, fishing_rod) < 1',
+            'inv_total(inv, $bait) < 1',
+            'inv_freespace(inv) < 1 & inv_total(inv, $bait) > 1',
+        ])
+        || !attemptConditions.some((condition) => condition.includes(`npc_type = ${HEMENSTER_NORTH_SPOT}`) && condition.includes('%fishingcompo'))
+        || !hasStmt(attemptShape.flat, 'def_namedobj $bait = ~get_hemenster_bait')
+        || !hasStmt(attemptShape.flat, 'p_delay(4)')
+        || !hasStmt(attemptShape.flat, '@hemenster_catch($bait)')) return null;
+
+    const baitShape = flatten(baitChoice);
+    const baitCondition = 'inv_total(inv, red_vine_worm) > 0';
+    if (!conditions(baitShape.nodes).includes(baitCondition)
+        || !baitShape.flat.some(({ stmt, path }) => stmt.text === 'return (red_vine_worm)' && path.some((each) => each.polarity && each.cond === baitCondition))
+        || !hasStmt(baitShape.flat, 'return (fishing_bait)')) return null;
+
+    const catchShape = flatten(catchFish);
+    const carpConditions = [`npc_type = ${HEMENSTER_NORTH_SPOT}`, '$bait = red_vine_worm'];
+    const under = (flat: Flat[], text: string, required: string[]) => flat.some(({ stmt, path }) =>
+        stmt.text === text && required.every((condition) => path.some((each) => each.polarity && each.cond === condition)));
+    const grants = catchShape.flat.map(({ stmt }) => stmt.text).filter((text) => text.startsWith('inv_add(inv,'));
+    const completionCondition = '%hemenster_comp_stage = ^hemenster_comp_all_fish_caught';
+    if (!hasStmt(catchShape.flat, 'inv_del(inv, $bait, 1)')
+        || !under(catchShape.flat, 'inv_add(inv, raw_giant_carp, 1)', carpConditions)
+        || JSON.stringify(grants) !== JSON.stringify([
+            'inv_add(inv, raw_giant_carp, 1)',
+            'inv_add(inv, raw_sardine, 1)',
+            'inv_add(inv, raw_sardine, 1)',
+            'inv_add(inv, raw_shrimp, 1)',
+        ])
+        || catchShape.flat.some(({ stmt }) => stmt.text.startsWith('stat_advance(fishing,'))
+        || !hasStmt(catchShape.flat, '%hemenster_comp_stage = calc(%hemenster_comp_stage + 1)')
+        || !under(catchShape.flat, '~bonzo_handover_catch', [completionCondition, 'npc_find(coord, bonzo, 12, 0) = true'])) return null;
+
+    const inCompetitionShape = flatten(inCompetition);
+    const paidGate = '%hemenster_comp_stage >= ^hemenster_comp_paidfee & %fishingcompo = ^fishingcompo_started';
+    const compConditions = conditions(inCompetitionShape.nodes);
+    if (!hasRequiredConditions(compConditions, [
+        '%hemenster_comp_stage = ^hemenster_comp_not_entered',
+        paidGate,
+        completionCondition,
+    ]) || !returnsUnder(inCompetitionShape.flat, '%hemenster_comp_stage = ^hemenster_comp_not_entered')
+        || !returnsUnder(inCompetitionShape.flat, paidGate)
+        || !returnsUnder(inCompetitionShape.flat, completionCondition)
+        || !hasStmt(inCompetitionShape.flat, 'return (true)')
+        || !under(inCompetitionShape.flat, '~bonzo_set_places', [paidGate])
+        || !under(inCompetitionShape.flat, '~bonzo_handover_catch', [completionCondition])) return null;
+
+    const levelPath = attemptShape.flat.flatMap(({ path }) => path).find((each) => each.polarity && each.cond === levelCondition);
+    if (!levelPath || !ctx.idx.obj.get('fishing_rod') || !ctx.idx.obj.get('red_vine_worm') || !ctx.idx.obj.get('raw_giant_carp')) return null;
+    const level = Number(levelGuard[1]);
+    const targetId = ctx.entities.id('npc', HEMENSTER_NORTH_SPOT, HEMENSTER_CARP_METHOD);
+    const rod = ctx.entities.id('obj', 'fishing_rod', `${HEMENSTER_CARP_METHOD} tool`);
+    const worm = ctx.entities.id('obj', 'red_vine_worm', `${HEMENSTER_CARP_METHOD} bait`);
+    const carp = ctx.entities.id('obj', 'raw_giant_carp', `${HEMENSTER_CARP_METHOD} product`);
+    const levelSpan = line(attempt.span.file, levelPath.line);
+    const provenance = [
+        header.span, npc.span, attempt.span, baitChoice.span, catchFish.span, inCompetition.span,
+        levelSpan, paidFee.span, allFishCaught.span,
+    ].map(spanRef);
+    const questGate = gap('varp-gate', attempt.span, inCompetition.span, catchFish.span, paidFee.span, allFishCaught.span);
+    return {
+        id: HEMENSTER_CARP_METHOD,
+        skill: 'fishing',
+        resources: ['raw_giant_carp'],
+        op: { slot: 1, label },
+        targets: known([{ kind: 'npc', id: targetId, op: 1, class: 'resource', respawn: known(null) }]),
+        products: known([{ item: carp, level }]),
+        tools: known([{ item: rod, use_gate: null, wield_gate: null }]),
+        consumes: known([{ item: worm, count: 1 }]),
+        requirements: partial([{ id: `${HEMENSTER_CARP_METHOD}.level`, source: spanRef(levelSpan), kind: 'skill', skill: SKILL.fishing, level }], [questGate]),
+        spots: known(null),
+        sources: provenance,
+    };
+}
+
 
 function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; movements: MovementWire[]; hazardNpcs: number[] } {
     const npcs = ctx.idx.npc.all().filter((section) => section.span.file === FISHING_NPC);
@@ -1035,10 +1156,12 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
     const subjects = new Map<string, FishSubject>();
     const loose: LooseWire[] = [];
     const hazardAliases = new Set<string>();
+    const contestMethod = hemensterNorthCarp(ctx);
     const looseNpc = (alias: string, code: string, ...spans: Span[]) => loose.push({ skill: 'fishing', kind: 'npc', id: ctx.entities.id('npc', alias, `loose ${alias}`), class: 'unclassified', gap: gap(code, ...spans) });
     const join = (key: string, subject: FishSubject) => subjects.get(key) ?? subjects.set(key, subject).get(key)!;
     for (const section of npcs) {
         const alias = section.name;
+        if (alias === HEMENSTER_NORTH_SPOT && contestMethod) continue;
         const category = section.props.get('category')?.[0];
         const aliasHeaders = [1, 2, 3, 4, 5].flatMap((slot) => ctx.idx.headers.get(`opnpc${slot},${alias}`) ?? []);
         if (category && dispatchSlots(ctx, 'npc', `_${category}`).length > 0 && aliasHeaders.length === 0) {
@@ -1047,6 +1170,8 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
             looseNpc(alias, 'custom-handler', section.span, ...aliasHeaders.map((header) => header.span));
         } else if (aliasHeaders.length > 0 && aliasHeaders.every((header) => header.span.file.startsWith(FISHING_SCRIPTS))) {
             join(alias, { kind: 'npc', dispatch: alias, id: alias, members: [], hazards: [] }).members.push({ alias, def: section });
+        } else if (alias === HEMENSTER_NORTH_SPOT && aliasHeaders.some((header) => header.span.file === HEMENSTER_FISHING_SCRIPT)) {
+            looseNpc(alias, 'quest-handler-shape', section.span, ...aliasHeaders.map((header) => header.span));
         } else if (aliasHeaders.length > 0) {
             looseNpc(alias, 'handler-outside-skill-scripts', section.span, ...aliasHeaders.map((header) => header.span));
         } else looseNpc(alias, 'no-handler', section.span);
@@ -1140,6 +1265,11 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
                 sources: [spanRef(header.span)],
             });
         }
+    }
+    if (contestMethod) {
+        methods.push(contestMethod);
+        const target = contestMethod.targets.state === 'known' ? contestMethod.targets.value[0] : undefined;
+        if (target?.kind === 'npc') movementIds.add(target.id);
     }
     const movements = [...movementIds].sort((a, b) => a - b).map((id) => ({ npc: id, region: regionOf(ctx, ctx.entities.alias('npc', id)) }));
     return { methods, loose, movements, hazardNpcs: [...hazardAliases].map((alias) => ctx.entities.id('npc', alias, 'fishing whirlpool')).sort((a, b) => a - b) };
@@ -1930,7 +2060,13 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
         report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox };
     }
-    rows.sort((a, b) => compareCodepoint(a.label, b.label));
+    // Sort by place names so plain names precede their bearing siblings.
+    rows.sort((a, b) => {
+        const aSeparator = a.label.indexOf(' · ');
+        const bSeparator = b.label.indexOf(' · ');
+        return compareCodepoint(a.label.slice(0, aSeparator), b.label.slice(0, bSeparator))
+            || compareCodepoint(a.label, b.label);
+    });
     const ids = rows.map((row) => row.id);
     if (new Set(ids).size !== ids.length) throw new Error(`gather_sites: duplicate ids ${ids.filter((id, index) => ids.indexOf(id) !== index).join(', ')}`);
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {

@@ -1,7 +1,8 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
 use api::gather_methods::{
-    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput, TargetClass,
+    known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
+    SceneRegionInput, TargetClass,
 };
 use api::selected::{EntityId, Knowledge, Truth};
 use api::snapshot::{LocView, NpcView, WorldStateView, WorldTile};
@@ -19,7 +20,6 @@ const NPC_VIEW_RADIUS: u32 = 15;
 const OBSERVATION_RADIUS: i32 = NPC_VIEW_RADIUS as i32 - RESOURCE_APPROACH_RADIUS as i32;
 const OBSERVATION_WIDTH: i32 = OBSERVATION_RADIUS * 2 + 1;
 const OBSERVATION_WINDOW_TICKS: u64 = 100;
-const MAX_OBSERVATION_STANDS: u32 = 8;
 const MAX_FISHING_APPROACHES: u8 = 8;
 
 /// Session-owned evidence and approach budgets, never evicted while selecting
@@ -32,7 +32,8 @@ pub struct FishingSurvey {
 struct FishingPlacementSurvey {
     method: u16,
     spot: u32,
-    covered: u8,
+    covered: u64,
+    covered_more: Vec<u64>,
     started: Option<u64>,
     approaches: u8,
 }
@@ -48,6 +49,7 @@ impl FishingSurvey {
                 method,
                 spot,
                 covered: 0,
+                covered_more: Vec::new(),
                 started: None,
                 approaches: 0,
             });
@@ -63,6 +65,7 @@ impl FishingSurvey {
             .find(|row| row.method == method && row.spot == spot)
         {
             row.covered = 0;
+            row.covered_more.fill(0);
             row.started = None;
         }
     }
@@ -130,15 +133,21 @@ impl FishingPlacementSurvey {
             .is_some_and(|started| now.saturating_sub(started) > OBSERVATION_WINDOW_TICKS)
         {
             self.covered = 0;
+            self.covered_more.fill(0);
             self.started = None;
         }
-        for (index, cell) in observation_cells(bounds)
-            .take(MAX_OBSERVATION_STANDS as usize)
-            .enumerate()
-        {
+        for (index, cell) in observation_cells(bounds).enumerate() {
             if region_loaded(cell, world) && region_visible(cell, here) {
                 self.started.get_or_insert(now);
-                self.covered |= 1 << index;
+                if index < u64::BITS as usize {
+                    self.covered |= 1 << index;
+                } else {
+                    let word = index / u64::BITS as usize - 1;
+                    if word >= self.covered_more.len() {
+                        self.covered_more.resize(word + 1, 0);
+                    }
+                    self.covered_more[word] |= 1 << (index % u64::BITS as usize);
+                }
             }
         }
     }
@@ -147,7 +156,13 @@ impl FishingPlacementSurvey {
         observation_cells(bounds)
             .enumerate()
             .filter(|(index, _)| {
-                *index < MAX_OBSERVATION_STANDS as usize && self.covered & (1 << index) == 0
+                if *index < u64::BITS as usize {
+                    self.covered & (1 << index) == 0
+                } else {
+                    self.covered_more
+                        .get(index / u64::BITS as usize - 1)
+                        .is_none_or(|word| word & (1 << (index % u64::BITS as usize)) == 0)
+                }
             })
             .map(|(_, cell)| observation_stand(cell, here))
             .min_by_key(|stand| distance(here, *stand))
@@ -196,6 +211,58 @@ pub enum Selection {
 pub struct SelectedTarget {
     pub plan: TargetPlan,
     pub class: PlacementClass,
+}
+
+impl SelectedTarget {
+    /// One approach policy for Gatherer and finite quest gathering.
+    /// Live NPC ops own client-side approach; locs settle at their footprint.
+    pub(crate) fn approach(
+        &self,
+        snapshot: api::snapshot::SnapshotView<'_>,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<crate::native::WalkRequest> {
+        let observation_approach =
+            self.class == PlacementClass::Unloaded && matches!(self.plan.entity, EntityId::Npc(_));
+        let loc_id = match self.plan.entity {
+            EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let needs_walk = if self.class == PlacementClass::Unloaded {
+            true
+        } else if self.plan.npc_index >= 0 {
+            false
+        } else {
+            !snapshot.here().is_some_and(|here| match loc_id {
+                Some(id) => snapshot.walk_loc_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                    id,
+                ),
+                None => snapshot.walk_arrived(
+                    here.value,
+                    self.plan.tile,
+                    i32::from(RESOURCE_APPROACH_RADIUS),
+                ),
+            })
+        };
+        needs_walk.then(|| crate::native::WalkRequest {
+            target: self.plan.tile,
+            loc_id,
+            radius: RESOURCE_APPROACH_RADIUS,
+            arrival: if observation_approach {
+                nav::arrival::ArrivalKind::Area
+            } else {
+                nav::arrival::ArrivalKind::Reach
+            },
+            options: crate::native::WalkOptions::default(),
+            required_after,
+            evidence: None,
+            cross: Vec::new().into_boxed_slice(),
+            protect: false,
+            allow: Default::default(),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +441,52 @@ pub fn select(
     avoided: &[AvoidedTile; MAX_AVOID],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        avoided,
+        observation,
+        None,
+    )
+}
+
+/// Quest Paths own their quest-state gates. They may attempt a state-gated
+/// resource, but never an intercepted or substituted yield.
+pub(crate) fn select_for_quest(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    observation: SelectionObservation<'_>,
+    snapshot: api::snapshot::SnapshotView<'_>,
+) -> SelectionResult {
+    select_with_access(
+        catalog,
+        method_indices,
+        settings,
+        area,
+        &[AvoidedTile::EMPTY; MAX_AVOID],
+        observation,
+        Some(snapshot),
+    )
+}
+
+fn select_with_access(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    avoided: &[AvoidedTile; MAX_AVOID],
+    observation: SelectionObservation<'_>,
+    quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
+) -> SelectionResult {
+    let access = if quest_snapshot.is_some() {
+        AccessPolicy::Possible
+    } else {
+        AccessPolicy::Usable
+    };
     let SelectionObservation {
         world,
         locs,
@@ -395,6 +508,11 @@ pub fn select(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
@@ -405,7 +523,7 @@ pub fn select(
             for spot in spots.iter().filter(|spot| {
                 fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -413,6 +531,9 @@ pub fn select(
                     continue;
                 };
                 for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+                    if access == AccessPolicy::Possible && !area.contains(npc.tile) {
+                        continue;
+                    }
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
@@ -444,7 +565,7 @@ pub fn select(
                 continue;
             };
             for spot in spots.filter(|spot| known_resource_target(method, spot.entity)) {
-                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                if !access_allowed(catalog, method, spot, access) {
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
@@ -504,6 +625,11 @@ pub fn select(
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
+        if quest_snapshot.is_some_and(|snapshot| {
+            !super::supply::method_ready(snapshot, method, true).is_ok_and(|ready| ready)
+        }) {
+            continue;
+        }
         let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
@@ -535,10 +661,7 @@ pub fn select(
                 if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
                     let survey = fishing.placement(method_index, spot.id.0);
                     survey.observe(bounds, world, here, now);
-                    let cell_count = observation_cells(bounds).count();
-                    if cell_count > MAX_OBSERVATION_STANDS as usize {
-                        class = PlacementClass::Avoided;
-                    } else if let Some(next) = survey.next_stand(bounds, here) {
+                    if let Some(next) = survey.next_stand(bounds, here) {
                         if survey.approaches >= MAX_FISHING_APPROACHES {
                             // Budget exhaustion is not proof of absence. Let
                             // existing exhaustion handling bound an unseen spot.
@@ -706,23 +829,8 @@ pub fn resource_return_target(
             let Some(spots) = complete_spots(method) else {
                 continue;
             };
-            for spot in spots
-                .iter()
-                .filter(|spot| fishing_spot_eligible(spot, area))
-            {
-                if !known_resource_target(method, spot.entity)
-                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
-                    || avoid_until(spot, method.skill, observation.avoided) > observation.now
-                {
-                    continue;
-                }
-                let bounds = movement_bounds(spot).expect("eligible fishing movement");
-                if observation_cells(bounds).count() > MAX_OBSERVATION_STANDS as usize {
-                    continue;
-                }
-                let Some(stand) = observation_cells(bounds)
-                    .map(|cell| observation_stand(cell, observation.here))
-                    .min_by_key(|stand| distance(observation.here, *stand))
+            for spot in spots {
+                let Some(stand) = fishing_return_stand(catalog, method, spot, area, &observation)
                 else {
                     continue;
                 };
@@ -779,6 +887,25 @@ pub fn resource_return_target(
         npc_index,
         observation.skill_stat,
     ))
+}
+
+fn fishing_return_stand(
+    catalog: &GatherCatalog,
+    method: &GatherMethod,
+    spot: &GatherSpot,
+    area: WorkArea,
+    observation: &ReturnObservation<'_>,
+) -> Option<WorldTile> {
+    if !fishing_spot_eligible(spot, area)
+        || !known_resource_target(method, spot.entity)
+        || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
+        || avoid_until(spot, method.skill, observation.avoided) > observation.now
+    {
+        return None;
+    }
+    observation_cells(movement_bounds(spot)?)
+        .map(|cell| observation_stand(cell, observation.here))
+        .min_by_key(|stand| distance(observation.here, *stand))
 }
 
 fn consider_candidate<'a>(
@@ -933,6 +1060,19 @@ fn better_candidate(
             (distance, -level, i64::from(spot_id))
                 < (current_distance, -current_level, i64::from(current_spot))
         }
+    }
+}
+
+fn access_allowed(
+    catalog: &GatherCatalog,
+    method: &GatherMethod,
+    spot: &GatherSpot,
+    policy: AccessPolicy,
+) -> bool {
+    match catalog.access(method, spot) {
+        Ok(Truth::True) => true,
+        Ok(Truth::Unknown) => policy == AccessPolicy::Possible,
+        Ok(Truth::False) | Err(_) => false,
     }
 }
 
@@ -1155,6 +1295,98 @@ mod tests {
             level: tile.level,
             ..WorldStateView::default()
         }
+    }
+
+    #[test]
+    fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let mut spot = complete_spots(method)
+            .unwrap()
+            .iter()
+            .find(|spot| catalog.access(method, spot) == Ok(Truth::True))
+            .unwrap()
+            .clone();
+        let origin = spot.origin;
+        let bounds = SceneRegionInput {
+            min_x: origin.x,
+            min_z: origin.z,
+            max_x: origin.x + OBSERVATION_WIDTH * 9 - 1,
+            max_z: origin.z + OBSERVATION_WIDTH - 1,
+            level: origin.level,
+        };
+        spot.movement = Knowledge::Known(Some(bounds));
+        let here = WorldTile {
+            x: bounds.max_x + 30,
+            z: origin.z + OBSERVATION_RADIUS,
+            ..origin
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: origin,
+            radius: 1,
+        };
+        let expected = WorldTile {
+            x: bounds.max_x - OBSERVATION_RADIUS,
+            z: here.z,
+            ..origin
+        };
+        let observation = ReturnObservation {
+            here,
+            now: 1,
+            skill_stat: 10,
+            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+        };
+        assert_eq!(
+            fishing_return_stand(&catalog, method, &spot, area, &observation),
+            Some(expected),
+            "Return must not reject a spot solely because its movement spans nine cells"
+        );
+        let mut fishing = FishingSurvey::default();
+        let survey = fishing.placement(0, spot.id.0);
+        assert_eq!(survey.next_stand(bounds, here), Some(expected));
+        survey.observe(bounds, &scene_around(expected), expected, 2);
+        assert_ne!(
+            survey.next_stand(bounds, expected),
+            Some(expected),
+            "arrival must record the ninth cell before selecting the next observation"
+        );
+    }
+
+    #[test]
+    fn large_fishing_survey_records_cells_beyond_the_inline_mask() {
+        let bounds = SceneRegionInput {
+            min_x: 3000,
+            min_z: 3000,
+            max_x: 3000 + OBSERVATION_WIDTH * 65 - 1,
+            max_z: 3000 + OBSERVATION_WIDTH - 1,
+            level: 0,
+        };
+        let here = WorldTile {
+            x: bounds.max_x + 30,
+            z: bounds.min_z + OBSERVATION_RADIUS,
+            level: 0,
+        };
+        let expected = WorldTile {
+            x: bounds.max_x - OBSERVATION_RADIUS,
+            ..here
+        };
+        let mut fishing = FishingSurvey::default();
+        let survey = fishing.placement(0, 0);
+        assert_eq!(survey.next_stand(bounds, here), Some(expected));
+        survey.observe(bounds, &scene_around(expected), expected, 1);
+        assert_ne!(survey.next_stand(bounds, expected), Some(expected));
+        survey.observe(
+            bounds,
+            &scene_around(here),
+            here,
+            OBSERVATION_WINDOW_TICKS + 2,
+        );
+        assert_eq!(
+            survey.next_stand(bounds, here),
+            Some(expected),
+            "expired observations reopen distant cells without changing the approach budget"
+        );
     }
 
     #[test]
@@ -2035,7 +2267,7 @@ mod tests {
     }
 
     #[test]
-    fn fishing_content_envelopes_have_radius_one_safe_bounded_stands() {
+    fn fishing_content_envelopes_have_radius_one_safe_stands() {
         let catalog = real_catalog();
         for id in [310, 317, 320, 325, 1191] {
             let mut checked = 0;
@@ -2051,15 +2283,12 @@ mod tests {
                 {
                     let bounds = movement_bounds(spot).unwrap();
                     let cells: Vec<_> = observation_cells(bounds).collect();
-                    assert!(
-                        !cells.is_empty() && cells.len() <= MAX_OBSERVATION_STANDS as usize,
-                        "NPC {id} requires {} cells: {bounds:?}",
-                        cells.len()
-                    );
+                    assert!(!cells.is_empty(), "NPC {id} has no cells: {bounds:?}");
                     let survey = FishingPlacementSurvey {
                         method: 0,
                         spot: 0,
                         covered: 0,
+                        covered_more: Vec::new(),
                         started: None,
                         approaches: 0,
                     };
@@ -2102,6 +2331,7 @@ mod tests {
             method: 0,
             spot: 0,
             covered: 0,
+            covered_more: Vec::new(),
             started: None,
             approaches: 3,
         };

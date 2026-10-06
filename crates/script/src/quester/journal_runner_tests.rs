@@ -19,7 +19,7 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     step.kind = "wait".into();
     step.args = serde_json::json!({"until":{"All":[]},"max_ticks":10});
     step.skip_if = PredicateDocument::Any(vec![]);
-    step.advances = journal;
+    step.advances = Some(journal);
     step.settle = if journal {
         PredicateDocument::Fact {
             kind: "stage_in".into(),
@@ -457,6 +457,7 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
                 required_after,
                 bank: &script.bank,
                 banks: &script.banks,
+                choices: &script.choices,
             };
             let run = super::super::families::combat::tests::policy_s2_run_for_runner(&mut cx);
             if wraps_recipe {
@@ -545,11 +546,18 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
     ] {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = super::super::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
         .unwrap();
         let mut script = Quester::new(
             RunKey {
@@ -893,12 +901,14 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
     let step = &mut Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0];
     step.plan = Arc::new(super::super::families::AcquirePlan {
         recipe: Arc::from("synthetic-journal"),
-        steps: vec![super::super::families::CompiledAcquireStep {
+        steps: Arc::from(vec![super::super::families::CompiledAcquireStep {
+            id: step.id.clone(),
             advances: true,
             skip_if: Arc::clone(&step.skip_if),
+            skip_if_summary: Arc::clone(&step.skip_if_summary),
             settle: Arc::clone(&step.settle),
             plan: Arc::clone(&step.plan),
-        }],
+        }]),
     });
     step.advances = false;
     let mut ledger = None;
@@ -1344,17 +1354,19 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog)
+            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+                component_id: None
+            })
         ));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         snapshot.seed_inventory(held(output), 28);
-        for tick in 8..=13 {
+        for tick in 8..=17 {
             drive(&mut script, &snapshot, &mut ledger, tick);
         }
-        drive(&mut script, &snapshot, &mut ledger, 14);
-        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 15, after);
-        drive(&mut script, &snapshot, &mut ledger, 19);
+        drive(&mut script, &snapshot, &mut ledger, 18);
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 19, after);
+        drive(&mut script, &snapshot, &mut ledger, 23);
         assert_eq!(
             script.current_step().unwrap().id.0.as_ref(),
             next,
@@ -1405,6 +1417,169 @@ impl NativeOutput for StatusCapture {
     fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
+}
+
+struct NeedsEvidenceStep {
+    gates: Arc<[api::selected::QuestGate]>,
+    name: Arc<str>,
+}
+
+impl StepRun for NeedsEvidenceStep {
+    fn poll(&mut self, _cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        Poll::Ready(Err(ActionError::NeedsEvidence(Arc::clone(&self.gates))))
+    }
+
+    fn cancel(&mut self, _actions: &mut crate::native::NativeActions) {}
+
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        Some(("Loadout observation", &self.name))
+    }
+}
+
+fn run_needs_evidence_step(gates: Arc<[api::selected::QuestGate]>) -> (Quester, ScriptFlow) {
+    let (mut script, snapshot) = fixture(false);
+    script.step = Some(Box::new(NeedsEvidenceStep {
+        gates,
+        name: Arc::from("Waiting for inventory/equipment observation"),
+    }));
+    let mut ledger = None;
+    let mut output = StatusCapture::default();
+    let flow = with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+        script.tick(tick).unwrap()
+    });
+    (script, flow)
+}
+
+#[test]
+fn empty_gate_needs_evidence_uses_active_step_wait_detail_before_drop() {
+    let empty_gates: Arc<[api::selected::QuestGate]> = Arc::from([]);
+    let (script, flow) = run_needs_evidence_step(empty_gates);
+
+    assert!(matches!(
+        &flow,
+        ScriptFlow::Blocked(failure) if failure.code.as_ref() == "needs-evidence"
+    ));
+    assert!(
+        script.step.is_none(),
+        "the refused owner must still be dropped"
+    );
+    assert_eq!(script.last_error_kind, QuesterFailureKind::NeedsEvidence);
+    assert_eq!(
+        script.last_error.as_deref(),
+        Some("needs evidence: Loadout observation: Waiting for inventory/equipment observation")
+    );
+}
+
+#[test]
+fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        api::selected::FactKey::new("cook:mid"),
+    )]);
+    let (script, flow) = run_needs_evidence_step(gates);
+
+    assert!(matches!(
+        &flow,
+        ScriptFlow::Blocked(failure) if failure.code.as_ref() == "needs-evidence"
+    ));
+    assert_eq!(
+        script.last_error.as_deref(),
+        Some("walk needs authoritative quest-gate evidence")
+    );
+}
+
+#[test]
+fn provisioner_pending_preserves_semantic_outcome_and_status() {
+    use crate::combat::{CombatEnd, CombatReport};
+    use api::quest_progress::EvidenceStamp;
+
+    let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-semantic-outcome");
+    let mut fixture = nested_bank_fixture(false);
+    let mut cleared_before_acquire = false;
+    let mut semantic_evidence = None;
+    for tick in 1..=64 {
+        let mut output = StatusCapture::default();
+        fixture.drive_with_output(tick, &mut output);
+        if !cleared_before_acquire
+            && fixture.script.provisioner.status().phase
+                == super::super::provision::ProvisionPhase::Acquiring
+        {
+            assert!(
+                fixture.script.bank.known(),
+                "the real provisioning scan must establish an empty-bank memo first"
+            );
+            fixture.script.bank.clear();
+            cleared_before_acquire = true;
+            let evidence = EvidenceStamp {
+                run: fixture.script.run,
+                tick: 0,
+                sequence: 0,
+            };
+            let report = CombatReport {
+                end: CombatEnd::TargetGone,
+                evidence,
+                engaged: None,
+                engaged_npc_type: 477,
+                ticks: 1,
+                swings: 0,
+                casts: 0,
+                damage_taken: 0,
+                food: 0,
+                prayer_doses: 0,
+                boost_doses: 0,
+                antifire_doses: 0,
+                hits_while_protected: 0,
+                protect_switches: 0,
+                intruders: 0,
+                ammo_pickups: 0,
+                restorations: 0,
+                locked_ticks: 0,
+                multi_op_plans: 0,
+                melee_mode_fallback: None,
+                flick_resets: 0,
+                flick_misses: 0,
+                flick_fallback: false,
+            };
+            fixture.script.last_outcome = Some(StepOutcome {
+                progress: None,
+                evidence,
+                receipt: Some(Arc::new(crate::quester::families::combat::CombatReceipt {
+                    report,
+                    target_gone_restarts: 1,
+                })),
+            });
+            semantic_evidence = Some(evidence);
+        }
+
+        if let Some(receipt_tick) = fixture.provisioner_bank_receipt_tick() {
+            let semantic_evidence =
+                semantic_evidence.expect("the semantic outcome must precede the receipt");
+            assert_eq!(
+                fixture
+                    .script
+                    .last_outcome
+                    .as_ref()
+                    .map(|outcome| outcome.evidence),
+                Some(semantic_evidence),
+                "a Provisioner Pending receipt must not replace the semantic outcome"
+            );
+            assert!(fixture.script.bank.known());
+            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+            let status = output
+                .0
+                .last()
+                .expect("the receipt change publishes status");
+            assert!(
+                status.fields.iter().any(|field| {
+                    field.key == "combat_end"
+                        && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+                }),
+                "Provisioner receipt publication must retain the prior semantic status"
+            );
+            assert_ne!(semantic_evidence.tick, receipt_tick);
+            return;
+        }
+    }
+    panic!("the native Provisioner scan must expose a cached BankReceipt");
 }
 
 #[test]
@@ -1462,5 +1637,747 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
     assert_eq!(
         slot.lifecycle_receipt().expect("completed receipt").state,
         crate::ScriptTerminalState::Completed
+    );
+}
+struct NestedBankFixture {
+    script: Quester,
+    snapshot: GameSnapshot,
+    ledger: Ledger,
+    bank: api::named_banks::NamedBank,
+    bank_tile: api::snapshot::WorldTile,
+    egg_id: i32,
+    selected_bank: bool,
+    opened_bank: bool,
+}
+
+impl NestedBankFixture {
+    fn drive(&mut self, tick: u64) -> ScriptFlow {
+        let mut output = StatusCapture::default();
+        self.drive_with_output(tick, &mut output)
+    }
+
+    fn drive_with_output(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
+        let flow = with_tick_output(&self.snapshot, &mut self.ledger, tick, output, |t| {
+            self.script.tick(t).unwrap()
+        });
+        let bank_pick_pending = self.ledger.as_ref().is_some_and(|ledger| {
+            ledger
+                .outbox
+                .first()
+                .is_some_and(|action| matches!(&action.effect, HostEffect::BankPick(_)))
+        });
+        let open_stand_pending = self.ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.first().is_some_and(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                )
+            })
+        });
+        if bank_pick_pending {
+            let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+            let authority = action.authority();
+            self.ledger.as_mut().unwrap().complete_bank_pick(
+                &authority,
+                crate::bank::BankPickReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: authority.run(),
+                        tick,
+                        sequence: tick,
+                    },
+                    selected: crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: self.bank_tile,
+                        kind: crate::bank::PickKind::Reachable,
+                        access: Some(Arc::new(crate::bank::BankStandAccess {
+                            bank: self.bank,
+                            stand_tile: self.bank_tile,
+                            kind: crate::bank::AccessKind::Booth,
+                            stand_op: 1,
+                            name: None,
+                            choose: None,
+                        })),
+                    },
+                },
+            );
+            self.selected_bank = true;
+        } else if open_stand_pending {
+            assert!(matches!(
+                ack(&mut self.ledger, tick),
+                HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+            ));
+            self.snapshot
+                .seed_bank_observation(1, tick, Some(vec![]), vec![]);
+            self.opened_bank = true;
+        } else if self
+            .ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            panic!("unexpected nested bank effect");
+        }
+        flow
+    }
+
+    fn path_bank_receipt_tick(&self) -> Option<u64> {
+        bank_receipt_tick(
+            self.script
+                .step
+                .as_ref()
+                .and_then(|step| step.in_flight_outcome()),
+        )
+    }
+
+    fn provisioner_bank_receipt_tick(&self) -> Option<u64> {
+        bank_receipt_tick(self.script.provisioner.in_flight_outcome())
+    }
+}
+
+fn bank_receipt_tick(outcome: Option<&crate::quester::compile::StepOutcome>) -> Option<u64> {
+    outcome.and_then(|outcome| {
+        outcome
+            .receipt
+            .as_deref()
+            .and_then(|receipt| {
+                receipt
+                    .as_any()
+                    .downcast_ref::<crate::native_bank::BankReceipt>()
+            })
+            .map(|_| outcome.evidence.tick)
+    })
+}
+
+fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
+    use crate::quester::families::tests::local_player;
+    use crate::quester::path::StepDocument;
+    use api::snapshot::{LocLayer, LocView, WorldTile};
+
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let mut document = super::super::compile::decode_cook().unwrap();
+    let bank_has_egg = |qty| PredicateDocument::Fact {
+        kind: "bank_has".into(),
+        version: 1,
+        args: serde_json::json!({"obj": "egg", "qty": qty}),
+    };
+    let bank_known = PredicateDocument::Fact {
+        kind: "bank_known".into(),
+        version: 1,
+        args: serde_json::json!({}),
+    };
+    let bank_empty = PredicateDocument::All(vec![
+        bank_known.clone(),
+        PredicateDocument::Not(Box::new(bank_has_egg(1))),
+    ]);
+
+    let header = document.quest.as_mut().unwrap();
+    header.owns_inventory = owns_inventory;
+    header.acquire.insert(
+        "acquire:egg".into(),
+        vec![StepDocument {
+            id: FactKey::new("nested-bank-acquire"),
+            kind: "acquire".into(),
+            version: 1,
+            args: serde_json::json!({"recipe": "acquire:egg-bank-scan"}),
+            comment: None,
+            advances: Some(false),
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: bank_empty.clone(),
+        }],
+    );
+    header.acquire.insert(
+        "acquire:egg-bank-scan".into(),
+        vec![
+            StepDocument {
+                id: FactKey::new("real-empty-bank-scan"),
+                kind: "bank".into(),
+                version: 1,
+                args: serde_json::json!({
+                    "op": "scan",
+                    "at": "nearest",
+                    "items": [],
+                    "keep": [],
+                    "keep_ids": [],
+                    "partial_ok": false
+                }),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: bank_known,
+            },
+            StepDocument {
+                id: FactKey::new("skip-until-empty-bank-is-known"),
+                kind: "wait".into(),
+                version: 1,
+                args: serde_json::json!({
+                    "until": {
+                        "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {"obj": "egg", "qty": 1}
+                        }
+                    },
+                    "max_ticks": 4
+                }),
+                comment: None,
+                advances: Some(false),
+                skip_if: bank_empty.clone(),
+                settle: bank_empty.clone(),
+            },
+        ],
+    );
+    let sequence = &mut document.roles[0].sequences[1];
+    sequence.steps.truncate(1);
+    sequence.terminal = true;
+    sequence.steps[0].skip_if = bank_empty.clone();
+    sequence.steps[0].settle = bank_empty;
+
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
+        .expect("nested cook bank recipes compile");
+    let bank_tile = WorldTile {
+        x: 3092,
+        z: 3242,
+        level: 0,
+    };
+    let bank = api::named_banks::NamedBank::new("Nested receipt bank", bank_tile);
+    let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+    let egg_id = data.item_by_alias("egg").unwrap().id;
+    let script = Quester::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        path,
+        Arc::clone(&data),
+        quests,
+        banks,
+    );
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(local_player(bank_tile));
+    snapshot.seed_inventory(vec![], 28);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf8f800,
+        }],
+        true,
+    );
+    snapshot.seed_locs(vec![LocView {
+        id: 2213,
+        name: Some("Bank booth".into()),
+        actions: vec![Some("Use-quickly".into())],
+        tile: bank_tile,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    NestedBankFixture {
+        script,
+        snapshot,
+        ledger: None,
+        bank,
+        bank_tile,
+        egg_id,
+        selected_bank: false,
+        opened_bank: false,
+    }
+}
+
+#[test]
+fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
+    let _isolated = crate::IsolatedEnv::enter("quester-nested-bank-receipt");
+    let mut fixture = nested_bank_fixture(true);
+    let mut flow = ScriptFlow::Continue;
+    for tick in 1..=48 {
+        flow = fixture.drive(tick);
+        if matches!(flow, ScriptFlow::Complete) {
+            break;
+        }
+    }
+
+    assert!(
+        fixture.selected_bank,
+        "the real scan must request bank selection"
+    );
+    assert!(
+        fixture.opened_bank,
+        "the selected stand must open before the real scan"
+    );
+    assert_eq!(
+        flow,
+        ScriptFlow::Complete,
+        "the nested outer acquire must settle instead of timing out on unknown bank evidence"
+    );
+    assert!(fixture.script.bank.known());
+    assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+    assert!(!fixture.script.parked);
+    assert!(fixture
+        .script
+        .last_error
+        .as_ref()
+        .is_none_or(|error| !error.contains("step settle timeout")));
+
+    let dependent = &fixture.script.path.provisioning.recipes["acquire:egg-bank-scan"][1].skip_if;
+    let outer_settle = &fixture.script.path.sequences[1].steps[0].settle;
+    let (dependent_truth, settle_truth) =
+        with_tick(&fixture.snapshot, &mut fixture.ledger, 49, |tick| {
+            let cx = PredicateContext {
+                cx: &tick.cx,
+                pairs: tick.pairs,
+                quests: &fixture.script.quests,
+                progress: &[],
+                required_after: tick.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+                bank: &fixture.script.bank,
+            };
+            (dependent.evaluate(&cx), outer_settle.evaluate(&cx))
+        });
+    assert_eq!(dependent_truth, Truth::True);
+    assert_eq!(settle_truth, Truth::True);
+}
+
+#[test]
+fn provisioner_pending_publishes_nested_receipt_before_skip_and_invalidates_on_completion() {
+    let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt");
+    let mut fixture = nested_bank_fixture(false);
+    let mut invalidated = false;
+    let mut published = false;
+    let mut cleared_before_acquire = false;
+    for tick in 1..=64 {
+        fixture.drive(tick);
+        if !cleared_before_acquire
+            && fixture.script.provisioner.status().phase
+                == super::super::provision::ProvisionPhase::Acquiring
+        {
+            assert!(
+                fixture.script.bank.known(),
+                "the real provisioning scan must first establish the observed empty bank"
+            );
+            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+            fixture.script.bank.clear();
+            cleared_before_acquire = true;
+        }
+
+        if cleared_before_acquire {
+            if fixture.provisioner_bank_receipt_tick().is_some() {
+                assert!(
+                    fixture.script.bank.known(),
+                    "Provisioner Pending must publish its nested native BankReceipt"
+                );
+                assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+                published = true;
+            } else if published && !fixture.script.bank.known() {
+                invalidated = true;
+                break;
+            }
+        }
+    }
+
+    assert!(
+        fixture.selected_bank,
+        "provisioning must select the real bank"
+    );
+    assert!(
+        fixture.opened_bank,
+        "provisioning must open the selected bank"
+    );
+    assert!(
+        published,
+        "the nested AcquireRun must expose its in-flight scan receipt"
+    );
+    assert!(cleared_before_acquire);
+    assert!(
+        invalidated,
+        "completed acquisition must still invalidate the memo because inventory may have changed"
+    );
+    assert!(!fixture.script.parked);
+    assert!(fixture
+        .script
+        .last_error
+        .as_ref()
+        .is_none_or(|error| !error.contains("settle timeout")));
+}
+
+#[test]
+fn path_cached_bank_receipt_is_not_republished_and_session_end_drops_it() {
+    let _isolated = crate::IsolatedEnv::enter("quester-path-bank-receipt-lifecycle");
+    let mut fixture = nested_bank_fixture(true);
+    for tick in 1..=48 {
+        fixture.drive(tick);
+        let Some(receipt_tick) = fixture.path_bank_receipt_tick() else {
+            continue;
+        };
+        assert!(fixture.script.bank.known());
+        assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+        assert_eq!(
+            fixture
+                .script
+                .last_outcome
+                .as_ref()
+                .map(|outcome| outcome.evidence.tick),
+            Some(receipt_tick)
+        );
+
+        fixture.script.bank.clear();
+        fixture.drive(tick + 1);
+        assert_eq!(fixture.path_bank_receipt_tick(), Some(receipt_tick));
+        assert!(
+            !fixture.script.bank.known(),
+            "the cached Path child receipt must not be published twice"
+        );
+
+        fixture
+            .script
+            .interrupt(crate::native::Interrupt::SessionEnded);
+        assert!(fixture.script.step.is_none());
+        assert!(fixture.script.last_outcome.is_none());
+        assert_eq!(fixture.path_bank_receipt_tick(), None);
+        fixture.drive(tick + 2);
+        assert!(
+            !fixture.script.bank.known(),
+            "a later Path poll must not republish a cancelled cached receipt"
+        );
+        assert!(fixture.selected_bank);
+        assert!(fixture.opened_bank);
+        return;
+    }
+    panic!("the native Path scan must expose a cached BankReceipt");
+}
+
+#[test]
+fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
+    let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt-lifecycle");
+    let mut fixture = nested_bank_fixture(false);
+    let mut cleared_before_acquire = false;
+    for tick in 1..=64 {
+        let semantic_outcome_before = fixture
+            .script
+            .last_outcome
+            .as_ref()
+            .map(|outcome| outcome.evidence);
+        fixture.drive(tick);
+        if !cleared_before_acquire
+            && fixture.script.provisioner.status().phase
+                == super::super::provision::ProvisionPhase::Acquiring
+        {
+            assert!(
+                fixture.script.bank.known(),
+                "the real provisioning scan must establish an empty-bank memo first"
+            );
+            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+            fixture.script.bank.clear();
+            cleared_before_acquire = true;
+        }
+        let Some(receipt_tick) = fixture.provisioner_bank_receipt_tick() else {
+            continue;
+        };
+        assert!(cleared_before_acquire);
+        assert!(fixture.script.bank.known());
+        assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+        assert_eq!(
+            fixture
+                .script
+                .last_outcome
+                .as_ref()
+                .map(|outcome| outcome.evidence),
+            semantic_outcome_before,
+            "a Provisioner receipt must not replace the semantic outcome"
+        );
+
+        fixture.script.bank.clear();
+        fixture.drive(tick + 1);
+        assert_eq!(fixture.provisioner_bank_receipt_tick(), Some(receipt_tick));
+        assert!(
+            !fixture.script.bank.known(),
+            "the cached Provisioner child receipt must not be published twice"
+        );
+
+        fixture.script.on_stop(crate::native::StopReason::Operator);
+        assert_eq!(fixture.provisioner_bank_receipt_tick(), None);
+        assert!(fixture.script.last_outcome.is_none());
+        fixture.drive(tick + 2);
+        assert!(
+            !fixture.script.bank.known(),
+            "a later poll after Stop must not republish the dropped cached receipt"
+        );
+        assert!(fixture.selected_bank);
+        assert!(fixture.opened_bank);
+        return;
+    }
+    panic!("the native Provisioner scan must expose a cached BankReceipt");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ProgressOutcomeStamp {
+    Fresh,
+    PreviousPoll,
+    StepBegin,
+    BeforeStep,
+    Uncorrelated,
+    Future,
+    ForeignRun,
+}
+
+struct ProgressOutcomePlan {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+}
+
+impl super::super::compile::StepPlan for ProgressOutcomePlan {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let mut progress = self.progress.clone();
+        progress.evidence = cx.required_after;
+        Ok(Box::new(ProgressOutcomeRun {
+            progress,
+            stamp: self.stamp,
+            previous_poll: None,
+        }))
+    }
+}
+
+struct ProgressOutcomeRun {
+    progress: QuestProgress,
+    stamp: ProgressOutcomeStamp,
+    previous_poll: Option<api::quest_progress::EvidenceStamp>,
+}
+
+impl StepRun for ProgressOutcomeRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let current = cx.tick.cx.evidence();
+        let begin = self.progress.evidence;
+        self.progress.evidence = match self.stamp {
+            ProgressOutcomeStamp::StepBegin => begin,
+            ProgressOutcomeStamp::BeforeStep => api::quest_progress::EvidenceStamp {
+                tick: begin.tick - 1,
+                sequence: begin.sequence - 1,
+                ..begin
+            },
+            ProgressOutcomeStamp::Future => api::quest_progress::EvidenceStamp {
+                tick: current.tick + 1,
+                sequence: current.sequence + 1,
+                ..current
+            },
+            ProgressOutcomeStamp::ForeignRun => api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    session: current.run.session + 1,
+                    ..current.run
+                },
+                ..current
+            },
+            ProgressOutcomeStamp::PreviousPoll => {
+                let Some(previous) = self.previous_poll.replace(current) else {
+                    return Poll::Pending;
+                };
+                previous
+            }
+            ProgressOutcomeStamp::Fresh | ProgressOutcomeStamp::Uncorrelated => current,
+        };
+        Poll::Ready(Ok(StepOutcome {
+            evidence: if matches!(self.stamp, ProgressOutcomeStamp::Uncorrelated) {
+                begin
+            } else {
+                self.progress.evidence
+            },
+            progress: Some(Arc::new(self.progress.clone())),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
+fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot, Ledger) {
+    let (mut script, snapshot) = fixture(false);
+    let mut ledger = None;
+    let progress = with_tick(&snapshot, &mut ledger, 0, |tick| {
+        resolve_colour(
+            &script.path,
+            QuestListStatus::Complete,
+            tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        )
+    });
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
+        Arc::new(ProgressOutcomePlan { progress, stamp });
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        script.step.is_some(),
+        "the runner must begin the authored step"
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    (script, snapshot, ledger)
+}
+
+#[test]
+fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
+    for stamp in [
+        ProgressOutcomeStamp::Fresh,
+        ProgressOutcomeStamp::PreviousPoll,
+    ] {
+        let (mut script, mut snapshot, mut ledger) = step_progress_fixture(stamp);
+        let poll_tick = if matches!(stamp, ProgressOutcomeStamp::PreviousPoll) {
+            drive(&mut script, &snapshot, &mut ledger, 2);
+            assert!(script.step.is_some() && !script.settling);
+            3
+        } else {
+            2
+        };
+        drive(&mut script, &snapshot, &mut ledger, poll_tick);
+        assert!(
+            script.settling,
+            "fresh progress correlated with its final outcome must settle: {stamp:?}, {:?}",
+            script.last_error
+        );
+        let outcome = script.last_outcome.as_ref().expect("accepted outcome");
+        assert_eq!(outcome.evidence, script.progress().unwrap().evidence);
+        assert_eq!(outcome.evidence.tick, 2);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:2");
+        assert_eq!(script.progress().unwrap().complete, Truth::True);
+        assert!(script.last_error.is_none());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0x00f800,
+            }],
+            true,
+        );
+        drive(&mut script, &snapshot, &mut ledger, poll_tick + 1);
+        assert!(!script.settling);
+        assert!(matches!(
+            drive(&mut script, &snapshot, &mut ledger, poll_tick + 2),
+            ScriptFlow::Complete
+        ));
+    }
+}
+
+#[test]
+fn step_outcome_progress_rejects_stale_uncorrelated_future_and_foreign_receipts() {
+    for stamp in [
+        ProgressOutcomeStamp::StepBegin,
+        ProgressOutcomeStamp::BeforeStep,
+        ProgressOutcomeStamp::Uncorrelated,
+        ProgressOutcomeStamp::Future,
+        ProgressOutcomeStamp::ForeignRun,
+    ] {
+        let (mut script, snapshot, mut ledger) = step_progress_fixture(stamp);
+        let prior = script.progress().unwrap().evidence;
+        drive(&mut script, &snapshot, &mut ledger, 2);
+        assert!(
+            !script.settling,
+            "invalid progress must not settle: {stamp:?}"
+        );
+        assert!(script.last_outcome.is_none());
+        assert_eq!(script.progress().unwrap().evidence, prior);
+        assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+        assert_eq!(script.last_error.as_deref(), Some("step error: Stale"));
+    }
+}
+
+#[test]
+fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
+    let (script, snapshot) = fixture(false);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let after = api::quest_progress::EvidenceStamp {
+            run: tick.cx.run(),
+            tick: 4,
+            sequence: 4,
+        };
+        let progress = resolve_colour(
+            &script.path,
+            QuestListStatus::NotStarted,
+            tick.cx.evidence(),
+            Arc::new(tick.cx.pin().clone()),
+        );
+        assert!(script.valid_progress(tick, &progress, after));
+        let mut bad = progress.clone();
+        bad.evidence = after;
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "same-frame cached progress is not a new owned read"
+        );
+        bad.evidence = api::quest_progress::EvidenceStamp {
+            tick: 6,
+            sequence: 6,
+            ..after
+        };
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "future receipts cannot be consumed"
+        );
+        bad = progress.clone();
+        bad.evidence.run.session += 1;
+        assert!(!script.valid_progress(tick, &bad, after), "foreign session");
+        bad = progress.clone();
+        bad.binding = FactKey::new("card:other");
+        assert!(!script.valid_progress(tick, &bad, after), "foreign binding");
+        bad = progress.clone();
+        bad.role = Some(FactKey::new("other"));
+        assert!(!script.valid_progress(tick, &bad, after), "foreign role");
+        bad = progress.clone();
+        bad.stage = Knowledge::Known(FactKey::new("unbound"));
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "undeclared stage"
+        );
+        bad = progress.clone();
+        bad.complete = Truth::True;
+        assert!(
+            !script.valid_progress(tick, &bad, after),
+            "completion must name the terminal stage"
+        );
+        bad = progress.clone();
+        bad.flags = Arc::from([api::quest_progress::ProgressFlag {
+            flag: FactKey::new("undeclared"),
+            truth: Truth::True,
+            count: None,
+        }]);
+        assert!(!script.valid_progress(tick, &bad, after), "undeclared flag");
+    });
+}
+
+#[test]
+fn ordinary_recovery_keeps_completed_admission_but_pause_and_new_run_do_not() {
+    let (mut script, snapshot) = fixture(false);
+    script.pair_admitted = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 5, |tick| script.cancel_step(tick));
+    assert!(
+        script.pair_admitted,
+        "ordinary death/prayer cleanup does not invent a second peer barrier"
+    );
+    script.interrupt(Interrupt::Hold(true));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Hold(false));
+    assert!(script.pair_admitted);
+    script.interrupt(Interrupt::Pause);
+    assert!(!script.pair_admitted);
+    script.pair_admitted = true;
+    script.run.session += 1;
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        !script.pair_admitted,
+        "a different run/session must acquire a fresh reciprocal admission"
     );
 }

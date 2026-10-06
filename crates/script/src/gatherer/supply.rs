@@ -8,8 +8,8 @@ use super::card::Prepared;
 use super::settings::{GathererSettings, Skill};
 use crate::native::ConfigError;
 use api::game_data::{SelectedGameData, TeleportSpell};
-use api::gather_methods::{known_rows, GatherCatalog};
-use api::selected::SkillMinimum;
+use api::gather_methods::{known_rows, GatherCatalog, GatherMethod};
+use api::selected::{Knowledge, SkillMinimum};
 use api::snapshot::{ItemView, StatView};
 use std::sync::Arc;
 
@@ -95,27 +95,29 @@ fn resolve_food(
     settings: &mut GathererSettings,
     selected: &SelectedGameData,
 ) -> Result<Option<SupplyItemFact>, ConfigError> {
-    let requested = settings.food.trim();
+    let requested = settings.food.as_str();
     if requested.is_empty() {
-        settings.food.clear();
         return Ok(None);
     }
-    let hit = selected
-        .search_named_items(requested, usize::MAX)
-        .into_iter()
-        .filter(|item| item.name.eq_ignore_ascii_case(requested))
-        .min_by_key(|item| item.id)
+    let item = selected
+        .resolve_item_name(requested)
+        .filter(|item| {
+            item.name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+        })
         .ok_or_else(|| {
             ConfigError::new(
                 "food",
                 "unknown-item",
-                format!("food {requested:?} is not a selected object name"),
+                format!("food {requested:?} is not a selected item alias or name"),
             )
         })?;
-    settings.food.clone_from(&hit.name);
+    let name = item.name.as_deref().expect("resolved named item");
+    settings.food = name.to_string();
     Ok(Some(SupplyItemFact {
-        id: hit.id,
-        name: Arc::from(hit.name),
+        id: item.id,
+        name: Arc::from(name),
     }))
 }
 
@@ -261,6 +263,99 @@ pub struct ToolChoice {
     pub worn: bool,
 }
 
+/// Admission shares supply planning's tool and effective-stat rules. Quest Paths
+/// own their selected quest-state gates; ordinary Gatherer revalidates on refusal.
+pub(crate) fn method_ready(
+    snapshot: api::snapshot::SnapshotView<'_>,
+    method: &GatherMethod,
+    quest_owned: bool,
+) -> Result<bool, &'static str> {
+    let (Some(stats), Some(inventory), Some(equipment), Some(world)) = (
+        snapshot.stats(),
+        snapshot.inventory(),
+        snapshot.equipment(),
+        snapshot.world(),
+    ) else {
+        return Ok(false);
+    };
+    let Some(requirements) = super::settings::method_requirements(method, quest_owned) else {
+        return Err("gather requirements are incomplete");
+    };
+    let count = |id| {
+        inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == id)
+            .fold(0i32, |count, row| count.saturating_add(row.count))
+    };
+    for requirement in requirements.iter() {
+        match requirement.kind {
+            api::selected::RequirementKind::Skill(minimum) => {
+                if !stats
+                    .value
+                    .iter()
+                    .any(|stat| stat.index == i32::from(minimum.skill))
+                {
+                    return Ok(false);
+                }
+                if !meets_gate(stats.value, minimum) {
+                    return Err("gather level too low");
+                }
+            }
+            api::selected::RequirementKind::MembersWorld if !world.value.members => {
+                return Err("gather requires a members world");
+            }
+            api::selected::RequirementKind::MembersWorld => {}
+            api::selected::RequirementKind::Item(item)
+                if i64::from(count(item.item)) < i64::from(item.count) =>
+            {
+                return Err("gather required item missing");
+            }
+            api::selected::RequirementKind::Item(_) => {}
+            _ => return Err("gather requirement is not observed"),
+        }
+    }
+    let (Knowledge::Known(tools), Knowledge::Known(consumes)) = (&method.tools, &method.consumes)
+    else {
+        return Err("gather supplies are incomplete");
+    };
+    if !tools.is_empty()
+        && best_method_tool(method, stats.value, inventory.value, equipment.value).is_none()
+    {
+        return Err("gather usable tool missing");
+    }
+    if consumes
+        .iter()
+        .any(|item| i64::from(count(item.item)) < i64::from(item.count))
+    {
+        return Err("gather bait missing");
+    }
+    Ok(true)
+}
+
+fn best_method_tool(
+    method: &GatherMethod,
+    stats: &[StatView],
+    inventory: &[ItemView],
+    equipment: &[ItemView],
+) -> Option<ToolChoice> {
+    known_rows(&method.tools).iter().find_map(|tool| {
+        if tool.use_gate.is_some_and(|gate| !meets_gate(stats, gate)) {
+            return None;
+        }
+        let worn = equipment
+            .iter()
+            .any(|row| row.def.id == tool.item && row.count > 0);
+        let held = inventory
+            .iter()
+            .any(|row| row.def.id == tool.item && row.count > 0);
+        (worn || held).then_some(ToolChoice {
+            id: tool.item,
+            worn,
+        })
+    })
+}
+
 /// Return the best-first supported tool that is already held or worn.
 /// Wield eligibility is deliberately separate: an unwieldable higher-tier axe
 /// in the pack is still the selected and protected tool.
@@ -285,31 +380,14 @@ pub fn best_tool(
             inventory,
             equipment,
         ),
-        Skill::Fishing => {
-            for &index in prepared.methods.iter() {
-                let Some(method) = prepared.catalog.methods().get(index) else {
-                    continue;
-                };
-                for tool in known_rows(&method.tools) {
-                    if tool.use_gate.is_some_and(|gate| !meets_gate(stats, gate)) {
-                        continue;
-                    }
-                    let worn = equipment
-                        .iter()
-                        .any(|row| row.def.id == tool.item && row.count > 0);
-                    let held = inventory
-                        .iter()
-                        .any(|row| row.def.id == tool.item && row.count > 0);
-                    if worn || held {
-                        return Some(ToolChoice {
-                            id: tool.item,
-                            worn,
-                        });
-                    }
-                }
-            }
-            None
-        }
+        Skill::Fishing => prepared.methods.iter().find_map(|&index| {
+            best_method_tool(
+                prepared.catalog.methods().get(index)?,
+                stats,
+                inventory,
+                equipment,
+            )
+        }),
     }
 }
 
@@ -322,11 +400,9 @@ fn best_static_tool(
 ) -> Option<ToolChoice> {
     for candidate in candidates {
         if candidate.use_level.is_some_and(|level| {
-            !candidate.use_skill.is_some_and(|skill| {
-                stats
-                    .iter()
-                    .any(|stat| stat.name.eq_ignore_ascii_case(skill) && stat.base >= level)
-            })
+            !candidate
+                .use_skill
+                .is_some_and(|skill| meets_named_gate(stats, skill, level))
         }) {
             continue;
         }
@@ -391,10 +467,17 @@ fn static_wield_gate(
     })
 }
 
-fn meets_gate(stats: &[StatView], gate: SkillMinimum) -> bool {
+/// Content's `stat()` gate uses the current effective level, including boosts/drains.
+pub(crate) fn meets_gate(stats: &[StatView], gate: SkillMinimum) -> bool {
     stats
         .iter()
-        .any(|stat| stat.index == i32::from(gate.skill) && stat.base >= i32::from(gate.level))
+        .any(|stat| stat.index == i32::from(gate.skill) && stat.effective >= i32::from(gate.level))
+}
+
+fn meets_named_gate(stats: &[StatView], skill: &str, level: i32) -> bool {
+    stats
+        .iter()
+        .any(|stat| stat.name.eq_ignore_ascii_case(skill) && stat.effective >= level)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -750,11 +833,9 @@ fn preferred_static_tool(
         .iter()
         .find(|candidate| {
             candidate.use_level.is_none_or(|level| {
-                candidate.use_skill.is_some_and(|skill| {
-                    stats
-                        .iter()
-                        .any(|stat| stat.name.eq_ignore_ascii_case(skill) && stat.base >= level)
-                })
+                candidate
+                    .use_skill
+                    .is_some_and(|skill| meets_named_gate(stats, skill, level))
             })
         })
         .map(|candidate| Arc::from(candidate.name))
@@ -895,6 +976,30 @@ mod tests {
     }
 
     #[test]
+    fn supply_tool_selection_uses_effective_levels_for_boosts_and_drains() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        let prepared = prepare(settings);
+        let held = [item(1275, "Rune pickaxe", 1, ItemContainer::Inventory)];
+        let mut stats = stats(&prepared);
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 40;
+        mining.effective = 41;
+        assert_eq!(best_tool(&prepared, &stats, &held, &[]).unwrap().id, 1275);
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 41;
+        mining.effective = 40;
+        assert!(best_tool(&prepared, &stats, &held, &[]).is_none());
+        assert!(!meets_gate(
+            &stats,
+            SkillMinimum {
+                skill: 14,
+                level: 41
+            }
+        ));
+    }
+
+    #[test]
     fn partial_supplies_do_not_admit_a_trip_and_loaded_bank_plan_targets_final_counts() {
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
@@ -1005,6 +1110,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(bait.id, 5)]
         );
+    }
+
+    #[test]
+    fn food_setting_resolves_alias_or_case_insensitive_name() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let (item_id, alias, name) = selected
+            .items()
+            .iter()
+            .find_map(|item| {
+                let alias = item.alias.as_deref()?;
+                let name = item.name.as_deref()?;
+                (!alias.eq_ignore_ascii_case(name))
+                    .then(|| (item.id, alias.to_string(), name.to_string()))
+            })
+            .unwrap();
+        let mut settings = GathererSettings {
+            food: alias,
+            ..GathererSettings::default()
+        };
+
+        let fact = resolve_food(&mut settings, &selected).unwrap().unwrap();
+
+        assert_eq!(fact.id, item_id);
+        assert_eq!(fact.name.as_ref(), name);
+        assert_eq!(settings.food, name);
+
+        let mut display_settings = GathererSettings {
+            food: name.to_ascii_uppercase(),
+            ..GathererSettings::default()
+        };
+        let by_display = resolve_food(&mut display_settings, &selected)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_display.id, item_id);
+        assert_eq!(by_display.name.as_ref(), name);
+        assert_eq!(display_settings.food, name);
     }
 
     #[test]

@@ -15,7 +15,8 @@ use rand_core::{OsRng, RngCore};
 use vault::{Profile, Vault, VaultError};
 
 use super::{
-    catalog_core, paired_core, progress, scatter, FrameBuf, Play, ServerProfile, SlotInput,
+    catalog_core, paired_core, progress, quest_pair, scatter, FrameBuf, Play, ServerProfile,
+    SlotInput,
 };
 
 /// Mint a login password accepted by the game protocol.
@@ -331,6 +332,13 @@ impl PlayConnection {
             Self::Bound { template, .. } => template.profile().client().game_host(),
         }
     }
+
+    pub(super) fn game_port(&self) -> u16 {
+        match self {
+            Self::Direct(options) => options.port,
+            Self::Bound { template, .. } => template.profile().client().game_port(),
+        }
+    }
 }
 
 /// Nav pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack` (same rule
@@ -413,6 +421,7 @@ impl Play {
             obj_names,
             catalog_core: catalog_core::CoreWatch::default(),
             paired_core: paired_core::PairWatch::default(),
+            quest_pairs: Arc::new(quest_pair::QuestPairCoordinator::default()),
             ifaces,
             ifaces_mut_template,
             queue: Arc::new(QueueMutex::new(LoginQueue::default())),
@@ -428,6 +437,8 @@ impl Play {
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
             pause_script_on_manual_walk_abort: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            walk_globals: Arc::new(Mutex::new(super::WalkGlobals::default())),
+            walk_globals_store: None,
             world,
             wakes: HashMap::new(),
         }

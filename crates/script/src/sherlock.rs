@@ -58,7 +58,7 @@ use api::game_data::SelectedGameData;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot};
 use serde_json::{json, Map, Value};
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::clue::{Delegation, Outcome};
 use crate::combat::{
@@ -72,7 +72,7 @@ use crate::native::{
     ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue,
 };
 use crate::shim::{InteractReq, ScriptPaint};
-use crate::CompiledId;
+use crate::{CompiledId, SettingDef};
 use api::selected::RunKey;
 use std::task::Poll;
 
@@ -82,7 +82,7 @@ pub(crate) const CARD: CompiledCard = CompiledCard {
     description: "Rust-native clue trail solver — waits for a clue and solves it.",
     category: "Treasure Trails",
     schema_version: 1,
-    schema: || &[],
+    schema: settings_schema,
     per_account_settings: &[],
     prepare,
     create,
@@ -95,6 +95,42 @@ struct SherlockSettings {
     // does not implement the duel family; its action extraction owns that.
     #[serde(default, rename = "clueDuelPartner")]
     _clue_duel_partner: String,
+    #[serde(default, rename = "allow_teleports")]
+    _allow_teleports: bool,
+    #[serde(default, rename = "allow_wilderness")]
+    _allow_wilderness: bool,
+    #[serde(default, rename = "allow_danger_zones")]
+    _allow_danger_zones: bool,
+}
+
+fn settings_schema() -> &'static [SettingDef] {
+    static SETTINGS: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
+        [
+            ("allow_teleports", "Allow teleports"),
+            ("allow_wilderness", "Allow wilderness"),
+            ("allow_danger_zones", "Allow danger zones"),
+        ]
+        .into_iter()
+        .map(|(id, label)| SettingDef {
+            id: id.into(),
+            ty: "boolean".into(),
+            default: Some("false".into()),
+            label: Some(label.into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: Some("Walk permissions".into()),
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: Some("Allow this script when the global setting is off.".into()),
+            item_option_spec: None,
+        })
+        .collect()
+    });
+    &SETTINGS
 }
 
 fn prepare(
@@ -157,17 +193,20 @@ fn validate_config(config: &PreparedConfig) -> Result<(), ConfigError> {
 fn create(
     run: RunKey,
     config: Arc<PreparedConfig>,
-    _retained: &mut RetainedMemory,
+    retained: &mut RetainedMemory,
 ) -> Result<Box<dyn Script>, StartError> {
     validate_config(&config).map_err(StartError::Config)?;
     let tables = config
         .get::<Prepared>()
         .map(|prepared| Arc::clone(&prepared.tables));
+    let retained = retained.sherlock();
     Ok(Box::new(Sherlock {
         run: Some(run),
         revision: config.revision(),
         dirty: true,
         hygiene_pending: false,
+        death: crate::native::death::DeathLatch::from_watermark(retained.death_seq),
+        death_pending: retained.death_pending,
         tables,
         ..Default::default()
     }))
@@ -215,8 +254,8 @@ pub struct Sherlock {
     revision: u64,
     status: Option<Arc<str>>,
     dirty: bool,
-    /// Sequence-aware chat death observation. Kept across reconnect session
-    /// changes so the latch can reconcile a replacement chat ring.
+    /// Sequence-aware chat death observation. The slot retains its watermark
+    /// across watchdog recreation so a death in the gap is still observed.
     death: crate::native::death::DeathLatch,
     /// A latched death waiting for the interaction sink to become available.
     death_pending: bool,
@@ -246,6 +285,7 @@ impl Script for Sherlock {
             } else {
                 // Do not start a new clue on the same frame as a death signal.
                 self.cancel_for_death(tick.actions);
+                self.persist_death_state(tick);
                 self.publish(tick.output);
                 return Ok(self
                     .blocked
@@ -260,12 +300,14 @@ impl Script for Sherlock {
             if self.tick_frame(tick, true) && self.token.is_none() {
                 self.death_pending = false;
             }
+            self.persist_death_state(tick);
             self.publish(tick.output);
             return Ok(self
                 .blocked
                 .clone()
                 .map_or(ScriptFlow::Continue, ScriptFlow::Blocked));
         }
+        self.persist_death_state(tick);
         if let Some(failure) = self.blocked.clone() {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(failure));
@@ -397,6 +439,12 @@ impl Script for Sherlock {
 }
 
 impl Sherlock {
+    fn persist_death_state(&self, tick: &mut NativeTick<'_>) {
+        let retained = tick.cx.retained().sherlock();
+        retained.death_seq = self.death.watermark();
+        retained.death_pending = self.death_pending;
+    }
+
     fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
         if let Some(Fight::Combat(handle)) = self.fight.as_ref() {
             self.hygiene_owned = handle.prayer_cleanup();
@@ -1129,12 +1177,13 @@ fn answered_token(answer: &Value) -> Option<u64> {
 /// Map one machine verb onto this slot's interact queue: the same variants the
 /// isolate forwards for the same verbs, one explicit arm per kind.
 ///
-/// The walk is the ordinary [`InteractReq::Walk`] with every `FindOptions` bit
-/// off — never `WalkTo` (host navigation) and never a driver call. The loc,
-/// npc and obj verbs keep the identity the machine posted beside them, so the
-/// host matches that row and refuses a stale one. An unknown kind is not a
-/// verb: nothing is enqueued for it, and a step missing a field it needs is
-/// not a verb either.
+/// The walk is the ordinary [`InteractReq::Walk`], retaining its existing
+/// boolean wire bits. This compiled card's false values are interpreted as
+/// Inherit by the host admission; they do not veto captured script permissions.
+/// It is never `WalkTo` (host navigation) or a driver call. The loc, npc and obj
+/// verbs keep the identity the machine posted beside them, so the host matches
+/// that row and refuses a stale one. An unknown kind is not a verb: nothing is
+/// enqueued for it, and a step missing a field it needs is not a verb either.
 fn enqueue(sink: &mut Vec<InteractReq>, _kind: &str, step: &Value) {
     if let Some(req) = crate::clue::verb_req(step) {
         sink.push(req);
@@ -1151,7 +1200,48 @@ mod tests {
     use client::dash3d::ClientObj;
     use client::datastruct::LinkList;
     use client::io::{ClientRevision, ServerProt};
+    use serde::Deserialize;
     use std::sync::Arc;
+
+    #[test]
+    fn walk_permission_schema_and_legacy_settings_are_snake_case_and_false() {
+        assert_eq!(CARD.schema_version, 1);
+        let legacy_bag = SettingsBag::new();
+        let legacy = SherlockSettings::deserialize(serde::de::value::MapDeserializer::new(
+            legacy_bag.iter().map(|(key, value)| (key.as_str(), value)),
+        ))
+        .unwrap();
+        assert!(!legacy._allow_teleports);
+        assert!(!legacy._allow_wilderness);
+        assert!(!legacy._allow_danger_zones);
+
+        for id in ["allow_teleports", "allow_wilderness", "allow_danger_zones"] {
+            let definition = settings_schema()
+                .iter()
+                .find(|setting| setting.id == id)
+                .unwrap();
+            assert_eq!(definition.ty, "boolean");
+            assert_eq!(definition.default.as_deref(), Some("false"));
+            assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
+        }
+
+        let mut bag = SettingsBag::new();
+        bag.insert("clueDuelPartner".into(), serde_json::json!("alice"));
+        bag.insert("allow_teleports".into(), serde_json::json!(true));
+        bag.insert("allow_wilderness".into(), serde_json::json!(false));
+        bag.insert("allow_danger_zones".into(), serde_json::json!(true));
+        let restored: SettingsBag =
+            serde_json::from_value(serde_json::to_value(&bag).unwrap()).unwrap();
+        assert_eq!(restored, bag);
+        let settings = SherlockSettings::deserialize(serde::de::value::MapDeserializer::new(
+            restored.iter().map(|(key, value)| (key.as_str(), value)),
+        ))
+        .unwrap();
+        assert_eq!(settings._clue_duel_partner, "alice");
+        assert!(settings._allow_teleports);
+        assert!(!settings._allow_wilderness);
+        assert!(settings._allow_danger_zones);
+    }
 
     /// The selected-revision facts every session identifies against.
     fn selected() -> Arc<SelectedGameData> {
@@ -2062,6 +2152,7 @@ mod tests {
                     name: "Spade".into(),
                     action: "Dig".into(),
                     slot: None,
+                    target_item_id: None,
                 },
                 InteractReq::Loc {
                     x: 1,
@@ -2090,7 +2181,7 @@ mod tests {
                     component: 6600,
                     generation: 7,
                 },
-                InteractReq::ContinueDialog,
+                InteractReq::ContinueDialog { component_id: None },
                 InteractReq::Answer { option: 2 },
                 InteractReq::AnswerCount { value: 6859 },
                 InteractReq::ShopButton {
@@ -2225,7 +2316,7 @@ mod tests {
         let sink = tick(&mut chatting, &mut script, Some(&data));
         assert_eq!(
             sink,
-            vec![InteractReq::ContinueDialog],
+            vec![InteractReq::ContinueDialog { component_id: None }],
             "a posted continue is not a Talk-to and not a wait"
         );
         assert!(script.token.is_some(), "continue keeps the session");
@@ -2246,7 +2337,7 @@ mod tests {
         .is_none());
         assert!(matches!(
             crate::clue::verb_req(&serde_json::json!({ "kind": "continue" })),
-            Some(InteractReq::ContinueDialog)
+            Some(InteractReq::ContinueDialog { component_id: None })
         ));
         assert!(matches!(
             crate::clue::verb_req(

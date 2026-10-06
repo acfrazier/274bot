@@ -103,7 +103,7 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         content_id: None,
         source_sha256: None,
         generator: warm,
-        format: "274V15".into(),
+        format: "274V16".into(),
         revision: 289,
         cache_id: "cache-1".into(),
         cache_manifest: None,
@@ -131,7 +131,7 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
     };
     let expected = crate::bundle::StampExpectation {
         revision: 289,
-        format: "274V15",
+        format: "274V16",
         generator: &after_router,
         cache_id: "cache-1",
         inputs: &inputs,
