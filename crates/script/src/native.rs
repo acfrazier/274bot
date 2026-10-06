@@ -499,6 +499,10 @@ pub struct WalkRequest {
     pub cross: Box<[Arc<str>]>,
     /// Create a [`crate::combat::WalkGuard`] for this followed route.
     pub protect: bool,
+    /// Create a food-only [`crate::combat::WalkGuard`] when `protect` is
+    /// false. Only combat abort walks set this; ordinary walks run no host
+    /// guard. Requires `allow.food`, or the walk is refused.
+    pub food_guard: bool,
     /// Represented on the request so a protect walk can still be refused
     /// when the owner disallows prayer.
     pub allow: WalkAllow,
@@ -650,7 +654,10 @@ pub trait NativeMachine: Send + 'static {
     where
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
-    fn cancel(&mut self);
+    fn cancel(&mut self) {}
+    fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        crate::combat::RaisedPrayers::empty()
+    }
 }
 
 #[cfg(test)]

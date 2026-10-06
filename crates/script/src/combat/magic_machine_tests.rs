@@ -670,6 +670,7 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut mage = PlayerView {
         index: 2,
+        network: tile(2605, 3200),
         actor: actor(tile(2605, 3200)),
         combat_level: 60,
         skill_level: 0,

@@ -85401,6 +85401,600 @@
     }
   ],
   "melee_mode_varp": 43,
+  "ranged_weapons": [
+    {
+      "obj_id": 732,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 767,
+      "attackrange": 5,
+      "levelrequire": 1,
+      "ammo_family": "bolt"
+    },
+    {
+      "obj_id": 800,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 801,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 802,
+      "attackrange": 4,
+      "levelrequire": 5,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 803,
+      "attackrange": 4,
+      "levelrequire": 20,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 804,
+      "attackrange": 4,
+      "levelrequire": 30,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 805,
+      "attackrange": 4,
+      "levelrequire": 40,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 806,
+      "attackrange": 3,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 807,
+      "attackrange": 3,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 808,
+      "attackrange": 3,
+      "levelrequire": 5,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 809,
+      "attackrange": 3,
+      "levelrequire": 20,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 810,
+      "attackrange": 3,
+      "levelrequire": 30,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 811,
+      "attackrange": 3,
+      "levelrequire": 40,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 812,
+      "attackrange": 3,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 813,
+      "attackrange": 3,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 814,
+      "attackrange": 3,
+      "levelrequire": 5,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 815,
+      "attackrange": 3,
+      "levelrequire": 20,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 816,
+      "attackrange": 3,
+      "levelrequire": 30,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 817,
+      "attackrange": 3,
+      "levelrequire": 40,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 818,
+      "attackrange": 3,
+      "levelrequire": 0,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 825,
+      "attackrange": 5,
+      "levelrequire": 1,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 826,
+      "attackrange": 5,
+      "levelrequire": 1,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 827,
+      "attackrange": 5,
+      "levelrequire": 5,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 828,
+      "attackrange": 5,
+      "levelrequire": 20,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 829,
+      "attackrange": 5,
+      "levelrequire": 30,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 830,
+      "attackrange": 5,
+      "levelrequire": 40,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 831,
+      "attackrange": 5,
+      "levelrequire": 1,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 832,
+      "attackrange": 5,
+      "levelrequire": 1,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 833,
+      "attackrange": 5,
+      "levelrequire": 5,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 834,
+      "attackrange": 5,
+      "levelrequire": 20,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 835,
+      "attackrange": 5,
+      "levelrequire": 30,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 836,
+      "attackrange": 5,
+      "levelrequire": 40,
+      "ammo_family": "javelin"
+    },
+    {
+      "obj_id": 837,
+      "attackrange": 10,
+      "levelrequire": 1,
+      "ammo_family": "bolt"
+    },
+    {
+      "obj_id": 839,
+      "attackrange": 10,
+      "levelrequire": 1,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 841,
+      "attackrange": 7,
+      "levelrequire": 1,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 843,
+      "attackrange": 7,
+      "levelrequire": 5,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 845,
+      "attackrange": 10,
+      "levelrequire": 5,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 847,
+      "attackrange": 10,
+      "levelrequire": 20,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 849,
+      "attackrange": 7,
+      "levelrequire": 20,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 851,
+      "attackrange": 10,
+      "levelrequire": 30,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 853,
+      "attackrange": 7,
+      "levelrequire": 30,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 855,
+      "attackrange": 10,
+      "levelrequire": 40,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 857,
+      "attackrange": 7,
+      "levelrequire": 40,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 859,
+      "attackrange": 10,
+      "levelrequire": 50,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 861,
+      "attackrange": 7,
+      "levelrequire": 50,
+      "ammo_family": "arrow"
+    },
+    {
+      "obj_id": 863,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 864,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 865,
+      "attackrange": 4,
+      "levelrequire": 5,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 866,
+      "attackrange": 4,
+      "levelrequire": 20,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 867,
+      "attackrange": 4,
+      "levelrequire": 30,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 868,
+      "attackrange": 4,
+      "levelrequire": 40,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 869,
+      "attackrange": 4,
+      "levelrequire": 10,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 870,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 871,
+      "attackrange": 4,
+      "levelrequire": 1,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 872,
+      "attackrange": 4,
+      "levelrequire": 5,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 873,
+      "attackrange": 4,
+      "levelrequire": 20,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 874,
+      "attackrange": 4,
+      "levelrequire": 10,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 875,
+      "attackrange": 4,
+      "levelrequire": 30,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 876,
+      "attackrange": 4,
+      "levelrequire": 40,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 2883,
+      "attackrange": 10,
+      "levelrequire": 30,
+      "ammo_family": "ogre_arrow"
+    },
+    {
+      "obj_id": 3093,
+      "attackrange": 3,
+      "levelrequire": 10,
+      "ammo_family": "thrown"
+    },
+    {
+      "obj_id": 3094,
+      "attackrange": 3,
+      "levelrequire": 10,
+      "ammo_family": "thrown"
+    }
+  ],
+  "ranged_ammo": [
+    {
+      "obj_id": 78,
+      "levelrequire": 40,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 598,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 877,
+      "levelrequire": 1,
+      "family": "bolt"
+    },
+    {
+      "obj_id": 878,
+      "levelrequire": 1,
+      "family": "bolt"
+    },
+    {
+      "obj_id": 879,
+      "levelrequire": 1,
+      "family": "bolt"
+    },
+    {
+      "obj_id": 880,
+      "levelrequire": 1,
+      "family": "bolt"
+    },
+    {
+      "obj_id": 881,
+      "levelrequire": 1,
+      "family": "bolt"
+    },
+    {
+      "obj_id": 882,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 883,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 884,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 885,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 886,
+      "levelrequire": 5,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 887,
+      "levelrequire": 5,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 888,
+      "levelrequire": 20,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 889,
+      "levelrequire": 20,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 890,
+      "levelrequire": 30,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 891,
+      "levelrequire": 30,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 892,
+      "levelrequire": 40,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 893,
+      "levelrequire": 40,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 942,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2532,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2533,
+      "levelrequire": 1,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2534,
+      "levelrequire": 5,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2535,
+      "levelrequire": 5,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2536,
+      "levelrequire": 20,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2537,
+      "levelrequire": 20,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2538,
+      "levelrequire": 30,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2539,
+      "levelrequire": 30,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2540,
+      "levelrequire": 40,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2541,
+      "levelrequire": 40,
+      "family": "arrow"
+    },
+    {
+      "obj_id": 2866,
+      "levelrequire": 30,
+      "family": "ogre_arrow"
+    }
+  ],
+  "ranged_modes": [
+    {
+      "tab": 12,
+      "slot": 0,
+      "mode": 0,
+      "button": 1772
+    },
+    {
+      "tab": 12,
+      "slot": 1,
+      "mode": 1,
+      "button": 1771
+    },
+    {
+      "tab": 12,
+      "slot": 2,
+      "mode": 2,
+      "button": 1770
+    },
+    {
+      "tab": 13,
+      "slot": 0,
+      "mode": 0,
+      "button": 1757
+    },
+    {
+      "tab": 13,
+      "slot": 1,
+      "mode": 1,
+      "button": 1756
+    },
+    {
+      "tab": 13,
+      "slot": 2,
+      "mode": 2,
+      "button": 1755
+    },
+    {
+      "tab": 14,
+      "slot": 0,
+      "mode": 0,
+      "button": 4454
+    },
+    {
+      "tab": 14,
+      "slot": 1,
+      "mode": 1,
+      "button": 4453
+    },
+    {
+      "tab": 14,
+      "slot": 2,
+      "mode": 2,
+      "button": 4452
+    }
+  ],
+  "ranged_mode_varp": 43,
   "karamja": {
     "luthas_spawn": {
       "config": "luthas",

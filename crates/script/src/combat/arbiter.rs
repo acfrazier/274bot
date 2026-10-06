@@ -18,6 +18,7 @@ pub(crate) enum RowKind {
     Style,
     Retaliate,
     Attack,
+    Pickup,
     Cast,
     Arm,
 }
@@ -35,15 +36,17 @@ impl PlanRow {
         if self.kind == RowKind::Arm && self.aux & ARM_SIDE_TAB_FLAG != 0 {
             return 0;
         }
-        if matches!(self.kind, RowKind::Attack | RowKind::Cast) {
+        if matches!(self.kind, RowKind::Attack | RowKind::Pickup | RowKind::Cast) {
             2
         } else {
             1
         }
     }
     pub fn terminal(self, tables: &CombatTables) -> bool {
-        matches!(self.kind, RowKind::Attack | RowKind::Cast | RowKind::Arm)
-            || self.kind == RowKind::Drink
+        matches!(
+            self.kind,
+            RowKind::Attack | RowKind::Pickup | RowKind::Cast | RowKind::Arm
+        ) || self.kind == RowKind::Drink
             || (self.kind == RowKind::Eat
                 && tables
                     .food(self.id)

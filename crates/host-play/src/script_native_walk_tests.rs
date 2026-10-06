@@ -19,6 +19,7 @@ struct Walker {
     walks: usize,
     cross_first: Vec<Arc<str>>,
     protect: bool,
+    food_guard: bool,
     disallow_prayer: bool,
     target: Option<WorldTile>,
     later_target: Option<WorldTile>,
@@ -86,6 +87,7 @@ impl Script for WalkerScript {
                 evidence: None,
                 cross: cross.into_boxed_slice(),
                 protect: shared.protect,
+                food_guard: shared.food_guard,
                 allow: script::native::WalkAllow {
                     prayer: !shared.disallow_prayer,
                     ..Default::default()
@@ -682,6 +684,46 @@ fn a_protected_walk_refuses_when_prayer_is_disallowed() {
             .is_some_and(|bot| bot.walk_guard.is_some()),
         "a prayer-disallowed protect walk must not arm a driver"
     );
+}
+
+#[test]
+fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
+    for (prayer, disallow_prayer) in [(1, false), (43, true)] {
+        let mut rig = open_rig(false);
+        rig.shared.lock().disallow_prayer = disallow_prayer;
+        rig.shared.lock().food_guard = true;
+        seed_protect_frame(&mut rig.snapshot, prayer);
+        rig.snapshot.seed_tick(1);
+        rig.observe(1);
+        rig.wait_routed();
+        assert!(
+            rig.navs.lock().unwrap()["alice"].walk_guard.is_some(),
+            "an abort-shaped food-only walk must retain eating without prayer admission"
+        );
+        rig.step();
+        assert!(rig.walk_armed());
+        assert!(rig.driver.move_calls > 0, "the escape must actually walk");
+        assert!(rig.driver.if_button_components.is_empty());
+        assert_eq!(rig.end(), None);
+    }
+}
+
+#[test]
+fn a_default_walk_with_food_allowed_starts_no_host_guard() {
+    for prayer in [1, 43] {
+        let mut rig = open_rig(false);
+        seed_protect_frame(&mut rig.snapshot, prayer);
+        rig.snapshot.seed_tick(1);
+        rig.observe(1);
+        rig.wait_routed();
+        assert!(
+            rig.navs.lock().unwrap()["alice"].walk_guard.is_none(),
+            "default walks (allow.food=true, no food_guard) must not start the food-only guard"
+        );
+        rig.step();
+        assert!(rig.walk_armed());
+        assert!(rig.driver.move_calls > 0);
+    }
 }
 
 fn seed_protect_frame(snapshot: &mut GameSnapshot, prayer_base: i32) {

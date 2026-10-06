@@ -3251,7 +3251,11 @@
         },
         "style": {
           "type": "string",
-          "description": "Attack style; `melee` and `mage` are supported."
+          "description": "Attack style; `melee`, `ranged`, and `mage` are supported."
+        },
+        "ranged_style": {
+          "$ref": "#/$defs/RangedMode",
+          "default": "rapid"
         },
         "engage_radius": {
           "type": "integer",
@@ -3277,6 +3281,14 @@
         "kind",
         "style",
         "engage_radius"
+      ]
+    },
+    "RangedMode": {
+      "type": "string",
+      "enum": [
+        "accurate",
+        "rapid",
+        "long_range"
       ]
     },
     "MeleeMode": {

@@ -442,12 +442,22 @@ function weaponCombatTabs(content: string, interfaces: ReadonlyMap<string, numbe
     }
     return { byCategory, fallback: fallbackSeen ? fallback : null, roots };
 }
-type MeleeModeSemantic = 'accurate' | 'aggressive' | 'defensive' | 'controlled';
-const MELEE_MODE_CONSTANTS = new Map<string, MeleeModeSemantic>([
+type CombatModeSemantic = 'accurate' | 'aggressive' | 'defensive' | 'controlled' | 'rapid' | 'long_range';
+const MELEE_MODE_CONSTANTS = new Map<string, CombatModeSemantic>([
     ['style_melee_accurate', 'accurate'],
     ['style_melee_aggressive', 'aggressive'],
     ['style_melee_defensive', 'defensive'],
     ['style_melee_controlled', 'controlled'],
+]);
+const RANGED_MODE_CONSTANTS = new Map<string, CombatModeSemantic>([
+    ['style_ranged_accurate', 'accurate'],
+    ['style_ranged_rapid', 'rapid'],
+    ['style_ranged_longrange', 'long_range'],
+]);
+const RANGED_MODE_CODES = new Map<CombatModeSemantic, number>([
+    ['accurate', 0],
+    ['rapid', 1],
+    ['long_range', 2],
 ]);
 
 function bracedBody(source: string, opener: RegExp) {
@@ -493,7 +503,13 @@ function weaponStyleTables(content: string) {
     return { byCategory, fallback: fallbackSeen ? fallback : null };
 }
 
-function meleeModeFacts(content: string, interfaces: ReadonlyMap<string, number>, tabs: CombatTabMap) {
+function combatModeFacts(
+    content: string,
+    interfaces: ReadonlyMap<string, number>,
+    tabs: CombatTabMap,
+    modeConstants: ReadonlyMap<string, CombatModeSemantic>,
+    modeCodesBySemantic?: ReadonlyMap<CombatModeSemantic, number>,
+) {
     const dbrowText = requireGatherText(content, 'scripts/skill_combat/configs/combat.dbrow');
     const dbrowRows = new Map<string, CombatDbRow | null>();
     for (const row of parseRows(dbrowText)) {
@@ -508,14 +524,14 @@ function meleeModeFacts(content: string, interfaces: ReadonlyMap<string, number>
     }
     const schema = parseSections(stripComments(requireGatherText(content, 'scripts/skill_combat/configs/combat.dbtable')))
         .find((section) => section.kind === 'combat_style_table' && section.target === null);
-    if (!schema || !/^\s*column=damagestyle,int,LIST\s*$/m.test(schema.body)) return [];
+    if (!schema || !/^\s*column=damagestyle,int,LIST\s*$/m.test(schema.body)) return { rows: [], varp: null };
 
     const constantText = stripComments(requireGatherText(
         content,
         'scripts/skill_combat/configs/combat_damagestyles.constant',
     ));
     const modeCodes = new Map<string, number | null>();
-    for (const name of MELEE_MODE_CONSTANTS.keys()) {
+    for (const name of modeConstants.keys()) {
         const matches = [...constantText.matchAll(new RegExp(`^\\s*\\^${name}\\s*=\\s*(-?\\d+)\\s*$`, 'gm'))];
         const code = matches.length === 1 ? Number(matches[0]![1]) : NaN;
         modeCodes.set(name, Number.isInteger(code) && code >= 0 && code <= 255 ? code : null);
@@ -584,12 +600,16 @@ function meleeModeFacts(content: string, interfaces: ReadonlyMap<string, number>
                 complete = false;
                 break;
             }
-            if (!MELEE_MODE_CONSTANTS.has(sourceName)) {
-                if (sourceName.startsWith('style_ranged_') || sourceName.startsWith('style_magic_')) continue;
+            if (!modeConstants.has(sourceName)) {
+                if (/^style_(?:ranged|magic|melee)_/.test(sourceName)) continue;
                 complete = false;
                 break;
             }
-            const mode = modeCodes.get(sourceName);
+            const sourceMode = modeCodes.get(sourceName);
+            const semanticMode = modeConstants.get(sourceName);
+            const mode = sourceMode === undefined || sourceMode === null || semanticMode === undefined
+                ? null
+                : modeCodesBySemantic?.get(semanticMode) ?? sourceMode;
             const button = controls.get(tab)?.get(slot);
             if (mode === undefined || mode === null || button === undefined || button === null) {
                 complete = false;
@@ -602,11 +622,73 @@ function meleeModeFacts(content: string, interfaces: ReadonlyMap<string, number>
     rows.sort((a, b) => a.tab - b.tab || a.slot - b.slot);
     const varpsPath = path.join(content, 'pack/varp.pack');
     const varps = fs.existsSync(varpsPath) ? parsePack(requireGatherText(content, 'pack/varp.pack')) : new Map<string, number>();
-    const meleeModeVarp = varps.get('com_mode');
+    const modeVarp = varps.get('com_mode');
     return {
         rows,
-        varp: meleeModeVarp !== undefined && meleeModeVarp >= 0 ? meleeModeVarp : null,
+        varp: modeVarp !== undefined && modeVarp >= 0 ? modeVarp : null,
     };
+}
+
+type RangedAmmoFamily = 'arrow' | 'ogre_arrow' | 'bolt' | 'thrown' | 'javelin';
+type RangedWeaponRow = { obj_id: number; attackrange: number; levelrequire: number; ammo_family: RangedAmmoFamily };
+type RangedAmmoRow = { obj_id: number; levelrequire: number; family: RangedAmmoFamily };
+
+function rangedObjectFacts(
+    content: string,
+    objects: readonly CombatObject[],
+    categories: ReadonlyMap<number, string>,
+    paramIds: ReadonlyMap<string, number>,
+) {
+    const objectIds = parsePack(requireGatherText(content, 'pack/obj.pack'));
+    const rangedWeapons: RangedWeaponRow[] = [];
+    const rangedAmmo: RangedAmmoRow[] = [];
+    const familyForCategory = new Map<string, RangedAmmoFamily>([
+        ['weapon_bow', 'arrow'],
+        ['weapon_crossbow', 'bolt'],
+        ['weapon_thrown', 'thrown'],
+        ['weapon_javelin', 'javelin'],
+        ['arrows', 'arrow'],
+        ['ogre_arrows', 'ogre_arrow'],
+        ['bolts', 'bolt'],
+    ]);
+    const param = (object: CombatObject, name: string): number => {
+        const value = parameterValue(object.params, paramIds, name);
+        // ParamType.defaultInt is -1 for an omitted levelrequire; the u8 fact uses zero for no minimum level.
+        if (name === 'levelrequire' && (value === undefined || value === -1)) return 0;
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 255) {
+            throw new Error(`obj ${object.id}: ${name} is missing or out of range`);
+        }
+        return value;
+    };
+    const ogreBow = objectIds.get('ogre_bow');
+    if (ogreBow === undefined) throw new Error('pack/obj.pack lacks ogre_bow');
+    for (const object of objects) {
+        if (object.category === undefined) continue;
+        const category = categories.get(object.category);
+        if (category === undefined) continue;
+        const family = familyForCategory.get(category);
+        if (!family) continue;
+        if (category.startsWith('weapon_')) {
+            const ammoFamily = object.id === ogreBow ? 'ogre_arrow'
+                : family === 'javelin' || family === 'thrown' ? family
+                    : family === 'bolt' ? 'bolt' : 'arrow';
+            rangedWeapons.push({
+                obj_id: object.id,
+                attackrange: param(object, 'attackrange'),
+                levelrequire: param(object, 'levelrequire'),
+                ammo_family: ammoFamily,
+            });
+        } else {
+            rangedAmmo.push({
+                obj_id: object.id,
+                levelrequire: param(object, 'levelrequire'),
+                family,
+            });
+        }
+    }
+    rangedWeapons.sort((a, b) => a.obj_id - b.obj_id);
+    rangedAmmo.sort((a, b) => a.obj_id - b.obj_id);
+    return { rangedWeapons, rangedAmmo };
 }
 
 export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts) {
@@ -615,9 +697,11 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const categoryPack = parsePack(requireGatherText(content, 'pack/category.pack'));
     const interfacePack = parsePack(requireGatherText(content, 'pack/interface.pack'));
     const combatTabs = weaponCombatTabs(content, interfacePack);
-    const meleeModes = meleeModeFacts(content, interfacePack, combatTabs);
+    const meleeModes = combatModeFacts(content, interfacePack, combatTabs, MELEE_MODE_CONSTANTS);
+    const rangedModes = combatModeFacts(content, interfacePack, combatTabs, RANGED_MODE_CONSTANTS, RANGED_MODE_CODES);
     const paramIds = packParameterIds(content);
     const categoryNames = new Map([...categoryPack.entries()].map(([name, id]) => [id, name]));
+    const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds);
     const sequences = new Map<number, number>();
     const spotanims = new Map<number, { style: number; where: SpotanimWhere }>();
     const weaponStyles: { obj_id: number; style: number; attackrate: number; category: number; tab: number | null }[] = [];
@@ -697,6 +781,10 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         weapon_styles: weaponStyles.sort((a, b) => a.obj_id - b.obj_id),
         melee_modes: meleeModes.rows,
         melee_mode_varp: meleeModes.varp,
+        ranged_weapons: ranged.rangedWeapons,
+        ranged_ammo: ranged.rangedAmmo,
+        ranged_modes: rangedModes.rows,
+        ranged_mode_varp: rangedModes.varp,
     };
 }
 

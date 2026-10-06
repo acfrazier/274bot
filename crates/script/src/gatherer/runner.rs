@@ -298,6 +298,7 @@ impl Gatherer {
             evidence: None,
             cross: Box::default(),
             protect: false,
+            food_guard: false,
             allow: Default::default(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
@@ -1490,6 +1491,7 @@ impl Gatherer {
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
             protect: false,
+            food_guard: false,
             allow: Default::default(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {

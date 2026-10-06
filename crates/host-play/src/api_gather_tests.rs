@@ -151,6 +151,7 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapsh
     snapshot.seed_local_player(LocalPlayerView {
         player: PlayerView {
             index: 0,
+            network: actor.tile,
             actor,
             combat_level: 3,
             skill_level: 1,
