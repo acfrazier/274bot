@@ -942,6 +942,7 @@
           "version": 1,
           "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_pickaxe", "qty": 1}], "partial_ok": false},
           "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 41}}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"All": [
@@ -950,7 +951,7 @@
             ]}
           ]},
           "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
-          "comment": "Withdraw only the best available owned tier; once it is held or worn, lower-tier withdrawals skip."
+          "comment": "Withdraw only the best available owned tier the Mining level can use (rune 41, adamant 31, mithril 21, steel 6: skill_mining/configs/pickaxes.obj:92,127,162,197); once a pickaxe is held or worn, lower-tier withdrawals skip."
         },
         {
           "id": "withdraw-adamant-pickaxe",
@@ -958,6 +959,7 @@
           "version": 1,
           "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "adamant_pickaxe", "qty": 1}], "partial_ok": false},
           "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 31}}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
@@ -975,6 +977,7 @@
           "version": 1,
           "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "mithril_pickaxe", "qty": 1}], "partial_ok": false},
           "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 21}}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
@@ -994,6 +997,7 @@
           "version": 1,
           "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "steel_pickaxe", "qty": 1}], "partial_ok": false},
           "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 6}}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
             {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
