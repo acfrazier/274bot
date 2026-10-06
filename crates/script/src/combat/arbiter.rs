@@ -106,13 +106,9 @@ pub(crate) fn stat(frame: &Frame<'_>, index: i32) -> (i32, i32) {
         .find(|row| row.index == index)
         .map_or((0, 0), |row| (row.effective, row.base))
 }
+/// Held count of the exact id on the frame's pack.
 pub(crate) fn count(frame: &Frame<'_>, id: i32) -> i32 {
-    frame
-        .inventory
-        .iter()
-        .filter(|row| row.def.id == id)
-        .map(|row| row.count)
-        .sum()
+    crate::bank::ops::count_id(frame.inventory, id)
 }
 pub(crate) fn potion_id(frame: &Frame<'_>, tables: &CombatTables, kind: PotionKind) -> Option<i32> {
     let family = tables.potion(kind)?;
