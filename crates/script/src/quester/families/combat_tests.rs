@@ -2018,6 +2018,171 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
+/// Abort with the engaged Warlord live, then fail the abort walk so the hold
+/// starts. Returns the run, its ledger and the abort tile.
+fn engaged_abort_hold_after_failed_walk(
+    snapshot: &mut GameSnapshot,
+    after_walk: Vec<api::snapshot::NpcView>,
+) -> (
+    CombatRun,
+    Option<Box<crate::native::ledger::Ledger>>,
+    api::WorldTile,
+) {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut engaged = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    engaged.animation = live_attack_animation(&run);
+    seed_abort_scene(snapshot, here, 1, vec![engaged], None, None);
+    let mut aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
+        crate::combat::PrepItem::Ammo,
+    )));
+    aborted.engaged = Some(crate::combat::ActorRef {
+        kind: api::snapshot::ActorKind::Npc,
+        index: 7,
+    });
+    aborted.engaged_npc_type = warlord.id;
+    let mut ledger = None;
+    assert!(with_step_context(snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(aborted, cx)
+    })
+    .is_pending());
+    let failed_walk = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        request_id: failed_walk,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 13,
+            sequence: 13,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("route fixture failure")),
+    });
+    assert!(with_step_context(snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    seed_abort_scene(snapshot, here, 1, after_walk, None, None);
+    (run, ledger, here)
+}
+
+fn live_attack_animation(run: &CombatRun) -> i32 {
+    run.tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id
+}
+
+#[test]
+fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let wolf_like = data
+        .npc_names()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|row| crate::combat::facts::npc_max_hit(row) == Some(4))
+        .expect("selected content includes a known-hit lower threat");
+    let mut snapshot = GameSnapshot::new();
+    let mut newcomer = aborting_npc(
+        9,
+        wolf_like.id,
+        api::WorldTile {
+            x: 3000,
+            z: 2999,
+            level: 0,
+        },
+    );
+    // The live R2 shape: the Warlord row is gone; another NPC attacks.
+    let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    newcomer.animation = live_attack_animation(&probe_run);
+    let (mut run, mut ledger, here) =
+        engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
+    for tick in 14..=16 {
+        let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
+        assert!(
+            polled.is_pending(),
+            "tick {tick}: the exhausted hold must escape, not park"
+        );
+    }
+    let walks = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request.target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
+    assert_eq!(walks[0].x, here.x, "no reference to the vanished Warlord");
+    assert!(
+        walks[0].z > here.z,
+        "the escape runs north, away from the new attacker"
+    );
+}
+
+#[test]
+fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
+    let mut snapshot = GameSnapshot::new();
+    let (mut run, mut ledger, _) = engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
+    let mut ended = None;
+    for tick in 14..=20 {
+        let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
+        if let Poll::Ready(result) = polled {
+            ended = Some((tick, result));
+            break;
+        }
+    }
+    let Some((tick, Err(ActionError::Blocked(reason)))) = ended else {
+        panic!("the hold must park with Blocked once the threat-free horizon passes");
+    };
+    assert_eq!(&*reason, super::ABORT_HOLD_SAFE_REASON);
+    assert!(
+        tick >= 16,
+        "three threat-free ticks (14-16) precede the park, got {tick}"
+    );
+    assert!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .all(|action| !matches!(action.effect, crate::native::HostEffect::Walk(_))),
+        "no escape walk runs without a live attacker"
+    );
+}
+
 #[test]
 fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
