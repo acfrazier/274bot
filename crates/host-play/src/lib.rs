@@ -276,9 +276,12 @@ pub struct Play {
     /// thread.
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     /// One last-seen bank per account (design-bank-snapshot §1.2), keyed
-    /// by username like the arms. The slot thread is the only writer; the
-    /// map outlives a slot so a stop and respawn keeps the memory. The
-    /// panel/TUI read it through [`Play::bank_rows`].
+    /// by the account's login identity ([`slot_bank_memory::memory_key`]),
+    /// not the typed username the arms are keyed by: every spelling the
+    /// client logs in as one account shares one memory, as it shares one
+    /// hint file. The slot thread is the only writer; the map outlives a
+    /// slot so a stop and respawn keeps the memory. The panel/TUI read it
+    /// through [`Play::bank_rows`].
     bank_memories: HashMap<String, slot_bank_memory::SharedBankMemory>,
     /// Shared user preference; slot threads read it at the takeover fence.
     pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
@@ -340,10 +343,12 @@ impl Play {
 
     /// The account's last-seen bank (design-bank-snapshot §1.2): one copy
     /// of the memory's rows with their origin, for an operator walk arm.
-    /// `Unknown` with no rows for a never-observed or unknown account.
+    /// `name` is the typed username, looked up by the login identity it
+    /// decodes to ([`slot_bank_memory::memory_key`]). `Unknown` with no
+    /// rows for a never-observed or unknown account.
     pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
         self.bank_memories
-            .get(name)
+            .get(slot_bank_memory::memory_key(name).as_ref())
             .map_or_else(nav::bank_fetch::BankRows::default, |memory| {
                 let memory = memory.read();
                 nav::bank_fetch::BankRows {
