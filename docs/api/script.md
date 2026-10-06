@@ -1069,14 +1069,20 @@ Path `cross` names danger-zone exemptions for that walk; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may
 be used with or without that guard.
 
-The guard holds the selected protection prayer without attacking, eating or
-flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces
-one non-terminal `WalkEventKind::Unprotectable` warning for that style and cause.
-The native owner consumes it with `NativeActions::take_walk_event`; the walk
-keeps following and any other held protection remains managed. Quester shows
-the cause under **Walk protection**, for example “Prayer 40 needed for Protect
-from Missiles”, without parking or retrying the step.
-
+The guard holds protection without attacking or flicking. It uses Combat's eat
+line, choosing the largest ordinary food that fits the HP deficit (or the
+smallest available heal if none fits) and respecting the observed food eat
+clock. A sent Eat remains pending for a six-tick observation window so its
+count drop or HP rise can arrive independently of that clock. At or below the
+emergency line, an available Eat takes priority over protection; otherwise
+protection is proposed first. Message-delay food keeps its input lock. A
+Prayer-level shortfall, or zero points with no prayer potion,
+produces one non-terminal `WalkEventKind::Unprotectable` warning for that
+style and cause. The native owner consumes it with
+`NativeActions::take_walk_event`; the walk keeps following and any other held
+protection remains managed. Quester shows the cause under **Walk protection**,
+for example “Prayer 40 needed for Protect from Missiles”, without parking or
+retrying the step.
 The guard owns only a protect it raised during this walk. A protect already on
 when the walk begins, or raised by another owner, is not turned off at the end.
 Only one protect can be active: switching from a pre-existing user protect to

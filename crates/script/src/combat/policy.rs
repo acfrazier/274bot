@@ -1,5 +1,6 @@
 //! Pure combat rules shared by native Combat, WalkGuard, and Hunt.
 use super::frame::Frame;
+use super::schedule::Schedule;
 use super::select;
 use super::tables::{CombatTables, FoodFact, StyleWhere};
 use super::threats::{StyleObs, Threat, ThreatSet};
@@ -311,6 +312,73 @@ pub(crate) fn food_by(
         }
     }
     fitting.or(smallest).map(|(id, _)| id)
+}
+
+/// Food chosen on one HP observation. Ordinary food follows the next-eat
+/// clock; combo food is eligible only when it crosses its message-delay gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EatChoice {
+    pub ordinary: Option<i32>,
+    pub combo: Option<i32>,
+}
+
+/// Shared food selection for Combat and WalkGuard. The caller owns admission
+/// and pending-operation policy; this function only evaluates the current
+/// observation.
+pub(crate) fn eat_choice(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    schedule: &Schedule,
+    danger: Option<i32>,
+    hp: i32,
+    hp_max: i32,
+    tick: u16,
+) -> Option<EatChoice> {
+    if hp <= 0 || danger == Some(0) || hp > select::lines(danger, hp_max).eat {
+        return None;
+    }
+
+    let ordinary = food_by(
+        hp,
+        hp_max,
+        frame.inventory.iter().map(|row| (row.def.id, row.count)),
+        tables,
+        None,
+        |food| food.eat_delay_arg.is_some() && schedule.food_ready(food, tick),
+    );
+    let heal = ordinary
+        .and_then(|id| tables.food(id))
+        .map_or(0, |food| food.heal);
+    if ordinary.is_some()
+        && hp.saturating_add(heal).min(hp_max) > select::lines(danger, hp_max).drink_gate
+    {
+        return Some(EatChoice {
+            ordinary,
+            combo: None,
+        });
+    }
+    let combo = food_by(
+        hp,
+        hp_max,
+        frame.inventory.iter().map(|row| (row.def.id, row.count)),
+        tables,
+        None,
+        |food| {
+            let Some(delay) = food.message_delay else {
+                return false;
+            };
+            let gate = danger.map_or((hp_max + 1) / 2, |danger| {
+                danger.saturating_mul(delay + 2).saturating_add(1)
+            });
+            food.eat_delay_arg.is_none()
+                && hp
+                    .saturating_add(heal)
+                    .saturating_add(food.heal)
+                    .min(hp_max)
+                    > gate
+        },
+    );
+    (ordinary.is_some() || combo.is_some()).then_some(EatChoice { ordinary, combo })
 }
 #[cfg(test)]
 mod tests {
