@@ -240,6 +240,7 @@ pub struct Play {
     catalog_core: catalog_core::CoreWatch,
     /// Dormant unless a visible pair proof explicitly configures it.
     paired_core: paired_core::PairWatch,
+    quest_pairs: Arc<quest_pair::QuestPairCoordinator>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: SharedLoginQueue,
@@ -428,10 +429,21 @@ impl Play {
     /// Keep vault credentials for a later [`Play::spawn_slot`] / reconnect,
     /// and publish handshake-time settings to an already-running slot.
     pub fn remember_profile(&mut self, profile: Profile) {
+        self.quest_pairs.remember(&profile.username);
         if let Some(arm) = self.arms.get(&profile.username) {
             sync_profile_arm(arm, &profile);
         }
         self.profiles.insert(profile.username.clone(), profile);
+    }
+
+    /// Canonical configured identities only; no credentials leave the vault owner.
+    pub fn set_quest_accounts<'a>(&self, names: impl IntoIterator<Item = &'a str>) {
+        self.quest_pairs.set_accounts(names);
+    }
+
+    /// Immutable sorted identities for the per-account partner picker.
+    pub fn quest_accounts(&self) -> Arc<[script::quester::pair::AccountKey]> {
+        self.quest_pairs.accounts()
     }
 
     /// Give `name` focused priority. Existing membership moves to the front;

@@ -66,15 +66,21 @@ fn evaluate_path(
     bank: &BankMemo,
 ) -> EligibilityResult {
     let mut skills = Vec::new();
-    let Some(status) = tab_status(view, &path.display_name) else {
-        return blocked(
-            vec![reason(
-                "quest-status",
-                "quest-tab status is not observed",
-                None,
-            )],
-            skills,
-        );
+    let status = if path.kind == super::path::PathKind::Miniquest {
+        // Completion is proved by the owned card/guard reader, not a fabricated tab row.
+        QuestListStatus::NotStarted
+    } else {
+        let Some(status) = tab_status(view, &path.display_name) else {
+            return blocked(
+                vec![reason(
+                    "quest-status",
+                    "quest-tab status is not observed",
+                    None,
+                )],
+                skills,
+            );
+        };
+        status
     };
     if status == QuestListStatus::Complete {
         return EligibilityResult {

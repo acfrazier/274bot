@@ -31,6 +31,27 @@ the decoded `PathDocument`, its selected `QuestIdentityRow` and
 `SelectedGameData`, a stage key, an optional loadout, extra carried items,
 and the starting tile. Each stage needs a `progress.rules` varp hint;
 missing or contradictory hints fail rather than becoming stage zero.
+
+Paired quests use `quester_role_stage(request, gang, stage_varp, seed_vars)`.
+It selects an explicitly authored Phoenix or Black Arm role, seeds that role's
+real content variable, and keeps prerequisite variables in pre-Start setup.
+`run_pair(PairCell { roles, mode })` prepares both accounts before either Start,
+adds reciprocal account settings, and starts each account's own Quester. Role 0
+is Phoenix; role 1 is Black Arm. Restart cells explicitly Stop and restart both
+accounts; an ordinary paired step never starts or stops the other account.
+Set `BOT_LIVE_NAME_PREFIX` for role 0 and `BOT_LIVE_PARTNER_NAME_PREFIX` for
+role 1. Both names use the same invocation token; the token budget uses the
+longer prefix so each account stays within the engine's 12-character limit.
+Reserved-phase death cells use `PairMode::Death`: inject during the named
+owned combat, observe cancellation, then explicitly Stop both accounts and
+restart them without reseeding. Ordinary-role fights outside a reserved phase
+use `PairMode::DeathIndependent`: the affected account recovers in its original
+run, both finish with one Start and no Stop, and the peer must remain alive.
+Miniquests use `miniquest_stage(MiniquestStage { ... })`, with explicit content
+variable seeds and a proof predicate instead of an invented quest-tab identity.
+Their terminal proof also requires the Path's owned progress reader to publish
+completion; a closed card or successful click alone is not completion.
+
 `FixtureLoadout::Path(name)` seeds that Path's actual kit.
 `FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
 operator's starting gear. Gear never raises the profile to make it wearable:

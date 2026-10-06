@@ -102,6 +102,18 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         quest: "horror",
         profile: TestProfile::Base60,
     },
+    QuestFixtureProfile {
+        quest: "blackarmgang",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "hero",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "barcrawl",
+        profile: TestProfile::Base40,
+    },
 ];
 
 pub fn fixture_profile(quest: &str) -> Result<TestProfile, String> {
@@ -186,6 +198,30 @@ pub struct QuesterStage<'a> {
     pub loadout: Option<FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
     pub stand: WorldTile,
+}
+
+/// A real card-backed miniquest: explicit content variable seeds, no quest identity.
+pub struct MiniquestStage<'a> {
+    pub name: &'static str,
+    pub path: &'a PathDocument,
+    pub selected: &'a SelectedGameData,
+    pub stage: &'a str,
+    pub loadout: Option<FixtureLoadout<'a>>,
+    pub extra_items: &'a [(&'a str, i32)],
+    pub stand: WorldTile,
+    pub seed_vars: &'a [(&'a str, i32)],
+    pub proof: Proof,
+}
+
+struct FixtureSeed<'a> {
+    name: &'static str,
+    path: &'a PathDocument,
+    selected: &'a SelectedGameData,
+    loadout: Option<FixtureLoadout<'a>>,
+    extra_items: &'a [(&'a str, i32)],
+    stand: WorldTile,
+    seed_vars: &'a [(&'a str, i32)],
+    proof: Proof,
 }
 
 /// Scenario ownership is independent of the cloneable Start observation.
@@ -349,18 +385,60 @@ fn command_step(name: &'static str, command: String, proof: Proof) -> Step {
 /// observe completion. Always relog after the seed, including permanent
 /// non-transmitted varps, so quest-tab colours cannot be stale.
 pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String> {
+    let role = request
+        .path
+        .roles
+        .first()
+        .filter(|_| request.path.roles.len() == 1)
+        .ok_or("single-account fixture needs exactly one Path role")?;
+    let stage_varp = request.identity.varp.as_str();
+    build_quest_fixture(request, role, stage_varp, &[])
+}
+
+/// Prepare one explicitly selected paired role; the shared pair runner starts both.
+/// `stage_varp` names the pinned role's real content variable, not a synthetic identity.
+pub fn quester_role_stage(
+    request: QuesterStage<'_>,
+    gang: script::quester::pair::Gang,
+    stage_varp: &str,
+    seed_vars: &[(&str, i32)],
+) -> Result<QuesterFixture, String> {
+    let declaration = request
+        .path
+        .partner
+        .as_ref()
+        .ok_or("role fixture needs a partner declaration")?;
+    let declared = declaration
+        .roles
+        .iter()
+        .find(|role| role.gang == gang)
+        .ok_or("fixture gang is not declared by the Path")?;
+    let role = request
+        .path
+        .roles
+        .iter()
+        .find(|role| role.role.as_ref() == Some(&declared.id))
+        .ok_or("fixture role is not authored by the Path")?;
+    let mut fixture = build_quest_fixture(request, role, stage_varp, seed_vars)?;
+    fixture.start_settings.insert(
+        "gang".into(),
+        json!(match gang {
+            script::quester::pair::Gang::Phoenix => "phoenix",
+            script::quester::pair::Gang::BlackArm => "blackarm",
+        }),
+    );
+    Ok(fixture)
+}
+
+fn validate_identity(request: &QuesterStage<'_>) -> Result<(), String> {
     let QuesterStage {
-        name,
-        quest_display,
         path,
         identity,
+        quest_display,
         selected,
-        stage,
-        loadout,
-        extra_items,
-        stand,
+        ..
     } = request;
-    if path.id.0.as_ref() != identity.id || quest_display != identity.display {
+    if path.id.0.as_ref() != identity.id || *quest_display != identity.display {
         return Err("fixture Path/selected quest identity mismatch".into());
     }
     let selected_identity = selected
@@ -373,17 +451,13 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
     {
         return Err("fixture quest identity differs from selected content".into());
     }
-    if !(0..=16383).contains(&stand.x)
-        || !(0..=16383).contains(&stand.z)
-        || !(0..=3).contains(&stand.level)
-    {
-        return Err("fixture stand is outside world coordinates".into());
-    }
-    let role = path
-        .roles
-        .first()
-        .filter(|_| path.roles.len() == 1)
-        .ok_or("single-account fixture needs exactly one Path role")?;
+    Ok(())
+}
+
+fn validate_stage(
+    role: &script::quester::path::PathRoleDocument,
+    stage: &str,
+) -> Result<(), String> {
     if !role
         .sequences
         .iter()
@@ -391,6 +465,17 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
     {
         return Err(format!("fixture stage {stage} has no sequence"));
     }
+    Ok(())
+}
+
+fn build_quest_fixture(
+    request: QuesterStage<'_>,
+    role: &script::quester::path::PathRoleDocument,
+    stage_varp: &str,
+    extra_vars: &[(&str, i32)],
+) -> Result<QuesterFixture, String> {
+    validate_identity(&request)?;
+    validate_stage(role, request.stage)?;
     let progress = role
         .progress
         .as_ref()
@@ -398,17 +483,76 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
     let mut values = progress
         .rules
         .iter()
-        .filter(|rule| rule.stage.0.as_ref() == stage)
+        .filter(|rule| rule.stage.0.as_ref() == request.stage)
         .filter_map(|rule| rule.varp);
     let value = values
         .next()
-        .ok_or_else(|| format!("fixture stage {stage} has no varp hint"))?;
+        .ok_or_else(|| format!("fixture stage {} has no varp hint", request.stage))?;
     if values.any(|other| other != value) {
         return Err(format!(
-            "fixture stage {stage} has contradictory varp hints"
+            "fixture stage {} has contradictory varp hints",
+            request.stage
         ));
     }
-    let profile = fixture_profile(&identity.id)?;
+    let mut seed_vars = Vec::with_capacity(extra_vars.len() + 1);
+    seed_vars.push((stage_varp, value));
+    seed_vars.extend_from_slice(extra_vars);
+    build_fixture(FixtureSeed {
+        name: request.name,
+        path: request.path,
+        selected: request.selected,
+        loadout: request.loadout,
+        extra_items: request.extra_items,
+        stand: request.stand,
+        seed_vars: &seed_vars,
+        proof: Proof::QuestDone {
+            name: request.quest_display,
+        },
+    })
+}
+
+/// The same qualification profile/loadout/Start proof as a quest, without a fake tab.
+pub fn miniquest_stage(request: MiniquestStage<'_>) -> Result<QuesterFixture, String> {
+    if request.path.kind != script::quester::path::PathKind::Miniquest
+        || request.path.partner.is_some()
+        || request.path.roles.len() != 1
+    {
+        return Err("miniquest fixture needs one real card-backed Path role".into());
+    }
+    validate_stage(&request.path.roles[0], request.stage)?;
+    if request.seed_vars.is_empty() {
+        return Err("miniquest fixture needs explicit content seeds".into());
+    }
+    build_fixture(FixtureSeed {
+        name: request.name,
+        path: request.path,
+        selected: request.selected,
+        loadout: request.loadout,
+        extra_items: request.extra_items,
+        stand: request.stand,
+        seed_vars: request.seed_vars,
+        proof: request.proof,
+    })
+}
+
+fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
+    let FixtureSeed {
+        name,
+        path,
+        selected,
+        loadout,
+        extra_items,
+        stand,
+        seed_vars,
+        proof,
+    } = request;
+    if !(0..=16383).contains(&stand.x)
+        || !(0..=16383).contains(&stand.z)
+        || !(0..=3).contains(&stand.level)
+    {
+        return Err("fixture stand is outside world coordinates".into());
+    }
+    let profile = fixture_profile(path.id.0.as_ref())?;
     let stats = stats_for(path, profile)?;
     let header = path
         .quest
@@ -460,11 +604,21 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
                 Proof::SideTabAvailable { index: 3 },
             );
         }
-        push(
-            "reset authored quest stage",
-            format!("setvar {} {value}", identity.varp),
-            Proof::SideTabAvailable { index: 3 },
-        );
+        for (index, (varp, value)) in seed_vars.iter().enumerate() {
+            if varp.is_empty()
+                || !varp
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                || seed_vars[..index].iter().any(|(other, _)| other == varp)
+            {
+                return Err("fixture content variable must be a unique config alias".into());
+            }
+            push(
+                "reset authored content stage",
+                format!("setvar {varp} {value}"),
+                Proof::SideTabAvailable { index: 3 },
+            );
+        }
     }
     let resolve = |name: &str| {
         let item = selected
@@ -572,9 +726,6 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
         },
     });
     steps.push(start_compiled_step());
-    let proof = Proof::QuestDone {
-        name: quest_display,
-    };
     steps.push(Step {
         name: "observe native quest completion",
         kind: StepKind::Perform {
@@ -606,7 +757,7 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
     };
     Ok(QuesterFixture {
         scenario,
-        start_settings: Map::from_iter([("quests".into(), json!([identity.id]))]),
+        start_settings: Map::from_iter([("quests".into(), json!([path.id.0.as_ref()]))]),
         seed: QuesterSeed {
             profile,
             stats,
@@ -912,5 +1063,65 @@ mod tests {
         ] {
             assert_eq!(fixture_profile(quest).unwrap(), TestProfile::Base60);
         }
+    }
+
+    #[test]
+    fn card_fixture_reuses_the_profile_without_a_synthetic_quest_identity() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "barcrawl")
+            .expect("native zero-QP miniquest identity");
+        assert_eq!(identity.quest_points, 0);
+        assert_eq!(identity.varp_id, 77);
+        // The fixture builder needs a miniquest document, not the private
+        // production Path or a made-up quest-tab identity.
+        let mut path = document();
+        path.id = FactKey::new("barcrawl");
+        path.kind = script::quester::path::PathKind::Miniquest;
+        path.quest.as_mut().unwrap().quest_points = 0;
+        path.roles[0].sequences[0].stage = FactKey::new("barcrawl:tour");
+        let card = selected.item_by_alias("barcrawl_card").unwrap().id;
+        let fixture = miniquest_stage(MiniquestStage {
+            name: "barcrawl_fixture_unit",
+            path: &path,
+            selected: &selected,
+            stage: "barcrawl:tour",
+            loadout: None,
+            extra_items: &[("barcrawl_card", 1), ("coins", 408)],
+            stand: WorldTile {
+                x: 3044,
+                z: 3258,
+                level: 0,
+            },
+            seed_vars: &[("barcrawl", 2305)],
+            proof: Proof::ItemIdAtMost { id: card, count: 0 },
+        })
+        .unwrap();
+        assert!(fixture
+            .seed_commands
+            .iter()
+            .any(|command| command == "setvar barcrawl 2305"));
+        assert_eq!(fixture.start_settings["quests"], json!(["barcrawl"]));
+        assert_eq!(fixture.seed.profile, TestProfile::Base40);
+        assert_eq!(
+            fixture.scenario.proof,
+            Proof::ItemIdAtMost { id: card, count: 0 }
+        );
+        let start = fixture
+            .scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(
+            fixture.scenario.steps[start + 1..]
+                .iter()
+                .all(|step| { step.name == "observe native quest completion" }),
+            "no content variable seed may run after Start"
+        );
     }
 }

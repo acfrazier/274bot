@@ -7,7 +7,7 @@
       "output": "crates/api/data/game-data/274.json",
       "records": 3894,
       "consumption": 262,
-      "pickpocket": 12,
+      "pickpocket": 16,
       "drop_tables": 5,
       "spells": 21,
       "staves": 14,
@@ -19,8 +19,8 @@
         "gathering": {
           "path": "274/gathering.json",
           "schema": 2,
-          "bytes": 1345636,
-          "sha256": "6b95bd442c03ec5815b7628786f6a4b5b05796fcb06b72bbdbced0cbe9755c3c"
+          "bytes": 1348424,
+          "sha256": "0c0e1389c8871e5f81678b656a83ff0731435a2c40afd8c246f920a7d1fb2f1e"
         },
         "debug": {
           "path": "274/debug.json",
@@ -33,7 +33,7 @@
         "methods": {
           "woodcutting": 10,
           "mining": 15,
-          "fishing": 15
+          "fishing": 16
         },
         "rocks": {
           "population": 59,
@@ -45,9 +45,9 @@
             "custom-handler": 3
           }
         },
-        "targets": 210,
+        "targets": 211,
         "placements": {
-          "rows": 15668,
+          "rows": 15669,
           "files": 235,
           "by_method": {
             "woodcutting.normal": 12672,
@@ -77,6 +77,7 @@
             "fishing.rarefish.op1": 20,
             "fishing.rarefish.op3": 20,
             "woodcutting.maple": 89,
+            "fishing.0_41_53_sinisterfishspot.op1": 1,
             "fishing.saltfish.op1": 23,
             "fishing.saltfish.op3": 23,
             "fishing.loc_2630.op1": 4,
@@ -93,7 +94,7 @@
         },
         "zones": 1,
         "knowledge": {
-          "partial": 18,
+          "partial": 19,
           "unknown": 6
         }
       },
@@ -111,7 +112,7 @@
           "outside_box": 0
         },
         "fishing": {
-          "sites": 31,
+          "sites": 32,
           "direct": 20,
           "dropped": 7,
           "outside_box": 0
@@ -193,8 +194,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5024893,
-      "sha256": "2da36c3e125433ff944ef70176d0e6dde1ca8d5a949562ef29579a94b591ac34",
+      "bytes": 5027853,
+      "sha256": "c7ff81c9be85ca617c57ecec161d2852e008e6f16c24adfcfcda04d673656a5c",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -8383,7 +8384,7 @@
       "output": "crates/api/data/game-data/289.json",
       "records": 4089,
       "consumption": 262,
-      "pickpocket": 12,
+      "pickpocket": 16,
       "drop_tables": 5,
       "spells": 21,
       "staves": 14,
@@ -8395,8 +8396,8 @@
         "gathering": {
           "path": "289/gathering.json",
           "schema": 2,
-          "bytes": 1408685,
-          "sha256": "48998bbd8b815f756da0f57b0f8ff7770ae2942262fafde2e1712a94bd596077"
+          "bytes": 1411473,
+          "sha256": "b055d338ad8d1264c29007daa112425bd5c2c150c6e01f449b9d67f332aeeb3d"
         },
         "debug": {
           "path": "289/debug.json",
@@ -8409,7 +8410,7 @@
         "methods": {
           "woodcutting": 10,
           "mining": 15,
-          "fishing": 15
+          "fishing": 16
         },
         "rocks": {
           "population": 62,
@@ -8421,9 +8422,9 @@
             "custom-handler": 6
           }
         },
-        "targets": 218,
+        "targets": 219,
         "placements": {
-          "rows": 15974,
+          "rows": 15975,
           "files": 247,
           "by_method": {
             "woodcutting.normal": 12947,
@@ -8453,6 +8454,7 @@
             "woodcutting.achey": 24,
             "fishing.rarefish.op1": 20,
             "fishing.rarefish.op3": 20,
+            "fishing.0_41_53_sinisterfishspot.op1": 1,
             "fishing.saltfish.op1": 23,
             "fishing.saltfish.op3": 23,
             "fishing.loc_2630.op1": 4,
@@ -8469,7 +8471,7 @@
         },
         "zones": 3,
         "knowledge": {
-          "partial": 20,
+          "partial": 21,
           "unknown": 6
         }
       },
@@ -8487,7 +8489,7 @@
           "outside_box": 0
         },
         "fishing": {
-          "sites": 31,
+          "sites": 32,
           "direct": 20,
           "dropped": 9,
           "outside_box": 0
@@ -8569,8 +8571,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5464880,
-      "sha256": "abd90dc9b5ce4aab5bec7746bfe327bec212c2eab45230a56f0a9122433b7551",
+      "bytes": 5467907,
+      "sha256": "53b77c66ac64268fe3e20a10625531589572e69d19846064ed2f6b62ac9ea08f",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

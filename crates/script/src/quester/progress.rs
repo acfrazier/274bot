@@ -96,7 +96,15 @@ pub(crate) fn compile_progress(
     // Identity catalogs know the expected binding. Keep the compiler useful
     // for synthetic/cache fixtures whose deliberately changed path id is not
     // present in the identity roster.
-    if let Ok(facts) = quests.quest(document.id.0.as_ref()) {
+    if document.kind == super::path::PathKind::Miniquest {
+        if role.role.is_some()
+            || role.progress_binding.0.as_ref() != format!("card:{}", document.id.0)
+        {
+            return Err(super::compile::CompileError::code(
+                "miniquest-progress-binding",
+            ));
+        }
+    } else if let Ok(facts) = quests.quest(document.id.0.as_ref()) {
         if let Knowledge::Known(expected) = &facts.progress_binding {
             if expected != &role.progress_binding {
                 return Err(super::compile::CompileError::code("progress-binding"));
@@ -445,7 +453,13 @@ pub fn resolve_journal(
         quest: path.id.clone(),
         stage,
         complete,
-        signals: Arc::from(Vec::<api::selected::SignalRange>::new()),
+        signals: if super::pair::PairQuest::from_path(path.id.0.as_ref())
+            == Some(super::pair::PairQuest::Arrav)
+        {
+            super::gang::resolve_normalized(&path.id, &journal.text).signals
+        } else {
+            Arc::from([])
+        },
         flags: resolve_flags(&path.progress.flags, &journal),
         evidence,
         binding: path.progress.binding.clone(),
@@ -644,6 +658,9 @@ mod tests {
         CompiledPath {
             id: FactKey::new("synthetic"),
             role: None,
+            kind: crate::quester::path::PathKind::Quest,
+            partner: None,
+            progress_reader: None,
             display_name: Arc::from("Synthetic"),
             tested_stats: None,
             digest: [0; 32],
@@ -941,8 +958,11 @@ mod tests {
     fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-        let bytes = crate::quester::card::released_path("romeojuliet").unwrap();
-        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let bytes = crate::quester::registry::bundled_path("romeojuliet").unwrap();
+        let document = serde_json::from_slice(bytes).unwrap();
+        let path =
+            crate::quester::compile::compile_uncached_for_test(&document, &selected, &quests)
+                .unwrap();
         let completed = resolve_journal(
             &path,
             &read_lines(
@@ -966,8 +986,11 @@ mod tests {
     fn released_sheep_complete_journal_resolves_complete_not_collect_more() {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-        let bytes = crate::quester::card::released_path("sheep").unwrap();
-        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let bytes = crate::quester::registry::bundled_path("sheep").unwrap();
+        let document = serde_json::from_slice(bytes).unwrap();
+        let path =
+            crate::quester::compile::compile_uncached_for_test(&document, &selected, &quests)
+                .unwrap();
         let in_progress = resolve_journal(
             &path,
             &read_lines(

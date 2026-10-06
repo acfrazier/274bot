@@ -824,12 +824,13 @@ pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
     root != -1 || continue_component_id >= 0
 }
 
-/// The same visible-page gate for operation adoption and the shared driver.
+/// Operation adoption covers chat and selected documents, not unrelated interfaces.
 pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
     cx.snapshot()
         .chat_modal()
         .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
-        || observe_main(cx, selected_dialogue_ui(cx)).is_some_and(|main| main.open())
+        || observe_main(cx, selected_dialogue_ui(cx))
+            .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {

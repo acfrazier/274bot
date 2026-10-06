@@ -6,7 +6,14 @@
 //! inline copy of that body (the reference) and the native export over the same
 //! inputs and compares target/blocked identity plus the callback sequence.
 
+use script::isolate_fb::{
+    encode_snapshot, encode_snapshot_delta, ItemRowInput, SceneEntityInput, SnapshotFingerprint,
+    StatInput,
+};
+use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
+
+mod common;
 
 const SRC: &str = r#"
 import { chooseTarget } from '../../api/thieving/targets.js';
@@ -532,4 +539,250 @@ fn the_export_matches_the_frozen_loop_body() {
         iso.probe("__parity").unwrap()
     );
     iso.join();
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotMode {
+    Keyframe { chat_open: bool },
+    InventoryMissing,
+    ChatUnknown,
+}
+
+fn thieving_data() -> std::sync::Arc<api::game_data::SelectedGameData> {
+    api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected 289 data")
+}
+
+fn npc_row<'a>(id: i32, name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 7,
+        id,
+        name: Some(name),
+        x: 3222,
+        z: 3222,
+        level: 0,
+        distance: 1,
+        health: 1,
+        max_health: 1,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 1,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
+        shape: 0,
+        angle: 0,
+    }
+}
+
+fn snapshot_interact(
+    data: std::sync::Arc<api::game_data::SelectedGameData>,
+    action: &str,
+    npc: SceneEntityInput<'_>,
+    base: i32,
+    effective: i32,
+    mode: SnapshotMode,
+) -> (bool, Vec<InteractReq>) {
+    let src = format!(
+        r#"
+import {{ Npcs }} from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {{
+    loop() {{
+        globalThis.__accepted = Npcs.all()[0].interact({action:?});
+    }}
+}}
+"#
+    );
+    let iso = LoadIsolate::spawn_with_game_data(src, LoadShape::CompatClass, vec![], data).unwrap();
+    let stats = [StatInput {
+        index: 17,
+        name: "thieving",
+        xp: 0,
+        base,
+        effective,
+    }];
+    let npcs = [npc];
+    let mut snapshot = common::ingame_snapshot();
+    snapshot.stats = &stats;
+    snapshot.npcs = &npcs;
+    let bytes = match mode {
+        SnapshotMode::Keyframe { chat_open } => {
+            snapshot.chat_open = chat_open;
+            snapshot.chat_modal_id = if chat_open { 1 } else { -1 };
+            encode_snapshot(&snapshot)
+        }
+        SnapshotMode::InventoryMissing => {
+            // Keep the NPC/stat pages and a known-closed chat bit, but omit
+            // the inventory vector so the host observes inventory as unknown.
+            snapshot.chat_open = false;
+            let last = SnapshotFingerprint {
+                chat_open: true,
+                ..SnapshotFingerprint::default()
+            };
+            encode_snapshot_delta(Some(&last), &snapshot, false).0
+        }
+        SnapshotMode::ChatUnknown => {
+            // A changed inventory is posted, while unchanged chat_open is
+            // absent from this delta and remains unknown to the host.
+            let coins = [ItemRowInput::nc(Some("Coins"), 1)];
+            snapshot.inv = &coins;
+            encode_snapshot_delta(Some(&SnapshotFingerprint::default()), &snapshot, false).0
+        }
+    };
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let accepted = iso
+        .probe("__accepted")
+        .unwrap()
+        .as_bool()
+        .expect("Npc.interact result");
+    let ops = iso.drain_interacts();
+    iso.join();
+    (accepted, ops)
+}
+
+fn workman(data: &api::game_data::SelectedGameData) -> (i32, i32) {
+    let id = data
+        .npc_by_config("digworkman1")
+        .expect("selected Digsite Workman")
+        .id;
+    let required = data
+        .required_thieving_npc(id)
+        .expect("selected Workman level");
+    assert_eq!(required, 25);
+    (id, required)
+}
+
+fn expected_npc_op(name: &str, action: &str) -> InteractReq {
+    InteractReq::Npc {
+        name: name.into(),
+        action: action.into(),
+        index: Some(7),
+    }
+}
+
+#[test]
+fn npc_pickpocket_clicks_through_open_chat_modal() {
+    let data = thieving_data();
+    let (id, required) = workman(&data);
+    let actions = ["Pickpocket".to_string()];
+    let (accepted, ops) = snapshot_interact(
+        data,
+        "Pickpocket",
+        npc_row(id, "Workman", &actions),
+        required,
+        required,
+        SnapshotMode::Keyframe { chat_open: true },
+    );
+    assert!(
+        accepted,
+        "an open chat modal does not suppress the NPC click"
+    );
+    assert_eq!(ops, vec![expected_npc_op("Workman", "Pickpocket")]);
+}
+
+#[test]
+fn npc_pickpocket_rowless_zealot_defaults_to_level_one() {
+    let data = thieving_data();
+    assert_eq!(
+        data.required_thieving_npc(1528),
+        None,
+        "Zealot has no selected pickpocket row"
+    );
+    let actions = ["Pickpocket".to_string()];
+    let (accepted, ops) = snapshot_interact(
+        data,
+        "Pickpocket",
+        npc_row(1528, "Zealot", &actions),
+        1,
+        1,
+        SnapshotMode::Keyframe { chat_open: false },
+    );
+    assert!(
+        accepted,
+        "an unlisted NPC uses the frozen level-one default"
+    );
+    assert_eq!(ops, vec![expected_npc_op("Zealot", "Pickpocket")]);
+}
+
+#[test]
+fn npc_pickpocket_does_not_gate_on_unobserved_inventory() {
+    let data = thieving_data();
+    let (id, required) = workman(&data);
+    let actions = ["Pickpocket".to_string()];
+    let (accepted, ops) = snapshot_interact(
+        data,
+        "Pickpocket",
+        npc_row(id, "Workman", &actions),
+        required,
+        required,
+        SnapshotMode::InventoryMissing,
+    );
+    assert!(
+        accepted,
+        "missing inventory evidence does not refuse the click"
+    );
+    assert_eq!(ops, vec![expected_npc_op("Workman", "Pickpocket")]);
+}
+
+#[test]
+fn npc_steal_from_clicks_through_unknown_chat_state() {
+    let data = thieving_data();
+    let (id, required) = workman(&data);
+    let actions = ["Steal-from".to_string()];
+    let (accepted, ops) = snapshot_interact(
+        data,
+        "Steal-from",
+        npc_row(id, "Workman", &actions),
+        required,
+        required,
+        SnapshotMode::ChatUnknown,
+    );
+    assert!(
+        accepted,
+        "unknown chat state does not suppress the NPC click"
+    );
+    assert_eq!(ops, vec![expected_npc_op("Workman", "Steal-from")]);
+}
+
+#[test]
+fn npc_pickpocket_gate_uses_effective_not_base_thieving() {
+    let data = thieving_data();
+    let (id, required) = workman(&data);
+    let actions = ["Pickpocket".to_string()];
+
+    let (accepted, ops) = snapshot_interact(
+        data.clone(),
+        "Pickpocket",
+        npc_row(id, "Workman", &actions),
+        required - 1,
+        required,
+        SnapshotMode::Keyframe { chat_open: false },
+    );
+    assert!(
+        accepted,
+        "effective level meets the content gate despite lower base"
+    );
+    assert_eq!(ops, vec![expected_npc_op("Workman", "Pickpocket")]);
+
+    let (accepted, ops) = snapshot_interact(
+        data,
+        "Pickpocket",
+        npc_row(id, "Workman", &actions),
+        required,
+        required - 1,
+        SnapshotMode::Keyframe { chat_open: false },
+    );
+    assert!(
+        !accepted,
+        "base level cannot override a low effective level"
+    );
+    assert!(
+        ops.is_empty(),
+        "an effective-level refusal queues no operation"
+    );
 }
