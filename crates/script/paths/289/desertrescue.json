@@ -225,7 +225,7 @@
             "radius": 3,
             "settle_ms": 15000
           },
-          "comment": "quest_desertrescue.rs2:883-894: with Ana on the lift the winch brings her barrel up ('You pull on the winch.' then the barrel box; stage 23); without her a second line adds 'a heavy barrel filled with stone'. Restart evidence: the last mine exit prints 'The doors open with some effort!' (427) after the lower-mine pickup, so the winch is due only while that line is newer than any winch pull, stone barrel or pickup; after the surface pickup (and the chat-silent cart loading) the pickup is newest and the cursor moves on to the driver. A stone result on a mistaken pull fails this step once and skips it on the retry.",
+          "comment": "quest_desertrescue.rs2:883-894: with Ana on the lift the winch brings her barrel up ('You pull on the winch.' then the barrel box; stage 23); without her a second line adds 'a heavy barrel filled with stone'. Item/area routing: holding thanainabarrel (stage 24) or being off the surface (stage 22 still underground, stage 26 outside the camp) skips this; otherwise the pull runs. Restart evidence: the last mine exit prints 'The doors open with some effort!' (427) after the lower-mine pickup, so the winch is due while that line is newer than any winch pull, stone barrel or pickup; after the surface pickup (and the chat-silent cart loading) the pickup is newest and the cursor moves on to the driver. Stage 23 and stage 25 are both surface without the barrel, so a mistaken stone pull is expected on a restart there: it fails this step once and skips it on the retry, and the barrel search stays due (stone no longer clears it).",
           "skip_if": {
             "Any": [
               {
@@ -322,7 +322,7 @@
             "radius": 3,
             "settle_ms": 12000
           },
-          "comment": "quest_desertrescue.rs2:715-730: only the full barrel at 3278,3017 (^desertrescue_upper_barrel_coord) holds Ana after the winch; the exact loc tile avoids the sibling barrel at 3277,3019. Needs one free pack slot; stage 24. Due only while a successful winch pull is the newest of winch/stone/pickup/mine-exit lines, so it is not replayed after the cart loading.",
+          "comment": "quest_desertrescue.rs2:715-730: only the full barrel at 3278,3017 (^desertrescue_upper_barrel_coord) holds Ana after the winch; the exact loc tile avoids the sibling barrel at 3277,3019. Needs one free pack slot; stage 24. Due while a winch pull is the newest of winch/pickup/mine-exit lines: the pickup stays newest through the chat-silent cart loading, so it is not replayed at stage 25, and the mine exit stays newest until the first pull at stage 22. A stone pull does NOT clear it: stage 23 and stage 25 look identical (surface, no barrel), so after a mistaken stone pull the search must still run; at 25 the upper-barrel Search returns at once (ana_lift_barrel bit clear) and the step fails its settle once and is skipped on the retry.",
           "skip_if": {
             "Any": [
               {
@@ -355,7 +355,6 @@
                         "you pull on the winch."
                       ],
                       "clear": [
-                        "filled with stone",
                         "you pick up ana in a barrel",
                         "the doors open with some effort"
                       ]
@@ -7276,7 +7275,7 @@
               "args": {
                 "recipe": "acquire:surface-rescue"
               },
-              "comment": "Winch, surface barrel, cart loading, driver bribe and cart ride as one cursor. Stages 22-26 share the stage-19 journal line and loading Ana on the cart leaves no chat line (quest_desertrescue.rs2:392-398 is a message box), so after the loading the inventory and chat ring look exactly like the arrival from the mine; selecting the surface steps individually re-picked the winch. The recipe steps carry chat-evidence skips for a restart part-way through. Ends outside the camp at 3258,3029 holding Ana (stage 26, journal unchanged). A jailed player has no authored recovery here (parks: no step for stage).",
+              "comment": "Winch, surface barrel, cart loading, driver bribe and cart ride as one cursor. Stages 22-26 share the stage-19 journal line (desertrescue_journal.rs2:195-199), so a restart part-way is routed from item/area evidence, not the stage number. Stage 22 holds no barrel (the lift guard takes it, camp_guard.rs2:200-202): underground it leaves via exit-mine-ana-on-lift, on the surface the winch pull advances it to 23 (quest_desertrescue.rs2:886-892). Stage 23 (surface, no barrel, Ana waiting in the upper barrel via the ana_lift_barrel bit, quest_desertrescue.rs2:716-727) is indistinguishable from stage 25 (surface, no barrel, barrel already on the cart via the ana_mining_cart bit, quest_desertrescue.rs2:392-398 is a message box with no chat line), so the cursor pulls the winch first (a stone no-op there) and always runs the barrel search while a winch pull is newest. Stage 24 holds thanainabarrel on the surface (quest_desertrescue.rs2:724-727) and skips straight to the cart loading. Stage 25 bribes (mine_cart_driver.rs2:100-110 sets ready_rescue; an already-bribed driver just says 'Hurry up, get in the cart') and rides; stage 26 is outside the camp at 3258,3029 holding Ana (quest_desertrescue.rs2:367-371), so this whole cursor is skipped off-surface and return-ana takes over. Selecting the surface steps individually re-picked the winch, hence one cursor. A jailed player has no authored recovery here (parks: no step for stage).",
               "skip_if": {
                 "Any": [
                   {
