@@ -15,6 +15,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
+use host_play::evidence_writer::{
+    EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
+};
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
@@ -292,6 +295,13 @@ struct BankChoiceState {
     pending_capture: Option<CaptureRequest>,
     capture_paths: Vec<(String, String)>,
     capture_error: Option<String>,
+    /// Monotonic capture sequence assigned at submit; the FIFO writer
+    /// completes in order, so stems match the old synchronous numbering.
+    capture_seq: u32,
+    /// Captures handed to the background writer, awaiting their outcomes.
+    pending_jobs: Vec<PendingChoiceCapture>,
+    /// One shared background evidence writer per origin cell.
+    evidence: Arc<EvidenceWriter>,
     latest_status: Option<Arc<ScriptStatus>>,
     latest_status_key: Option<StatusKey>,
     native_status_history: Vec<Value>,
@@ -334,24 +344,53 @@ impl BankChoiceState {
         raw
     }
 
+    /// Render (needs the client) and hand the frame to the background
+    /// writer; the path lands in `capture_paths` via [`poll_captures`].
     fn save_capture(
         &mut self,
         client: &mut client::client::Client,
         label: &'static str,
         receipt: Value,
     ) {
-        let result = save_live_capture(
+        self.capture_seq += 1;
+        let evidence_dir = self.evidence_dir.clone();
+        let evidence = Arc::clone(&self.evidence);
+        match submit_live_capture(
             client,
-            &self.evidence_dir,
+            &evidence_dir,
             label,
-            (self.capture_paths.len() + 1) as u32,
+            self.capture_seq,
             receipt,
-        );
-        match result {
-            Ok(path) => self
-                .capture_paths
-                .push((label.to_owned(), path.display().to_string())),
+            &evidence,
+        ) {
+            Ok(pending) => self.pending_jobs.push(pending),
             Err(error) => self.capture_error = Some(error),
+        }
+    }
+
+    /// Move finished background captures into `capture_paths`. The run loop
+    /// already waits for the terminal capture under its deadline; this is
+    /// the bounded cell-end flush.
+    fn poll_captures(&mut self) {
+        let evidence = Arc::clone(&self.evidence);
+        let mut completed = Vec::new();
+        self.pending_jobs
+            .retain(|pending| match evidence.poll(&pending.job) {
+                Some(outcome) => {
+                    completed.push((
+                        pending.label.clone(),
+                        pending.png_path.display().to_string(),
+                        outcome.error,
+                    ));
+                    false
+                }
+                None => true,
+            });
+        for (label, path, error) in completed {
+            match error {
+                None => self.capture_paths.push((label, path)),
+                Some(error) => self.capture_error = Some(error),
+            }
         }
     }
 
@@ -361,6 +400,10 @@ impl BankChoiceState {
                 .capture_paths
                 .iter()
                 .any(|(captured, _)| captured == label)
+            && !self
+                .pending_jobs
+                .iter()
+                .any(|pending| pending.label == label)
         {
             self.pending_capture = Some(CaptureRequest {
                 label,
@@ -571,7 +614,7 @@ impl BankChoiceState {
                 return;
             }
         }
-
+        self.poll_captures();
         if !matches!(
             self.runner.status(),
             RunnerStatus::Passed | RunnerStatus::Failed(_)
@@ -690,13 +733,25 @@ fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, S
     })
 }
 
-fn save_live_capture(
+/// A capture handed to the background writer, awaiting its outcome. The PNG
+/// path is fixed at submit; completions are recorded by the hook poll.
+struct PendingChoiceCapture {
+    label: String,
+    png_path: PathBuf,
+    job: EvidenceJob,
+}
+
+/// The slot-thread half of a bank-choice capture: guard, render (needs the
+/// client) and hand the pixels plus the JSON receipt to the shared
+/// background evidence writer for encode and write.
+fn submit_live_capture(
     client: &mut client::client::Client,
     directory: &Path,
     label: &str,
     sequence: u32,
     receipt: Value,
-) -> Result<PathBuf, String> {
+    writer: &EvidenceWriter,
+) -> Result<PendingChoiceCapture, String> {
     if !client.ingame || client.scene_state != 2 {
         return Err(format!(
             "capture {label} requires ingame && scene_state == 2, got ingame={} scene_state={}",
@@ -709,6 +764,7 @@ fn save_live_capture(
         .map_err(|error| error.to_string())?
         .as_millis();
     let stem = format!("{epoch_ms}Z_{sequence:02}-{label}");
+    let render_start = Instant::now();
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);
@@ -717,25 +773,12 @@ fn save_live_capture(
     let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
         return Err("live capture did not return a CPU PixMap; run with BOT_CPU=1".into());
     };
-    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
-    for pixel in &pixels.pixels {
-        rgba.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-            u8::MAX,
-        ]);
-    }
-    let png_path = directory.join(format!("{stem}.png"));
-    let file = std::fs::File::create(&png_path).map_err(|error| error.to_string())?;
-    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .map_err(|error| error.to_string())?
-        .write_image_data(&rgba)
-        .map_err(|error| error.to_string())?;
+    println!(
+        "capture-render site=bank_choice {stem} {}x{} render_ms={:.1}",
+        pixels.width,
+        pixels.height,
+        render_start.elapsed().as_secs_f64() * 1000.0,
+    );
     let mut receipt = receipt;
     receipt["frame"] = json!({
         "ingame": client.ingame,
@@ -744,12 +787,24 @@ fn save_live_capture(
         "width": pixels.width,
         "height": pixels.height,
     });
-    std::fs::write(
-        directory.join(format!("{stem}.json")),
-        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(png_path)
+    let png_path = directory.join(format!("{stem}.png"));
+    let job = writer.submit(EvidenceRequest {
+        png_path: png_path.clone(),
+        width: pixels.width as u32,
+        height: pixels.height as u32,
+        pixels: pixels.pixels,
+        color: PngColor::Rgba,
+        sidecar: Some(EvidenceSidecar {
+            path: directory.join(format!("{stem}.json")),
+            receipt,
+            patch_error: None,
+        }),
+    });
+    Ok(PendingChoiceCapture {
+        label: label.to_owned(),
+        png_path,
+        job,
+    })
 }
 
 fn run_origin(
@@ -777,6 +832,9 @@ fn run_origin(
     runner.set_map_members(profile.map_members());
     runner.set_live_names(std::slice::from_ref(&account));
     runner.set_shot_sink(Box::new(|_, _| {}));
+    let evidence = Arc::new(EvidenceWriter::new(
+        host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
+    ));
     let state = Arc::new(Mutex::new(BankChoiceState {
         runner,
         account: account.clone(),
@@ -797,6 +855,9 @@ fn run_origin(
         pending_capture: None,
         capture_paths: Vec::new(),
         capture_error: None,
+        capture_seq: 0,
+        pending_jobs: Vec::new(),
+        evidence,
         latest_status: None,
         latest_status_key: None,
         native_status_history: Vec::new(),
@@ -1057,6 +1118,8 @@ struct RecoveryWitness {
     respawn_observed: bool,
     captures: Vec<PathBuf>,
     error: Option<String>,
+    capture_seq: u32,
+    pending_jobs: Vec<PendingChoiceCapture>,
 }
 
 fn run_quester_recovery_live() -> Result<(), String> {
@@ -1124,10 +1187,14 @@ fn run_quester_recovery_live() -> Result<(), String> {
     runner.set_shot_sink(Box::new(|_, _| {}));
     let runner = Arc::new(Mutex::new(runner));
     let witness = Arc::new(Mutex::new(RecoveryWitness::default()));
+    let evidence = Arc::new(EvidenceWriter::new(
+        host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
+    ));
     let start_handle = Arc::new(Mutex::new(None::<ScriptStartHandle>));
     let start_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let frame_runner = Arc::clone(&runner);
     let frame_witness = Arc::clone(&witness);
+    let frame_evidence = Arc::clone(&evidence);
     let frame_handle = Arc::clone(&start_handle);
     let frame_count = Arc::clone(&start_count);
     let frame_account = account.clone();
@@ -1242,10 +1309,36 @@ fn run_quester_recovery_live() -> Result<(), String> {
                     "chat": format!("{:?}", snapshot.chat_lines()),
                     "scenario_status": format!("{:?}", runner.status()),
                 });
-                let sequence = witness.captures.len() as u32 + 1;
-                match save_live_capture(client, &frame_directory, label, sequence, receipt) {
-                    Ok(path) => witness.captures.push(path),
+                witness.capture_seq += 1;
+                let sequence = witness.capture_seq;
+                match submit_live_capture(
+                    client,
+                    &frame_directory,
+                    label,
+                    sequence,
+                    receipt,
+                    &frame_evidence,
+                ) {
+                    Ok(pending) => witness.pending_jobs.push(pending),
                     Err(error) => witness.error = Some(error),
+                }
+            }
+            // Completions land here; the driver loop already waits for all
+            // four captures under its deadline, which is the bounded flush.
+            let mut completed = Vec::new();
+            witness
+                .pending_jobs
+                .retain(|pending| match frame_evidence.poll(&pending.job) {
+                    Some(outcome) => {
+                        completed.push((pending.png_path.clone(), outcome.error));
+                        false
+                    }
+                    None => true,
+                });
+            for (png_path, error) in completed {
+                match error {
+                    None => witness.captures.push(png_path),
+                    Some(error) => witness.error = Some(error),
                 }
             }
         },
