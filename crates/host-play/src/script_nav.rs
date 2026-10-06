@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
+use api::bank_memory::Origin;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
 use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankRows, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
@@ -217,7 +218,7 @@ pub(crate) struct ScriptWalkArm {
     pub(crate) state: Option<WorldState>,
     /// The account's bank memory rows at arm time
     /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
-    /// session is planned over ([`BankRows::planning_rows`]).
+    /// session is planned over ([`nav::bank_fetch::planning_rows`]).
     pub(crate) bank: BankRows,
 }
 
@@ -1011,7 +1012,8 @@ impl ScriptWalkArm {
                 arrival,
                 opts,
                 state: self.state.clone(),
-                bank: self.bank.clone(),
+                bank_origin: self.bank.origin,
+                bank: self.bank.rows.clone(),
                 live_candidates,
                 exclusions,
                 completion,
@@ -1345,7 +1347,10 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
-    pub(crate) bank: BankRows,
+    /// The arm's bank memory ([`ScriptWalkArm::bank`]), its origin beside
+    /// its rows so the byte packs into this request's own padding.
+    pub(crate) bank_origin: Origin,
+    pub(crate) bank: Vec<(i32, i32)>,
     /// Explicit live-loc footprint goals; otherwise use the request's tile-area rule.
     pub(crate) live_candidates: Option<Vec<WorldTile>>,
     /// Frozen request exclusions: every search keeps out of rects and carries
@@ -1446,7 +1451,7 @@ impl ScriptRouteRequest {
             let Some(plan) = plan_bank_fetch(
                 &missing,
                 state,
-                &self.bank.planning_rows(&missing),
+                &planning_rows(self.bank_origin, &self.bank, &missing),
                 self.world.banks(),
                 self.from,
                 &self.world.collision,
@@ -1576,7 +1581,10 @@ impl ScriptRouteRequest {
     /// searches, one strict and one fetchable, plus one fetchable search for
     /// each stand or tile whose session is refused (no session covers its
     /// missing facts, or the post-state re-find still misses a gate; a
-    /// session never deposits).
+    /// session never deposits). A `Hint` bank memory adds one relaxed
+    /// goal-set diagnosis of the same shape before the fetchable search
+    /// ([`fetchable_facts`]), so its stock never rejects a goal whose one
+    /// verifying trip would decide it.
     fn calculate_solid(
         &self,
         stands: &[WorldTile],
@@ -1629,23 +1637,34 @@ impl ScriptRouteRequest {
             (Err(_), tile) => tile,
         };
 
-        let fetchable = fetchable_facts(&self.world, self.opts, state, &self.bank);
+        // A routed strict tile beats a session to one, so the stands are
+        // searched alone under the fetchable facts (and diagnosed alone).
+        let stand_tiles = match strict_tile {
+            Some(FallbackRoute::Routed(_)) => &[][..],
+            _ => tiles,
+        };
+        let fetchable = fetchable_facts(
+            &self.world,
+            self.from,
+            stands,
+            stand_tiles,
+            self.opts,
+            state,
+            self.bank_origin,
+            &self.bank,
+            self.avoid(),
+        );
         let mut fetch_tiles = None;
         if let Some(fetchable) = &fetchable {
-            // A strict route to a tile beats a session to one, so a routed
-            // strict tile leaves the stands alone to search.
-            let tiles = match strict_tile {
-                Some(FallbackRoute::Routed(_)) => &[][..],
-                _ => tiles,
-            };
             match fetch_stand(
                 &self.world,
                 self.from,
                 stands,
-                tiles,
+                stand_tiles,
                 self.opts,
                 state,
                 fetchable,
+                self.bank_origin,
                 &self.bank,
                 self.avoid(),
             ) {
@@ -1682,6 +1701,7 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 fetchable,
+                self.bank_origin,
                 &self.bank,
                 self.avoid(),
             ),
@@ -1724,6 +1744,7 @@ impl ScriptRouteRequest {
                 target,
                 self.opts,
                 state,
+                self.bank_origin,
                 &self.bank,
                 self.avoid(),
             );
@@ -1758,6 +1779,7 @@ impl ScriptRouteRequest {
                 self.to,
                 self.opts,
                 state,
+                self.bank_origin,
                 &self.bank,
                 self.avoid(),
             );
@@ -2450,7 +2472,8 @@ mod diagnostic_tests {
                 ..FindOptions::default()
             },
             state: None,
-            bank: BankRows::default(),
+            bank_origin: Origin::Unknown,
+            bank: Vec::new(),
             live_candidates: None,
             exclusions: None,
             completion: Default::default(),

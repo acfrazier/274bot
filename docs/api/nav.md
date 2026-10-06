@@ -893,7 +893,7 @@ memory (`nav::bank_fetch::BankRows`: `Play::bank_rows(name)` for WalkTo, the
 slot's memory for script walks and route inspects), not from the open
 bank, so a closed bank still plans a trip. While the bank is open the
 memory mirrors it. What a shortage means depends on where the rows came
-from (`BankRows::planning_rows`, design-bank-snapshot §2.4):
+from (`nav::bank_fetch::planning_rows`, design-bank-snapshot §2.4):
 
 - `Session` (seen in an open bank since login): the rows as they are; a
   missing item is `NoPath` in place.
@@ -905,6 +905,13 @@ from (`BankRows::planning_rows`, design-bank-snapshot §2.4):
   then `Session`, and the next WalkTo is `NoPath`. A whole-stack Withdraw
   that the live stack does not match goes through Withdraw-X for the
   planned amount.
+
+  Radius walks to a solid tile and Area walks search a set of goals under
+  what a session could fetch. With a `Hint`, that set is first diagnosed
+  once (`nav::router::find_first_missing_item_reqs_with_avoid`, the strict
+  first-goal budgets) and the chosen goal's missing items are added to the
+  hint for the search, so a hint that lacks a toll or tool still plans the
+  one verifying trip instead of `NoPath`.
 
 The bank a closed-bank plan walks to can be far from where the walk was
 armed. When the session ends, a post-session route that does not start

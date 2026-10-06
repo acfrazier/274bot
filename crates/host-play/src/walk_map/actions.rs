@@ -928,7 +928,7 @@ fn blocking_zones_for_walk(
     let plan = plan_bank_fetch(
         &missing,
         slot.state,
-        &slot.bank.planning_rows(&missing),
+        &nav::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
         world.banks(),
         from,
         &world.collision,

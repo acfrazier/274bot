@@ -345,7 +345,8 @@ fn bank_false_fare_is_nopath() {
         generation: 0,
         world,
         state: WorldState::empty(),
-        bank: BankRows::default(),
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         from: at,
         to,
         opts: FindOptions {
@@ -397,10 +398,8 @@ fn pre_state_stand_proof_rejects_post_only_stand() {
         generation: 0,
         world,
         state: WorldState::empty(),
-        bank: BankRows {
-            origin: Origin::Session,
-            rows: vec![(995, 10)],
-        },
+        bank_origin: Origin::Session,
+        bank: vec![(995, 10)],
         from,
         to: dest,
         opts: FindOptions {
@@ -430,7 +429,8 @@ fn no_path_reason_names_the_active_zone_witness() {
         generation: 0,
         world: zoned_line_world(TransportGraph::default(), vec![]),
         state: WorldState::empty(),
-        bank: BankRows::default(),
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         from,
         to: tile(4, 0, 0),
         opts: FindOptions {
@@ -477,10 +477,8 @@ fn bank_access_no_path_reason_names_the_active_zone_witness() {
             }],
         ),
         state: WorldState::empty(),
-        bank: BankRows {
-            origin: Origin::Session,
-            rows: vec![(995, 1)],
-        },
+        bank_origin: Origin::Session,
+        bank: vec![(995, 1)],
         from,
         to: destination,
         opts: FindOptions {
@@ -525,10 +523,8 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
         generation: 0,
         world,
         state: WorldState::empty(),
-        bank: BankRows {
-            origin: Origin::Session,
-            rows: vec![(995, 10)],
-        },
+        bank_origin: Origin::Session,
+        bank: vec![(995, 10)],
         from,
         to: dest,
         opts: FindOptions {
@@ -820,7 +816,8 @@ fn capture(
         generation: 0,
         world,
         state: WorldState::empty(),
-        bank,
+        bank_origin: bank.origin,
+        bank: bank.rows,
         from,
         to,
         opts,

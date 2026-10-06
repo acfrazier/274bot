@@ -3391,7 +3391,8 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         arrival: ArrivalKind::Area,
         opts: FindOptions::default(),
         state: None,
-        bank: BankRows::default(),
+        bank_origin: api::bank_memory::Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
         completion: Default::default(),
@@ -3725,10 +3726,11 @@ fn s2a_compute_only_per_bot_layouts() {
     // slots and u16 masks, WalkGuard 256 -> 264) and `traveller` +16 (648 ->
     // 664; nav-door-expire's per-hop `DoorRetry` re-Open pacing state). Field
     // probe: CORE-INTEGRATOR-6 probe-b656.log / probe-head.log.
-    // BANK-SNAPSHOT-S5 +16 B: the queued `pending_route` and the inspect
-    // `pending` capture each carry the walk's `BankRows` (the bank memory's
-    // origin beside its rows, design-bank-snapshot §4 F6) instead of a bare
-    // rows `Vec`: +8 B each (one origin byte, padded).
+    // BANK-SNAPSHOT-S5 adds nothing: the queued `pending_route` and the
+    // inspect `pending` capture each keep the bank memory's origin beside
+    // its rows (design-bank-snapshot §4 F6) as their own field, so the byte
+    // packs into each holder's existing padding. Carrying a padded
+    // `BankRows` there instead measured 3488 (S5 round 1).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -3741,7 +3743,7 @@ fn s2a_compute_only_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3488, 4024, 512, 264)
+        (3472, 4024, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

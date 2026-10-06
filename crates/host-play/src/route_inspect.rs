@@ -3,10 +3,11 @@
 //! Pause does not abort inspect, and results never arm Traveller.
 
 use super::NavBot;
+use api::bank_memory::Origin;
 use api::obj_names::ObjNames;
 use api::snapshot::WorldTile;
 use client::config::Cache;
-use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankRows, BankStep};
 use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
@@ -77,7 +78,10 @@ pub(crate) struct InspectCapture {
     pub generation: u64,
     pub world: Arc<NavWorld>,
     pub state: WorldState,
-    pub bank: BankRows,
+    /// The bank memory's origin beside its rows ([`BankRows`] flattened, so
+    /// the byte packs into this capture's own padding).
+    pub bank_origin: Origin,
+    pub bank: Vec<(i32, i32)>,
     pub from: WorldTile,
     pub to: WorldTile,
     pub opts: FindOptions,
@@ -406,7 +410,8 @@ pub(super) fn queue_inspect(
             generation,
             world,
             state: state.unwrap_or_else(WorldState::empty),
-            bank,
+            bank_origin: bank.origin,
+            bank: bank.rows,
             from: req.from,
             to: req.to,
             opts,
@@ -609,7 +614,7 @@ fn calculate_bank(
     let Some(plan) = plan_bank_fetch(
         &missing,
         pre,
-        &capture.bank.planning_rows(&missing),
+        &planning_rows(capture.bank_origin, &capture.bank, &missing),
         capture.world.banks(),
         capture.from,
         &capture.world.collision,

@@ -68,7 +68,7 @@ pub struct NoPath;
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
 /// none. `bank` is the account's bank memory rows ([`crate::Play::bank_rows`])
 /// the BankBudget session is planned over
-/// ([`nav::bank_fetch::BankRows::planning_rows`]): a `Session` or `Unknown`
+/// ([`nav::bank_fetch::planning_rows`]): a `Session` or `Unknown`
 /// bank that lacks a missing item is `NoPath`; a `Hint` plans the one
 /// verifying trip, which the open bank settles.
 /// On success the caller's picked dest is stored by the arm's route;
@@ -110,7 +110,16 @@ pub fn arm_walk_on(
             .get(name)
             .and_then(|arm| arm.lock().unwrap().traveller.essence())
     });
-    let outcome = route_or_bank_fetch(world, from_w, dest_w, options, state, bank, &[]);
+    let outcome = route_or_bank_fetch(
+        world,
+        from_w,
+        dest_w,
+        options,
+        state,
+        bank.origin,
+        &bank.rows,
+        &[],
+    );
     match outcome {
         RouteOutcome::Routed(route) => {
             replace_walk_arm(travellers, focused, from_w, &route, None);

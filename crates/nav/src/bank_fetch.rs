@@ -39,7 +39,9 @@ pub const SAME_BANK: i32 = 12;
 /// (design-bank-snapshot §1.2, §2.4). `Unknown` with no rows is the
 /// never-observed bank. The rows are one copy per walk arm, never per tick;
 /// while the bank is open and loaded the memory mirrors the live table, so
-/// this is also the open-bank case.
+/// this is also the open-bank case. A holder that keeps them inline may
+/// store the two fields apart; every planner reads them through
+/// [`planning_rows`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BankRows {
     pub origin: Origin,
@@ -54,49 +56,52 @@ impl BankRows {
             rows: memory.rows().to_vec(),
         }
     }
+}
 
-    /// The rows [`plan_bank_fetch`] plans a session for the route diagnosis
-    /// `missing` over (design-bank-snapshot §2.4, §4 F6). `Session` rows are
-    /// this session's observation and `Unknown` rows are empty: both are
-    /// returned as they are (borrowed), so a shortage there is `NoPath`. A
-    /// `Hint` is advisory, so a shortage it predicts costs one verifying trip
-    /// instead: each diagnosed `Carry { id, count }` is raised to
-    /// `max(hinted, count)` and each `WearAny` none of whose ids is hinted
-    /// gains one unit of its first id. The open bank then settles the trip
-    /// (a withdraw it cannot serve aborts the session). Only the route's own
-    /// diagnosis is overlaid; the rows stay sorted by id. One small owned
-    /// `Vec` per plan, never per tick.
-    pub fn planning_rows(&self, missing: &[MissingReq]) -> Cow<'_, [(i32, i32)]> {
-        if self.origin != Origin::Hint {
-            return Cow::Borrowed(&self.rows);
-        }
-        let hinted = |id: i32| self.rows.iter().any(|&(row, count)| row == id && count > 0);
-        let mut rows = self.rows.clone();
-        let mut raise = |id: i32, count: i32, add: bool| match rows
-            .binary_search_by_key(&id, |&(row, _)| row)
-        {
-            Ok(at) if add => rows[at].1 = rows[at].1.saturating_add(count),
-            Ok(at) => rows[at].1 = rows[at].1.max(count),
-            Err(at) => rows.insert(at, (id, count)),
-        };
-        for req in missing {
-            if let MissingReq::Carry { id, count } = *req {
-                if count > 0 {
-                    raise(id, count, false);
-                }
-            }
-        }
-        for req in missing {
-            if let MissingReq::WearAny { ids } = req {
-                if let Some(&first) = ids.first() {
-                    if !ids.iter().any(|&id| hinted(id)) {
-                        raise(first, 1, true);
-                    }
-                }
-            }
-        }
-        Cow::Owned(rows)
+/// The rows [`plan_bank_fetch`] plans a session for the route diagnosis
+/// `missing` over, from bank rows `rows` of origin `origin`
+/// (design-bank-snapshot §2.4, §4 F6). `Session` rows are this session's
+/// observation and `Unknown` rows are empty: both are returned as they are
+/// (borrowed), so a shortage there is `NoPath`. A `Hint` is advisory, so a
+/// shortage it predicts costs one verifying trip instead: each diagnosed
+/// `Carry { id, count }` is raised to `max(hinted, count)` and each
+/// `WearAny` none of whose ids is hinted gains one unit of its first id.
+/// The open bank then settles the trip (a withdraw it cannot serve aborts
+/// the session). Only the given diagnosis is overlaid; the rows stay sorted
+/// by id. One small owned `Vec` per plan, never per tick.
+pub fn planning_rows<'a>(
+    origin: Origin,
+    rows: &'a [(i32, i32)],
+    missing: &[MissingReq],
+) -> Cow<'a, [(i32, i32)]> {
+    if origin != Origin::Hint {
+        return Cow::Borrowed(rows);
     }
+    let hinted = |id: i32| rows.iter().any(|&(row, count)| row == id && count > 0);
+    let mut planned = rows.to_vec();
+    let mut raise =
+        |id: i32, count: i32, add: bool| match planned.binary_search_by_key(&id, |&(row, _)| row) {
+            Ok(at) if add => planned[at].1 = planned[at].1.saturating_add(count),
+            Ok(at) => planned[at].1 = planned[at].1.max(count),
+            Err(at) => planned.insert(at, (id, count)),
+        };
+    for req in missing {
+        if let MissingReq::Carry { id, count } = *req {
+            if count > 0 {
+                raise(id, count, false);
+            }
+        }
+    }
+    for req in missing {
+        if let MissingReq::WearAny { ids } = req {
+            if let Some(&first) = ids.first() {
+                if !ids.iter().any(|&id| hinted(id)) {
+                    raise(first, 1, true);
+                }
+            }
+        }
+    }
+    Cow::Owned(planned)
 }
 
 /// The standable tiles `stand` is used from, by the access rule the C1
@@ -219,7 +224,7 @@ pub struct BankFetch {
 /// targets already held so a matching `WearAny` cannot spend the last
 /// carried unit needed by the route.
 /// `state` is the search's gating facts; `bank` is the rows the session is
-/// planned over — [`BankRows::planning_rows`] of the account's bank memory
+/// planned over — [`planning_rows`] of the account's bank memory
 /// (the live table while the bank is open); an item the rows do not cover
 /// cannot be proved and this returns `None`;
 /// `stands` is the packed bank stand table
@@ -391,9 +396,8 @@ pub fn plan_bank_fetch(
 /// The facts a BankBudget session can establish from `state`, whichever
 /// route it serves: exactly the supply [`plan_bank_fetch`] checks. Every
 /// carried obj can be worn in place; with a bank stand to walk to, every
-/// obj in the bank rows (the account's bank memory, [`BankRows::rows`]; an
-/// obj's first row, as the planner reads it) plus the backpack can be
-/// carried at their combined count, and made
+/// obj in `bank` (an obj's first row, as the planner reads it) plus the
+/// backpack can be carried at their combined count, and made
 /// available to the legacy `worn_req` any-of gate. These are candidate
 /// items, not observed equipment, so `worn_all_req` stays exact.
 /// A strict search under this state reaches only goals whose `item_req`,
@@ -401,7 +405,10 @@ pub fn plan_bank_fetch(
 /// [`plan_bank_fetch`] budgets the whole route's missing facts. A goal
 /// behind an obj the session cannot get never hides one it can (frozen
 /// `virtualizeWithItems` likewise searches with the bank's objs assumed
-/// held).
+/// held). `bank` is the memory's rows; for a `Hint` memory the host passes
+/// [`planning_rows`] of a goal-set diagnosis
+/// ([`crate::router::find_first_missing_item_reqs_with_avoid`]), so a
+/// hinted shortage does not hide the one trip that would verify it.
 pub fn fetchable_state(
     state: &WorldState,
     bank: &[(i32, i32)],

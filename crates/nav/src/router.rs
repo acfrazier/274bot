@@ -1636,6 +1636,66 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     (!missing.is_empty()).then_some(missing)
 }
 
+/// [`find_missing_item_reqs_with_avoid`] over a first-goal set, as
+/// [`find_first_with_fallback_avoid`] searches it: one relaxed search over
+/// the preferred `targets` with the `fallback` set, plus one over the
+/// fallback alone only when the shared search leaves it
+/// [`FallbackRoute::Undecided`]. The diagnosis is the chosen route's: the
+/// cheapest preferred goal's when one routes relaxed, else the fallback
+/// set's. The searches keep the strict first-goal budgets
+/// ([`FIRST_TARGET_BUDGET`] unless the backward proof shows a goal
+/// reachable), so a goal set costs what its strict search may, never one
+/// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
+/// are [`find_missing_item_reqs`]'s.
+#[allow(clippy::too_many_arguments)] // first-goal search surface plus avoid rects
+pub fn find_first_missing_item_reqs_with_avoid(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Vec<MissingReq>> {
+    let search = |relax| {
+        let first = |targets: &[WorldTile], fallback: &[WorldTile]| {
+            first_search(
+                collision,
+                graph,
+                from,
+                targets,
+                fallback,
+                opts,
+                state,
+                relax,
+                avoid,
+                FIRST_TARGET_BUDGET,
+                NODE_BUDGET,
+            )
+            .into_routes()
+        };
+        match first(targets, fallback) {
+            (Ok(route), _) | (Err(_), Some(FallbackRoute::Routed(route))) => Some(route),
+            (Err(_), Some(FallbackRoute::Undecided)) => first(fallback, &[]).0.ok(),
+            (Err(_), Some(FallbackRoute::Failed(_)) | None) => None,
+        }
+    };
+    if let Some(route) = search(Relax::CarryWorn) {
+        return Some(missing_item_reqs(&route, state));
+    }
+    if !graph
+        .edges
+        .iter()
+        .chain(&graph.teleports)
+        .any(|edge| state.quest_gates(edge) == Truth::Unknown)
+    {
+        return None;
+    }
+    let missing = missing_item_reqs(&search(Relax::CarryWornUnknownQuest)?, state);
+    (!missing.is_empty()).then_some(missing)
+}
+
 /// Initial carry supply needed by the whole route, and missing worn gates.
 /// Consumed counts accumulate; credits from charge downgrades reduce later
 /// demand. A held gate needs its stack intact at the point where it is used.
