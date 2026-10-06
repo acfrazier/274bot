@@ -22,7 +22,140 @@
       { "obj": "copper_ore", "qty": 4, "kind": "acquirable", "acquire": null },
       { "obj": "iron_ore", "qty": 2, "kind": "acquirable", "acquire": null }
     ],
-    "acquire": {},
+    "acquire": {
+      "acquire:best-pickaxe": [
+        {
+          "id": "pickaxe-bank-scan",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "scan", "at": "nearest" },
+          "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+          "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+          "comment": "Scan before selecting one banked tool in the gather family's best-first pickaxe order."
+        },
+        {
+          "id": "withdraw-rune-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "rune_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "rune_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+          "comment": "Withdraw only the best available owned tier; once it is held or worn, lower-tier withdrawals skip."
+        },
+        {
+          "id": "withdraw-adamant-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "adamant_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "adamant_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } }
+        },
+        {
+          "id": "withdraw-mithril-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "mithril_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "mithril_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } }
+        },
+        {
+          "id": "withdraw-steel-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "steel_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "steel_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } }
+        },
+        {
+          "id": "withdraw-iron-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "iron_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "iron_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } }
+        },
+        {
+          "id": "withdraw-bronze-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "bronze_pickaxe", "qty": 1 }], "partial_ok": false },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } },
+            { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_pickaxe" } } },
+            { "All": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "bronze_pickaxe" } } } }
+            ] }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+        }
+      ]
+    },
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -57,7 +190,7 @@
               "kind": "talk",
               "version": 1,
               "advances": true,
-              "comment": "Banked ores are withdrawn first during preparation. After Start, the Path gathers any missing clay, copper ore and iron ore at Rimmington before handing them in.",
+              "comment": "Banked ores are withdrawn during preparation. Before each gather the Path ensures the best available pickaxe is held or worn; it then gathers any missing clay, copper ore and iron ore at Rimmington before handing them in.",
               "args": {
                 "npc": "doric",
                 "anchor": {
@@ -79,6 +212,28 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "ensure-pickaxe-for-clay",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:best-pickaxe" },
+              "comment": "Withdraw the best banked pickaxe only when no pickaxe tier is already held or worn.",
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+              ] },
+              "settle": { "All": [] }
+            },
+            {
               "id": "gather-doric-clay",
               "kind": "gather",
               "version": 1,
@@ -99,6 +254,28 @@
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } } }
             },
             {
+              "id": "ensure-pickaxe-for-copper",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:best-pickaxe" },
+              "comment": "Withdraw the best banked pickaxe only when no pickaxe tier is already held or worn.",
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+              ] },
+              "settle": { "All": [] }
+            },
+            {
               "id": "gather-doric-copper",
               "kind": "gather",
               "version": 1,
@@ -116,6 +293,28 @@
               "comment": "Mine to the held count of 4 after banked copper ore is withdrawn; this rock requires Mining 1.",
               "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } } }
+            },
+            {
+              "id": "ensure-pickaxe-for-iron",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:best-pickaxe" },
+              "comment": "Withdraw the best banked pickaxe only when no pickaxe tier is already held or worn.",
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } },
+                { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+              ] },
+              "settle": { "All": [] }
             },
             {
               "id": "gather-doric-iron",

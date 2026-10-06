@@ -254,7 +254,8 @@ fn anchor(tile: [i32; 3]) -> WorldTile {
 struct ItemQty {
     /// Symbolic item config name.
     obj: String,
-    /// Requested quantity; omitted uses 1 and values below 1 are rejected.
+    /// Target held count for `withdraw`; ignored by `deposit`.
+    /// Omitted defaults to 1; `withdraw` rejects values below 1.
     #[serde(default = "one")]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
@@ -637,7 +638,7 @@ pub(super) struct BuyArgs {
     shop: ShopArg,
     /// Symbolic item config name to buy.
     obj: String,
-    /// Number of items to buy; must be at least 1.
+    /// Desired held count after buying; must be at least 1.
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
     /// Estimated coin budget; currently informational.
