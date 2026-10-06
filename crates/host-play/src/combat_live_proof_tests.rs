@@ -908,8 +908,7 @@ fn scenario_for(
         .splice(stand_index..stand_index, pre_stand_steps);
     // A ranged placement prepares after the stand (the Warlord dialogue
     // needs it); every other case prepares between the relog and the stand.
-    let preparation_index =
-        stand_index + pre_stand_count + usize::from(placement.is_some());
+    let preparation_index = stand_index + pre_stand_count + usize::from(placement.is_some());
     let preparation = preparation_steps(case, stand, placement, Arc::clone(&capture));
     scenario
         .steps
