@@ -5,6 +5,7 @@ use super::{
     SideTabView, StatView, VarpView, WorldStateView,
 };
 use crate::quest_progress::EvidenceStamp;
+use crate::selected::Truth;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +60,7 @@ pub struct SnapshotView<'a> {
     snapshot: Option<&'a GameSnapshot>,
     stamp: EvidenceStamp,
     reach: Option<&'a crate::query::ReachQueryView>,
+    world_members: Truth,
 }
 
 impl<'a> SnapshotView<'a> {
@@ -69,7 +71,25 @@ impl<'a> SnapshotView<'a> {
             snapshot,
             stamp,
             reach: None,
+            world_members: Truth::Unknown,
         }
+    }
+
+    /// Attach the bound server profile's world type. The host derives it from
+    /// the profile, not from this snapshot, so a view built without it reports
+    /// [`Truth::Unknown`].
+    pub fn with_world_members(mut self, world_members: Truth) -> Self {
+        self.world_members = world_members;
+        self
+    }
+
+    /// Whether the connected world is a members world, as declared by the
+    /// bound server profile. [`Truth::Unknown`] only when no profile fact was
+    /// attached (for example a Direct connection). This is the world, not the
+    /// account: [`WorldStateView::members`] is the account flag the server
+    /// sent at login and can be true on a free-to-play world.
+    pub fn world_members(&self) -> Truth {
+        self.world_members
     }
 
     pub fn here(&self) -> Option<Observed<super::WorldTile>> {
@@ -1092,5 +1112,45 @@ mod tests {
         assert_ne!(id("livetest_0"), id("Livetest 1"));
         assert_eq!(id(""), None);
         assert_eq!(id("___"), None);
+    }
+
+    #[test]
+    fn world_members_is_the_host_profile_fact_not_the_account_flag() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        // The account flag the server sent at login is true throughout.
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..Default::default()
+        });
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.world().unwrap().value.members);
+        assert_eq!(view.world_members(), Truth::Unknown);
+        assert_eq!(
+            view.with_world_members(Truth::False).world_members(),
+            Truth::False
+        );
+        assert_eq!(
+            view.with_world_members(Truth::True).world_members(),
+            Truth::True
+        );
+        // No frame at all still reports the attached profile fact.
+        let empty = SnapshotView::new(None, stamp);
+        assert_eq!(empty.world_members(), Truth::Unknown);
+        assert_eq!(
+            empty.with_world_members(Truth::True).world_members(),
+            Truth::True
+        );
     }
 }

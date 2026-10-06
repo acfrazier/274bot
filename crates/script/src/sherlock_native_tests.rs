@@ -409,6 +409,7 @@ fn with_tick<R>(
                 selected: Some(&world.data),
                 reach: None,
                 hold: world.held,
+                world_members: api::selected::Truth::Unknown,
                 interacts: Some(Vec::new()),
             },
         },
@@ -1254,6 +1255,7 @@ fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u
             selected: Some(&world.data),
             reach: None,
             hold: world.held,
+            world_members: api::selected::Truth::Unknown,
             interacts: None,
         },
     });

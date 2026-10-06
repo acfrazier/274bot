@@ -26200,3 +26200,16 @@ mod host_batch_tests {
         assert_ne!(slot.lock().unwrap().work_epoch(), epoch);
     }
 }
+
+#[test]
+fn direct_connection_has_no_world_type() {
+    let direct = crate::play_bootstrap::PlayConnection::Direct(PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: String::new(),
+        lowmem: true,
+        mainland: false,
+    });
+    assert_eq!(direct.world_members(), api::selected::Truth::Unknown);
+}

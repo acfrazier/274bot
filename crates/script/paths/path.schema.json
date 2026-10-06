@@ -592,6 +592,9 @@
                   "$ref": "#/$defs/fact.modal_open.v1"
                 },
                 {
+                  "$ref": "#/$defs/fact.members_world.v1"
+                },
+                {
                   "$ref": "#/$defs/fact.item_count_at_least.v1"
                 },
                 {
@@ -1004,6 +1007,26 @@
       "properties": {
         "kind": {
           "const": "modal_open"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NoArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.members_world.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "members_world"
         },
         "version": {
           "const": 1

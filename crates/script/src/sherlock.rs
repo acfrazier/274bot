@@ -1469,6 +1469,7 @@ mod tests {
                     selected,
                     reach: None,
                     hold: self.hold,
+                    world_members: api::selected::Truth::Unknown,
                     interacts: Some(Vec::new()),
                 },
             }

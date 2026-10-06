@@ -2312,3 +2312,46 @@ fn native_waiting_keeps_running_until_its_own_terminal_bound() {
     slot.stop();
     assert_eq!(cancels.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn host_world_members_reaches_the_native_snapshot_view() {
+    use api::selected::Truth;
+    struct Reads(Arc<std::sync::Mutex<Vec<Truth>>>);
+    impl Script for Reads {
+        fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(cx.cx.snapshot().world_members());
+            Ok(ScriptFlow::Continue)
+        }
+    }
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    assert_eq!(slot.world_members(), Truth::Unknown);
+    slot.bind_world_members(Truth::True);
+    assert_eq!(slot.world_members(), Truth::True);
+    slot.start_test_script(Box::new(Reads(Arc::clone(&seen))), Some(selected()))
+        .unwrap();
+    for world in [Truth::True, Truth::False, Truth::Unknown] {
+        slot.on_game_tick(&mut ScriptCtx {
+            driver: &mut NullDriver::default(),
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                world_members: world,
+                ..Default::default()
+            },
+        });
+    }
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [Truth::True, Truth::False, Truth::Unknown]
+    );
+}

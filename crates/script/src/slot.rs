@@ -161,6 +161,8 @@ pub struct SlotScript {
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
+    /// The bound server profile's world type, bound by the host on spawn.
+    world_members: api::selected::Truth,
     control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
     /// by the host on the same frames the isolate's queue is. Never both — a
@@ -286,6 +288,7 @@ impl SlotScript {
             pair_evidence: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
+            world_members: api::selected::Truth::Unknown,
             control_generation: 0,
             #[cfg(feature = "load")]
             compiled_interacts: Vec::new(),
@@ -1248,6 +1251,17 @@ impl SlotScript {
     /// Share the host SlotInput authority. Call on spawn before Start.
     pub fn bind_native_input(&mut self, authority: Arc<NativeInputAuthority>) {
         self.native_input = authority;
+    }
+
+    /// Bind the server profile's world type (members or free-to-play). Call on
+    /// spawn before Start; a slot with no profile keeps `Unknown`.
+    pub fn bind_world_members(&mut self, world_members: api::selected::Truth) {
+        self.world_members = world_members;
+    }
+
+    /// The world type bound by [`SlotScript::bind_world_members`].
+    pub fn world_members(&self) -> api::selected::Truth {
+        self.world_members
     }
 
     fn revoke_native_input(&mut self) {
