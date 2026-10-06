@@ -79,7 +79,7 @@
           "version": 1,
           "advances": false,
           "args": {
-            "target": { "loc": "ladder_cellar" },
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
             "op": "Climb-down",
             "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
             "radius": 3
@@ -144,7 +144,7 @@
           "version": 1,
           "advances": false,
           "args": {
-            "target": { "loc": "ladder_cellar" },
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
             "op": "Climb-down",
             "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
             "radius": 3
@@ -198,7 +198,7 @@
           "version": 1,
           "advances": false,
           "args": {
-            "target": { "loc": "ladder_cellar" },
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
             "op": "Climb-down",
             "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
             "radius": 3
