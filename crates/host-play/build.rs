@@ -27,8 +27,12 @@
 //! Knobs (see docs/api/nav.md):
 //! - `BOT_NAV_BUILD=require|skip` (default `require`)
 //! - `BOT_NAV_REVISION=289|274` (default `289`)
-//! - `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR` (required when nav bundling is enabled)
-//! - `BOT_NAV_CONTENT_DIR` (default the engine's sibling `content/`)
+//! - `ENGINE_DIR`: the engine root, the `engine/` folder of an engine checkout
+//!   (required when nav bundling is enabled). `BOT_NAV_ENGINE_DIR` overrides it
+//!   for this build only. A leading `~/` is expanded, since shells leave a quoted
+//!   `~` unexpanded.
+//! - `BOT_NAV_CONTENT_DIR` (default the engine root's sibling `content/`; set it only
+//!   when content lives elsewhere)
 //! - `BOT_CACHE_MANIFEST` (verified cache manifest; otherwise the captured
 //!   cache identity must be one of the checked-in known cache identities)
 //! - `BOT_NAV_RESOURCE_DIR` (staging root; default the cargo profile dir)
@@ -114,34 +118,42 @@ fn main() {
     }
 
     let revision = selected_revision();
-    let engine_dir = engine_dir();
-    let content_dir = std::env::var_os("BOT_NAV_CONTENT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            engine_dir
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("content")
-        });
+    let (engine_dir, engine_key) = engine_dir(revision);
+    let content_from_env = env_path("BOT_NAV_CONTENT_DIR");
+    let inputs_origin = format!(
+        "engine root {} from {engine_key}; content {}",
+        engine_dir.display(),
+        if content_from_env.is_some() {
+            "from BOT_NAV_CONTENT_DIR"
+        } else {
+            "beside the engine root"
+        }
+    );
+    let content_dir = content_from_env.unwrap_or_else(|| {
+        engine_dir
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("content")
+    });
     let cache_dir = engine_dir.join("data/pack/client");
     let inputs = content_inputs(&content_dir);
     let config_jag = match config_jag_for(revision, &cache_dir) {
         Ok(path) => path,
-        Err(e) => fail(&e),
+        Err(e) => fail(&format!("{e} ({inputs_origin})")),
     };
 
     // Canonical inputs are required: a build that cannot produce the artifact
     // fails here instead of shipping an apparently ready app without nav.
-    require_dir(&inputs.maps_dir, revision);
-    require_dir(&inputs.doors_dir, revision);
-    require_file(&inputs.gates, revision);
-    require_file(&config_jag, revision);
+    require_dir(&inputs.maps_dir, revision, &inputs_origin);
+    require_dir(&inputs.doors_dir, revision, &inputs_origin);
+    require_file(&inputs.gates, revision, &inputs_origin);
+    require_file(&config_jag, revision, &inputs_origin);
     let archives: Vec<PathBuf> = CacheManifest::ARCHIVES
         .iter()
         .map(|name| cache_dir.join(name))
         .collect();
     for archive in &archives {
-        require_file(archive, revision);
+        require_file(archive, revision, &inputs_origin);
     }
     // The bake also consumes inputs it does not take as named arguments: the
     // jm2 placements and the pack id tables behind the transport graph and the
@@ -563,14 +575,30 @@ fn selected_revision() -> u16 {
     }
 }
 
-fn engine_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("BOT_NAV_ENGINE_DIR").map(PathBuf::from) {
-        return dir;
+/// The engine root and the variable that supplied it. `BOT_NAV_ENGINE_DIR` is the same
+/// setting as `ENGINE_DIR`, scoped to this build.
+fn engine_dir(revision: u16) -> (PathBuf, &'static str) {
+    for key in ["BOT_NAV_ENGINE_DIR", "ENGINE_DIR"] {
+        if let Some(dir) = env_path(key) {
+            return (dir, key);
+        }
     }
-    if let Some(dir) = std::env::var_os("ENGINE_DIR").map(PathBuf::from) {
-        return dir;
-    }
-    fail("set BOT_NAV_ENGINE_DIR or ENGINE_DIR to the local engine root, or BOT_NAV_BUILD=skip to build without bundled navigation")
+    fail(&format!(
+        "set ENGINE_DIR to the revision {revision} engine root (the `engine/` folder of the \
+         engine checkout, with `content/` beside it), or BOT_NAV_BUILD=skip to build without \
+         bundled navigation"
+    ))
+}
+
+/// A non-empty path variable, with a leading `~/` expanded: shells don't expand `~`
+/// inside quotes, so `ENGINE_DIR="~/…"` arrives literally.
+fn env_path(key: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os(key).filter(|value| !value.is_empty())?);
+    let Ok(rest) = path.strip_prefix("~") else {
+        return Some(path);
+    };
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(rest))
 }
 
 fn read_rows(path: &Path) -> Vec<NavIdentityRow> {
@@ -618,26 +646,26 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn require_dir(path: &Path, revision: u16) {
+fn require_dir(path: &Path, revision: u16, origin: &str) {
     if !path.is_dir() {
-        fail(&format!(
-            "{} (revision {revision}) is missing; point BOT_NAV_ENGINE_DIR/BOT_NAV_CONTENT_DIR \
-             at the canonical tree, or set BOT_NAV_BUILD=skip to build without bundled \
-             navigation",
-            path.display()
-        ));
+        fail(&missing_input(path, revision, origin));
     }
 }
 
-fn require_file(path: &Path, revision: u16) {
+fn require_file(path: &Path, revision: u16, origin: &str) {
     if !path.is_file() {
-        fail(&format!(
-            "{} (revision {revision}) is missing; point BOT_NAV_ENGINE_DIR/BOT_NAV_CONTENT_DIR \
-             at the canonical tree, or set BOT_NAV_BUILD=skip to build without bundled \
-             navigation",
-            path.display()
-        ));
+        fail(&missing_input(path, revision, origin));
     }
+}
+
+fn missing_input(path: &Path, revision: u16, origin: &str) -> String {
+    format!(
+        "{} (revision {revision}) is missing ({origin}); ENGINE_DIR must be the `engine/` \
+         folder of a complete revision {revision} engine checkout with its `content/` beside \
+         it (set BOT_NAV_CONTENT_DIR only if content lives elsewhere), or set \
+         BOT_NAV_BUILD=skip to build without bundled navigation",
+        path.display()
+    )
 }
 
 /// The canonical-input inventory failure. Naming every missing input would

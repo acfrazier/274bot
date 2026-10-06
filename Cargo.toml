@@ -27,3 +27,13 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 opt-level = 1
+
+# host-play's build script bakes the navigation pack through the `nav` crate.
+# Build scripts default to opt-level 0, which made a bake take about 46 s instead
+# of 9 s (measured 2026-10-05); the baked files are byte-identical either way.
+# Registry build deps in dev still get `package."*"` above, which takes precedence.
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release.build-override]
+opt-level = 3
