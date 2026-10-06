@@ -389,7 +389,15 @@ impl BankChoiceState {
         for (label, path, error) in completed {
             match error {
                 None => self.capture_paths.push((label, path)),
-                Some(error) => self.capture_error = Some(error),
+                Some(error) => {
+                    // A failed background capture must fail the cell like a
+                    // synchronous save failure, not sit in `capture_error`
+                    // while the driver still PASSes on the terminal file.
+                    if self.error.is_none() {
+                        self.error = Some(format!("{label} evidence capture failed: {error}"));
+                    }
+                    self.capture_error = Some(error);
+                }
             }
         }
     }
@@ -917,12 +925,16 @@ fn run_origin(
         let run_state = play.script_state(&account);
         let lifecycle = play.script_lifecycle_receipt(&account);
         let script_error = play.script_last_error(&account);
-        let (arrival_at, after_bank, state_error, scenario_status) = {
+        let (arrival_at, after_bank, state_error, capture_error, pending_jobs, scenario_status) = {
             let mut slot = state.lock().map_err(|_| "bank-choice state poisoned")?;
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
             }
             slot.observe_status(status.clone());
+            // Poll completions on the driver too so a failed capture fails
+            // fast even between slot frames; `poll_captures` promotes the
+            // worker error to `slot.error` like the other sites.
+            slot.poll_captures();
             (
                 slot.arrival_at,
                 slot.after_bank_outcome.is_some()
@@ -931,11 +943,18 @@ fn run_origin(
                         .iter()
                         .any(|(step, _)| step == "03-after-bank"),
                 slot.error.clone(),
+                slot.capture_error.clone(),
+                slot.pending_jobs.len(),
                 slot.runner.status(),
             )
         };
         if let Some(error) = state_error {
             break Err(error);
+        }
+        // A failed capture must fail the cell even when the terminal file
+        // still lands; never PASS with `capture_error` set.
+        if let Some(error) = capture_error {
+            break Err(format!("bank-choice evidence capture failed: {error}"));
         }
         if let Some(error) = script_error {
             break Err(format!("Quester lifecycle error: {error}"));
@@ -961,7 +980,9 @@ fn run_origin(
         if let RunnerStatus::Failed(error) = scenario_status {
             break Err(format!("Cook scenario setup failed: {error}"));
         }
-        if after_bank {
+        // Only PASS once the terminal capture has landed and the queue has
+        // drained; otherwise keep waiting for the flush under the deadline.
+        if after_bank && pending_jobs == 0 {
             break Ok(());
         }
         let deadline = arrival_at

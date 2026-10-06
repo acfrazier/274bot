@@ -337,6 +337,9 @@ fn worker_loop(inner: Arc<WriterInner>) {
             state.active += 1;
             state.queue.pop_front().expect("queue checked non-empty")
         };
+        // A freed slot must wake a submitter blocked on a full queue;
+        // without this the submit stalls until `submit_wait`.
+        inner.changed.notify_all();
         let QueuedJob { job, request } = queued;
         let outcome = write_capture(job.id, &request);
         {
@@ -349,9 +352,9 @@ fn worker_loop(inner: Arc<WriterInner>) {
             }
             *job.slot.outcome.lock() = Some(outcome.clone());
             job.slot.ready.notify_all();
-            if state.queue.is_empty() && state.active == 0 {
-                inner.changed.notify_all();
-            }
+            // Wake flush waiters (and any submitter rechecking state):
+            // completion changes `active`/stats observed under `changed`.
+            inner.changed.notify_all();
         }
         if outcome.error.is_some() {
             println!(
@@ -738,5 +741,64 @@ mod tests {
         let outcome = writer.poll(&job).expect("drop completes inline");
         assert!(outcome.error.is_some(), "drop must carry an error");
         assert_eq!(writer.stats().dropped, 1);
+    }
+
+    #[test]
+    fn full_queue_submit_wakes_when_worker_pops() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-evidence-wakeup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let submit_wait = Duration::from_secs(2);
+        let writer = EvidenceWriter::with_config(WriterConfig {
+            bound: 1,
+            submit_wait,
+        });
+        // A large first capture keeps the worker busy while the next two
+        // submits fill the single queue slot, so the third submit must
+        // block until the worker pops.
+        let big = vec![0x7f7f_7f7fi32; 512 * 512];
+        let job0 = writer.submit(EvidenceRequest {
+            png_path: dir.join("w0.png"),
+            width: 512,
+            height: 512,
+            pixels: big,
+            color: PngColor::Rgba,
+            sidecar: None,
+        });
+        drop(job0);
+        let job1 = writer.submit(EvidenceRequest {
+            png_path: dir.join("w1.png"),
+            width: 2,
+            height: 2,
+            pixels: test_pixels(2, 2),
+            color: PngColor::Rgba,
+            sidecar: None,
+        });
+        let start = Instant::now();
+        let job2 = writer.submit(EvidenceRequest {
+            png_path: dir.join("w2.png"),
+            width: 2,
+            height: 2,
+            pixels: test_pixels(2, 2),
+            color: PngColor::Rgba,
+            sidecar: None,
+        });
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < submit_wait,
+            "submit to a full queue must enqueue after a pop, not stall the full {submit_wait:?} (took {elapsed:?})"
+        );
+        // The woken submit must have enqueued rather than dropped.
+        let outcome = writer
+            .wait(&job1, Duration::from_secs(10))
+            .expect("queued capture completes");
+        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        let outcome = writer
+            .wait(&job2, Duration::from_secs(10))
+            .expect("woken capture completes");
+        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert!(writer.flush(Duration::from_secs(10)));
+        assert_eq!(writer.stats().dropped, 0);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
