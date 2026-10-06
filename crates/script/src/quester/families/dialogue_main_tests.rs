@@ -867,3 +867,58 @@ fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
         assert_eq!(snapshot.modals().main, root);
     }
 }
+
+/// Captain Tobias's "Yes please." runs `~set_sail`, whose
+/// `if_openmain(ship_journey)` replaces the chat page with a Main modal that
+/// is neither a scroll nor a book. After our own accepted advance that is
+/// the end of the conversation; a refused advance, or the same modal after
+/// only the Talk-to, stays failed.
+#[test]
+fn a_main_modal_opened_by_our_accepted_advance_completes_the_dialogue() {
+    let ids = dialogue_ui();
+    let ship_journey = ids.scroll_root.max(ids.book_root) + 100;
+    for (advance, accepted, expected) in [
+        (true, true, DialogueOutcome::Completed),
+        (true, false, DialogueOutcome::Failed),
+        (false, true, DialogueOutcome::Failed),
+    ] {
+        let mut snapshot = snapshot();
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Dialogue>(npc_args(), &mut tick.cx)
+                .unwrap()
+        });
+        complete_talk(&mut ledger, 2, true, false);
+        if advance {
+            snapshot.seed_chat_modal(4882, vec!["Yes please.".into()]);
+            snapshot.seed_chat_options(vec![], 4883);
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending());
+            assert!(matches!(
+                last_interaction(&ledger),
+                InteractReq::ContinueDialog { .. }
+            ));
+            complete_last_interaction(&mut ledger, 4, accepted);
+        }
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        snapshot.seed_main_modal(ship_journey, vec![]);
+        let outcome = with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(outcome, Poll::Ready(Ok(outcome)) if outcome == expected),
+            "advance {advance}, accepted {accepted}: expected {expected:?}"
+        );
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+                &entry.effect,
+                HostEffect::Interaction(InteractReq::CloseModal)
+            ))
+        );
+        assert_eq!(snapshot.modals().main, ship_journey);
+    }
+}

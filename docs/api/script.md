@@ -503,6 +503,12 @@ ambiguous, missing-control or unchanged pages fail without a guessed fallback.
 `Dialogue::owned_chat_page` borrows only the first chat page from that driver's
 accepted NPC Talk request. It requires a newer game tick and a change from the
 pre-Talk page, and returns no page after Continue or an answer is emitted.
+A Main modal that is neither a selected scroll nor a book can only be new
+while the driver is on the chat surface. When it replaces the chat page after
+the driver's own accepted, fresh Continue or Answer (for example `set_sail`'s
+`if_openmain(ship_journey)` after a boat or customs answer), the conversation
+completes and the step's `settle` judges the outcome. The same modal after only
+the Talk-to, or after a refused answer, still fails.
 
 `interact` accepts `target: {"held": "death_iou"}` with an observed operation
 such as `"op": "Read"`. It selects the exact inventory item and slot, verifies
@@ -554,6 +560,11 @@ loc id as well as its display name; a nearer or co-located same-name loc cannot
 replace it.
 For an anchored loc, the settle deadline starts on arrival at the first legal
 stand and is shared by all repeated `until` attempts; retries do not restart it.
+An anchored `interact` or `use_on` on a straight wall (a door or gate, loc
+shape 0) approaches from the player's side of the wall. From the angle-facing
+side it walks to the facing tile at radius 0: the loc's own tile is across the
+wall, so nav's tile arrival would drop the doorstep and leave only far-side
+stands. From the loc's own side it walks to the loc tile at radius 1.
 
 The `ground_item_near` fact may declare `at: [x,z,level]`. It then requires the
 selected item id at that exact tile and within the declared radius; a nearby

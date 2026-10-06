@@ -83,17 +83,18 @@ fn path_schema_matches_generator() {
     );
 }
 
-#[test]
-fn gobdip_redberries_recipe_collects_three_ground_spawns() {
-    let value = read_path(&paths_dir().join("gobdip.json"));
-    let steps = value["quest"]["acquire"]["acquire:redberries"]
-        .as_array()
-        .expect("Gobdip redberry recipe");
+/// Redberries come from the respawning Varrock ground spawns rather than
+/// Wydin's one-stock shop: bank withdraw, then the patch walk, then Take.
+fn assert_redberries_from_ground_spawns(steps: &[Value], qty: i64) {
     let bank_withdraw = steps
         .iter()
-        .position(|step| step["kind"] == "bank" && step["args"]["op"] == "withdraw")
+        .position(|step| {
+            step["kind"] == "bank"
+                && step["args"]["op"] == "withdraw"
+                && step["args"]["items"][0]["obj"] == "redberries"
+        })
         .expect("bank withdrawal before gathering");
-    assert_eq!(steps[bank_withdraw]["args"]["items"][0]["qty"], json!(3));
+    assert_eq!(steps[bank_withdraw]["args"]["items"][0]["qty"], json!(qty));
 
     let patch_tile = json!([3271, 3366, 0]);
     let patch_walk = steps
@@ -116,13 +117,36 @@ fn gobdip_redberries_recipe_collects_three_ground_spawns() {
     assert_eq!(steps[collect]["args"]["wait_if_missing"], true);
     assert_eq!(
         steps[collect]["args"]["until"],
-        json!({ "obj": "redberries", "qty": 3 })
+        json!({ "obj": "redberries", "qty": qty })
     );
     assert_eq!(steps[collect]["args"]["settle_ms"], 300000);
     assert!(
-        steps.iter().all(|step| step["kind"] != "buy"),
+        steps
+            .iter()
+            .all(|step| step["kind"] != "buy" || step["args"]["obj"] != "redberries"),
         "redberries must come from ground spawns rather than Wydin's one-stock shop"
     );
+}
+
+#[test]
+fn gobdip_redberries_recipe_collects_three_ground_spawns() {
+    let value = read_path(&paths_dir().join("gobdip.json"));
+    let steps = value["quest"]["acquire"]["acquire:redberries"]
+        .as_array()
+        .expect("Gobdip redberry recipe");
+    assert!(steps.iter().all(|step| step["kind"] != "buy"));
+    assert_redberries_from_ground_spawns(steps, 3);
+}
+
+/// Redberry pie burns about half the time at Cooking 10 and the pie recipe
+/// retries without limit, so its berries need the respawning source too.
+#[test]
+fn squire_pie_recipe_takes_redberries_from_ground_spawns() {
+    let value = read_path(&paths_dir().join("squire.json"));
+    let steps = value["quest"]["acquire"]["acquire:pie"]
+        .as_array()
+        .expect("Squire pie recipe");
+    assert_redberries_from_ground_spawns(steps, 1);
 }
 
 #[test]
