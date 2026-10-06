@@ -8,13 +8,14 @@
 //! ephemeral, no persist). Not crowding the main view — a small centered
 //! box drawn after the panes.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
+use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
     GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED, SCRIPT_SCOPE_NOTICE,
@@ -42,10 +43,14 @@ pub struct SettingsState {
     pub open: bool,
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=teleports,
     /// 4=wilderness, 5=bank fetch, 6=danger zones, 7=manual-walk pause,
-    /// 8=map bake, 9=memory.
+    /// 8=map bake, 9=memory, 10=folder gate, 11=folder, 12=reload.
     pub row: usize,
+    /// Path folder text input is active.
+    pub folder_editing: bool,
+    /// Text changed during this folder edit and needs persistence when closed.
+    pub folder_changed: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 10],
+    pub row_areas: [Rect; 13],
 }
 
 impl SettingsState {
@@ -70,6 +75,10 @@ pub enum SettingsKey {
     ScriptScopeNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
+    /// The Quester folder settings changed and need shared persistence.
+    QuesterPathsChanged,
+    /// Reload the shared Path registry without starting a Path.
+    ReloadPaths,
     /// Relog the bound member now to apply the entire queued memory mode.
     MemoryRelog,
     /// The key was consumed but nothing changed (navigation, Esc).
@@ -92,6 +101,10 @@ pub struct SettingsPane<'a> {
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
+    pub quester_paths: Option<&'a mut QuesterPathsView>,
+    pub quester_paths_notice: Option<&'a str>,
+    pub quester_paths_notice_error: bool,
+    pub quester_paths_reloading: bool,
     pub title: &'a str,
     pub notice: Option<&'a FormNotice>,
     pub memory: Option<MemoryNotice>,
@@ -114,6 +127,10 @@ impl<'a> SettingsPane<'a> {
             memory: None,
             pause_script_on_manual_walk_abort: None,
             script_scope_notice_ack: None,
+            quester_paths: None,
+            quester_paths_notice: None,
+            quester_paths_notice_error: false,
+            quester_paths_reloading: false,
         }
     }
     /// Bind the shared script-scope acknowledgement.
@@ -127,11 +144,21 @@ impl<'a> SettingsPane<'a> {
         self.pause_script_on_manual_walk_abort = Some(value);
         self
     }
+
+    /// Bind shared Quester Path settings.
+    pub fn quester_paths(mut self, value: &'a mut QuesterPathsView) -> Self {
+        self.quester_paths = Some(value);
+        self
+    }
+
     /// One key while the popup is open. Up/Down move the row; Enter/Space
     /// toggles settings, `d` dismisses the one-time script-scope notice,
     /// `r` relogs the bound member only while its login mode differs and no
     /// relog is already queued; Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
+        if self.state.folder_editing {
+            return self.folder_key(key);
+        }
         match key.code {
             KeyCode::Char('r') if self.memory.is_some_and(MemoryNotice::can_relog) => {
                 SettingsKey::MemoryRelog
@@ -150,24 +177,12 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(9);
+                self.state.row = (self.state.row + 1).min(12);
                 SettingsKey::Consumed
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                self.activate();
-                match self.state.row {
-                    0..=2 | 9 => SettingsKey::Changed,
-                    3 => SettingsKey::WalkGlobal(NavPreference::AllowTeleports),
-                    4 => SettingsKey::WalkGlobal(NavPreference::AllowWilderness),
-                    5 => SettingsKey::WalkGlobal(NavPreference::AllowBankFetch),
-                    6 => SettingsKey::WalkGlobal(NavPreference::AllowDangerZones),
-                    7 if self.pause_script_on_manual_walk_abort.is_some() => {
-                        SettingsKey::PauseScriptOnManualWalkAbort
-                    }
-                    8 => SettingsKey::MapBake,
-                    _ => SettingsKey::Consumed,
-                }
-            }
+            KeyCode::Enter => self.activate(),
+            KeyCode::Char(' ') if self.state.row == 11 => SettingsKey::Consumed,
+            KeyCode::Char(' ') => self.activate(),
             KeyCode::Esc => {
                 self.state.open = false;
                 SettingsKey::Consumed
@@ -175,8 +190,97 @@ impl<'a> SettingsPane<'a> {
             _ => SettingsKey::Ignored,
         }
     }
-    /// The focused row's toggle/cycle.
-    fn activate(&mut self) {
+
+    fn folder_key(&mut self, key: KeyEvent) -> SettingsKey {
+        match key.code {
+            KeyCode::Enter | KeyCode::Esc => {
+                self.state.folder_editing = false;
+                if std::mem::take(&mut self.state.folder_changed) {
+                    SettingsKey::QuesterPathsChanged
+                } else {
+                    SettingsKey::Consumed
+                }
+            }
+            KeyCode::Backspace => {
+                let Some(paths) = self.quester_paths.as_deref_mut() else {
+                    return SettingsKey::Consumed;
+                };
+                let mut folder = paths.folder.to_string_lossy().into_owned();
+                if folder.pop().is_some() {
+                    paths.folder = folder.into();
+                    self.state.folder_changed = true;
+                }
+                SettingsKey::Consumed
+            }
+            KeyCode::Char(character)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                ) =>
+            {
+                if let Some(paths) = self.quester_paths.as_deref_mut() {
+                    let mut folder = paths.folder.to_string_lossy().into_owned();
+                    folder.push(character);
+                    paths.folder = folder.into();
+                    self.state.folder_changed = true;
+                }
+                SettingsKey::Consumed
+            }
+            _ => SettingsKey::Consumed,
+        }
+    }
+
+    /// The focused row's toggle/cycle or command.
+    fn activate(&mut self) -> SettingsKey {
+        match self.state.row {
+            0..=2 | 9 => {
+                self.activate_value();
+                SettingsKey::Changed
+            }
+            3 => {
+                self.activate_value();
+                SettingsKey::WalkGlobal(NavPreference::AllowTeleports)
+            }
+            4 => {
+                self.activate_value();
+                SettingsKey::WalkGlobal(NavPreference::AllowWilderness)
+            }
+            5 => {
+                self.activate_value();
+                SettingsKey::WalkGlobal(NavPreference::AllowBankFetch)
+            }
+            6 => {
+                self.activate_value();
+                SettingsKey::WalkGlobal(NavPreference::AllowDangerZones)
+            }
+            7 if self.pause_script_on_manual_walk_abort.is_some() => {
+                self.activate_value();
+                SettingsKey::PauseScriptOnManualWalkAbort
+            }
+            8 => {
+                self.activate_value();
+                SettingsKey::MapBake
+            }
+            10 => {
+                let Some(paths) = self.quester_paths.as_deref_mut() else {
+                    return SettingsKey::Consumed;
+                };
+                paths.enabled = !paths.enabled;
+                SettingsKey::QuesterPathsChanged
+            }
+            11 => {
+                if self.quester_paths.is_none() {
+                    return SettingsKey::Consumed;
+                }
+                self.state.folder_editing = true;
+                self.state.folder_changed = false;
+                SettingsKey::Consumed
+            }
+            12 => SettingsKey::ReloadPaths,
+            _ => SettingsKey::Consumed,
+        }
+    }
+
+    fn activate_value(&mut self) {
         match self.state.row {
             0 => self.settings.random_events = !self.settings.random_events,
             1 => {
@@ -198,7 +302,8 @@ impl<'a> SettingsPane<'a> {
                 }
             }
             8 => *self.map_bake = self.map_bake.toggled(),
-            _ => self.settings.lowmem = !self.settings.lowmem,
+            9 => self.settings.lowmem = !self.settings.lowmem,
+            _ => {}
         }
     }
 }
@@ -218,6 +323,25 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let marker = |row| if row == self.state.row { "> " } else { "  " };
+        let path_folder = self
+            .quester_paths
+            .as_deref()
+            .map(|paths| paths.folder.display().to_string())
+            .unwrap_or_else(|| "unavailable".into());
+        let paths_enabled = self
+            .quester_paths
+            .as_deref()
+            .is_some_and(|paths| paths.enabled);
+        let reload = if self.quester_paths_reloading {
+            format!("{} (reloading…)", RELOAD_PATHS_LABEL)
+        } else {
+            RELOAD_PATHS_LABEL.to_string()
+        };
+        let folder_hint = if self.state.folder_editing {
+            " [type path; Enter/Esc done]"
+        } else {
+            " [Enter edit]"
+        };
         let rows = [
             format!(
                 "{}random events: {}",
@@ -268,6 +392,9 @@ impl Widget for SettingsPane<'_> {
                 marker(9),
                 MemoryNotice::status_text(self.settings.lowmem, self.memory)
             ),
+            format!("{}{}: {}", marker(10), LOAD_PATHS_LABEL, paths_enabled),
+            format!("{}Paths folder: {}{}", marker(11), path_folder, folder_hint),
+            format!("{}{}", marker(12), reload),
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
@@ -284,9 +411,16 @@ impl Widget for SettingsPane<'_> {
                 |reason| wrapped_rows(reason, columns) + wrapped_rows(NOTHING_SAVED, columns),
             )
         });
-        let height =
-            (row_heights.iter().sum::<u16>() + memory_height + scope_height + notice_height + 2)
-                .min(area.height - 1);
+        let path_notice_height = self
+            .quester_paths_notice
+            .map_or(0, |notice| wrapped_rows(notice, columns));
+        let height = (row_heights.iter().sum::<u16>()
+            + memory_height
+            + scope_height
+            + notice_height
+            + path_notice_height
+            + 2)
+        .min(area.height - 1);
         let popup = Rect {
             x: area.x + (area.width - width) / 2,
             y: area.y + (area.height - height) / 2,
@@ -301,10 +435,13 @@ impl Widget for SettingsPane<'_> {
         // Keep feedback visible and the selected setting reachable when the
         // long global labels or scope notice cannot fit the terminal.
         let footer_capacity = inner.height.saturating_sub(1);
-        let notice_height = notice_height.min(footer_capacity);
-        let memory_height = memory_height.min(footer_capacity - notice_height);
-        let scope_height = scope_height.min(footer_capacity - notice_height - memory_height);
-        let rows_height = inner.height - notice_height - memory_height - scope_height;
+        let path_notice_height = path_notice_height.min(footer_capacity);
+        let notice_height = notice_height.min(footer_capacity - path_notice_height);
+        let memory_height = memory_height.min(footer_capacity - path_notice_height - notice_height);
+        let scope_height =
+            scope_height.min(footer_capacity - path_notice_height - notice_height - memory_height);
+        let rows_height =
+            inner.height - path_notice_height - notice_height - memory_height - scope_height;
         let selected = self.state.row.min(rows.len() - 1);
         let mut first = 0;
         let mut through_selected = row_heights[..=selected].iter().sum::<u16>();
@@ -346,26 +483,49 @@ impl Widget for SettingsPane<'_> {
                 yellow,
             );
         }
+        let profile_notice_bottom = inner.bottom().saturating_sub(path_notice_height);
         if let Some(notice) = self.notice {
-            let bottom = inner.bottom();
             match notice.error() {
                 Some(reason) => {
                     let red = Style::default().fg(Color::Red);
-                    let saved_y = bottom.saturating_sub(wrapped_rows(NOTHING_SAVED, columns));
+                    let saved_y =
+                        profile_notice_bottom.saturating_sub(wrapped_rows(NOTHING_SAVED, columns));
                     draw_wrapped(buf, inner, scope_bottom, saved_y, reason, red);
-                    draw_wrapped(buf, inner, saved_y, bottom, NOTHING_SAVED, red);
+                    draw_wrapped(
+                        buf,
+                        inner,
+                        saved_y,
+                        profile_notice_bottom,
+                        NOTHING_SAVED,
+                        red,
+                    );
                 }
                 None => {
                     draw_wrapped(
                         buf,
                         inner,
                         scope_bottom,
-                        bottom,
+                        profile_notice_bottom,
                         notice.text(),
                         Style::default().fg(Color::Green),
                     );
                 }
             }
+        }
+        if let Some(notice) = self.quester_paths_notice {
+            let color = if self.quester_paths_notice_error {
+                Color::Red
+            } else {
+                Color::Green
+            };
+            draw_wrapped(
+                buf,
+                inner,
+                profile_notice_bottom,
+                inner.bottom(),
+                notice,
+                Style::default().fg(color),
+            );
         }
     }
 }

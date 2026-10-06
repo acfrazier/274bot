@@ -404,6 +404,11 @@ impl GameSnapshot {
         self.scene = scene;
     }
 
+    /// Offline fixture observation of the decoded player's absolute world tile.
+    pub fn seed_tile(&mut self, tile: WorldTile) {
+        self.tile = Some((tile.x, tile.z, tile.level));
+    }
+
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;
@@ -416,6 +421,11 @@ impl GameSnapshot {
     pub fn seed_inventory(&mut self, rows: Vec<ItemView>, size: i32) {
         self.inventory = rows;
         self.inventory_size = size;
+    }
+
+    /// Offline fixture observation of a trade page; production uses decoded widgets.
+    pub fn seed_trade(&mut self, trade: TradeView) {
+        self.trade = trade;
     }
 
     /// Offline fixture observation of a bank modal and its two containers.

@@ -43,6 +43,9 @@ tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", 
 vault = { path = "../vault" }
 v8 = { version = "=137.2.1", default-features = false, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 # Integration tests use isolate seams without exposing them in normal builds.

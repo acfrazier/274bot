@@ -1,5 +1,12 @@
 use super::*;
 use std::hash::{Hash, Hasher};
+
+/// The client login identity for a saved or displayed player name.
+/// Spaces and underscores produce the same base-37 identity. Zero is invalid.
+pub fn player_account_id(name: &str) -> Option<u64> {
+    let id = client::util::JString::to_userhash(name);
+    (id != 0).then_some(id)
+}
 /// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
 /// loc/ground-item/player families are positioned by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]

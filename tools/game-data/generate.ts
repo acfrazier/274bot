@@ -94,6 +94,11 @@ const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scr
 // Manual spell names resolve through the magic tab interface, so it joins the base input closure.
 contentFiles.push('scripts/skill_magic/interfaces/magic.if');
 contentFiles.push(...dialogueUiContentFiles);
+const thievingLevelOnlySources = [
+    { file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', aliases: ['digworkman1', 'digworkman2'] },
+    { file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', aliases: ['troll_prison_guard1', 'troll_prison_guard2'] },
+] as const;
+contentFiles.push(...thievingLevelOnlySources.map((source) => source.file));
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
@@ -2438,18 +2443,27 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             dose_count: info.dose_count,
         });
     }
+    type PickpocketNpc = { alias: string; id: number; name: string };
     type PickpocketRow = {
         group: string;
-        npcs: { alias: string; id: number; name: string }[];
+        npcs: PickpocketNpc[];
         level: number;
         experience: number;
         stun_ticks: number;
         stun_damage: number;
         success_chance: { numerator: number; denominator: number };
-        loot: { item: { alias: string; id: number; name: string }; min: number; max: number; weight: number }[];
+        loot: { item: PickpocketNpc; min: number; max: number; weight: number }[];
         pocket: string;
     };
-    const pickpocket: PickpocketRow[] = [];
+    type PickpocketLevelOnlyRow = {
+        kind: 'level_only';
+        source_file: string;
+        target_row: string;
+        source_row: string;
+        npcs: PickpocketNpc[];
+        level: number;
+    };
+    const pickpocket: (PickpocketRow | PickpocketLevelOnlyRow)[] = [];
     for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow'), 'utf8'))) {
         const npc = (parsed.values.npc ?? []).map((value) => {
             const found = npcIds.get(value[0]);
@@ -2481,6 +2495,37 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
             loot,
             pocket: required(parsed.values, 'pocket', parsed.name),
         });
+    }
+    for (const source of thievingLevelOnlySources) {
+        const aliases = source.aliases.filter((alias) => npcIds.has(alias));
+        if (aliases.length === 0) continue;
+        const file = path.join(content, source.file);
+        if (!fs.existsSync(file)) throw new Error(`${source.file}: missing selected Thieving level source`);
+        const script = fs.readFileSync(file, 'utf8');
+        const gates = [...script.matchAll(/^\s*if\s*\(\s*stat\s*\(\s*thieving\s*\)\s*<\s*(\d+)\s*\)\s*\{\s*$/gm)];
+        if (gates.length !== 1) throw new Error(`${source.file}: expected one explicit Thieving level gate`);
+        const level = integer(gates[0][1], source.file);
+        if (level < 1) throw new Error(`${source.file}: invalid Thieving level gate`);
+        const targetRows = new Map<string, string[]>();
+        for (const match of script.matchAll(/^\s*\[opnpc3,([a-z0-9_]+)\][^\r\n]*$/gm)) {
+            const rows = targetRows.get(match[1]) ?? [];
+            rows.push(match[0].trim());
+            targetRows.set(match[1], rows);
+        }
+        for (const alias of aliases) {
+            const found = npcIds.get(alias);
+            if (!found?.name) throw new Error(`${source.file}: ${alias} has no selected NPC name`);
+            const rows = targetRows.get(alias);
+            if (!rows || rows.length !== 1) throw new Error(`${source.file}: expected one opnpc3 source row for ${alias}`);
+            pickpocket.push({
+                kind: 'level_only',
+                source_file: source.file,
+                target_row: rows[0],
+                source_row: gates[0][0].trim(),
+                npcs: [{ alias, id: found.id, name: found.name }],
+                level,
+            });
+        }
     }
     return { consumption, pickpocket };
 }

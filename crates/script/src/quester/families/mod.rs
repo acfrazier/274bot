@@ -2,10 +2,14 @@
 
 pub mod combat;
 pub mod dialogue;
+pub mod gather;
+pub mod item_arg;
+pub mod partner;
 pub mod progress_predicates;
 pub mod reach;
 pub mod s2;
 pub mod setting;
+pub mod thieve;
 
 use super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
@@ -69,6 +73,9 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             setting::compile_setting
         ),
         super::compile::step!("combat", 1, Explicit, combat::CombatArgs, combat::compile),
+        super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
+        super::compile::step!("gather", 1, Explicit, gather::Args, gather::compile),
+        super::compile::step!("thieve", 1, Explicit, thieve::Args, thieve::compile),
     ];
     HANDLERS
 }
@@ -256,6 +263,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             super::compile::ProgressRead::None,
             s2::EquipmentOnlyArgs,
             s2::compile_equipment_only
+        ),
+        super::compile::fact!(
+            "partner_item_count_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            partner::PartnerItemCountArgs,
+            partner::compile_partner_item_count
         ),
     ];
     HANDLERS
@@ -1377,6 +1391,9 @@ struct TalkPlan {
     expect_combat: Option<i32>,
 }
 impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
             target: self.target.clone(),
@@ -1553,7 +1570,8 @@ pub(crate) struct InteractArgs {
     #[serde(default)]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     pub(crate) settle_ms: Option<u64>,
-    /// Omission drains optional Continue pages without answering menus.
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -1692,6 +1710,9 @@ struct InteractPlan {
     reachable_only: bool,
 }
 impl StepPlan for InteractPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
@@ -1805,12 +1826,9 @@ impl StepRun for InteractRun {
                 self.dialogue_started = Some(cx.tick.cx.active_now());
                 return Poll::Pending;
             }
-            // Acceptance is not a post-action page observation. A newer
-            // evidence tick is enough when no page opens; no timer is added.
-            if self
-                .accepted_tick
-                .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
-            {
+            // A fresh idle-player observation anchors absence after arrival or
+            // the primary animation, without a fixed opening delay.
+            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick) {
                 return Poll::Pending;
             }
         }
@@ -2097,6 +2115,14 @@ fn primary_animation_active(cx: &crate::native::ActionContext<'_>) -> bool {
         .is_some_and(|player| player.value.player.actor.animation >= 0)
 }
 
+fn fresh_idle_after(cx: &crate::native::ActionContext<'_>, accepted_tick: Option<u64>) -> bool {
+    accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
+        && cx.snapshot().local_player().is_some_and(|player| {
+            let actor = &player.value.player.actor;
+            !actor.moving && actor.animation < 0
+        })
+}
+
 /// Use a selected held item on one target, with optional observed settlement.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -2125,7 +2151,8 @@ pub(super) struct UseOnArgs {
     /// Optional predicate that can end the repeated use-on attempt.
     #[serde(default)]
     no_product: Option<PredicateDocument>,
-    /// Omission drains optional Continue pages without answering menus.
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -2249,6 +2276,9 @@ struct UseOnPlan {
     dialogue_options: Option<dialogue::DialogueOptions>,
 }
 impl StepPlan for UseOnPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let until = begin_until(self.until.as_ref(), cx)?;
         Ok(Box::new(UseOnRun {
@@ -2582,6 +2612,7 @@ impl StepRun for UseOnRun {
             }
             let pred = PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -2604,9 +2635,7 @@ impl StepRun for UseOnRun {
             }
             if self.default_dialogue
                 && !self.dialogue_completed
-                && self
-                    .accepted_tick
-                    .is_some_and(|tick| cx.tick.cx.evidence().tick <= tick)
+                && !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
             {
                 return Poll::Pending;
             }
@@ -2808,6 +2837,7 @@ impl StepRun for AcquireRun {
         if self.settling {
             let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -2830,6 +2860,7 @@ impl StepRun for AcquireRun {
             while self.index < self.steps.len() {
                 let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
+                    pairs: cx.tick.pairs,
                     quests: cx.quests,
                     progress: cx.progress,
                     required_after: cx.required_after,
@@ -2966,6 +2997,7 @@ impl StepRun for WaitRun {
         }
         let pred = PredicateContext {
             cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
             quests: cx.quests,
             progress: cx.progress,
             required_after: cx.required_after,

@@ -20,30 +20,54 @@ pub fn select<'a>(
     sequence: usize,
     cx: &PredicateContext<'_, '_>,
 ) -> SelectionDecision<'a> {
-    for (prelude, steps) in [
-        (true, path.prelude.as_slice()),
-        (
-            false,
-            path.sequences
-                .get(sequence)
-                .map_or(&[], |seq| seq.steps.as_slice()),
-        ),
-    ] {
-        for (index, step) in steps.iter().enumerate() {
-            match step.skip_if.evaluate(cx) {
-                Truth::True => {}
-                Truth::Unknown => return SelectionDecision::Unknown,
-                Truth::False => {
-                    return SelectionDecision::Selected(Selection {
-                        step,
-                        index,
-                        prelude,
-                    })
+    for (index, step) in path.prelude.iter().enumerate() {
+        match step.skip_if.evaluate(cx) {
+            Truth::True => {}
+            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::False => {
+                return SelectionDecision::Selected(Selection {
+                    step,
+                    index,
+                    prelude: true,
+                });
+            }
+        }
+    }
+    let Some(sequence) = path.sequences.get(sequence) else {
+        return SelectionDecision::Exhausted;
+    };
+    let nearest = sequence.order == super::path::SequenceOrder::Nearest;
+    let here = nearest.then(|| cx.cx.snapshot().here()).flatten();
+    let mut chosen = None;
+    let mut best = (i64::MAX, i32::MAX);
+    for (index, step) in sequence.steps.iter().enumerate() {
+        match step.skip_if.evaluate(cx) {
+            Truth::True => {}
+            Truth::Unknown => return SelectionDecision::Unknown,
+            Truth::False => {
+                let candidate = Selection {
+                    step,
+                    index,
+                    prelude: false,
+                };
+                if !nearest {
+                    return SelectionDecision::Selected(candidate);
+                }
+                let (Some(here), Some(anchor)) = (here.as_ref(), step.plan.anchor()) else {
+                    return SelectionDecision::Unknown;
+                };
+                let distance = (i64::from(here.value.x) - i64::from(anchor.x))
+                    .abs()
+                    .max((i64::from(here.value.z) - i64::from(anchor.z)).abs());
+                let score = (distance, (here.value.level - anchor.level).abs());
+                if score < best {
+                    best = score;
+                    chosen = Some(candidate);
                 }
             }
         }
     }
-    SelectionDecision::Exhausted
+    chosen.map_or(SelectionDecision::Exhausted, SelectionDecision::Selected)
 }
 
 pub fn sequence_for_stage(path: &CompiledPath, stage: &str) -> Option<usize> {
@@ -178,6 +202,7 @@ mod tests {
         crate::quester::families::tests::with_tick(snapshot, &mut ledger, 1, |tick| {
             let cx = PredicateContext {
                 cx: &tick.cx,
+                pairs: tick.pairs,
                 quests,
                 progress,
                 required_after: stamp(),
@@ -232,6 +257,7 @@ mod tests {
         let bank = crate::quester::bank_memo::BankMemo::default();
         let pred = PredicateContext {
             cx: &cx,
+            pairs: None,
             quests: &quests,
             progress: &[],
             required_after: stamp(),
@@ -281,6 +307,7 @@ mod tests {
                     crate::quester::families::tests::with_tick(&snapshot, ledger, 1, |tick| {
                         let pred = PredicateContext {
                             cx: &tick.cx,
+                            pairs: tick.pairs,
                             quests: &quests,
                             progress: &[],
                             required_after: stamp(),
@@ -530,6 +557,178 @@ mod tests {
             choice_for_stage(&compiled, "sheep:1", &full_supply, &quests, &[], &bank,),
             Choice::Step("hand-in".into()),
             "the full hand-in quantity remains usable before the first journal read"
+        );
+    }
+
+    fn assert_nearest_approach_for_family(kind: &str, args: serde_json::Value) {
+        let data = selected();
+        let quests = quests(&data);
+        let mut document: serde_json::Value =
+            serde_json::from_str(crate::quester::compile::COOK_JSON).unwrap();
+        document["roles"][0]["prelude"] = serde_json::json!([]);
+        document["roles"][0]["sequences"][0]["order"] = serde_json::json!("nearest");
+        document["roles"][0]["sequences"][0]["steps"] = serde_json::json!([
+            ("far", [3227, 3300, 0], [3208, 3213, 0]),
+            ("near", [3208, 3213, 0], [3227, 3300, 0]),
+        ]
+        .into_iter()
+        .map(|(id, approach, exact_target)| {
+            let mut args = args.clone();
+            args["anchor"] = serde_json::json!({
+                "tile": approach,
+                "source": "nearest selection fixture"
+            });
+            if let Some(tile) = args.pointer_mut("/target/tile") {
+                *tile = serde_json::json!(exact_target);
+            }
+            serde_json::json!({
+                "id": id, "kind": kind, "version": 1, "args": args,
+                "advances": false,
+                "skip_if": {"Any": []}, "settle": {"All": []}
+            })
+        })
+        .collect::<Vec<_>>());
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        let bank = known_empty_bank();
+        for (x, z, expected) in [(3208, 3213, "near"), (3227, 3300, "far")] {
+            snapshot.seed_local_player(crate::quester::families::tests::local_player(
+                api::WorldTile { x, z, level: 0 },
+            ));
+            assert_eq!(
+                choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+                Choice::Step(expected.into()),
+                "{kind} must select by its authored approach, not authored order or exact target"
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_talk() {
+        assert_nearest_approach_for_family("talk", serde_json::json!({"npc": "cook"}));
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_interact() {
+        assert_nearest_approach_for_family(
+            "interact",
+            serde_json::json!({
+                "target": {
+                    "loc": "priestperiltempledoorl",
+                    "tile": [0, 0, 0],
+                    "source": "nearest selection fixture"
+                },
+                "op": "Knock-at"
+            }),
+        );
+    }
+
+    #[test]
+    fn nearest_uses_authored_approach_for_use_on() {
+        assert_nearest_approach_for_family(
+            "use_on",
+            serde_json::json!({
+                "item": "shears",
+                "target": {
+                    "ground": "wool",
+                    "tile": [0, 0, 0],
+                    "source": "nearest selection fixture"
+                }
+            }),
+        );
+    }
+
+    #[test]
+    fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
+        use crate::native::ActionError;
+        use crate::quester::compile::{PredicatePlan, StepContext, StepPlan, StepRun};
+        struct Skip(Truth);
+        impl PredicatePlan for Skip {
+            fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+                self.0
+            }
+        }
+        struct Anchor(api::WorldTile);
+        impl StepPlan for Anchor {
+            fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+                Err(ActionError::Unavailable(Arc::from(
+                    "selector fixture does not dispatch",
+                )))
+            }
+            fn anchor(&self) -> Option<api::WorldTile> {
+                Some(self.0)
+            }
+        }
+        let step = |id: &str, x, z| CompiledStep {
+            id: FactKey::new(id),
+            kind: Arc::from("fixture"),
+            comment: None,
+            loadout: None,
+            tactic: None,
+            advances: false,
+            skip_if: Arc::new(Skip(Truth::False)),
+            settle: Arc::new(Skip(Truth::True)),
+            plan: Arc::new(Anchor(api::WorldTile { x, z, level: 0 })),
+        };
+        let data = selected();
+        let quests = quests(&data);
+        let mut path = compile_uncached_for_test(&decode_cook().unwrap(), &data, &quests).unwrap();
+        let sequence = &mut Arc::get_mut(&mut path).unwrap().sequences[0];
+        sequence.order = crate::quester::path::SequenceOrder::Nearest;
+        sequence.steps = vec![step("far", 20, 0), step("near", 1, 0), step("tie", 0, 1)];
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+        ));
+        let bank = known_empty_bank();
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+            Choice::Step("near".into())
+        );
+        Arc::get_mut(&mut path).unwrap().sequences[0].steps[1].skip_if =
+            Arc::new(Skip(Truth::True));
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+            Choice::Step("tie".into())
+        );
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 100,
+                z: 0,
+                level: 0,
+            },
+        ));
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+            Choice::Step("far".into())
+        );
+        Arc::get_mut(&mut path).unwrap().sequences[0].steps[2].skip_if =
+            Arc::new(Skip(Truth::Unknown));
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+            Choice::Unknown
+        );
+        let missing_here = inventory_snapshot(&data, &[]);
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &missing_here, &quests, &[], &bank),
+            Choice::Unknown
+        );
+        for step in &mut Arc::get_mut(&mut path).unwrap().sequences[0].steps {
+            step.skip_if = Arc::new(Skip(Truth::True));
+        }
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &missing_here, &quests, &[], &bank),
+            Choice::Exhausted
+        );
+        Arc::get_mut(&mut path).unwrap().prelude = vec![step("authored-prelude", 1000, 0)];
+        assert_eq!(
+            choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
+            Choice::Step("authored-prelude".into())
         );
     }
 }

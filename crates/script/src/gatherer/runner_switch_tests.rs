@@ -1,3 +1,4 @@
+use super::super::select::PlacementClass;
 use super::*;
 use crate::quester::families::tests::with_tick;
 use api::gather_methods::{known_rows, TargetClass};
@@ -139,6 +140,7 @@ fn assert_target_handoff(depleted: bool) {
                         target: previous.clone(),
                         catalog: Arc::clone(&gatherer.prepared.catalog),
                         stall_ticks: DEFAULT_STALL_TICKS,
+                        quest_owned: false,
                     },
                     &mut tick.cx,
                 )

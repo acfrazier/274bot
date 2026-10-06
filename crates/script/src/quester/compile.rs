@@ -14,8 +14,8 @@ use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{
-    ClientRevision, FactKey, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
-    Truth,
+    ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
+    SkillMinimum, SourceSpan, Truth,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -27,10 +27,12 @@ use std::{
 
 pub struct CompileContext<'a> {
     pub path: &'a FactKey,
+    pub kind: super::path::PathKind,
     pub progress: &'a CompiledProgress,
+    pub pair: Option<PairCompileContext<'a>>,
     pub selected: &'a SelectedGameData,
     pub quests: &'a QuestCatalog,
-    pub gathering: Option<&'a GatherCatalog>,
+    pub gathering: Option<&'a Arc<GatherCatalog>>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
     pub recipes: &'a HashMap<String, Arc<[CompiledAcquireStep]>>,
     /// `None` uses the shared eligible-bank cost selector at step start.
@@ -39,6 +41,13 @@ pub struct CompileContext<'a> {
     pub bank_items: &'a [i32],
     pub keep_ids: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
+}
+
+#[derive(Clone, Copy)]
+pub struct PairCompileContext<'a> {
+    pub declaration: &'a super::pair::PartnerDeclaration,
+    pub role: &'a FactKey,
+    pub digest: [u8; 32],
 }
 #[derive(Debug, Clone)]
 pub struct CompileError {
@@ -127,6 +136,8 @@ pub(crate) use crate::{fact, step};
 pub struct CompiledPath {
     pub id: FactKey,
     pub role: Option<FactKey>,
+    pub kind: super::path::PathKind,
+    pub partner: Option<super::pair::PartnerDeclaration>,
     pub display_name: Arc<str>,
     pub tested_stats: Option<Arc<[api::selected::SkillMinimum]>>,
     pub digest: [u8; 32],
@@ -134,6 +145,7 @@ pub struct CompiledPath {
     pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
     pub progress: CompiledProgress,
+    pub progress_reader: Option<Box<CompiledStep>>,
     pub eligibility: CompiledEligibility,
     pub provisioning: CompiledProvisioning,
     pub prelude: Vec<CompiledStep>,
@@ -196,6 +208,7 @@ pub struct CompiledProvisioning {
 pub struct CompiledSequence {
     pub stage: FactKey,
     pub terminal: bool,
+    pub order: super::path::SequenceOrder,
     pub steps: Vec<CompiledStep>,
 }
 
@@ -218,6 +231,7 @@ pub struct PredicateContext<'a, 'frame> {
     pub required_after: EvidenceStamp,
     pub chat_since: i32,
     pub outcome: Option<&'a StepOutcome>,
+    pub pairs: Option<&'a dyn super::pair::QuestPairPort>,
     pub bank: &'a super::bank_memo::BankMemo,
 }
 pub struct StepContext<'a, 'frame> {
@@ -243,6 +257,10 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Stable authored world anchor for nearest-first selection.
+    fn anchor(&self) -> Option<api::WorldTile> {
+        None
+    }
     /// Post-machine predicate window, measured on the eligible clock.
     fn settle_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(8)
@@ -305,6 +323,7 @@ struct CacheKey {
     content: Arc<str>,
     digest: [u8; 32],
     abi: u64,
+    gang: Option<super::pair::Gang>,
 }
 
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
@@ -343,6 +362,18 @@ pub fn compile_path(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    worker: &mut FamilyPreparation,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_path_for_gang(bytes, selected, quests, worker, None)
+}
+
+/// Select an immutable gang role after the owned membership read.
+pub fn compile_path_for_gang(
+    bytes: &[u8],
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    worker: &mut FamilyPreparation,
+    gang: Option<super::pair::Gang>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
     let (revision, engine, content) = match selected.selected_pin() {
@@ -365,20 +396,62 @@ pub fn compile_path(
         content,
         digest,
         abi: abi_set(),
+        gang,
     };
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
             return Ok(hit);
         }
     }
-    let document: PathDocument =
-        serde_json::from_slice(bytes).map_err(|_| CompileError::code("invalid-json"))?;
-    let compiled = Arc::new(compile_uncached(&document, digest, selected, quests)?);
+    let document: PathDocument = serde_json::from_slice(bytes)
+        .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
+    let gathering = prepare_gathering(&document, selected, worker)?;
+    let compiled = Arc::new(compile_uncached(
+        &document, digest, selected, quests, gathering, gang,
+    )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
         cache.insert(key, Arc::downgrade(&compiled));
     }
     Ok(compiled)
+}
+
+pub(super) fn prepare_gathering(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    worker: &mut FamilyPreparation,
+) -> Result<Option<Arc<GatherCatalog>>, CompileError> {
+    uses_gathering(document)
+        .then(|| selected.prepare_gathering(worker))
+        .transpose()
+        .map_err(|_| CompileError::code("gathering-unavailable").with_path(document.id.clone()))
+}
+
+fn uses_gathering(document: &PathDocument) -> bool {
+    document.roles.iter().any(|role| {
+        role.prelude
+            .iter()
+            .chain(role.sequences.iter().flat_map(|sequence| &sequence.steps))
+            .chain(role.progress_reader.iter())
+            .any(|step| step.kind == "gather")
+    }) || document.quest.as_ref().is_some_and(|header| {
+        header
+            .acquire
+            .values()
+            .flatten()
+            .any(|step| step.kind == "gather")
+    })
+}
+
+/// Run test-only family preparation on the same off-pump worker as production.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn prepare_for_test<R: Send + 'static>(
+    work: impl FnOnce(&mut FamilyPreparation) -> R + Send + 'static,
+) -> R {
+    FamilyPreparation::run(work)
+        .expect("start test family preparation")
+        .join()
+        .expect("join test family preparation")
 }
 
 /// Test helper: compile without the process cache.
@@ -387,7 +460,18 @@ pub fn compile_uncached_for_test(
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_uncached(document, digest_bytes(b"test"), selected, quests).map(Arc::new)
+    let gathering = uses_gathering(document)
+        .then(|| api::gather_methods::cached(selected))
+        .flatten();
+    compile_uncached(
+        document,
+        digest_bytes(b"test"),
+        selected,
+        quests,
+        gathering,
+        None,
+    )
+    .map(Arc::new)
 }
 
 fn compile_requirement(
@@ -458,11 +542,13 @@ fn skill_index(name: &str) -> Option<u8> {
         .and_then(|id| u8::try_from(id).ok())
 }
 
-fn compile_uncached(
+pub(super) fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
+    gathering: Option<Arc<GatherCatalog>>,
+    gang: Option<super::pair::Gang>,
 ) -> Result<CompiledPath, CompileError> {
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
@@ -473,10 +559,34 @@ fn compile_uncached(
         .ok_or_else(|| CompileError::code("missing-quest-header").with_path(document.id.clone()))?;
     validate_header(header, selected).map_err(|err| err.with_path(document.id.clone()))?;
     validate_nav_coverage(document).map_err(|err| err.with_path(document.id.clone()))?;
-    let role = document
-        .roles
-        .first()
-        .ok_or_else(|| CompileError::code("missing-role").with_path(document.id.clone()))?;
+    let role = if let Some(declaration) = &document.partner {
+        if document.roles.len() != 2
+            || declaration.roles[0].id == declaration.roles[1].id
+            || declaration.roles[0].gang == declaration.roles[1].gang
+        {
+            return Err(CompileError::code("invalid-partner-roles").with_path(document.id.clone()));
+        }
+        let gang =
+            gang.ok_or_else(|| CompileError::code("missing-gang").with_path(document.id.clone()))?;
+        let selected_role = declaration
+            .roles
+            .iter()
+            .find(|role| role.gang == gang)
+            .ok_or_else(|| CompileError::code("invalid-partner-role"))?;
+        document
+            .roles
+            .iter()
+            .find(|role| role.role.as_ref() == Some(&selected_role.id))
+            .ok_or_else(|| CompileError::code("missing-partner-role"))?
+    } else {
+        if document.roles.len() != 1 {
+            return Err(CompileError::code("invalid-solo-roles").with_path(document.id.clone()));
+        }
+        &document.roles[0]
+    };
+    if document.kind == super::path::PathKind::Miniquest && role.progress_reader.is_none() {
+        return Err(CompileError::code("missing-miniquest-reader").with_path(document.id.clone()));
+    }
     let progress = role
         .progress
         .as_ref()
@@ -624,10 +734,20 @@ fn compile_uncached(
     };
     let mut recipe_ctx = CompileContext {
         path: &document.id,
+        kind: document.kind,
         progress: &compiled_progress,
+        pair: document
+            .partner
+            .as_ref()
+            .zip(role.role.as_ref())
+            .map(|(declaration, role)| PairCompileContext {
+                declaration,
+                role,
+                digest,
+            }),
         selected,
         quests,
-        gathering: None,
+        gathering: gathering.as_ref(),
         areas: &areas,
         recipes: &empty_recipes,
         bank,
@@ -651,6 +771,14 @@ fn compile_uncached(
         )?;
     }
     recipe_ctx.recipes = &recipes;
+    let progress_reader = role
+        .progress_reader
+        .as_ref()
+        .map(|reader| {
+            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
+                .map(|mut steps| Box::new(steps.remove(0)))
+        })
+        .transpose()?;
     let mut warnings: Vec<Arc<str>> = Vec::new();
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
@@ -675,6 +803,7 @@ fn compile_uncached(
         .prelude
         .iter()
         .chain(role.sequences.iter().flat_map(|s| s.steps.iter()))
+        .chain(role.progress_reader.iter())
     {
         if !global_ids.insert(step.id.0.clone()) {
             return Err(CompileError {
@@ -695,9 +824,17 @@ fn compile_uncached(
             return Err(CompileError::code("empty-nonterminal").with_path(document.id.clone()));
         }
         let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
+        if sequence.order == super::path::SequenceOrder::Nearest
+            && steps.iter().any(|step| step.plan.anchor().is_none())
+        {
+            return Err(
+                CompileError::code("nearest-step-missing-anchor").with_path(document.id.clone())
+            );
+        }
         sequences.push(CompiledSequence {
             stage: sequence.stage.clone(),
             terminal: sequence.terminal,
+            order: sequence.order,
             steps,
         });
     }
@@ -739,6 +876,8 @@ fn compile_uncached(
     Ok(CompiledPath {
         id: document.id.clone(),
         role: role.role.clone(),
+        kind: document.kind,
+        partner: document.partner.clone(),
         display_name: Arc::from(document.display_name.as_str()),
         tested_stats: document.tested_stats.as_deref().map(Arc::from),
         digest,
@@ -746,6 +885,7 @@ fn compile_uncached(
         colour_complete: progress.colour.complete.clone(),
         colour_in_progress: progress.colour.in_progress.clone(),
         progress: compiled_progress,
+        progress_reader,
         eligibility,
         provisioning,
         prelude,
@@ -1204,19 +1344,86 @@ mod tests {
 
     #[test]
     fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
-        let data = selected();
-        let quests = quests(&data);
-        let first = compile_path(cook_bytes(), &data, &quests).unwrap();
-        let hit = compile_path(cook_bytes(), &data, &quests).unwrap();
-        assert!(Arc::ptr_eq(&first, &hit));
-        let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
-        changed["id"] = serde_json::json!("cook-cache-different");
-        let bytes = serde_json::to_vec(&changed).unwrap();
-        let miss = compile_path(&bytes, &data, &quests).unwrap();
-        assert!(!Arc::ptr_eq(&first, &miss));
-        assert_eq!(first.id.0.as_ref(), "cook");
-        assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
-        assert_ne!(first.digest, miss.digest);
+        let _home = crate::IsolatedEnv::enter("quester-compile-cache");
+        FamilyPreparation::run(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let first = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            let hit = compile_path(cook_bytes(), &data, &quests, worker).unwrap();
+            assert!(Arc::ptr_eq(&first, &hit));
+            let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
+            changed["id"] = serde_json::json!("cook-cache-different");
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            let miss = compile_path(&bytes, &data, &quests, worker).unwrap();
+            assert!(!Arc::ptr_eq(&first, &miss));
+            assert_eq!(first.id.0.as_ref(), "cook");
+            assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
+            assert_ne!(first.digest, miss.digest);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn gather_progress_reader_prepares_catalog_through_production_compiler() {
+        let _home = crate::IsolatedEnv::enter("quester-gather-progress-reader");
+        prepare_for_test(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let mut document: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
+            let mut reader = document["roles"][0]["sequences"][0]["steps"][0].clone();
+            reader["id"] = serde_json::json!("gather-progress-reader");
+            reader["kind"] = serde_json::json!("gather");
+            reader["advances"] = serde_json::json!(false);
+            reader["args"] = serde_json::json!({
+                "skill": "mining",
+                "resource": "copper",
+                "until": {"obj": "copper_ore", "qty": 1}
+            });
+            reader["settle"] = serde_json::json!({
+                "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {"obj": "copper_ore", "qty": 1}
+                }
+            });
+            document["roles"][0]["progress_reader"] = reader;
+            let bytes = serde_json::to_vec(&document).unwrap();
+            let compiled = compile_path(&bytes, &data, &quests, worker).unwrap();
+            assert_eq!(
+                compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
+                "gather-progress-reader"
+            );
+        });
+    }
+
+    #[test]
+    fn gather_preparation_covers_preludes_other_roles_and_acquisition_recipes() {
+        let mut document = decode_cook().unwrap();
+        assert!(!uses_gathering(&document));
+        let mut gather = document.roles[0].sequences[0].steps[0].clone();
+        gather.kind = "gather".into();
+
+        document.roles[0].prelude.push(gather.clone());
+        assert!(uses_gathering(&document));
+        document.roles[0].prelude.pop();
+
+        let mut other = document.roles[0].clone();
+        other.sequences[0].steps[0] = gather.clone();
+        document.roles.push(other);
+        assert!(uses_gathering(&document));
+        document.roles.pop();
+
+        document
+            .quest
+            .as_mut()
+            .unwrap()
+            .acquire
+            .insert("copper".into(), vec![gather]);
+        assert!(uses_gathering(&document));
+        document.quest.as_mut().unwrap().acquire.remove("copper");
+        assert!(!uses_gathering(&document));
     }
 
     #[test]

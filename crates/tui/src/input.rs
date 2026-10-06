@@ -183,13 +183,16 @@ impl TuiApp {
             return "Up/Down/Tab row · Enter/Space act · type into fields · Esc close";
         }
         if self.settings_state.open {
+            if self.settings_state.folder_editing {
+                return "type path · Backspace erase · Enter/Esc finish editing";
+            }
             return if self
                 .settings_memory
                 .is_some_and(frontend_core::MemoryNotice::can_relog)
             {
-                "Up/Down row · Enter/Space toggle · r Relog now · Esc close"
+                "Up/Down row · Enter/Space act · r Relog now · Esc close"
             } else {
-                "Up/Down row · Enter/Space toggle · Esc close"
+                "Up/Down row · Enter/Space act · Esc close"
             };
         }
         if let Some(modal) = &self.modal {
@@ -607,7 +610,8 @@ impl TuiApp {
             &mut self.settings_state,
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
-        .script_scope_notice_ack(&mut self.script_scope_notice_ack);
+        .script_scope_notice_ack(&mut self.script_scope_notice_ack)
+        .quester_paths(&mut self.quester_paths);
         pane.memory = self.settings_memory;
         let outcome = pane.on_key(key);
         match outcome {
@@ -648,6 +652,11 @@ impl TuiApp {
             SettingsKey::PauseScriptOnManualWalkAbort => {
                 self.pause_script_on_manual_walk_abort_dirty = true;
             }
+            SettingsKey::QuesterPathsChanged => {
+                self.quester_paths_dirty = true;
+                self.quester_paths_controller.clear_notice();
+            }
+            SettingsKey::ReloadPaths => return AppAction::ReloadPaths,
             SettingsKey::Consumed | SettingsKey::Ignored => {}
         }
         AppAction::None
