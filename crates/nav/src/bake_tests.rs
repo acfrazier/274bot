@@ -244,3 +244,62 @@ fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
     let open_shape = stationary_melee_shape(&west_wall, spawn, 1, &door_faces).unwrap();
     assert_ne!(open_shape & (1u64 << 3), 0);
 }
+
+#[test]
+fn fixed_ranged_hunter_carves_occluded_tiles_but_retains_visible_range() {
+    let spawn = WorldTile {
+        x: 12,
+        z: 12,
+        level: 0,
+    };
+    let mut collision = collision_with_flags(24, 24, &[]);
+    // A permanent range-blocking ridge, unlike walk-only ground collision.
+    let mut flags = vec![0u32; 4 * 24 * 24];
+    for z in 0..24 {
+        flags[z * 24 + 8] = CollisionFlag::V_E as u32;
+        flags[z * 24 + 9] = CollisionFlag::V_W as u32;
+    }
+    collision.attach_flags(flags);
+    let zone = Zone::npc(spawn, 8, ZoneClass::Always, u16::MAX, 0);
+    let mut carves = Vec::new();
+    append_ranged_visibility_carves(&collision, &zone, 0, &mut carves).unwrap();
+    let table = ZoneTable::from_parts(
+        vec![zone],
+        vec![ZoneKind::new(
+            "thrower",
+            "Thrower Troll",
+            1101,
+            67,
+            true,
+            false,
+        )],
+        vec![],
+        carves,
+        vec![],
+        collision.origin,
+        24,
+        24,
+        &crate::transport::WildernessRules::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        table.at(spawn).count(),
+        1,
+        "the NPC and visible plateau stay dangerous"
+    );
+    assert_eq!(table.at(WorldTile { x: 9, ..spawn }).count(), 1);
+    assert_eq!(
+        table.at(WorldTile { x: 8, ..spawn }).count(),
+        0,
+        "the ridge blocks acquisition"
+    );
+    assert_eq!(table.at(WorldTile { x: 4, ..spawn }).count(), 0);
+    assert_eq!(
+        table.at(WorldTile { x: 20, ..spawn }).count(),
+        1,
+        "inclusive hunt range remains eight"
+    );
+    assert_eq!(table.at(WorldTile { x: 21, ..spawn }).count(), 0);
+    collision.drop_flags();
+    assert!(append_ranged_visibility_carves(&collision, &zone, 0, &mut Vec::new()).is_err());
+}
