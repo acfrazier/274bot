@@ -831,7 +831,12 @@ impl TuiSession {
                         Some(name),
                     )
                 });
-                if refused || !WalkArm::may_follow(hold || frame.host_move_owned) {
+                if refused
+                    || !frontend_core::walk_permissions::manual_walk_may_follow(
+                        hold,
+                        frame.host_move_owned,
+                    )
+                {
                     if refused {
                         walk_clear.store(true, Ordering::Relaxed);
                     }
@@ -2539,7 +2544,7 @@ impl TuiSession {
                 .lock()
                 .unwrap()
                 .get(name)
-                .and_then(|a| a.lock().unwrap().route.clone());
+                .and_then(|a| a.lock().unwrap().route.as_deref().cloned());
             if self.walk_clear.swap(false, Ordering::Relaxed) {
                 app.walk_dest = None;
             }

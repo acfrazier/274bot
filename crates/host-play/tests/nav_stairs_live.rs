@@ -222,11 +222,7 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
             command.options(),
             host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
             0,
-            host_play::WalkGlobals {
-                allow_danger_zones: true,
-                survivable_routing: false,
-                ..Default::default()
-            },
+            host_play::WalkGlobals::default(),
         );
         let route = match command.walk_on(&world, &context, &name, &state, &[], admission, &arms) {
             Ok(route) => route.route,

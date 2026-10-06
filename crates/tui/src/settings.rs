@@ -19,7 +19,7 @@ use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PA
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED,
-    SCRIPT_SCOPE_NOTICE, SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
+    SCRIPT_SCOPE_NOTICE,
 };
 use vault::ProfileSettings;
 
@@ -353,7 +353,7 @@ impl Widget for SettingsPane<'_> {
         let selected_row = self.state.row.min(12);
         let danger_help = (selected_row == 6
             && danger_level == frontend_core::DangerLevel::WhenSurvivable)
-            .then_some(SURVIVABLE_ROUTING_TOOLTIP);
+            .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
         let marker = |row| if row == self.state.row { "> " } else { "  " };
         let path_folder = self
             .quester_paths
@@ -408,7 +408,7 @@ impl Widget for SettingsPane<'_> {
                     "{}{}: {} — {} · {}",
                     marker(6),
                     GLOBAL_PERMISSION_LABELS[3].1,
-                    danger_level.label(),
+                    frontend_core::walk_permissions::danger_routing_label(danger_level),
                     GLOBAL_DANGER_WARNING,
                     GLOBAL_PERMISSION_SCOPE
                 )
@@ -417,7 +417,7 @@ impl Widget for SettingsPane<'_> {
                     "{}{}: {} · {}",
                     marker(6),
                     GLOBAL_PERMISSION_LABELS[3].1,
-                    danger_level.label(),
+                    frontend_core::walk_permissions::danger_routing_label(danger_level),
                     GLOBAL_PERMISSION_SCOPE
                 )
             },
@@ -450,7 +450,10 @@ impl Widget for SettingsPane<'_> {
             0
         };
         let migration_notice_height = if show_survivable_routing_notice {
-            wrapped_rows(SURVIVABLE_ROUTING_NOTICE, columns) + 1
+            wrapped_rows(
+                frontend_core::walk_permissions::survivable_routing_notice(),
+                columns,
+            )
         } else {
             0
         };
@@ -542,7 +545,7 @@ impl Widget for SettingsPane<'_> {
                 inner,
                 help_bottom,
                 dismiss_y,
-                SURVIVABLE_ROUTING_NOTICE,
+                frontend_core::walk_permissions::survivable_routing_notice(),
                 yellow,
             );
             draw_wrapped(
@@ -887,6 +890,33 @@ mod tests {
             24,
         );
         assert!(!text.contains("Danger routing now has three levels"));
+    }
+
+    #[test]
+    fn held_survivable_setting_and_notice_are_truthful_in_the_popup() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 6,
+            ..Default::default()
+        };
+        let mut acknowledged = false;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .survivable_routing_notice_ack(&mut acknowledged),
+            120,
+            40,
+        );
+        assert!(text.contains(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_LABEL));
+        assert!(text.contains("Effective level: Never"));
+        assert!(text.contains("not available yet"));
+        assert!(!text.contains("274V17"));
+        assert!(!text.contains("rebake"));
+        assert!(!text.contains("turn back"));
+        assert!(!text.contains("eating"));
+        assert!(!text.contains("praying"));
     }
 
     #[test]

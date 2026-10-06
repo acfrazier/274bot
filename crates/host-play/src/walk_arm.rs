@@ -28,7 +28,7 @@ use script::native::WalkRefusal;
 #[derive(Default)]
 pub struct WalkArm {
     pub traveller: Traveller,
-    pub route: Option<Route>,
+    pub route: Option<Arc<Route>>,
     /// Changes when a route is installed or cancelled, fencing the prior owner.
     pub route_generation: u64,
     pub bank_fetch: Option<PendingBankFetch>,
@@ -182,22 +182,27 @@ pub fn arm_walk_on(
             let assessment = assessment.expect("a found route is always assessed");
             crate::admission::log(focused, &assessment, false);
             let (route, bank_fetch) = match outcome {
-                RouteOutcome::Routed(route) => (route, None),
-                RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
+                RouteOutcome::Routed(route) => (Arc::new(route), None),
+                RouteOutcome::BankSession { pending, .. } => {
+                    (Arc::clone(&pending.final_route), Some(pending))
+                }
                 RouteOutcome::NoPath => unreachable!(),
             };
             replace_walk_arm(
                 travellers,
                 focused,
                 from_w,
-                &route,
+                Arc::clone(&route),
                 bank_fetch,
                 admission,
                 Arc::clone(&assessment),
                 options,
                 state,
             );
-            Ok(WalkRoute { route, assessment })
+            Ok(WalkRoute {
+                route: route.as_ref().clone(),
+                assessment,
+            })
         }
         RouteOutcome::NoPath => {
             let detail = admitted.refusal.map(|refusal| {
@@ -325,7 +330,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
 /// Whether a WalkArm BankBudget session freezes follow this frame
 /// (panel / TUI). Same rule as the script [`NavBot`] pump.
 pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
-    session_freezes_follow(arm.bank_fetch.as_ref(), arm.route.as_ref())
+    session_freezes_follow(arm.bank_fetch.as_ref(), arm.route.as_deref())
 }
 
 fn walk_destination(arm: &WalkArm) -> Option<WorldTile> {
@@ -356,7 +361,7 @@ fn replace_walk_arm(
     travellers: &WalkArms,
     focused: Option<&str>,
     from: WorldTile,
-    route: &Route,
+    route: Arc<Route>,
     bank_fetch: Option<PendingBankFetch>,
     admission: Admission,
     assessment: Arc<RouteAssessment>,
@@ -380,12 +385,12 @@ fn replace_walk_arm(
         // BankBudget session. Traveller::clear preserves the essence latch.
         arm.traveller.clear();
         arm.bank_fetch = bank_fetch;
-        arm.route = Some(route.clone());
+        arm.route = Some(Arc::clone(&route));
         arm.route_generation = admission.generation;
         arm.admission = Some(Box::new(admission));
         arm.assessment = Some(assessment);
         arm.basis = Some(Arc::new(RouteBasis {
-            route: route.clone(),
+            route: Arc::clone(&route),
             options,
             avoid: Arc::from([]),
             quest_evidence: state.quest_evidence.clone(),
@@ -523,7 +528,7 @@ pub fn step_walk_arm_follow<D: Driver>(
     };
     let outcome = arm
         .traveller
-        .follow(driver, snapshot, route.clone(), &mut options);
+        .follow_shared(driver, snapshot, Arc::clone(route), &mut options);
     if walking_stand && matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
         arm.route = None;
         return false;

@@ -18,7 +18,7 @@ use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
 /// broaden teleport/wilderness/avoid/quest authority for a later escape.
 #[derive(Clone)]
 pub struct RouteBasis {
-    pub route: Route,
+    pub route: Arc<Route>,
     pub options: FindOptions,
     pub avoid: Arc<[AvoidRect]>,
     pub quest_evidence: Option<nav::quest_gates::QuestEvidence>,
@@ -27,6 +27,9 @@ pub struct RouteBasis {
 #[derive(Clone, Copy, Debug)]
 pub struct Admission {
     pub policy: RiskPolicy,
+    /// False only for inherited admission while activation is held: retain the
+    /// assessment, but preserve the pre-S2b router's admit/refuse decision.
+    pub enforce: bool,
     pub grants: ZoneExempt,
     pub allow: WalkAllow,
     pub input: RiskInput,
@@ -50,6 +53,7 @@ impl Admission {
             } else {
                 globals.risk_policy(Default::default(), Default::default())
             },
+            enforce: crate::NET_AVAILABLE || options.zones != ZoneExempt::NONE,
             grants: options.zones,
             allow: WalkAllow::default(),
             input,
@@ -253,10 +257,15 @@ pub fn permits(
     admission: &Admission,
     assessment: &RouteAssessment,
 ) -> bool {
-    if admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
+    if !admission.enforce || admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
         return true;
     }
     if assessment.verdict == Verdict::Survivable {
+        return true;
+    }
+    // Fleeing cannot be refused because an attacker or snapshot is unknown.
+    // Incomplete geometry is not evidence of a safe-only route.
+    if assessment.plan.complete && assessment.plan.crossings.is_empty() {
         return true;
     }
     let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {
@@ -276,7 +285,7 @@ pub fn permits(
 /// Check every member of a witness group; one unsupported or lethal member
 /// refuses the one-round expansion. This never relaxes any hard constraint.
 pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey]) -> bool {
-    if keys.is_empty() || keys.len() > 8 {
+    if keys.is_empty() || keys.len() > 8 || matches!(input.poison, PoisonState::Unknown { .. }) {
         return false;
     }
     let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {

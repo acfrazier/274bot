@@ -20,7 +20,7 @@ use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
 };
 use script::combat::risk::{UnknownWhy, Verdict};
-use script::native::WalkRefusal;
+use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions, WalkRefusal};
 use serde_json::{json, Value};
 
 struct NavLogs(Mutex<Vec<(String, Option<u32>, String)>>);
@@ -280,7 +280,7 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, BOT_CACHE_DIR (per-run clone), BOT_UNPACK_DIR, LIVE_EVIDENCE_DIR; Engine A 44594/1080"]
-fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
+fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     install_nav_logs();
@@ -376,7 +376,9 @@ fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
             strict_options,
         )
         .expect("strict map command");
-    let refusal = strict
+    // The held default must retain the router's endpoint completion. Assess it
+    // honestly, but do not follow it before exercising the explicit refusal.
+    let default_walk = strict
         .walk_on(
             &world,
             &context,
@@ -386,7 +388,50 @@ fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
             Admission::manual(strict_options, input, 1, WalkGlobals::default()),
             &arms,
         )
-        .expect_err("ungranted endpoint must refuse Unknown poison");
+        .expect("held default preserves endpoint admission");
+    assert_eq!(
+        default_walk.assessment.verdict,
+        Verdict::Unknown(UnknownWhy::Poison)
+    );
+    let arm = Arc::clone(&arms.lock().expect("arms")[&name]);
+    assert!(arm.lock().expect("arm").route.is_some());
+    assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
+    assert_eq!(
+        model.select_tile(&world, tile(destination)),
+        Some(tile(destination))
+    );
+    let strict = model
+        .confirm(
+            ActionKind::Walk,
+            &context,
+            Some(tile(origin)),
+            strict_options,
+        )
+        .expect("explicit forbid map command");
+    // This caller explicitly requests Forbid. Resolve its enforcement from the
+    // same global/tri-state contract as native requests; this is not default UI.
+    let forbid = WalkOptions {
+        allow_danger_zones: WalkBit::Forbid,
+        ..WalkOptions::default()
+    };
+    let globals = WalkGlobals::default();
+    let strict_admission = Admission {
+        policy: globals.risk_policy(WalkPermissions::default(), forbid),
+        enforce: globals.enforces_risk(WalkPermissions::default(), forbid),
+        ..Admission::manual(strict_options, input, 2, globals)
+    };
+    assert_eq!(strict_admission.policy, RiskPolicy::Avoid);
+    let refusal = strict
+        .walk_on(
+            &world,
+            &context,
+            &name,
+            &state,
+            &[],
+            strict_admission,
+            &arms,
+        )
+        .expect_err("explicit Forbid endpoint must refuse Unknown poison");
     let ActionError::RiskRefused {
         refusal: WalkRefusal::Unknown(UnknownWhy::Poison),
         detail,
@@ -394,7 +439,6 @@ fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
     else {
         panic!("expected visible Unknown(Poison), got {refusal:?}");
     };
-    let arm = Arc::clone(&arms.lock().expect("arms")[&name]);
     let assessment = Arc::clone(
         arm.lock()
             .expect("arm")
@@ -413,7 +457,11 @@ fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
         "refused": {"verdict": format!("{:?}", assessment.verdict), "reason": detail,
             "route_armed": false, "crossings": assessment.plan.intervals.len(), "hp": input.hp,
             "poison": format!("{:?}", input.poison)},
-        "first_crossing_cost": "Fresh-login Unknown poison cannot admit a crossing until S2c positively observes Clear; no preflight movement was used.",
+        "held_default": {"admitted": true, "route_armed": true,
+            "verdict": format!("{:?}", default_walk.assessment.verdict),
+            "movement_before_explicit_forbid": false},
+        "refusal_policy": "explicit per-walk Forbid (not default/inherited admission)",
+        "poison_scope": "S2b poison remains Unknown for the entire session; only explicit enforcing crossings refuse, held defaults are unchanged.",
         "deaths": 0});
     receipt["refused_png"] = json!(capture(
         &mut client,
@@ -514,6 +562,98 @@ fn real_unknown_poison_endpoint_refused_then_explicit_opt_in_crosses() {
         &directory,
         "explicit-opt-in-arrived",
         &receipt
+    ));
+    // Added live cell: start inside the actual endpoint zone and leave it using
+    // untouched defaults. No synthetic Clear, preflight or explicit grant.
+    assert!(world
+        .graph
+        .zones
+        .as_ref()
+        .unwrap()
+        .at(destination)
+        .next()
+        .is_some());
+    assert_eq!(model.select_tile(&world, tile(origin)), Some(tile(origin)));
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &context,
+            Some(tile(destination)),
+            strict_options,
+        )
+        .expect("default escape map command");
+    let escape_input =
+        admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let escaped = command
+        .walk_on(
+            &world,
+            &context,
+            &name,
+            &state,
+            &[],
+            Admission::manual(strict_options, escape_input, 3, WalkGlobals::default()),
+            &arms,
+        )
+        .expect("default walk out of a real zone is admitted");
+    assert!(escaped.assessment.plan.complete);
+    assert!(escaped.assessment.plan.crossings.is_empty());
+    assert!(escaped
+        .assessment
+        .plan
+        .intervals
+        .iter()
+        .any(|row| row.escaping()));
+    receipt["default_escape"] = json!({"admitted": true, "explicit_grant": false,
+        "origin": [destination.x, destination.z, destination.level],
+        "destination": [origin.x, origin.z, origin.level],
+        "entering_crossings": 0, "escape_intervals": escaped.assessment.plan.intervals.len(),
+        "verdict": format!("{:?}", escaped.assessment.verdict),
+        "poison": format!("{:?}", escape_input.poison)});
+    let escape_deadline = Instant::now() + Duration::from_secs(60);
+    let mut last_tick = None;
+    let mut escape_path = Vec::new();
+    loop {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        if Some(snapshot.tick()) != last_tick {
+            last_tick = Some(snapshot.tick());
+            if let Some(here) = snapshot.tile() {
+                if escape_path.last() != Some(&here) {
+                    escape_path.push(here);
+                }
+                host_play::step_walk_arm_follow(
+                    &mut client,
+                    &snapshot,
+                    &mut arm.lock().expect("arm"),
+                    Some(&world),
+                    here,
+                    state.map_members,
+                    Some(&name),
+                );
+                if arm.lock().expect("arm").route.is_none() {
+                    break;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < escape_deadline,
+            "default escape deadline at {:?}",
+            snapshot.tile()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let escape_final =
+        admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
+    assert!(escape_path.len() > 1);
+    assert!(escape_final.hp > 0);
+    receipt["default_escape"]["arrived"] = json!(true);
+    receipt["default_escape"]["observed_path"] = json!(escape_path);
+    receipt["default_escape"]["final_hp"] = json!(escape_final.hp);
+    receipt["default_escape"]["arrival_png"] = json!(capture(
+        &mut client,
+        &directory,
+        "default-real-zone-escape-arrived",
+        &receipt,
     ));
     std::fs::write(
         directory.join("receipt.json"),

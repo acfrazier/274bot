@@ -2861,7 +2861,7 @@ impl Session {
             let walk = match travellers.lock().unwrap().get(name).cloned() {
                 Some(arm) => {
                     let arm = arm.lock().unwrap();
-                    (arm.route.clone(), arm.traveller.current_aim())
+                    (arm.route.as_deref().cloned(), arm.traveller.current_aim())
                 }
                 None => (None, None),
             };
@@ -3107,7 +3107,12 @@ impl Session {
                         Some(name),
                     )
                 });
-                if refused || !WalkArm::may_follow(hold || frame.host_move_owned) {
+                if refused
+                    || !frontend_core::walk_permissions::manual_walk_may_follow(
+                        hold,
+                        frame.host_move_owned,
+                    )
+                {
                     if refused {
                         walk_clear.store(true, Ordering::Relaxed);
                     }

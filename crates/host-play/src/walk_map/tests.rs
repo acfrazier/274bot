@@ -38,17 +38,12 @@ fn bound_context(play: &crate::Play) -> MapContext {
     }
 }
 
-// Legacy geometry fixtures have no zone table and opt in rather than invent facts.
-fn routing_test_admission(world: &NavWorld) -> crate::admission::Admission {
+fn routing_test_admission() -> crate::admission::Admission {
     crate::admission::Admission::manual(
         FindOptions::default(),
         Default::default(),
         0,
-        crate::WalkGlobals {
-            allow_danger_zones: world.graph.zones.is_none(),
-            survivable_routing: false,
-            ..crate::WalkGlobals::default()
-        },
+        crate::WalkGlobals::default(),
     )
 }
 
@@ -560,7 +555,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
             "alice",
             &WorldState::empty(),
             &[],
-            routing_test_admission(&world),
+            routing_test_admission(),
             &arms,
         )
         .unwrap();
@@ -592,7 +587,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
                 "alice",
                 &WorldState::empty(),
                 &[],
-                routing_test_admission(&world),
+                routing_test_admission(),
                 &arms
             )
             .unwrap_err(),
@@ -624,7 +619,7 @@ fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
             "alice",
             &WorldState::empty(),
             &[],
-            routing_test_admission(&world),
+            routing_test_admission(),
             &arms,
         )
         .unwrap_err();
@@ -708,7 +703,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
             "alice",
             &WorldState::empty(),
             &[],
-            routing_test_admission(&nav),
+            routing_test_admission(),
             &arms,
         )
         .expect_err("F2P must refuse the members-only route");
@@ -1124,7 +1119,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     play.navs.lock().unwrap().insert(
         "alice".into(),
         crate::script_runtime::NavBot {
-            route: Some(route.clone()),
+            route: Some(Arc::new(route.clone())),
             map_route_generation: 7,
             ..Default::default()
         },
@@ -1138,10 +1133,10 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
         Some((RouteSource::Script, 7, wt(3, 3, 0)))
     );
     assert_eq!(play.with_map_route("bob", Some(&manual), None, read), None);
-    manual.route = Some(nav::router::Route {
+    manual.route = Some(Arc::new(nav::router::Route {
         dest: wt(2, 3, 0),
         ..route.clone()
-    });
+    }));
     manual.route_generation = 8;
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),
@@ -1369,7 +1364,7 @@ fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
             FindOptions::default(),
             &WorldState::empty(),
             &[],
-            routing_test_admission(&world),
+            routing_test_admission(),
             &arms,
             Some("alice"),
         )
@@ -1768,7 +1763,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
             "alice",
             &state,
             &[],
-            routing_test_admission(&nav),
+            routing_test_admission(),
             &arms,
         )
         .unwrap_err();

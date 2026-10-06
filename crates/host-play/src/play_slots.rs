@@ -65,6 +65,14 @@ impl SlotFrameInput {
         usize::from(self.manual_move_intent.is_some()) + self.manual_steps
     }
 }
+/// Project script and native-navigation ownership into the frame value read
+/// by the panel and TUI follow gates.
+pub(super) fn project_slot_frame_host_move_owned(
+    script_state: Option<script::RunState>,
+    nav_owned: bool,
+) -> bool {
+    crate::script_runtime::script_movement_owned(script_state) || nav_owned
+}
 
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
@@ -1421,12 +1429,12 @@ fn spawn_slot_thread(
                             );
                             let script_state = script_frame_state(&slot_scripts, name);
                             let running = script_state == Some(script::RunState::Running);
-                            let script_owned = crate::script_runtime::script_movement_owned(script_state);
                             let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
                                 bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
                                 bot.route.is_some() || bot.bank_fetch.is_some(),
                             ));
-                            frame_input.host_move_owned = script_owned || nav_owned;
+                            frame_input.host_move_owned =
+                                project_slot_frame_host_move_owned(script_state, nav_owned);
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             slot_frame(c, name, frame_input);

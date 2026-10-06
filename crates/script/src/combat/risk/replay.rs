@@ -309,6 +309,22 @@ fn hits(
             }
         }
     }
+    // Initial envelope exposure is still physical damage, but escaping it is
+    // never an entering-crossing admission obligation.
+    let escape_end = plan
+        .crossings
+        .first()
+        .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
+    for row in &plan.intervals[..escape_end] {
+        let (start, end) = exposure(path, row)?;
+        if row.hazard() {
+            if tick == start {
+                damage = add(damage, i32::from(row.max_hit))?;
+            }
+        } else if tick >= start && tick < end && (tick - start) % i32::from(row.rate) == 0 {
+            damage = add(damage, i32::from(row.max_hit))?;
+        }
+    }
     for live in input.live.iter().take(usize::from(input.live_len)) {
         let duration = origin_duration(live, tables)?;
         if tick < duration && tick % i32::from(live.rate) == 0 {
@@ -670,6 +686,11 @@ fn omit_granted_unknowns(
 
     let mut intervals = Vec::with_capacity(plan.intervals.len());
     let mut crossings = Vec::with_capacity(plan.crossings.len());
+    let escape_end = plan
+        .crossings
+        .first()
+        .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
+    intervals.extend_from_slice(&plan.intervals[..escape_end]);
     for crossing in &plan.crossings {
         let granted = granted(crossing);
         let start = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
@@ -686,6 +707,7 @@ fn omit_granted_unknowns(
     }
 
     Ok(Some(RoutePlan {
+        complete: plan.complete,
         intervals: intervals.into_boxed_slice(),
         crossings: crossings.into_boxed_slice(),
     }))
@@ -708,7 +730,7 @@ pub fn admission_passes(
             .iter()
             .all(|row| grants.contains_zone(row.zone, zones))
     };
-    if !plan.crossings.is_empty() && plan.crossings.iter().all(granted) {
+    if plan.complete && (plan.crossings.is_empty() || plan.crossings.iter().all(granted)) {
         return Ok(true);
     }
     if let Some(why) = input_problem(&assessment.input, tables) {
@@ -907,9 +929,9 @@ fn assess_inner(
             )?;
             hp_after = bounded_hp(baseline.hp_after)?;
             bites = baseline.bites;
-            // Poison alone never refuses a no-crossing walk. Known origin
-            // attackers still retain their complete, raw admission budget.
-            if !baseline.passed && (!plan.crossings.is_empty() || input.live_len > 0) {
+            // Poison alone cannot make a no-crossing walk unsafe. Retain
+            // physical NPC damage diagnostics; permits still allows fleeing.
+            if !baseline.passed && (!plan.intervals.is_empty() || input.live_len != 0) {
                 verdict = Verdict::Unsurvivable;
                 let carried = input
                     .food_iter()

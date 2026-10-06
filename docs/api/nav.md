@@ -621,8 +621,12 @@ own recovery movement.
 
 Before following a worker result, publication compares the observed HP,
 food, prayer, position, live actor/due identity, poison and cleanup debt.
-Changed inputs are reassessed and may refuse before movement.
-Bank-bound and observed post-fetch routes use the same seam.
+Changed inputs are reassessed and may refuse entering crossings before movement;
+zero entering crossings always remain admitted, including missing facts or an
+unknown attacker. Leaving an envelope containing the origin is escape exposure,
+not a crossing. Re-entering that envelope after exiting is a crossing.
+Bank-bound and observed post-fetch routes use the same seam; bank completion
+keeps the precomputed final route and reassesses it without another search.
 Both frontends publish manual admission above their outer hold/mover gates;
 publication itself never sends movement. One slot ownership projection
 freezes manual/scenario movement during script Starting/Running/Paused/
@@ -631,9 +635,15 @@ Advisory `assess_walk` never acquires that movement ownership.
 
 The stored default is **When survivable**, but S2b's single
 `NET_AVAILABLE=false` gate makes it effective Never for every preference
-source, including migration and explicit selection. The live observer,
-ordinary-walk runtime net and escape execution belong to S2c/integrated
-acceptance; no Clear poison state or automatic preflight movement is invented.
+source, including migration and explicit selection. While held, default and
+inherited walks keep exactly the pre-S2b router outcome and route, including
+origin-inside walks and destination-zone completion. Their assessments are
+informational, not new admission refusals. Explicit script/per-walk overrides
+and named grants keep their S2b semantics. Panel and TUI display the held middle
+level as **When survivable (not available yet: acts as Never)**; the host emits
+one informational held-state note per slot session, not a warning on every walk.
+The live observer, ordinary-walk safety behavior and escape execution belong
+to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and
 full FLOOR, may flip availability; an S2c merge by itself does not enable
 the middle level.

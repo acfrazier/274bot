@@ -256,7 +256,7 @@ fn wait_for_route(
             .lock()
             .unwrap()
             .get(ALICE)
-            .and_then(|bot| bot.route.clone());
+            .and_then(|bot| bot.route.as_deref().cloned());
         if let Some(route) = route {
             if matches(route.dest) {
                 return route;

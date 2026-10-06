@@ -655,7 +655,7 @@ fn bank_pick_latest_pending_selection_preserves_an_armed_walk() {
     {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("test").unwrap();
-        bot.route = Some(route.clone());
+        bot.route = Some(Arc::new(route.clone()));
         bot.requested_route = Some((
             route.dest,
             0,
@@ -704,7 +704,7 @@ fn bank_pick_latest_pending_selection_preserves_an_armed_walk() {
         2,
         "only active and latest pending selection run"
     );
-    assert_eq!(bot.route.as_ref(), Some(&route));
+    assert_eq!(bot.route.as_deref(), Some(&route));
     assert_eq!((bot.route_generation, bot.walk_request_id), (12, 91));
 }
 

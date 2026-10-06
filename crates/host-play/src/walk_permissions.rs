@@ -142,6 +142,13 @@ impl WalkGlobals {
         self.effective_danger_level().risk_policy(script, walk)
     }
 
+    /// Resolve verdict authority separately from router grants. While held,
+    /// inherited requests retain precisely the router's pre-S2b outcome;
+    /// explicit script and per-walk overrides still use the admission seam.
+    pub fn enforces_risk(self, script: WalkPermissions, walk: WalkOptions) -> bool {
+        NET_AVAILABLE || script.allow_danger_zones || walk.allow_danger_zones != WalkBit::Inherit
+    }
+
     /// Manual WalkTo has no script grant. Its danger control is one admission only.
     pub fn manual_options(self, danger_this_walk: bool) -> FindOptions {
         FindOptions {
@@ -196,17 +203,18 @@ pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
     }
 }
 
-/// Record the held-off middle level once at an admission boundary, never from
-/// a per-tick path. Manual admission uses the same helper.
-pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals) {
+/// Record the held-off middle level once per session, never from a tick path.
+pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mut bool) {
     if globals.danger_level() == DangerLevel::WhenSurvivable
         && globals.effective_danger_level() == DangerLevel::Never
+        && !*logged
     {
+        *logged = true;
         api::host_log!(
             api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Warn,
+            api::hostlog::Level::Info,
             slot = slot,
-            "survivable routing requires the runtime net (S2c)"
+            "When survivable is not available yet: acts as Never; inherited routing is unchanged"
         );
     }
 }
@@ -216,11 +224,13 @@ pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
-) -> (FindOptions, RiskPolicy) {
-    let all = navs.lock().unwrap();
-    let bot = all.get(name);
-    let globals = globals_for(bot);
-    log_runtime_net_gate(name, globals);
+) -> (FindOptions, RiskPolicy, bool) {
+    let mut all = navs.lock().unwrap();
+    let mut bot = all.get_mut(name);
+    let globals = globals_for(bot.as_deref());
+    if let Some(bot) = bot.as_deref_mut() {
+        log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
+    }
     let script = bot
         .and_then(|bot| bot.native_permissions)
         .unwrap_or_default();
@@ -228,6 +238,7 @@ pub(crate) fn native_admission(
     (
         globals.native_options_with_policy(script, walk, policy),
         policy,
+        globals.enforces_risk(script, walk),
     )
 }
 
@@ -238,15 +249,15 @@ pub(crate) fn compiled_options(
     name: &str,
     opts: FindOptions,
 ) -> FindOptions {
-    let all = navs.lock().unwrap();
-    let Some(bot) = all.get(name) else {
+    let mut all = navs.lock().unwrap();
+    let Some(bot) = all.get_mut(name) else {
         return opts;
     };
     if bot.compat_v1 {
         return opts;
     }
     let globals = globals_for(Some(bot));
-    log_runtime_net_gate(name, globals);
+    log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
     let Some(script) = bot.native_permissions else {
         // Legacy bool calls keep teleport/wilderness/bank authority unchanged.
         // Only the host's danger preference is inherited.
@@ -362,7 +373,7 @@ mod tests {
                 }),
             )
             .unwrap();
-            let (native, policy) = native_admission(&navs, "alice", WalkOptions::default());
+            let (native, policy, _) = native_admission(&navs, "alice", WalkOptions::default());
             assert_eq!(
                 policy,
                 if enabled {
@@ -569,5 +580,63 @@ mod tests {
         );
         assert_eq!(resolved.zones, named);
         assert!(!resolved.zones.is_all());
+    }
+}
+
+#[cfg(test)]
+mod held_gate_tests {
+    use super::*;
+
+    #[test]
+    fn inherited_and_explicit_enforcement_are_distinct_while_held() {
+        const { assert!(!NET_AVAILABLE) };
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
+            let mut globals = WalkGlobals::default();
+            globals.set_danger_level(level);
+            assert!(!globals.enforces_risk(WalkPermissions::default(), WalkOptions::default()));
+            for bit in [WalkBit::Allow, WalkBit::Forbid] {
+                assert!(globals.enforces_risk(
+                    WalkPermissions::default(),
+                    WalkOptions {
+                        allow_danger_zones: bit,
+                        ..Default::default()
+                    },
+                ));
+            }
+            assert!(globals.enforces_risk(
+                WalkPermissions {
+                    allow_danger_zones: true,
+                    ..Default::default()
+                },
+                WalkOptions::default(),
+            ));
+        }
+    }
+
+    #[test]
+    fn repeated_native_compiled_and_manual_admissions_share_one_session_note() {
+        let navs = Arc::new(Mutex::new(HashMap::from([
+            ("alice".to_owned(), super::super::NavBot::default()),
+            ("bob".to_owned(), super::super::NavBot::default()),
+        ])));
+        assert!(!navs.lock().unwrap()["alice"].runtime_gate_logged);
+        native_admission(&navs, "alice", WalkOptions::default());
+        assert!(navs.lock().unwrap()["alice"].runtime_gate_logged);
+        assert!(!navs.lock().unwrap()["bob"].runtime_gate_logged);
+        for _ in 0..3 {
+            compiled_options(&navs, "alice", FindOptions::default());
+            native_admission(&navs, "alice", WalkOptions::default());
+            let mut all = navs.lock().unwrap();
+            log_runtime_net_gate(
+                "alice",
+                WalkGlobals::default(),
+                &mut all.get_mut("alice").unwrap().runtime_gate_logged,
+            );
+            assert!(all["alice"].runtime_gate_logged);
+        }
     }
 }

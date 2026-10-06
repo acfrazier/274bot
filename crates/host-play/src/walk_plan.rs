@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use nav::bank_fetch::{fetchable_state, plan_bank_fetch, BankFetch, BankStep};
@@ -25,7 +26,7 @@ pub struct PendingBankFetch {
     pub steps: VecDeque<BankStep>,
     pub dest: WorldTile,
     pub opts: FindOptions,
-    pub final_route: Route,
+    pub final_route: Arc<Route>,
     /// The walk's avoidance rectangles: the access sub-route keeps out of
     /// them as the walk does.
     pub avoid: Vec<AvoidRect>,
@@ -283,12 +284,13 @@ fn session_route(
         avoid,
     )
     .ok()?;
+    let final_route = Arc::new(route.clone());
     Some(RouteOutcome::BankSession {
         pending: PendingBankFetch {
             steps: fetch.steps.into(),
             dest: to,
             opts,
-            final_route: route.clone(),
+            final_route,
             avoid: avoid.to_vec(),
             progress: StepProgress::default(),
         },
