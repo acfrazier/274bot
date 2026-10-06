@@ -741,6 +741,7 @@ struct NamedConfig {
     vislevel: Option<String>,
     hunt_type: Option<String>,
     check_nottoostrong: Option<String>,
+    check_vis: Option<String>,
     find_newmode: Option<String>,
 }
 
@@ -780,6 +781,7 @@ fn ingest_named_config(text: &str, out: &mut HashMap<String, NamedConfig>) {
             "vislevel" => cur.vislevel = Some(value.trim().to_string()),
             "type" => cur.hunt_type = Some(value.trim().to_string()),
             "check_nottoostrong" => cur.check_nottoostrong = Some(value.trim().to_string()),
+            "check_vis" => cur.check_vis = Some(value.trim().to_string()),
             "find_newmode" => cur.find_newmode = Some(value.trim().to_string()),
             key if key.starts_with("op") && key.len() == 3 => {
                 if let Some(slot) = key.as_bytes().get(2).and_then(|b| {
@@ -888,6 +890,7 @@ pub(crate) struct HunterDefinition {
     pub stationary: bool,
     pub never_wanders: bool,
     pub check_nottoostrong: String,
+    pub check_lineofsight: bool,
     pub find_newmode: String,
 }
 
@@ -1018,6 +1021,10 @@ pub(crate) fn collect_hunter_inputs(
                 .check_nottoostrong
                 .clone()
                 .unwrap_or_else(|| "off".into()),
+            check_lineofsight: mode
+                .check_vis
+                .as_deref()
+                .is_some_and(|vis| vis.eq_ignore_ascii_case("lineofsight")),
             find_newmode: mode.find_newmode.clone().unwrap_or_else(|| "none".into()),
         });
         hunter_ids.insert(npc_id);

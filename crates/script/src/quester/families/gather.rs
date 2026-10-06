@@ -1,12 +1,14 @@
 //! A bounded quest inventory goal on the Gatherer's one native resource action.
 //!
-//! Authoring example: `{"skill":"mining","resource":"copper",
-//! "until":{"obj":"copper_ore","qty":1}}`. Set exactly one of `resource`
-//! (selected Gatherer resource key) or `method` (selected method id).
-//! `until.obj` also accepts `{"id":436}` for exact identity. `anchor` locates
+//! Authoring example: `{"skill":"woodcutting","resource":"normal",
+//! "until":{"obj":{"id":1511},"qty":3}}`. Supported skills are Woodcutting,
+//! Mining and Fishing. Set exactly one of `resource` (selected Gatherer resource
+//! key) or `method` (selected method id).
+//! `until.obj` also accepts `{"id":1511}` for exact identity. `anchor` locates
 //! the initial search area; its radius is fixed for the whole step (default 12,
 //! maximum 32). `settle_ms` bounds eligible execution time (default 120000).
-//! There is no bank, area loop, map survey, or fallback beyond observed resources.
+//! The Quester Provisioner can supply one compatible tool from the bank when
+//! none is carried or equipped. There is no inventory bank loop or map survey.
 
 use super::super::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
@@ -32,6 +34,7 @@ use std::time::Duration;
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Skill {
+    Woodcutting,
     Mining,
     Fishing,
 }
@@ -39,12 +42,14 @@ pub(super) enum Skill {
 impl Skill {
     fn catalog(self) -> GatherSkill {
         match self {
+            Self::Woodcutting => GatherSkill::Woodcutting,
             Self::Mining => GatherSkill::Mining,
             Self::Fishing => GatherSkill::Fishing,
         }
     }
     fn stat_name(self) -> &'static str {
         match self {
+            Self::Woodcutting => "woodcutting",
             Self::Mining => "mining",
             Self::Fishing => "fishing",
         }
@@ -86,24 +91,21 @@ fn default_settle_ms() -> u64 {
     120_000
 }
 
-pub(super) fn compile(
-    args: Args,
-    cx: &CompileContext<'_>,
-) -> Result<Arc<dyn StepPlan>, CompileError> {
-    if args.resource.is_some() == args.method.is_some()
+fn valid_args(args: &Args) -> bool {
+    !(args.resource.is_some() == args.method.is_some()
         || args.radius == 0
         || args.radius > 32
         || args.settle_ms == 0
-        || matches!(&args.until.qty, super::s2::QuantityDocument::Fixed(qty) if *qty < 1)
-    {
-        return Err(CompileError::code("invalid-args"));
-    }
-    let catalog = Arc::clone(
-        cx.gathering
-            .ok_or_else(|| CompileError::code("gathering-unavailable"))?,
-    );
-    let item_id = args.until.obj.id(cx.selected)?;
-    let methods: Vec<_> = catalog
+        || matches!(&args.until.qty, super::s2::QuantityDocument::Fixed(qty) if *qty < 1))
+}
+
+fn matched_methods(
+    args: &Args,
+    catalog: &GatherCatalog,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<(i32, Vec<usize>), CompileError> {
+    let item_id = args.until.obj.id(selected)?;
+    let methods = catalog
         .methods()
         .iter()
         .enumerate()
@@ -128,20 +130,81 @@ pub(super) fn compile(
                 .map_err(|_| CompileError::code("gather-method-incomplete"))?;
             Ok(index)
         })
-        .collect::<Result<_, CompileError>>()?;
+        .collect::<Result<Vec<_>, CompileError>>()?;
     if methods.is_empty() {
         return Err(CompileError::code("unresolved-gather-method"));
     }
+    Ok((item_id, methods))
+}
+
+fn build_tool_need(
+    args: &Args,
+    catalog: Arc<GatherCatalog>,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<super::super::compile::CompiledGatherToolNeed, CompileError> {
+    if !valid_args(args) {
+        return Err(CompileError::code("invalid-args"));
+    }
+    let (item_id, methods) = matched_methods(args, &catalog, selected)?;
+    let mut tools = Vec::new();
+    for &index in &methods {
+        for tool in api::gather_methods::known_rows(&catalog.methods()[index].tools) {
+            if tools
+                .iter()
+                .any(|existing: &crate::native_bank::BankItem| existing.id == tool.item)
+            {
+                continue;
+            }
+            let name = selected
+                .item_by_id(tool.item)
+                .and_then(|item| item.name.as_deref())
+                .ok_or_else(|| CompileError::code("gather-method-incomplete"))?;
+            tools.push(crate::native_bank::BankItem {
+                id: tool.item,
+                name: Arc::from(name),
+            });
+        }
+    }
+    Ok(super::super::compile::CompiledGatherToolNeed {
+        item_id,
+        catalog,
+        methods: methods.into(),
+        tools: tools.into(),
+    })
+}
+
+pub(in crate::quester) fn provisioning_tool_need(
+    value: &serde_json::Value,
+    catalog: Arc<GatherCatalog>,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<super::super::compile::CompiledGatherToolNeed, CompileError> {
+    let args =
+        serde_json::from_value(value.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    build_tool_need(&args, catalog, selected)
+}
+
+pub(super) fn compile(
+    args: Args,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn StepPlan>, CompileError> {
+    if !valid_args(&args) {
+        return Err(CompileError::code("invalid-args"));
+    }
+    let catalog = Arc::clone(
+        cx.gathering
+            .ok_or_else(|| CompileError::code("gathering-unavailable"))?,
+    );
+    let tool_need = build_tool_need(&args, Arc::clone(&catalog), cx.selected)?;
     let anchor = super::anchor_tile(args.anchor.as_ref())?;
     Ok(Arc::new(Plan {
         catalog,
-        methods: methods.into(),
+        methods: Arc::clone(&tool_need.methods),
         settings: Arc::new(GathererSettings {
             target_preference: "Nearest".into(),
             ..GathererSettings::default()
         }),
         skill: args.skill,
-        item_id,
+        item_id: tool_need.item_id,
         qty: super::s2::compile_quantity(args.until.qty, cx)?,
         anchor,
         radius: args.radius,
@@ -485,6 +548,150 @@ mod tests {
             id,
             name: Some("Rocks".into()),
             actions: vec![Some("Mine".into())],
+            tile: spot.origin,
+            distance: 1,
+            typecode: 0,
+            info: 0,
+            description: None,
+            layer: LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: true,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        snapshot
+    }
+
+    fn compiled_woodcutting_step() -> (Arc<dyn StepPlan>, Arc<GatherCatalog>, usize, i32, Arc<str>)
+    {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let catalog = api::selected::FamilyPreparation::run(|worker| {
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            api::gather_methods::prepare(&selected, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let method = catalog.method("woodcutting.normal").unwrap();
+        let method_index = catalog
+            .methods()
+            .iter()
+            .position(|candidate| candidate.id == method.id)
+            .unwrap();
+        let op: Arc<str> = Arc::from(catalog.op(method).unwrap().unwrap().1);
+        let axe_id = selected.item_by_alias("bronze_axe").unwrap().id;
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let path = api::selected::FactKey::new("woodcutting-normal");
+        let progress = crate::quester::progress::CompiledProgress {
+            binding: api::selected::FactKey::new("woodcutting-normal"),
+            role: None,
+            colour_not_started: api::selected::FactKey::new("not-started"),
+            colour_in_progress: api::selected::FactKey::new("in-progress"),
+            colour_complete: api::selected::FactKey::new("complete"),
+            stage_keys: Arc::from([]),
+            rules: Arc::from([]),
+            flags: Arc::from([]),
+            monotonic: false,
+        };
+        let areas = std::collections::HashMap::new();
+        let recipes = std::collections::HashMap::new();
+        let loadouts = crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+        let cx = CompileContext {
+            path: &path,
+            kind: crate::quester::path::PathKind::Quest,
+            progress: &progress,
+            pair: None,
+            selected: &selected,
+            quests: &quests,
+            gathering: Some(&catalog),
+            areas: &areas,
+            recipes: &recipes,
+            bank: None,
+            bank_required: false,
+            bank_items: &[],
+            keep_ids: &[],
+            loadouts: &loadouts,
+        };
+        let args = serde_json::from_value(serde_json::json!({
+            "skill": "woodcutting",
+            "resource": "normal",
+            "until": { "obj": { "id": 1511 }, "qty": 3 }
+        }))
+        .unwrap();
+        let plan = compile(args, &cx).unwrap();
+        (plan, catalog, method_index, axe_id, op)
+    }
+
+    fn woodcutting_snapshot(
+        catalog: &GatherCatalog,
+        method_index: usize,
+        axe_id: i32,
+        op: &str,
+    ) -> GameSnapshot {
+        let method = &catalog.methods()[method_index];
+        let spot = api::gather_methods::known_rows(&method.spots)
+            .iter()
+            .find(|spot| {
+                api::gather_methods::known_rows(&method.targets)
+                    .iter()
+                    .any(|target| {
+                        target.entity == spot.entity
+                            && target.class == api::gather_methods::TargetClass::Resource
+                            && matches!(target.respawn, api::selected::Knowledge::Known(_))
+                    })
+            })
+            .unwrap();
+        let api::selected::EntityId::Loc(id) = spot.entity else {
+            panic!("normal tree placement uses a loc");
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![held(axe_id, 1, 0)], 28);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 1,
+            base: 1,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: spot.origin.x + 1,
+            ..spot.origin
+        }));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: spot.origin.x - 50,
+            map_base_z: spot.origin.z - 50,
+            level: spot.origin.level,
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_scene(api::snapshot::SceneView {
+            available: true,
+            base_x: spot.origin.x - 50,
+            base_z: spot.origin.z - 50,
+            level: spot.origin.level,
+            width: 104,
+            height: 104,
+            collision_flags: vec![0; 104 * 104],
+        });
+        snapshot.seed_npcs(vec![]);
+        snapshot.seed_locs(vec![LocView {
+            id,
+            name: Some("Tree".into()),
+            actions: vec![Some(op.into())],
             tile: spot.origin,
             distance: 1,
             typecode: 0,
@@ -880,6 +1087,36 @@ mod tests {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Err(ActionError::UserInput))
+        ));
+    }
+    #[test]
+    fn compiled_woodcutting_gather_runs_until_three_bundled_normal_logs() {
+        let (plan, catalog, method_index, axe_id, op) = compiled_woodcutting_step();
+        let mut snapshot = woodcutting_snapshot(&catalog, method_index, axe_id, &op);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.iter().any(|operation| {
+            matches!(
+                &operation.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                    if action.as_str() == &*op
+            )
+        })
+        }));
+
+        snapshot.seed_inventory(vec![held(axe_id, 1, 0), held(1511, 3, 1)], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
         ));
     }
 }

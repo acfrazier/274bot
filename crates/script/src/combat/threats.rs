@@ -3,12 +3,118 @@ use super::frame::Frame;
 use super::request::{ActorKind, ActorRef};
 use super::select;
 use super::tables::{CombatTables, StyleWhere};
-use api::snapshot::{ActorTargetView, HitmarkView, NpcView, PlayerView, ProjectileView, WorldTile};
+use api::snapshot::{
+    ActorTargetView, ActorView, HitmarkView, HitmarksView, NpcView, PlayerView, ProjectileView,
+    WorldTile,
+};
 
 pub const THREAT_TTL: u16 = 10;
 pub const HITMARK_BLOCK: i32 = 0;
 pub const HITMARK_DAMAGE: i32 = 1;
 pub const HITMARK_POISON: i32 = 2;
+/// Actor-local evidence for an attack on the local player. Health-bar state is
+/// intentionally not part of this decision.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalAttackEvidence {
+    pub targets_local: bool,
+    pub attack_animation: bool,
+    pub attack_spot: bool,
+    pub local_hitmark_recent: bool,
+}
+
+impl LocalAttackEvidence {
+    pub const fn is_live(self) -> bool {
+        targets_local_with_attack_evidence(
+            self.targets_local,
+            self.attack_animation,
+            self.attack_spot,
+            self.local_hitmark_recent,
+        )
+    }
+}
+
+/// Shared pure threat predicate for product and offline proof evaluation.
+#[inline]
+pub const fn targets_local_with_attack_evidence(
+    targets_local: bool,
+    attack_animation: bool,
+    attack_spot: bool,
+    local_hitmark_recent: bool,
+) -> bool {
+    targets_local && (attack_animation || attack_spot || local_hitmark_recent)
+}
+
+/// Derive the exact health-bar-independent attack evidence for one NPC.
+pub fn npc_local_attack_evidence(
+    npc: &NpcView,
+    local_player_index: usize,
+    hitmarks: Option<&HitmarksView>,
+    tables: &CombatTables,
+) -> LocalAttackEvidence {
+    local_attack_evidence(
+        npc.target,
+        npc.animation,
+        npc.spot_animation,
+        npc.spot_animation_stamp,
+        local_player_index,
+        hitmarks,
+        tables,
+    )
+}
+
+/// Derive health-bar-independent attack evidence for any actor view.
+pub fn actor_local_attack_evidence(
+    actor: &ActorView,
+    local_player_index: usize,
+    hitmarks: Option<&HitmarksView>,
+    tables: &CombatTables,
+) -> LocalAttackEvidence {
+    local_attack_evidence(
+        actor.target,
+        actor.animation,
+        actor.spot_animation,
+        actor.spot_animation_stamp,
+        local_player_index,
+        hitmarks,
+        tables,
+    )
+}
+
+fn local_attack_evidence(
+    target: Option<ActorTargetView>,
+    animation: i32,
+    spot_animation: i32,
+    spot_animation_stamp: i32,
+    local_player_index: usize,
+    hitmarks: Option<&HitmarksView>,
+    tables: &CombatTables,
+) -> LocalAttackEvidence {
+    let targets_local = faces_us(target, local_player_index);
+    let attack_animation = animation >= 0
+        && tables
+            .style_seq(animation)
+            .is_some_and(|mask| mask.bits() != 0);
+    let attack_spot = targets_local
+        && hitmarks.is_some_and(|marks| {
+            cycle_recent(marks.loop_cycle, spot_animation_stamp)
+                && tables
+                    .style_spotanim(spot_animation)
+                    .is_some_and(|row| row.where_ == StyleWhere::Attacker)
+        });
+    let local_hitmark_recent = hitmarks.is_some_and(|marks| {
+        marks.marks.iter().any(|mark| {
+            mark.cycle > 0
+                && cycle_recent(marks.loop_cycle, mark.cycle)
+                && matches!(mark.kind, HITMARK_BLOCK | HITMARK_DAMAGE)
+        })
+    });
+    LocalAttackEvidence {
+        targets_local,
+        attack_animation,
+        attack_spot,
+        local_hitmark_recent,
+    }
+}
 
 const THREAT_VALID: u16 = 1;
 const THREAT_FACT_LIVE: u16 = 1 << 1;
@@ -407,8 +513,12 @@ impl ThreatSet {
         self.clear_npc_hints();
 
         self.observe_projectiles(frame, tables, tick);
+        let hitmarks = HitmarksView {
+            marks: frame.hitmarks,
+            loop_cycle: frame.loop_cycle,
+        };
         for npc in frame.npcs {
-            self.observe_npc(npc, frame, tables, tick);
+            self.observe_npc(npc, frame, &hitmarks, tables, tick);
         }
         for player in frame.players {
             self.observe_player(player, frame, tables, tick);
@@ -525,11 +635,26 @@ impl ThreatSet {
         antifire: bool,
         protect: Option<StyleObs>,
     ) -> Option<i32> {
+        self.danger_except(tables, tick, (shield, antifire), protect, None)
+    }
+
+    /// A confirmed corpse can retain an event row until its threat TTL expires.
+    pub(crate) fn danger_except(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        (shield, antifire): (bool, bool),
+        protect: Option<StyleObs>,
+        corpse: Option<ActorRef>,
+    ) -> Option<i32> {
         if self.has_unknown(tick) {
             return None;
         }
         let mut total = 0i32;
-        for threat in self.iter(tick) {
+        for threat in self
+            .iter(tick)
+            .filter(|threat| Some(threat.actor) != corpse)
+        {
             let style = if threat.style == StyleObs::Unknown {
                 threat.fallback_style()
             } else {
@@ -630,7 +755,14 @@ impl ThreatSet {
         }
     }
 
-    fn observe_npc(&mut self, npc: &NpcView, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
+    fn observe_npc(
+        &mut self,
+        npc: &NpcView,
+        frame: &Frame<'_>,
+        hitmarks: &HitmarksView,
+        tables: &CombatTables,
+        tick: u16,
+    ) {
         let Some(index) = u16::try_from(npc.index).ok() else {
             return;
         };
@@ -642,18 +774,14 @@ impl ThreatSet {
             .r#type
             .and_then(|id| i32::try_from(id).ok())
             .unwrap_or(-1);
-        let faces = faces_us(npc.target, frame.me());
+        let evidence = npc_local_attack_evidence(npc, frame.me(), Some(hitmarks), tables);
+        let faces = evidence.targets_local;
         let hint = faces && npc.in_combat;
         let existing = self.find_identity(actor, ident);
         let animation = npc.animation;
         let anim_mask = tables.style_seq(animation);
-        let has_attack_animation =
-            animation >= 0 && anim_mask.as_ref().is_some_and(|mask| mask.bits() != 0);
         let spot = tables.style_spotanim(npc.spot_animation);
-        let has_attack_spot = faces
-            && cycle_recent(frame.loop_cycle, npc.spot_animation_stamp)
-            && spot.is_some_and(|row| row.where_ == StyleWhere::Attacker);
-        if existing.is_none() && !hint && !(faces && has_attack_animation) && !has_attack_spot {
+        if existing.is_none() && !hint && !evidence.is_live() {
             self.forget_reused_slot(actor, ident);
             return;
         }
@@ -1598,6 +1726,39 @@ mod tests {
     }
 
     #[test]
+    fn due_projectile_actor_wins_over_current_facing_actor_for_late_hit() {
+        let mut threats = ThreatSet::default();
+        let launcher = actor(ActorKind::Npc, 1);
+        let current_facing = actor(ActorKind::Player, 2);
+        let mut launched = Threat::new(launcher, 10, StyleObs::Ranged, 4, Some(7), 10);
+        launched.add_due(12, ProjectileFamily::NpcRanged);
+        threats.rows[0] = launched;
+        threats.rows[1] = Threat::new(current_facing, 11, StyleObs::Melee, 4, Some(3), 12);
+
+        // The projectile visual is no longer needed: its queued impact still
+        // identifies its launcher, even if a different actor now faces us.
+        assert_eq!(threats.due_source(12), DueAttribution::Unique(launcher));
+        ThreatSet::record_impact(&mut threats.rows[0], 12);
+        assert!(threats.rows[0].has_event());
+        assert!(!threats.rows[1].has_event());
+    }
+
+    #[test]
+    fn distinct_projectiles_due_together_make_numeric_hit_unattributed() {
+        let mut threats = ThreatSet::default();
+        let first = actor(ActorKind::Npc, 1);
+        let second = actor(ActorKind::Player, 2);
+        let mut npc_shot = Threat::new(first, 10, StyleObs::Ranged, 4, Some(7), 10);
+        npc_shot.add_due(12, ProjectileFamily::NpcRanged);
+        threats.rows[0] = npc_shot;
+        let mut player_shot = Threat::new(second, 20, StyleObs::Ranged, 5, None, 10);
+        player_shot.add_due(12, ProjectileFamily::PlayerRanged);
+        threats.rows[1] = player_shot;
+
+        assert_eq!(threats.due_source(12), DueAttribution::Ambiguous);
+    }
+
+    #[test]
     fn reused_actor_slots_discard_old_attack_evidence() {
         let mut threats = ThreatSet::default();
         let actor = actor(ActorKind::Npc, 4);
@@ -1696,6 +1857,64 @@ mod tests {
         assert_eq!(row.history_len(), 1);
         assert_eq!(row.recent_position(StyleObs::Magic), Some(0));
         assert_eq!(row.next_decision(), 45);
+    }
+
+    #[test]
+    fn late_impact_does_not_rewind_newer_style_chronology() {
+        let mut row = Threat::new(
+            actor(ActorKind::Npc, 3),
+            30,
+            StyleObs::Unknown,
+            4,
+            Some(8),
+            40,
+        );
+        ThreatSet::record_event(
+            &mut row,
+            StyleObs::Magic,
+            PRIORITY_PROJECTILE,
+            41,
+            1_230,
+            Some(41),
+        );
+        let history_len = row.history_len();
+        let newer_position = row.recent_position(StyleObs::Magic);
+        let decision = row.next_decision();
+
+        ThreatSet::record_impact(&mut row, 42);
+
+        assert_eq!(row.style, StyleObs::Magic);
+        assert_eq!(row.history_len(), history_len);
+        assert_eq!(row.recent_position(StyleObs::Magic), newer_position);
+        assert_eq!(row.next_decision(), decision);
+    }
+
+    #[test]
+    fn ranged_projectile_due_ticks_include_family_delay_and_flight() {
+        for (family, visual_delay, flight_due) in [
+            (ProjectileFamily::NpcRanged, 32, 51),
+            (ProjectileFamily::PlayerRanged, 41, 52),
+            (ProjectileFamily::PlayerThrown, 32, 51),
+        ] {
+            // Emission is at cycle 1,000 / tick 50. The packet's t1 is the
+            // future visual start, not the emission clock.
+            let visual_start = 1_000 + visual_delay;
+            let zero_flight = projectile(visual_start, visual_start);
+            assert_eq!(
+                projectile_due_tick(&zero_flight, family, 50, 1_000),
+                Some(51)
+            );
+            let flight = projectile(visual_start, visual_start + 19);
+            assert_eq!(
+                projectile_due_tick(&flight, family, 50, 1_000),
+                Some(flight_due)
+            );
+            assert_eq!(
+                projectile_due_tick(&flight, family, 51, 1_030),
+                Some(flight_due),
+                "later observation must preserve emission-relative due tick"
+            );
+        }
     }
 
     #[test]

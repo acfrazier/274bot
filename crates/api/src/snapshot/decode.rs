@@ -130,6 +130,7 @@ impl GameSnapshot {
         self.player = client.local_player.as_ref().map(|lp| LocalPlayerView {
             player: PlayerView {
                 index: client.self_slot.max(0) as usize,
+                network: entity_network_tile(&lp.entity, base, level),
                 actor: actor_view(
                     &lp.entity,
                     base,
@@ -159,6 +160,7 @@ impl GameSnapshot {
                     .unwrap_or(0);
                 self.players.push(PlayerView {
                     index,
+                    network: entity_network_tile(&player.entity, base, level),
                     actor: actor_view(
                         &player.entity,
                         base,
@@ -214,8 +216,9 @@ impl GameSnapshot {
             let base = (client.map_build_base_x, client.map_build_base_z);
             let local_slot = client.self_slot as usize;
             let local_tile = local_world_tile(client);
-            // Keep incoming threats first; outgoing launches use remaining
-            // capacity and must never displace an incoming projectile.
+            // Keep incoming threats first; outgoing candidates whose source tile is local
+            // use remaining capacity and never displace them. ClientProj has no firing-player
+            // index, so ranged-onset attribution must reject them when another player shares the tile.
             for incoming in [true, false] {
                 if self.projectiles.len() >= MAX_PROJECTILES_PER_SNAPSHOT {
                     break;

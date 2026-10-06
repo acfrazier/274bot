@@ -1,0 +1,652 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "cog",
+  "display_name": "Clock Tower",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "blackcog", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "redcog", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "bluecog", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "whitecog", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "rat_poison", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "bucket_empty", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "bucket_water", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:black-cog": [
+        {
+          "id": "black-take-empty-bucket",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "bucket_empty" },
+            "op": "Take",
+            "anchor": { "tile": [2616, 3255, 0], "source": "C:maps/m40_50.jm2:7062; C:pack/obj.pack:1926" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } }
+            ]
+          }
+        },
+        {
+          "id": "black-fill-bucket-at-well",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "bucket_empty",
+            "target": { "loc": "well" },
+            "anchor": { "tile": [2612, 3254, 0], "source": "C:maps/m40_50.jm2:5864; C:pack/loc.pack:885; C:scripts/general_use/scripts/water_sources.rs2:69-73,86-93" },
+            "radius": 4,
+            "product": "bucket_water"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } }
+            ]
+          },
+          "settle": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } }
+            ]
+          }
+        },
+        {
+          "id": "black-descend-to-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
+            "op": "Climb-down",
+            "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
+            "radius": 3
+          },
+          "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } }
+        },
+        {
+          "id": "black-walk-to-ground-cog",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [2613, 9639, 0],
+            "source": "C:maps/m40_150.jm2:9467; C:pack/obj.pack:22-24",
+            "radius": 1
+          },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2613, 9639, 0], "radius": 1 } } } ] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2613, 9639, 0], "radius": 1 } } }
+        },
+        {
+          "id": "black-cool-with-water",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "bucket_water",
+            "target": { "ground": "blackcog" },
+            "anchor": { "tile": [2613, 9639, 0], "source": "C:maps/m40_150.jm2:9467; C:scripts/quests/quest_cog/scripts/objs/cogs.rs2:30-39" },
+            "radius": 2,
+            "product": "bucket_empty"
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "ice_gloves" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } },
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+          "comment": "Cooling returns bucket_empty before a mesbox Continue page; that modal text is not a chat-ring message."
+        },
+        {
+          "id": "black-take-ground-cog",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "blackcog" },
+            "op": "Take",
+            "anchor": { "tile": [2613, 9639, 0], "source": "C:maps/m40_150.jm2:9467; C:pack/obj.pack:22; C:scripts/quests/quest_cog/scripts/objs/cogs.rs2:16-27" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } } ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } }
+        }
+      ],
+      "acquire:red-cog": [
+        {
+          "id": "red-descend-to-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
+            "op": "Climb-down",
+            "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
+            "radius": 3
+          },
+          "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } }
+        },
+        {
+          "id": "red-walk-to-ground-cog",
+          "kind": "walk",
+          "version": 1,
+          "args": { "tile": [2583, 9613, 0], "source": "C:maps/m40_150.jm2:9466; C:pack/obj.pack:24", "radius": 1 },
+          "comment": "The red cog is beside three level-53 ogres at [2585,9608,0], [2586,9614,0] and [2588,9606,0] (C:maps/m40_150.jm2:9415-9419; C:scripts/areas/area_yanille/configs/ogre.npc:1-24). Bring food and full HP. No cross grant, protection or walking-time eating is promised; Stop on unsafe HP or a named-zone refusal.",
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2583, 9613, 0], "radius": 1 } } } ] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2583, 9613, 0], "radius": 1 } } }
+        },
+        {
+          "id": "red-take-ground-cog",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "redcog" },
+            "op": "Take",
+            "anchor": { "tile": [2583, 9613, 0], "source": "C:maps/m40_150.jm2:9466; C:pack/obj.pack:24; C:scripts/quests/quest_cog/scripts/objs/cogs.rs2:42-57" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } } ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }
+        },
+        {
+          "id": "red-climb-out-of-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_from_cellar" },
+            "op": "Climb-up",
+            "anchor": { "tile": [2566, 9642, 0], "source": "C:maps/m40_150.jm2:7019; C:pack/loc.pack:1756; C:scripts/ladders+stairs/scripts/ladders.rs2:87-95; C:scripts/_unpack/225/all.loc:9862-9868" },
+            "radius": 3
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } }
+        }
+      ],
+      "acquire:blue-cog": [
+        {
+          "id": "blue-descend-to-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_cellar", "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542 (ladder_cellar 1754 at [2566,3242,0])" },
+            "op": "Climb-down",
+            "anchor": { "tile": [2566, 3242, 0], "source": "C:maps/m40_50.jm2:4542; C:pack/loc.pack:1755; C:scripts/ladders+stairs/scripts/ladders.rs2:83-85; C:scripts/_unpack/225/all.loc:9854-9860" },
+            "radius": 3
+          },
+          "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } }
+        },
+        {
+          "id": "blue-push-secret-wall",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "secretdoor2" },
+            "op": "Push",
+            "anchor": { "tile": [2575, 9631, 0], "source": "C:maps/m40_150.jm2:7407; C:pack/loc.pack:1587; C:scripts/_unpack/225/all.loc:8787-8795; C:scripts/quests/quest_ikov/scripts/ikov_dungeon.rs2:1; C:scripts/doors/scripts/open_and_close_doors.rs2:43-62" },
+            "radius": 2
+          },
+          "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "blue_pocket" } } },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "blue_pocket" } } }
+        },
+        {
+          "id": "blue-walk-to-ground-cog",
+          "kind": "walk",
+          "version": 1,
+          "args": { "tile": [2574, 9633, 0], "source": "C:maps/m40_150.jm2:9464; C:pack/obj.pack:23", "radius": 1 },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2574, 9633, 0], "radius": 1 } } } ] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2574, 9633, 0], "radius": 1 } } }
+        },
+        {
+          "id": "blue-take-ground-cog",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "bluecog" },
+            "op": "Take",
+            "anchor": { "tile": [2574, 9633, 0], "source": "C:maps/m40_150.jm2:9464; C:pack/obj.pack:23; C:scripts/quests/quest_cog/scripts/objs/cogs.rs2:42-57" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } } ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } }
+        },
+        {
+          "id": "blue-climb-out-of-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_from_cellar" },
+            "op": "Climb-up",
+            "anchor": { "tile": [2572, 9631, 0], "source": "C:maps/m40_150.jm2:7287; C:pack/loc.pack:1756; C:scripts/ladders+stairs/scripts/ladders.rs2:87-95; C:scripts/_unpack/225/all.loc:9862-9868" },
+            "radius": 3
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } }
+        }
+      ],
+      "acquire:rat-poison": [
+        {
+          "id": "poison-walk-to-ground-item",
+          "kind": "walk",
+          "version": 1,
+          "args": { "tile": [2564, 9662, 0], "source": "C:maps/m40_150.jm2:9462; C:pack/obj.pack:25", "radius": 1 },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2564, 9662, 0], "radius": 1 } } } ] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2564, 9662, 0], "radius": 1 } } }
+        },
+        {
+          "id": "poison-take-ground-item",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "rat_poison" },
+            "op": "Take",
+            "anchor": { "tile": [2564, 9662, 0], "source": "C:maps/m40_150.jm2:9462; C:pack/obj.pack:25; C:scripts/quests/quest_cog/scripts/locs/quest_cog_food_trough.rs2:2-8" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } }
+        }
+      ],
+      "acquire:white-cog": [
+        {
+          "id": "white-walk-to-ground-cog",
+          "kind": "walk",
+          "version": 1,
+          "args": { "tile": [2577, 9655, 0], "source": "C:maps/m40_150.jm2:9465; C:pack/obj.pack:21", "radius": 1 },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2577, 9655, 0], "radius": 1 } } } ] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2577, 9655, 0], "radius": 1 } } }
+        },
+        {
+          "id": "white-take-ground-cog",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "whitecog" },
+            "op": "Take",
+            "anchor": { "tile": [2577, 9655, 0], "source": "C:maps/m40_150.jm2:9465; C:pack/obj.pack:21; C:scripts/quests/quest_cog/scripts/objs/cogs.rs2:42-57" },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } } ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } }
+        },
+        {
+          "id": "white-climb-out-of-cellar",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "ladder_from_cellar" },
+            "op": "Climb-up",
+            "anchor": { "tile": [2575, 9655, 0], "source": "C:maps/m40_150.jm2:7424; C:pack/loc.pack:1756; C:scripts/ladders+stairs/scripts/ladders.rs2:87-95; C:scripts/_unpack/225/all.loc:9862-9868" },
+            "radius": 3
+          },
+          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "clock_cellar" } } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "clock_cellar": {
+        "boxes": [[2560, 9600, 2623, 9663, 0]],
+        "source": "C:maps/m40_150.jm2:map square m40_150; C:maps/m40_150.jm2:9462-9467,7287,7407,7424,7561,7916"
+      },
+      "blue_pocket": {
+        "boxes": [[2572, 9631, 2575, 9633, 0]],
+        "source": "C:maps/m40_150.jm2:7287,7407,9464; Push from outside lands on secretdoor2 [2575,9631,0], rotation 2; C:scripts/doors/scripts/open_and_close_doors.rs2:43-62"
+      },
+      "rat_pen": {
+        "boxes": [[2580, 9654, 2595, 9659, 0]],
+        "source": "C:maps/m40_150.jm2:7560-7565,7665,7714,7777,7816,7875,7916-7917,7957,8009,8043,8083,8130,8291-8295; pen-only side south of z9660 wall, excluding north corridor and z9652-9653"
+      },
+      "white_pocket": {
+        "boxes": [[2575, 9654, 2578, 9657, 0]],
+        "source": "C:maps/m40_150.jm2:7424,7561,9465; C:pack/loc.pack:40-41"
+      }
+    },
+    "tools": [],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:cog",
+      "progress": {
+        "colour": { "not_started": "cog:0", "in_progress": "cog:1", "complete": "cog:8" },
+        "rules": [
+          { "stage": "cog:8", "all": ["quest complete!"], "any": [], "not": [], "varp": null },
+          { "stage": "cog:5", "all": ["i have placed all four cogs successfully on the spindles"], "any": [], "not": [], "varp": null },
+          { "stage": "cog:1", "all": [], "any": ["agreed to help him repair the clock"], "not": [], "varp": null }
+        ],
+        "flags": [
+          { "flag": "cog:placed-blue", "any": ["i have successfully placed the blue cog on its spindle", "i have placed all four cogs successfully on the spindles", "quest complete!"], "all": [], "count": null },
+          { "flag": "cog:placed-black", "any": ["i have successfully placed the black cog on its spindle", "i have placed all four cogs successfully on the spindles", "quest complete!"], "all": [], "count": null },
+          { "flag": "cog:placed-white", "any": ["i have successfully placed the white cog on its spindle", "i have placed all four cogs successfully on the spindles", "quest complete!"], "all": [], "count": null },
+          { "flag": "cog:placed-red", "any": ["i have successfully placed the red cog on its spindle", "i have placed all four cogs successfully on the spindles", "quest complete!"], "all": [], "count": null }
+        ],
+        "monotonic": true
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "cog:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-clock-tower",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "brother_kojo",
+                "anchor": { "tile": [2569, 3249, 0], "source": "C:maps/m40_50.jm2:7051; C:pack/npc.pack:224-225; C:scripts/quests/quest_cog/scripts/npcs/brother_kojo.rs2:10-18" },
+                "prefer": ["OK old monk, what can I do?"],
+                "strict": true
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "cog", "any": ["cog:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "cog:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "leave-pen-if-started-inside",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "ctratgatea" },
+                "op": "Open",
+                "anchor": { "tile": [2595, 9657, 0], "source": "C:maps/m40_150.jm2:8291; C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:15-19; C:scripts/quests/quest_cog/scripts/locs/quest_cog_gates_and_levers.rs2:10-24; inside gate column" },
+                "radius": 3
+              },
+              "skip_if": { "Any": [ { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "rat_pen" } } } }, { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } } ] },
+              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } },
+              "comment": "Open gate A from inside after its 500-tick reset; the script also changes the outside lever to ctlevera2. This opens the exit, not a teleport; later movement leaves through the open gate."
+            },
+            {
+              "id": "place-held-black",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "blackcog",
+                "target": { "loc": "brokeclockpole_black" },
+                "anchor": { "tile": [2570, 9642, 0], "source": "C:maps/m40_150.jm2:7200; C:pack/loc.pack:31-32; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:1-18" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }
+            },
+            {
+              "id": "place-held-red",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "redcog",
+                "target": { "loc": "brokeclockpole_red" },
+                "anchor": { "tile": [2568, 3243, 0], "source": "C:maps/m40_50.jm2:4621; C:pack/loc.pack:29-30; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:20-37" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } }
+            },
+            {
+              "id": "place-held-blue",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "bluecog",
+                "target": { "loc": "brokeclockpole_blue" },
+                "anchor": { "tile": [2569, 3240, 1], "source": "C:maps/m40_50.jm2:6285; C:pack/loc.pack:32-34; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:58-75" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } }
+            },
+            {
+              "id": "place-held-white",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "whitecog",
+                "target": { "loc": "brokeclockpole_white" },
+                "anchor": { "tile": [2567, 3241, 2], "source": "C:maps/m40_50.jm2:6824; C:pack/loc.pack:32-34; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:39-56" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }
+            },
+            {
+              "id": "acquire-black",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:black-cog" },
+              "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } } ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } }
+            },
+            {
+              "id": "place-black",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "blackcog",
+                "target": { "loc": "brokeclockpole_black" },
+                "anchor": { "tile": [2570, 9642, 0], "source": "C:maps/m40_150.jm2:7200; C:pack/loc.pack:31-32; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:1-18" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "blackcog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-black", "is": true } } }
+            },
+            {
+              "id": "acquire-red",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:red-cog" },
+              "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } } ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } }
+            },
+            {
+              "id": "place-red",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "redcog",
+                "target": { "loc": "brokeclockpole_red" },
+                "anchor": { "tile": [2568, 3243, 0], "source": "C:maps/m40_50.jm2:4621; C:pack/loc.pack:29-30; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:20-37" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redcog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-red", "is": true } } }
+            },
+            {
+              "id": "acquire-blue",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:blue-cog" },
+              "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } } ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } }
+            },
+            {
+              "id": "place-blue",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "bluecog",
+                "target": { "loc": "brokeclockpole_blue" },
+                "anchor": { "tile": [2569, 3240, 1], "source": "C:maps/m40_50.jm2:6285; C:pack/loc.pack:32-34; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:58-75" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluecog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-blue", "is": true } } }
+            },
+            {
+              "id": "acquire-rat-poison",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:rat-poison" },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["they seem to be dying"], "clear": [] } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] },
+              "settle": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["they seem to be dying"], "clear": [] } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] }
+            },
+            {
+              "id": "open-rat-pen-lever",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "comment": "ctlevera2 is the pulled/open state; Pull toggles it closed, so skip when that variant is present.",
+              "args": {
+                "target": { "loc": "ctlevera" },
+                "op": "Pull",
+                "anchor": { "tile": [2591, 9661, 0], "source": "C:maps/m40_150.jm2:8131; C:pack/loc.pack:34-36; C:scripts/quests/quest_cog/configs/quest_cog.loc:65-84; C:scripts/quests/quest_cog/scripts/locs/quest_cog_gates_and_levers.rs2:27-42" },
+                "radius": 3
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] },
+              "settle": { "Any": [ { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "ctlevera2" } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] }
+            },
+            {
+              "id": "walk-to-rat-food-trough",
+              "kind": "walk",
+              "version": 1,
+              "comment": "The trough sets the rat-door bit when rat_poison is used; avoid repeating it if the message state is already recorded.",
+              "args": { "tile": [2586, 9654, 0], "source": "C:maps/m40_150.jm2:7916; C:pack/loc.pack:41", "radius": 2 },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2586, 9654, 0], "radius": 2 } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["they seem to be dying"], "clear": [] } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2586, 9654, 0], "radius": 2 } } }
+            },
+            {
+              "id": "poison-rat-food-trough",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "rat_poison",
+                "target": { "loc": "ctfoodtrough" },
+                "anchor": { "tile": [2586, 9654, 0], "source": "C:maps/m40_150.jm2:7916; C:pack/loc.pack:41; C:scripts/quests/quest_cog/scripts/locs/quest_cog_food_trough.rs2:1-18" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rat_poison" } } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["they seem to be dying"], "clear": [] } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] },
+              "settle": { "Any": [ { "Fact": { "kind": "message", "version": 1, "args": { "any": ["they seem to be dying"] } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] }
+            },
+            {
+              "id": "go-through-rat-gate-c",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "ctratgatec" },
+                "op": "Go-through",
+                "anchor": { "tile": [2579, 9656, 0], "source": "C:maps/m40_150.jm2:7561; C:pack/loc.pack:40-41; C:scripts/quests/quest_cog/configs/quest_cog.loc:93-98; C:scripts/quests/quest_cog/scripts/locs/quest_cog_gates_and_levers.rs2:1-8; C:scripts/doors/scripts/open_and_close_doors.rs2:43-62" },
+                "radius": 3
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } } ] },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "white_pocket" } } }
+            },
+            {
+              "id": "acquire-white",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:white-cog" },
+              "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } }, { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } } ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } }
+            },
+            {
+              "id": "place-white",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "whitecog",
+                "target": { "loc": "brokeclockpole_white" },
+                "anchor": { "tile": [2567, 3241, 2], "source": "C:maps/m40_50.jm2:6824; C:pack/loc.pack:32-34; C:scripts/quests/quest_cog/scripts/locs/quest_cog_spindles.rs2:39-56" },
+                "radius": 4
+              },
+              "skip_if": { "Any": [ { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }, { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "whitecog" } } } } ] },
+              "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "cog", "flag": "cog:placed-white", "is": true } } }
+            }
+          ]
+        },
+        {
+          "stage": "cog:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "claim-clock-tower-reward",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "brother_kojo",
+                "anchor": { "tile": [2569, 3249, 0], "source": "C:maps/m40_50.jm2:7051; C:pack/npc.pack:224-225; C:scripts/quests/quest_cog/scripts/npcs/brother_kojo.rs2:44-48" },
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "cog", "any": ["cog:8"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "cog:8",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

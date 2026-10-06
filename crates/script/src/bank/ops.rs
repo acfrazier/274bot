@@ -150,9 +150,15 @@ pub fn count_id<R: BankRow>(rows: &[R], id: i32) -> i32 {
         .sum()
 }
 
-/// Whether every slot of a posted pack of `inv_size` slots is taken.
+/// Taken slots: every row with a positive count.
+pub fn occupied<R: BankRow>(rows: &[R]) -> i32 {
+    i32::try_from(rows.iter().filter(|row| row.count() > 0).count()).unwrap_or(i32::MAX)
+}
+
+/// Whether every slot of a posted pack of `inv_size` slots is taken; an
+/// unposted size (`<= 0`) is never full.
 pub fn pack_full<R: BankRow>(inv: &[R], inv_size: i32) -> bool {
-    inv_size > 0 && inv.iter().filter(|row| row.count() > 0).count() >= inv_size as usize
+    inv_size > 0 && occupied(inv) >= inv_size
 }
 
 /// Label bytes with whitespace, `-` and `_` gone, ASCII-folded.
@@ -243,7 +249,11 @@ pub enum CompletePolicy {
 pub struct WithdrawGoal {
     pub bank_item_id: i32,
     pub name: Arc<str>,
-    /// The caller argument: a native final count or a `withdrawX` add-count.
+    /// The caller's argument as given; its meaning follows `policy`: a native
+    /// held target under `ExactAtLeast` / `ExactEqual` (`requested ==
+    /// target`), a frozen `withdrawX` add-count under `AvailableLimited`
+    /// (`target = baseline + min(requested, available)`). Nothing plans from
+    /// it; the kernel reads `target` only.
     pub requested: i32,
     /// The observed landing id. Explicit; never rewritten to the source id.
     pub lands_as_id: i32,

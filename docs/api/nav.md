@@ -87,6 +87,20 @@ and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
+
+Ranged hunters with content `check_vis=lineofsight` retain their
+range-derived bounds, but the bake carves permanent occlusion only for `nomove`
+NPCs and NPCs with `wanderrange=0`. The engine checks LOS from the NPC's
+current tile; the bake uses the spawn tile for these static or zero-wander
+configurations. Positive-wander hunters retain their conservative rectangles.
+An already-engaged hunter can pursue the player, so this is not immunity from
+one that has moved into visible range. Areas containing openable doors also
+retain conservative rectangles. Curated group rectangles select and name spawn
+members; they are not additional exclusion surfaces. In particular, the Death
+Plateau scouting ridge is occluded from the throwers where it clips their
+eight-tile hunt boxes, and needs no `cross` grant. Rebake packs to obtain these
+carves; runtime routing does not require the raw flags sidecar.
+
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
 Ladder; v16 retains this encoding. The remaining kind value keeps its kind.
@@ -324,6 +338,16 @@ variants with their source skill/use-level gates. The selected tool identity
 remains opaque, so priority-dependent tool choices cannot invent a trajectory.
 Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
 without a real requirement are refused rather than emitted as free shortcuts.
+
+The pinned `agility_force_move` primitive shares this machine with exact
+movement. Death Plateau's east-side climbing rocks (`death_climbingrocks_top`
+and `death_climbingrocks_bottom`, op1 Climb) retain strict worn climbing-boots
+gates and final south/north three-tile landings. Carried or spiked boots do
+not authorize them. These rocks are east of the quest's scouting destination;
+the ridge walk from Tenzing's stile to that destination does not use them.
+The content permits wearing climbing boots only after `death_equiproom`
+reaches quest completion, so Paths must not require this equipment before
+the pre-completion scouting walk.
 
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked
@@ -722,7 +746,7 @@ call it once per delivered server tick; it returns `None` while in
 progress and `Some(TravelOutcome)` at a terminal state
 (`Arrived`/`Stalled`/`Refused`/`Blocked`/`EvidenceUnproven`/`GaveUp`). One driver send per
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
-on_leg, troll_doors }`.
+on_leg, on_event }`.
 
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.
@@ -757,18 +781,30 @@ on_leg, troll_doors }`.
   explanatory terminal `Blocked` receipt; attempt exhaustion names its
   actual attempt count. Duplicate snapshot polls do not spend this budget.
 
-- **Default door leg:** interact the door transport's menu option, then
-  settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
-  Escalating a slammed door to the troll strategy retains the elapsed hop
-  budget; an approach escalation retains its elapsed wait too. Losing the
-  connection reports `Dropped` only if the attempt made no tile progress;
-  otherwise the exhausted hop is `Expired`.
-- **`troll_doors = true` (non-default, expensive):** per tick, read the
-  door's open/closed state from the snapshot's `locs()`; when the door
-  reads open, `op_loc` (re-open) and `walk` through in the **same tick**
-  so a tick-perfect closer cannot slam it (the `2026-08-22-bot-nav.md`
-  same-tick rule). Use only for the live door-troll fixture; ordinary
-  routes pay the cheap default.
+- **Door legs with a packed open leaf:** every Door-kind edge whose closed
+  loc packs an open leaf takes state-aware recovery from the first poll:
+  swing doors, gates (1551→1552, 1553→1556), held-item doors (brass key) and
+  scripted `open_and_close_door` doors with a `next_loc_stage`. Open a closed
+  leaf promptly and walk through an open one. Re-read the packed closed/open
+  loc family within three tiles of the door's anchor, including shifted
+  double-door leaves; never click an open leaf's Close operation, also when
+  the leaf opens while the approach walk is finishing. If another player
+  closes the door before crossing, re-Open at once when the leaf was seen
+  open since the last Open; a leaf that never opened is re-Opened only after
+  it has read closed for 2 ticks, a window that doubles per unanswered Open
+  (Opens at ticks 0, 2, 6, 14 and 30 of the default 60-tick budget). All of
+  this stays inside the original hop budget: retries and open-state walks do
+  not reset it, and the terminal receipt counts actual interaction attempts.
+  A post-Open step from the door tile goes out only once the leaf reads open
+  or the wall step is clear; earlier, it would cancel the queued Open. Once
+  the player has crossed, a closer behind them cannot draw them back to the
+  door.
+- **Other door legs:** scripted doors without a packed open leaf retain the
+  one-interaction settle and wall-clear post-Open step; dialogue doors retain
+  their dialogue proof, and slashable webs retry only on an observed cut
+  failure. An exhausted crossing or approach ends without a last hopeless
+  Open or a second full wait budget. Losing the connection reports `Dropped`
+  only if the attempt made no tile progress; otherwise the hop is `Expired`.
 
 ## Route inspect (preview)
 
@@ -968,8 +1004,8 @@ LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 
 `nav_full`: `find` + `follow` (Lumbridge courtyard → (3220,3264,0)).
 `nav_door` is the gold fixture if something regresses: two slots — the
-walker crosses Catherby door 1530 to (2817,3443,0) with `troll_doors:
-true` while a tick-perfect closer keeps the door closed; PASS on
+walker crosses Catherby door 1530 to (2817,3443,0) while a tick-perfect
+closer keeps the door closed; PASS on
 `Arrived`. Additional live tests under `crates/e2e/tests`: `nav_gates`,
 `nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
 `nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed

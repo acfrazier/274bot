@@ -73,6 +73,7 @@ impl Script for SettlementWalker {
                 evidence: None,
                 cross: Box::default(),
                 protect: false,
+                food_guard: false,
                 allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {

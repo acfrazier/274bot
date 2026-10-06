@@ -1,0 +1,586 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "gobdip",
+  "display_name": "Goblin Diplomacy",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 5,
+    "requirements": [],
+    "items": [
+      { "obj": "goblin_armour", "qty": 3, "kind": "acquirable", "acquire": null },
+      { "obj": "onion", "qty": 2, "kind": "acquirable", "acquire": null },
+      { "obj": "redberries", "qty": 3, "kind": "acquirable", "acquire": null },
+      { "obj": "woadleaf", "qty": 2, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:mail": [
+        {
+          "id": "withdraw-mail-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "goblin_armour", "qty": 3 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "goblin_armour" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour" } } }
+        },
+        {
+          "id": "farm-goblin-mail",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "comment": "Goblin Village Goblins drop plain mail randomly; content gives no guaranteed mail per kill.",
+          "args": {
+            "target": { "npc": ["goblin_greenarmour", "goblin_redarmour"], "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 18, "auto_retaliate": true },
+            "stand": {
+              "tile": [2958, 3507, 0],
+              "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:43-107; scripts/drop tables/scripts/goblin.rs2:61-119; maps/m46_54.jm2:5959-5981 (Goblin spawns; farm stand [2958,3507,0] is a spawn)"
+            },
+            "lost_radius": 18,
+            "kill_budget_ticks": 240,
+            "loadout": null,
+            "loot": ["goblin_armour"],
+            "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
+          },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
+        }
+      ],
+      "acquire:onions": [
+        {
+          "id": "withdraw-onions-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "onion", "qty": 2 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "onion" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+        },
+        {
+          "id": "pick-onions",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "onion" },
+            "op": "Pick",
+            "anchor": {
+              "tile": [3188, 3267, 0],
+              "source": "scripts/_unpack/225/all.loc:15089-15096; scripts/general_use/scripts/pickables.rs2:30-40; maps/m49_51.jm2:5693-5696 (onion locs at [3188,3266-3268,0])"
+            },
+            "radius": 4,
+            "wait_if_missing": true,
+            "until": { "obj": "onion", "qty": 2 },
+            "settle_ms": 180000
+          },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } }
+        }
+      ],
+      "acquire:redberries": [
+        {
+          "id": "withdraw-redberries-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberries", "qty": 3 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "redberries" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
+        },
+        {
+          "id": "walk-to-redberry-patch",
+          "kind": "walk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "tile": [3271, 3366, 0],
+            "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164 (redberry spawn at [3271,3366,0])",
+            "radius": 3
+          },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 3 } } }
+        },
+        {
+          "id": "take-redberries-from-patch",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "redberries" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3271, 3366, 0],
+              "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164"
+            },
+            "radius": 12,
+            "wait_if_missing": true,
+            "until": { "obj": "redberries", "qty": 3 },
+            "settle_ms": 300000
+          },
+          "comment": "The map has three static redberry spawns in this radius; redberries have no item-specific respawn override, so the default 100-tick (one-minute) respawn applies. The five-minute settle bound allows the ground spawns to return if needed. Sources: content/maps/m51_52.jm2:6256,6257,6260; content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj:157-165; engine/src/cache/config/ObjType.ts:181-182,284-285; engine/src/engine/GameMap.ts:160-175; engine/src/engine/script/handlers/ObjOps.ts:156-159.",
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } }
+        }
+      ],
+      "acquire:woad": [
+        {
+          "id": "withdraw-woad-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "woadleaf", "qty": 2 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "woadleaf" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "woadleaf" } } }
+        },
+        {
+          "id": "buy-woad-leaves-from-wyson",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "wyson",
+            "anchor": {
+              "tile": [3027, 3379, 0],
+              "source": "scripts/areas/area_falador/scripts/wyson_the_gardener.rs2:1-35; maps/m47_52.jm2:11045 (Wyson at [3027,3379,0])"
+            },
+            "leash": 10,
+            "prefer": ["I'm looking for woad leaves.", "How about 20 coins?"]
+          },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } }
+        }
+      ],
+      "acquire:orange-dye": [
+        {
+          "id": "aggie-red-dye",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "aggie",
+            "anchor": {
+              "tile": [3086, 3259, 0],
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-116; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
+            },
+            "leash": 6,
+            "prefer": ["Can you make dyes for me please?", "What do you need to make red dye?", "Okay, make me some red dye please."]
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "reddye" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "reddye" } } }
+        },
+        {
+          "id": "aggie-yellow-dye",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "aggie",
+            "anchor": {
+              "tile": [3086, 3259, 0],
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-102; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
+            },
+            "leash": 6,
+            "prefer": ["Can you make dyes for me please?", "What do you need to make yellow dye?", "Okay, make me some yellow dye please."]
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellowdye" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellowdye" } } }
+        },
+        {
+          "id": "mix-orange-dye",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "reddye",
+            "target": { "item": "yellowdye" },
+            "anchor": {
+              "tile": [3086, 3259, 0],
+              "source": "scripts/skill_crafting/scripts/dye_cape/dye_cape.rs2:2-8,127-139; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
+            },
+            "radius": 4,
+            "product": "orangedye",
+            "settle_ms": 20000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } }
+        }
+      ],
+      "acquire:blue-dye": [
+        {
+          "id": "aggie-blue-dye",
+          "kind": "talk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "npc": "aggie",
+            "anchor": {
+              "tile": [3086, 3259, 0],
+              "source": "scripts/areas/area_draynor/scripts/aggie.rs2:1-8,71-130; maps/m48_50.jm2:6681 (Aggie at [3086,3259,0])"
+            },
+            "leash": 6,
+            "prefer": ["Can you make dyes for me please?", "What do you need to make blue dye?", "Okay, make me some blue dye please."]
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 100,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:goblin_armour",
+      "obj:onion",
+      "obj:redberries",
+      "obj:woadleaf",
+      "obj:coins",
+      "obj:reddye",
+      "obj:yellowdye",
+      "obj:orangedye",
+      "obj:bluedye",
+      "obj:goblin_armour_orange",
+      "obj:goblin_armour_darkblue"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:gobdip",
+      "progress": {
+        "colour": { "not_started": "gobdip:0", "in_progress": "gobdip:1", "complete": "gobdip:6" },
+        "rules": [
+          { "stage": "gobdip:6", "all": ["quest complete!"], "varp": 6 },
+          { "stage": "gobdip:5", "all": ["i should see if they liked the brown goblin armour"], "varp": 5 },
+          { "stage": "gobdip:4", "all": ["they asked me to bring them some of their original brown goblin armour"], "varp": 4 },
+          { "stage": "gobdip:3", "all": ["they asked me to bring them some blue goblin armour"], "varp": 3 },
+          { "stage": "gobdip:2", "all": ["i should bring the goblins some orange goblin armour"], "varp": 2 },
+          { "stage": "gobdip:1", "all": ["i should investigate before it turns into a full blown war"], "varp": 1 },
+          { "stage": "gobdip:0", "all": ["i can start this quest by talking to the bartender", "port sarim"], "varp": 0 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "gobdip:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-bartender",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "rustyanchor_bartender",
+                "anchor": {
+                  "tile": [3045, 3257, 0],
+                  "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:1-16; scripts/areas/area_port_sarim/scripts/bartender.rs2:1-23; maps/m47_50.jm2:10014 (Rusty Anchor bartender at [3045,3257,0])"
+                },
+                "leash": 8,
+                "prefer": ["Not very busy in here today, is it?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "offer-orange-armour",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "general_wartface",
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:81-89; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "leash": 6,
+                "prefer": ["Do you want me to pick an armour colour for you?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "scan-bank-orange",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "acquire-mail-orange",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:mail" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
+            },
+            {
+              "id": "acquire-redberries-orange",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:redberries" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } }
+            },
+            {
+              "id": "acquire-onions-orange",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:onions" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } }
+            },
+            {
+              "id": "acquire-orange-dye",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:orange-dye" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } }
+            },
+            {
+              "id": "dye-orange-mail",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "orangedye",
+                "target": { "item": "goblin_armour" },
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "radius": 6,
+                "product": "goblin_armour_orange",
+                "settle_ms": 20000
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+            },
+            {
+              "id": "hand-in-orange-mail",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "general_wartface",
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:89-98; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } } },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:3"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "scan-bank-blue",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "acquire-mail-blue",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:mail" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 2 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 2 } } }
+            },
+            {
+              "id": "acquire-woad-blue",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:woad" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } }
+            },
+            {
+              "id": "acquire-blue-dye",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:blue-dye" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } }
+            },
+            {
+              "id": "dye-blue-mail",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "bluedye",
+                "target": { "item": "goblin_armour" },
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/quests/quest_gobdip/scripts/goblin_mail.rs2:1-12; scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "radius": 6,
+                "product": "goblin_armour_darkblue",
+                "settle_ms": 20000
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } }
+            },
+            {
+              "id": "hand-in-blue-mail",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "general_wartface",
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:99-106; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } } },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:4"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "scan-bank-brown",
+              "kind": "bank",
+              "version": 1,
+              "args": { "op": "scan", "at": "nearest" },
+              "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+            },
+            {
+              "id": "acquire-mail-brown",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:mail" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour" } } }
+            },
+            {
+              "id": "hand-in-brown-mail",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "general_wartface",
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:108-115; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour" } } } },
+              "settle": { "Any": [
+                { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:5"] } } },
+                { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "gobdip", "is": "complete" } } }
+              ] }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "finish-completion-queue",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "general_wartface",
+                "anchor": {
+                  "tile": [2957, 3510, 0],
+                  "source": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc:23-42; scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2:71-79; maps/m46_54.jm2:5975 (General Wartface at [2957,3511,0])"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "gobdip", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "gobdip:6", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}

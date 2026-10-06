@@ -12,9 +12,9 @@ use crate::bank::ops::{
 };
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkOptions};
 use crate::shim::InteractReq;
-use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
+use api::named_banks::{BankOperation, BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
-use api::snapshot::{QuestListStatus, QuestStatusView, StatView, WorldTile};
+use api::snapshot::{LocView, QuestListStatus, QuestStatusView, StatView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -256,10 +256,19 @@ pub struct BankReceipt {
     pub complete: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AccessDialogue {
+    Teller,
+    Object,
+}
+
 #[derive(Clone, Copy)]
 enum Phase {
     Open,
-    NpcAccess(npc::NpcAccess),
+    NpcAccess {
+        core: npc::NpcAccess,
+        dialogue: AccessDialogue,
+    },
     AwaitOpen,
     AwaitNoteMode {
         request_id: u64,
@@ -284,6 +293,8 @@ pub struct BankMachine {
     request: BankRequest,
     phase: Phase,
     deadline: Duration,
+    /// Fixed opening bound, separate from the per-step `deadline` armed by dialogue.
+    open_deadline: Duration,
     session: u64,
     deposits: u8,
     withdraw_index: usize,
@@ -292,8 +303,68 @@ pub struct BankMachine {
     capacity_freed: u8,
     item_mode_ensured: bool,
     open_stage: u8,
+    open_first_target: Option<(i32, WorldTile)>,
+    object_interaction_sent: bool,
+    /// A completed object dialogue cannot be restarted just because its modal remains open.
+    object_dialogue_finished: bool,
     /// The until-empty side-view bound is armed in `deadline`.
     view_armed: bool,
+}
+
+const BANK_OBJECT_RADIUS: i32 = 4;
+fn catalog_object_matches(loc: &LocView, operation: BankOperation) -> bool {
+    loc.name
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case(operation.name))
+        && loc
+            .actions
+            .iter()
+            .flatten()
+            .any(|action| action.eq_ignore_ascii_case(operation.op))
+}
+
+fn catalog_object_at<'a>(
+    cx: &'a ActionContext<'_>,
+    id: i32,
+    tile: WorldTile,
+    operation: BankOperation,
+) -> Option<&'a LocView> {
+    cx.snapshot()
+        .locs()?
+        .value
+        .iter()
+        .find(|loc| loc.id == id && loc.tile == tile && catalog_object_matches(loc, operation))
+}
+
+/// Resolve a catalog object's live row around its declared access stand.
+fn catalog_object_loc<'a>(
+    cx: &'a ActionContext<'_>,
+    stand_tile: WorldTile,
+    operation: BankOperation,
+) -> Option<&'a LocView> {
+    cx.snapshot()
+        .locs()?
+        .value
+        .iter()
+        .filter(|loc| {
+            loc.tile.level == stand_tile.level
+                && loc
+                    .tile
+                    .x
+                    .abs_diff(stand_tile.x)
+                    .max(loc.tile.z.abs_diff(stand_tile.z))
+                    <= BANK_OBJECT_RADIUS as u32
+                && catalog_object_matches(loc, operation)
+        })
+        .min_by_key(|loc| {
+            (
+                loc.tile
+                    .x
+                    .abs_diff(stand_tile.x)
+                    .max(loc.tile.z.abs_diff(stand_tile.z)),
+                loc.id,
+            )
+        })
 }
 
 impl NativeMachine for BankMachine {
@@ -381,10 +452,12 @@ impl NativeMachine for BankMachine {
             }
             _ => {}
         }
+        let open_deadline = cx.active_now().saturating_add(OPEN_BOUND);
         Ok(Self {
             request,
             phase: Phase::Open,
-            deadline: cx.active_now().saturating_add(OPEN_BOUND),
+            deadline: open_deadline,
+            open_deadline,
             session: 0,
             deposits: 0,
             withdraw_index: 0,
@@ -393,6 +466,9 @@ impl NativeMachine for BankMachine {
             capacity_freed: 0,
             item_mode_ensured: false,
             open_stage: 0,
+            open_first_target: None,
+            object_interaction_sent: false,
+            object_dialogue_finished: false,
             view_armed: false,
         })
     }
@@ -424,7 +500,10 @@ impl NativeMachine for BankMachine {
                         &self.request.action,
                         BankAction::OpenStand { access } if access.kind == AccessKind::Teller
                     ) {
-                        self.phase = Phase::NpcAccess(npc::NpcAccess::new());
+                        self.phase = Phase::NpcAccess {
+                            core: npc::NpcAccess::new(),
+                            dialogue: AccessDialogue::Teller,
+                        };
                         continue;
                     }
                     if cx.snapshot().bank().is_some() {
@@ -443,82 +522,99 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::AwaitOpen;
                         continue;
                     }
-                    if cx.active_now() >= self.deadline {
+                    if cx.active_now() >= self.open_deadline {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank did not open",
                         ))));
                     }
                     if let BankAction::OpenStand { access } = &self.request.action {
-                        let operation = access
+                        let open_first = access
                             .bank
                             .definition
-                            .and_then(|definition| {
-                                if self.open_stage == 0 {
-                                    definition.open_first
-                                } else {
-                                    None
-                                }
-                            })
-                            .or_else(|| {
+                            .and_then(|definition| definition.open_first);
+                        let opening_first = self.open_stage == 0 && open_first.is_some();
+                        let operation =
+                            (if opening_first { open_first } else { None }).or_else(|| {
                                 access
                                     .bank
                                     .definition
                                     .and_then(|definition| definition.object)
                             });
-                        let Some(locs) = cx.snapshot().locs() else {
-                            return Poll::Pending;
-                        };
-                        let wanted_name = operation
-                            .map(|operation| operation.name)
-                            .or(access.name.as_deref());
-                        let Some(loc) = locs.value.iter().find(|loc| {
-                            loc.tile == access.stand_tile
-                                && wanted_name.is_none_or(|wanted| {
-                                    loc.name
-                                        .as_deref()
-                                        .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                                })
-                        }) else {
-                            return Poll::Pending;
-                        };
-                        let stand_op = if let Some(operation) = operation {
-                            loc.actions
-                                .iter()
-                                .position(|action| {
-                                    action.as_deref().is_some_and(|action| {
-                                        action.eq_ignore_ascii_case(operation.op)
-                                    })
-                                })
-                                .and_then(|index| i32::try_from(index + 1).ok())
-                        } else if access.stand_op > 0 {
-                            Some(access.stand_op)
+                        if let Some(operation) = operation {
+                            let Some(candidate) =
+                                catalog_object_loc(cx, access.stand_tile, operation)
+                            else {
+                                return Poll::Pending;
+                            };
+                            // A player-radius area and strict reachability
+                            // keep the old `reachable_only` object probe.
+                            let Some(loc) = crate::quester::families::reach::choose_loc(
+                                cx,
+                                Some(candidate.id),
+                                None,
+                                Some(operation.op),
+                                crate::quester::families::reach::Area::new(
+                                    None,
+                                    BANK_OBJECT_RADIUS,
+                                ),
+                                Some(candidate.tile),
+                                &crate::quester::families::reach::Avoid::default(),
+                            )
+                            .reachable() else {
+                                return Poll::Pending;
+                            };
+                            if opening_first {
+                                self.open_first_target = Some((loc.id, loc.tile));
+                            }
+                            cx.emit(InteractReq::Loc {
+                                x: loc.tile.x,
+                                z: loc.tile.z,
+                                level: loc.tile.level,
+                                action: operation.op.to_owned(),
+                                id: Some(loc.id),
+                            })?;
+                            self.object_interaction_sent = true;
+                            self.object_dialogue_finished = false;
                         } else {
-                            loc.actions
-                                .iter()
-                                .position(|action| {
-                                    action.as_deref().is_some_and(|action| {
-                                        action.eq_ignore_ascii_case("Use-quickly")
+                            let Some(locs) = cx.snapshot().locs() else {
+                                return Poll::Pending;
+                            };
+                            let wanted_name = access.name.as_deref();
+                            let Some(loc) = locs.value.iter().find(|loc| {
+                                loc.tile == access.stand_tile
+                                    && wanted_name.is_none_or(|wanted| {
+                                        loc.name.as_deref().is_some_and(|actual| {
+                                            actual.eq_ignore_ascii_case(wanted)
+                                        })
                                     })
-                                })
-                                .and_then(|index| i32::try_from(index + 1).ok())
-                        };
-                        let Some(stand_op) = stand_op else {
-                            return Poll::Pending;
-                        };
-                        let (tile, name, stand_op) = (
-                            loc.tile,
-                            loc.name.as_deref().map(str::to_owned),
-                            Some(stand_op),
-                        );
-                        cx.emit(InteractReq::OpenStand {
-                            x: tile.x,
-                            z: tile.z,
-                            level: tile.level,
-                            kind: access.kind.as_str().to_owned(),
-                            name,
-                            stand_op,
-                            choose: access.choose.as_deref().map(str::to_owned),
-                        })?;
+                            }) else {
+                                return Poll::Pending;
+                            };
+                            let stand_op = if access.stand_op > 0 {
+                                Some(access.stand_op)
+                            } else {
+                                loc.actions
+                                    .iter()
+                                    .position(|action| {
+                                        action.as_deref().is_some_and(|action| {
+                                            action.eq_ignore_ascii_case("Use-quickly")
+                                        })
+                                    })
+                                    .and_then(|index| i32::try_from(index + 1).ok())
+                            };
+                            let Some(stand_op) = stand_op else {
+                                return Poll::Pending;
+                            };
+                            cx.emit(InteractReq::OpenStand {
+                                x: loc.tile.x,
+                                z: loc.tile.z,
+                                level: loc.tile.level,
+                                kind: access.kind.as_str().to_owned(),
+                                name: loc.name.as_deref().map(str::to_owned),
+                                stand_op: Some(stand_op),
+                                choose: access.choose.as_deref().map(str::to_owned),
+                            })?;
+                        }
                         self.phase = Phase::AwaitOpen;
                         return Poll::Pending;
                     }
@@ -560,11 +656,26 @@ impl NativeMachine for BankMachine {
                     self.phase = Phase::AwaitOpen;
                     return Poll::Pending;
                 }
-                Phase::NpcAccess(mut core) => {
+                Phase::NpcAccess { mut core, dialogue } => {
+                    if dialogue == AccessDialogue::Object
+                        && cx.active_now() >= self.open_deadline
+                        && cx.snapshot().bank().is_none()
+                    {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank item table unavailable",
+                        ))));
+                    }
                     let BankAction::OpenStand { access } = &self.request.action else {
-                        unreachable!("NPC bank access only belongs to OpenStand");
+                        unreachable!("bank dialogue only belongs to OpenStand");
                     };
-                    let intent = npc_intent(access)?;
+                    let intent = match dialogue {
+                        AccessDialogue::Teller => npc_intent(access)?,
+                        AccessDialogue::Object => npc::Intent {
+                            name: "",
+                            op: npc::NpcOp::Index(-1),
+                            choose: "",
+                        },
+                    };
                     match core.step(
                         intent,
                         &mut NativeNpcContext {
@@ -573,21 +684,29 @@ impl NativeMachine for BankMachine {
                         },
                     )? {
                         npc::Step::Wait => {
-                            self.phase = Phase::NpcAccess(core);
+                            self.phase = Phase::NpcAccess { core, dialogue };
                             return Poll::Pending;
                         }
                         npc::Step::Note(npc::Note::Unloaded) => {
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "bank teller opened without a loaded item list",
-                            ))));
+                            let message = if dialogue == AccessDialogue::Teller {
+                                "bank teller opened without a loaded item list"
+                            } else {
+                                "bank object opened without a loaded item list"
+                            };
+                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(message))));
                         }
                         npc::Step::Note(
                             npc::Note::NoBanker | npc::Note::NoDialogue | npc::Note::NotOpened,
                         ) => {
-                            self.phase = Phase::NpcAccess(core);
+                            self.phase = Phase::NpcAccess { core, dialogue };
                             continue;
                         }
                         npc::Step::Done(false) => {
+                            if dialogue == AccessDialogue::Object {
+                                self.object_dialogue_finished = true;
+                                self.phase = Phase::AwaitOpen;
+                                continue;
+                            }
                             return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
                                 "bank teller did not open the bank",
                             ))));
@@ -595,18 +714,33 @@ impl NativeMachine for BankMachine {
                         npc::Step::Done(true) => {
                             let snapshot = cx.snapshot();
                             let Some(session) = snapshot.bank_session() else {
+                                let message = if dialogue == AccessDialogue::Teller {
+                                    "bank teller did not establish an open session"
+                                } else {
+                                    "bank object did not establish an open session"
+                                };
                                 return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    "bank teller did not establish an open session",
+                                    message,
                                 ))));
                             };
                             if !session.value.open {
+                                let message = if dialogue == AccessDialogue::Teller {
+                                    "bank teller did not establish an open session"
+                                } else {
+                                    "bank object did not establish an open session"
+                                };
                                 return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    "bank teller did not establish an open session",
+                                    message,
                                 ))));
                             }
                             if snapshot.bank().is_none() {
+                                let message = if dialogue == AccessDialogue::Teller {
+                                    "bank teller opened without a loaded item list"
+                                } else {
+                                    "bank object opened without a loaded item list"
+                                };
                                 return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    "bank teller opened without a loaded item list",
+                                    message,
                                 ))));
                             }
                             self.session = session.value.generation;
@@ -616,13 +750,39 @@ impl NativeMachine for BankMachine {
                     }
                 }
                 Phase::AwaitOpen => {
-                    if let Some(bank) = cx.snapshot().bank() {
+                    if cx.snapshot().bank().is_some() {
                         self.session = cx
                             .snapshot()
                             .bank_session()
                             .map_or(0, |session| session.value.generation);
-                        let _ = bank;
                         self.phase = Phase::Act;
+                        continue;
+                    }
+                    if cx.active_now() >= self.open_deadline {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank item table unavailable",
+                        ))));
+                    }
+                    let object_access = matches!(
+                        &self.request.action,
+                        BankAction::OpenStand { access }
+                            if access.kind == AccessKind::Booth
+                                && access.bank.definition.is_some_and(|definition| {
+                                    definition.open_first.or(definition.object).is_some()
+                                })
+                    );
+                    let chat_open = cx.snapshot().chat_modal().is_some_and(|chat| {
+                        chat.value.root != -1 || chat.value.continue_component_id >= 0
+                    });
+                    if self.object_interaction_sent
+                        && !self.object_dialogue_finished
+                        && object_access
+                        && chat_open
+                    {
+                        self.phase = Phase::NpcAccess {
+                            core: npc::NpcAccess::new(),
+                            dialogue: AccessDialogue::Object,
+                        };
                         continue;
                     }
                     if let BankAction::OpenStand { access } = &self.request.action {
@@ -632,30 +792,21 @@ impl NativeMachine for BankMachine {
                                 .definition
                                 .and_then(|definition| definition.open_first)
                             {
-                                let Some(locs) = cx.snapshot().locs() else {
+                                if cx.snapshot().locs().is_none() {
                                     return Poll::Pending;
-                                };
-                                let still_closed = locs.value.iter().any(|loc| {
-                                    loc.tile == access.stand_tile
-                                        && loc.name.as_deref().is_some_and(|name| {
-                                            name.eq_ignore_ascii_case(open_first.name)
-                                        })
-                                        && loc.actions.iter().flatten().any(|action| {
-                                            action.eq_ignore_ascii_case(open_first.op)
-                                        })
-                                });
-                                if !still_closed {
-                                    self.open_stage = 1;
-                                    self.phase = Phase::Open;
-                                    continue;
+                                }
+                                if let Some((id, tile)) = self.open_first_target {
+                                    let still_closed =
+                                        catalog_object_at(cx, id, tile, open_first).is_some();
+                                    if !still_closed {
+                                        self.open_stage = 1;
+                                        self.open_first_target = None;
+                                        self.phase = Phase::Open;
+                                        continue;
+                                    }
                                 }
                             }
                         }
-                    }
-                    if cx.active_now() >= self.deadline {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank item table unavailable",
-                        ))));
                     }
                     return Poll::Pending;
                 }
@@ -1567,7 +1718,7 @@ impl NativeMachine for Close {
 mod tests {
     use super::*;
     use crate::native::{HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
 
     fn catalog_bank(name: &str) -> NamedBank {
@@ -1668,6 +1819,460 @@ mod tests {
             memo_ids: Arc::from([]),
             partial_ok: false,
         }
+    }
+    fn bank_object_loc(
+        id: i32,
+        name: &str,
+        action: &str,
+        tile: WorldTile,
+        distance: i32,
+    ) -> api::snapshot::LocView {
+        api::snapshot::LocView {
+            typecode: id,
+            info: 0,
+            id,
+            name: Some(name.to_owned()),
+            description: None,
+            actions: vec![Some(action.to_owned())],
+            tile,
+            distance,
+            layer: api::snapshot::LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    fn object_reach_view(stand: WorldTile, loc: WorldTile) -> api::query::ReachQueryView {
+        let base_x = stand.x - 1;
+        let base_z = stand.z - 1;
+        let width = 3;
+        let height = 3;
+        let index = |tile: WorldTile| ((tile.x - base_x) * height + (tile.z - base_z)) as usize;
+        let tile_count = (width * height) as usize;
+        let mut reachable = vec![0; 1];
+        let mut reachable_adj = vec![0; 1];
+        let mut exact_rank = vec![u16::MAX; tile_count];
+        let mut adjacent_rank = vec![u16::MAX; tile_count];
+        let stand_index = index(stand);
+        let loc_index = index(loc);
+        reachable[stand_index / 32] |= 1 << (stand_index % 32);
+        reachable_adj[stand_index / 32] |= 1 << (stand_index % 32);
+        reachable_adj[loc_index / 32] |= 1 << (loc_index % 32);
+        exact_rank[stand_index] = 0;
+        adjacent_rank[stand_index] = 0;
+        adjacent_rank[loc_index] = 1;
+        api::query::ReachQueryView {
+            available: true,
+            base_x,
+            base_z,
+            level: stand.level,
+            width,
+            height,
+            walkable: vec![0; 1],
+            reachable,
+            reachable_adj,
+            exact_rank,
+            adjacent_rank,
+            step: vec![0; tile_count],
+            canlight: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn catalog_object_access_opens_live_loc_from_adjacent_bank_stand() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        // The shared chooser trusts a flood only from the live player tile.
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![
+            bank_object_loc(2694, "Shantay chest", "Bank", bank.tile, 0),
+            bank_object_loc(2693, "Shantay chest", "Open", loc_tile, 1),
+        ]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(InteractReq::Loc {
+                x,
+                z,
+                level,
+                action,
+                id: Some(2693),
+            })) if *x == loc_tile.x && *z == loc_tile.z && *level == loc_tile.level && action.as_str() == "Open"
+        ));
+    }
+    #[test]
+    fn catalog_object_dialogue_continues_and_settles_loaded_bank() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(2693),
+                ..
+            }) if action == "Open"
+        ));
+
+        snapshot.seed_chat_modal(1, vec!["You open the bank.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(InteractReq::ContinueDialog {
+                component_id: None
+            }))
+        ));
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+        ));
+
+        snapshot.seed_chat_modal(-1, Vec::new());
+        snapshot.seed_chat_options(Vec::new(), -1);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        with_tick_reach(&snapshot, &reach, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        let receipt = with_tick_reach(&snapshot, &reach, &mut ledger, 4, |tick| {
+            match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Ready(Ok(receipt)) => receipt,
+                other => panic!("loaded object bank should settle after dialogue: {other:?}"),
+            }
+        });
+        assert!(receipt.complete);
+    }
+
+    #[test]
+    fn catalog_open_first_bank_resolves_live_loc_stages_near_stand() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let other_loc_tile = WorldTile {
+            x: bank.tile.x,
+            z: bank.tile.z + 1,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![
+            bank_object_loc(4001, "Closed chest", "Open", loc_tile, 1),
+            bank_object_loc(4001, "Closed chest", "Open", other_loc_tile, 1),
+        ]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4001),
+                ..
+            }) if action == "Open"
+        ));
+        with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        snapshot.seed_locs(vec![
+            bank_object_loc(4002, "Open chest", "Bank", loc_tile, 1),
+            bank_object_loc(4001, "Closed chest", "Open", other_loc_tile, 1),
+        ]);
+        with_tick_reach(&snapshot, &reach, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4002),
+                ..
+            })) if action.as_str() == "Bank"
+        ));
+    }
+
+    #[test]
+    fn catalog_object_stuck_continue_modal_fails_at_open_deadline() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(2693),
+                ..
+            }) if action == "Open"
+        ));
+
+        snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
+        snapshot.seed_chat_options(Vec::new(), 99);
+        with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+        ));
+
+        for tick_number in [7, 12, 17] {
+            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            assert!(matches!(
+                acknowledge(&mut ledger, tick_number),
+                HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+            ));
+        }
+
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn catalog_object_finished_dialogue_does_not_restart_for_stuck_modal() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        let _ = acknowledge(&mut ledger, 1);
+
+        snapshot.seed_chat_modal(1, vec!["The bank remains open.".into()]);
+        snapshot.seed_chat_options(Vec::new(), -1);
+        for tick_number in [2, 7, 12, 17] {
+            with_tick_reach(&snapshot, &reach, &mut ledger, tick_number, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn catalog_open_first_missing_locs_respects_open_deadline() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            4001,
+            "Closed chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4001),
+                ..
+            }) if action == "Open"
+        ));
+
+        let mut missing_locs = GameSnapshot::new();
+        missing_locs.seed_ingame(1);
+        let result = with_tick(&missing_locs, &mut ledger, 21, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank item table unavailable"
+        ));
     }
 
     fn npc_row(index: usize, name: &str, actions: &[&str]) -> api::snapshot::NpcView {

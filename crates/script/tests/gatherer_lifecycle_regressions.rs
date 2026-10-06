@@ -126,6 +126,7 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
     snapshot.seed_local_player(LocalPlayerView {
         player: PlayerView {
             index: 0,
+            network: here,
             actor: ActorView {
                 name: Some("alice".into()),
                 actions: Vec::new(),

@@ -98,7 +98,58 @@ export RS2B0T=/absolute/path/to/rs2b0t
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
+
+# Run an embedded Path (repeat with any id from the bundled Path index).
+QUESTER_PATH=cook cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+
+# Run a Path supplied by a folder of Path documents.
+QUESTER_PATH=cook QUESTER_PATH_DIR=/absolute/path/to/paths \
+  cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+
 ```
+
+`script_quester_path` requires `QUESTER_PATH` (for example `cook`) and refuses
+to choose a default quest. It reads embedded Paths by default. Set
+`QUESTER_PATH_DIR` to an absolute folder to use the existing folder registry;
+the requested Path must be served from that folder. `QUESTER_SEEDS` optionally
+names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
+`loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
+`expect` and `mode` control the headless cell's settling; the headed scenario
+always watches native quest completion.
+Its `stand` must match the Path's authored not-started anchor. Without seeds,
+the fixture starts from a clean account and teleports to that anchor after
+relog. `QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
+zero and non-integer values are rejected. A terminal window shot is captured
+when the scenario completes.
+
+### Headed recording
+
+Overnight `--live script_<name>` runs can record video of the panel window
+for next-morning review. Recording reuses the terminal shot's whole-window
+readback (no second screenshot path): the render pass stages one extra
+capture per interval and a background `ffmpeg` process encodes H.264:
+
+```sh
+QUESTER_PATH=cook HEADED_RECORD=1 \
+  cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+```
+
+It is off by default and costs nothing when off. `HEADED_RECORD=1`
+(`true`/`yes`/`on` also work) enables it; `HEADED_RECORD_FPS` sets the
+capture cadence (default 2, clamped to 0.1–10). Encoding runs off the
+UI/slot threads through a bounded queue: a slow encoder drops a frame
+(counted) instead of stalling the run. At the default cadence the
+1280 px-wide `veryfast`/`crf 23` encode stays well under 500 MB per hour.
+The file lands next to the terminal shot in the session's shot dir as
+`record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
+its scenario step and runner tick (`t=<s> frame=<n> step=<i>/<total>
+tick=<ticks> name="<step>"`), so the video lines up with the step trace.
+The mp4 is finalized on PASS, FAIL and window close, so it is always
+playable. Resizing the window mid-run drops the mismatched frames
+(counted) because the encoder pipe has fixed geometry. `ffmpeg` is
+resolved from `HEADED_RECORD_FFMPEG`, then `/opt/homebrew/bin/ffmpeg`,
+then `PATH`; when it is missing the run logs one warning and continues
+without recording.
 
 Live runs mint fresh accounts named `live<token>_<i>` (at most 12
 characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace

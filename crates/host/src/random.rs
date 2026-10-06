@@ -641,9 +641,9 @@ fn on_mime_square(snap: &GameSnapshot) -> bool {
 }
 
 /// Whether the backpack has no free slot (the pack-full gate for the
-/// lost gear/tool sacrificial drop).
+/// lost gear/tool sacrificial drop); an unposted pack is not full.
 fn pack_full(snap: &GameSnapshot) -> bool {
-    snap.inventory_size() > 0 && snap.inventory().len() as i32 >= snap.inventory_size()
+    api::stock::Stock::pages(snap).pack_full() == Some(true)
 }
 
 /// One held item we may sacrifice for a full pack, else `None` (the Take

@@ -369,8 +369,9 @@ impl Traveller {
     /// on every poll. The snapshot is the host's per-tick `GameSnapshot`;
     /// `Interactions` and `Settle` are built fresh from it each call, so
     /// each call performs at most one driver send (walk or transport op)
-    /// plus one settle poll — except the door-troll fallback, which sends
-    /// Open followed by a bounded adjacent crossing probe, or a walk when open.
+    /// plus one settle poll. Door-kind edges with a packed open leaf (swing
+    /// doors, gates, held-item and scripted doors) re-read the leaf within the
+    /// original hop budget, opening while closed and walking through while open.
     pub fn follow<D: Driver>(
         &mut self,
         d: &mut D,
@@ -632,6 +633,7 @@ impl FollowRun {
                                     npc_index: None,
                                     npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
+                                    door_retry: DoorRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -689,6 +691,7 @@ impl FollowRun {
                                     npc_index: None,
                                     npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
+                                    door_retry: DoorRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -826,6 +829,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     open_sent_tick: None,
+                                    door_retry: DoorRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     npc_index: selected_npc_index,
                                     npc_recovery,
@@ -899,6 +903,8 @@ impl FollowRun {
                                     // Climb-down. Mark tries so poll_transport
                                     // does not send it a second time.
                                     let tries = if npc_backed(edge)
+                                        || (edge.kind == TransportKind::Door
+                                            && !edge.is_slashable_web())
                                         || (edge.open_loc_id.is_some()
                                             && edge.kind != TransportKind::Door
                                             && edge_loc_open(snapshot, edge))
@@ -930,6 +936,7 @@ impl FollowRun {
                                         npc_index: selected_npc_index,
                                         npc_recovery,
                                         open_sent_tick,
+                                        door_retry: DoorRetry::opened_at(open_sent_tick),
                                         chat_seq: chat_seq_at_send,
                                         dialog_page: None,
                                         approach: None,
@@ -1089,10 +1096,11 @@ impl WalkHop {
 }
 
 /// One transport-leg hop: the edge (for the phase callback) plus the
-/// arrival target and the stall clock. `troll` marks the automatic
-/// door-troll fallback: the hop re-reads the door's state and re-sends
-/// while closed, probes after Open, and walks when open after
-/// the cheap one-interact hop lapsed its budget. `chat_seq` is the watermark
+/// arrival target and the stall clock. `troll` marks state-aware door
+/// recovery within the original hop budget for every Door-kind edge with a
+/// packed open leaf (swing doors, gates, held-item and scripted doors): re-read
+/// the leaf, Open while closed (paced by `door_retry`), probe after Open, and
+/// walk when open. `chat_seq` is the watermark
 /// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
 /// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
@@ -1110,9 +1118,13 @@ struct TransportHop {
     npc_recovery: NpcRecovery,
     /// The tick a door Open was sent: one crossing probe
     /// ([`door_step_pending`]) on a later delivered tick. The troll spends
-    /// it on the next tick; the cheap hop keeps it until the player stands
-    /// on `at` with a wall-clear step to `to`.
+    /// it on the next tick, except that it keeps it while the player stands
+    /// on `at` behind a closed leaf and a wall (a step there would cancel the
+    /// queued Open); the cheap hop keeps it until the player stands on `at`
+    /// with a wall-clear step to `to`.
     open_sent_tick: Option<u32>,
+    /// Door recovery's re-Open pacing (see [`DoorRetry`]).
+    door_retry: DoorRetry,
     chat_seq: i32,
     /// The chat option-page last answered (joined option texts). A new
     /// page (spirit-tree dest list after "Where can I go?") is answered;

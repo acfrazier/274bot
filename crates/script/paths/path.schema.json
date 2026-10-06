@@ -360,6 +360,18 @@
             "null"
           ],
           "default": null
+        },
+        "from_stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stage key (e.g. `\"cook:1\"`) from which this item becomes due.\nEarlier stages skip its need entirely, including the Unknown-bank scan.",
+          "default": null
         }
       },
       "required": [
@@ -1911,7 +1923,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional authored approach anchor and source citation."
+          "description": "Optional approach anchor. A target without an exact tile is chosen inside\nthe anchor's area (anchor ± max(radius, 10)): a reachable match nearest by\nwalking distance, anchor distance breaking ties. When none is reachable\nfrom the player, the step walks to the area first."
         },
         "radius": {
           "type": "integer",
@@ -1941,7 +1953,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, reaching `until` completes immediately, even with an open page.\nIt does not adopt a new page or continue draining one already open; the next owner\nhandles it.\n`settle_ms` bounds the step while a page is open and is not extended by dialogue\ndraining.\nA count first observed after the deadline times out.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, reaching `until` completes immediately, even with an open page.\nIt does not adopt a new page or continue draining one already open; the next owner\nhandles it.\n`settle_ms` is the inactivity window for authored dialogue. Advancing\nchat pages renew it, capped at 120 seconds total (or `settle_ms` if larger).\nOmitted dialogue retains its fixed settle deadline.\nA count first observed after the deadline times out.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -1956,7 +1968,7 @@
         },
         "reachable_only": {
           "type": "boolean",
-          "description": "Filter loc candidates through the current known reach view.",
+          "description": "Only choose a loc candidate the live reach view proves reachable.",
           "default": false
         }
       },
@@ -2019,7 +2031,7 @@
           },
           "minItems": 3,
           "maxItems": 3,
-          "description": "Exact loc tile. The source field is required with this tile.",
+          "description": "Exact loc tile: this specific loc. Without it, any matching loc in the\nanchor's area may be chosen. The source field is required with this tile.",
           "default": null
         },
         "source": {
@@ -2179,7 +2191,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional authored approach anchor and source citation."
+          "description": "Optional approach anchor. NPC and ground targets are chosen inside the\nanchor's area (anchor ± max(radius, 10)): a reachable match nearest by\nwalking distance, anchor distance breaking ties. An NPC must be beside its\nfootprint across no wall before the use is sent; a chased NPC is re-read\nevery tick, and \"I can't reach that!\" re-picks at once."
         },
         "radius": {
           "type": "integer",
@@ -2532,7 +2544,7 @@
         "qty": {
           "type": "integer",
           "default": 1,
-          "description": "Requested quantity; omitted uses 1 and values below 1 are rejected.",
+          "description": "Held target for `withdraw`: the final backpack count, not a count to\ntake, so items already held are not withdrawn again and a backpack at\nor above it completes without a withdrawal. Ignored by `deposit`, which\ndeposits every held row of the item. Omitted uses 1 and values below 1\nare rejected.",
           "minimum": 1
         }
       },
@@ -2597,7 +2609,7 @@
         "qty": {
           "type": "integer",
           "minimum": 1,
-          "description": "Number of items to buy; must be at least 1."
+          "description": "Held target: the final backpack count, not a count to buy, so items\nalready held are not bought again; must be at least 1."
         },
         "est_gp": {
           "type": "integer",
@@ -3251,7 +3263,11 @@
         },
         "style": {
           "type": "string",
-          "description": "Attack style; `melee` and `mage` are supported."
+          "description": "Attack style; `melee`, `ranged`, and `mage` are supported."
+        },
+        "ranged_style": {
+          "$ref": "#/$defs/RangedMode",
+          "default": "rapid"
         },
         "engage_radius": {
           "type": "integer",
@@ -3277,6 +3293,14 @@
         "kind",
         "style",
         "engage_radius"
+      ]
+    },
+    "RangedMode": {
+      "type": "string",
+      "enum": [
+        "accurate",
+        "rapid",
+        "long_range"
       ]
     },
     "MeleeMode": {
@@ -3648,6 +3672,7 @@
     "Skill": {
       "type": "string",
       "enum": [
+        "woodcutting",
         "mining",
         "fishing"
       ]

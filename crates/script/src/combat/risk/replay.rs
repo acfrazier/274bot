@@ -431,6 +431,8 @@ pub fn replay(
                 running: false,
                 in_combat: false,
             },
+            // A replayed stand is stationary: the path head is its tile.
+            network: input.pos,
             combat_level: input.combat.map_or(0, i32::from),
             skill_level: 0,
             headicons: 0,

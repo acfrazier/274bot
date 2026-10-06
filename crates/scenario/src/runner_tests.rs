@@ -494,7 +494,9 @@ fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
     let mut checked = Vec::new();
     let mut vacuous = Vec::new();
     for name in crate::names() {
-        let scenario = crate::get(name).unwrap();
+        let Some(scenario) = crate::get(name) else {
+            continue;
+        };
         if scenario.settings.wait_script_stop.is_none() {
             continue;
         }
@@ -673,6 +675,16 @@ fn new_reads_deadline_and_terminal_shot_from_settings() {
     let runner = ScenarioRunner::new(crate::get("nav_full").unwrap());
     assert_eq!(runner.deadline(), Duration::from_secs(360));
     assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
+}
+
+#[test]
+fn record_position_names_the_run_before_the_first_tick() {
+    let scenario = crate::get("nav_full").unwrap();
+    let total = scenario.steps.len();
+    let runner = ScenarioRunner::new(scenario);
+    assert_eq!(runner.scenario_name(), "nav_full");
+    assert_eq!(runner.record_step(), (0, total, "seeding"));
+    assert_eq!(runner.total_ticks(), 0);
 }
 
 #[test]

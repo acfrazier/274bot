@@ -230,6 +230,9 @@ fn movement_proofs(src: &Sources) -> HashSet<String> {
     if matches("forcemove") && matches("agility_walk") {
         proofs.insert("forcemove".to_owned());
     }
+    if matches("agility_force_move") && matches("agility_walk") {
+        proofs.insert("agility_force_move".to_owned());
+    }
     if matches("agility_exactmove") {
         proofs.insert("agility_exactmove".to_owned());
     }
@@ -432,22 +435,41 @@ impl Motion<'_> {
         Some(())
     }
 
+    fn price_and_relocate_chebyshev(&mut self, to: WorldTile) -> Option<()> {
+        if to.level != self.here.level {
+            return None;
+        }
+        let distance =
+            to.x.checked_sub(self.here.x)?
+                .checked_abs()?
+                .max(to.z.checked_sub(self.here.z)?.checked_abs()?);
+        self.price(distance)?;
+        self.relocate(to)?;
+        self.moved = true;
+        Some(())
+    }
+
     fn call(&mut self, name: &str, args: &[Expr], env: &Env) -> End {
         let result = match name {
             "~forcemove" if self.proofs.contains("forcemove") => match args {
                 [dest] => self.value(dest, env).and_then(|value| match value {
-                    Val::Coord(to) if to.level == self.here.level => {
-                        let distance =
-                            to.x.checked_sub(self.here.x)?
-                                .checked_abs()?
-                                .max(to.z.checked_sub(self.here.z)?.checked_abs()?);
-                        self.price(distance)?;
-                        self.relocate(to)?;
-                        self.moved = true;
-                        Some(())
-                    }
+                    Val::Coord(to) => self.price_and_relocate_chebyshev(to),
                     _ => None,
                 }),
+                _ => None,
+            },
+            "~agility_force_move" if self.proofs.contains("agility_force_move") => match args {
+                [xp, animation, dest] => {
+                    if !matches!(self.value(xp, env), Some(Val::Int(n)) if n >= 0)
+                        || self.value(animation, env).is_none()
+                    {
+                        return End::Refused;
+                    }
+                    self.value(dest, env).and_then(|value| match value {
+                        Val::Coord(to) => self.price_and_relocate_chebyshev(to),
+                        _ => None,
+                    })
+                }
                 _ => None,
             },
             "~agility_exactmove" if self.proofs.contains("agility_exactmove") => match args {
@@ -494,7 +516,7 @@ impl Motion<'_> {
                 }
                 _ => None,
             },
-            "~forcemove" | "~agility_exactmove" => None,
+            "~forcemove" | "~agility_exactmove" | "~agility_force_move" => None,
             "p_exactmove" => match args {
                 [start, end, cycle0, cycle1, direction] => {
                     let values = (
@@ -923,7 +945,7 @@ pub(super) fn forced_move_edges(
             if !calls.iter().any(|call| {
                 matches!(
                     call.as_str(),
-                    "~forcemove" | "~agility_exactmove" | "p_exactmove"
+                    "~forcemove" | "~agility_exactmove" | "~agility_force_move" | "p_exactmove"
                 )
             }) {
                 continue;

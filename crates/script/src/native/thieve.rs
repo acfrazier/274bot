@@ -30,12 +30,6 @@ pub(crate) struct ThieveActionArgs {
     pub deadline: Duration,
 }
 
-#[derive(Clone, Copy)]
-struct Candidate<'a> {
-    npc: &'a NpcView,
-    target: &'a Target,
-}
-
 pub(crate) struct Thieve {
     args: ThieveActionArgs,
     core: ThieveCore,
@@ -186,29 +180,36 @@ impl NativeMachine for Thieve {
         let skills = snapshot.stats();
         let skill = skills.and_then(|stats| thieving_stat(stats.value));
         let inventory = snapshot.inventory();
-        let target_count = inventory.map(|items| item_count(items.value, self.args.item_id));
-        let inventory_used = inventory.map(|items| items.value.len() as i32);
+        let stock = snapshot.stock();
+        let target_count = stock.held(self.args.item_id);
+        let inventory_used = stock.occupied();
         let here = snapshot.here().map(|tile| tile.value);
         if self.area_anchor.is_none() {
             self.area_anchor = here;
         }
-        let candidate = snapshot.npcs().and_then(|npcs| {
-            select_target(
-                npcs.value,
-                &self.args.targets,
-                self.area_anchor,
-                self.args.radius,
-                skill.map(|(effective, _)| effective),
-            )
-        });
-        let required_level = candidate.map(|candidate| candidate.target.required_level);
+        let picked = select_target(
+            &*cx,
+            &self.args.targets,
+            self.area_anchor,
+            self.args.radius,
+            skill.map(|(effective, _)| effective),
+        );
+        let required_level = picked.map(|target| target.required_level);
         let pending_action = if self.core.pending_request_id().is_some() {
             self.pending_action.unwrap_or(PICKPOCKET)
         } else {
-            candidate
-                .map(|candidate| action_name(&candidate.target.action))
+            picked
+                .map(|target| action_name(&target.action))
                 .unwrap_or(PICKPOCKET)
         };
+        // Own the dispatch target before any mutable borrow.
+        let dispatch = picked.map(|target| {
+            (
+                target.id,
+                Arc::clone(&target.display),
+                Arc::clone(&target.action),
+            )
+        });
         let chat = if self.core.waiting_for_receipt() {
             ChatEvidence::default()
         } else {
@@ -289,19 +290,19 @@ impl NativeMachine for Thieve {
                 if walk_pending || chat_dialog_open || self.reach.is_some() {
                     return Poll::Pending;
                 }
-                let Some(candidate) = candidate else {
+                let Some((target_id, display, op)) = dispatch else {
                     return Poll::Pending;
                 };
-                let action = action_name(&candidate.target.action);
+                let action = action_name(&op);
                 let reach = match Reach::begin(
                     ReachArgs {
                         kind: ReachKind::Npc {
-                            id: candidate.target.id,
-                            name: Arc::clone(&candidate.target.display),
+                            id: target_id,
+                            name: display,
                         },
-                        op: Arc::clone(&candidate.target.action),
+                        op,
                         anchor: self.area_anchor,
-                        radius: candidate.npc.distance.max(1),
+                        radius: i32::from(self.args.radius),
                         wait_if_missing: true,
                         target_tile: None,
                         reachable_only: false,
@@ -311,7 +312,7 @@ impl NativeMachine for Thieve {
                     Ok(reach) => reach,
                     Err(error) => return Poll::Ready(Err(error)),
                 };
-                self.reach_target = Some((candidate.target.id, action));
+                self.reach_target = Some((target_id, action));
                 self.reach_request_id = None;
                 let request_id = reach.interaction_request_id();
                 self.reach = Some(reach);
@@ -557,64 +558,51 @@ fn chat_dialog(snapshot: SnapshotView<'_>) -> (bool, Option<u64>) {
     (true, Some(fingerprint))
 }
 
-fn item_count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
-    items
-        .iter()
-        .filter(|item| item.def.id == id)
-        .fold(0i32, |count, item| count.saturating_add(item.count.max(0)))
-}
-
-fn nearer(a: Candidate<'_>, b: Candidate<'_>) -> bool {
-    let a_distance = a.npc.distance.max(0);
-    let b_distance = b.npc.distance.max(0);
-    (a_distance > 1, a_distance, a.npc.index) < (b_distance > 1, b_distance, b.npc.index)
+fn matches_target(npc: &NpcView, target: &Target) -> bool {
+    i32::try_from(npc.index).is_ok()
+        && npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(target.id)
+        && npc
+            .name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(target.display.as_ref()))
+        && npc
+            .actions
+            .iter()
+            .flatten()
+            .any(|action| action.eq_ignore_ascii_case(target.action.as_ref()))
 }
 
 fn select_target<'a>(
-    npcs: &'a [NpcView],
+    cx: &ActionContext<'_>,
     targets: &'a [Target],
-    center: Option<WorldTile>,
+    anchor: Option<WorldTile>,
     radius: u8,
     effective_level: Option<i32>,
-) -> Option<Candidate<'a>> {
-    let center = center?;
-    let mut nearest: Option<Candidate<'a>> = None;
-    let mut eligible: Option<Candidate<'a>> = None;
-    for npc in npcs {
-        let Some(npc_id) = npc.r#type.and_then(|id| i32::try_from(id).ok()) else {
-            continue;
-        };
-        let Some(name) = npc.name.as_deref() else {
-            continue;
-        };
-        let Some(index) = i32::try_from(npc.index).ok() else {
-            continue;
-        };
-        if index < 0 || !reach::within(center, npc.tile, i32::from(radius)) {
-            continue;
-        }
-        for target in targets.iter().filter(|target| target.id == npc_id) {
-            if !name.eq_ignore_ascii_case(target.display.as_ref())
-                || !npc
-                    .actions
-                    .iter()
-                    .flatten()
-                    .any(|action| action.eq_ignore_ascii_case(target.action.as_ref()))
-            {
-                continue;
-            }
-            let candidate = Candidate { npc, target };
-            if nearest.is_none_or(|best| nearer(candidate, best)) {
-                nearest = Some(candidate);
-            }
-            if level_ready(effective_level, target.required_level) == Some(true)
-                && eligible.is_none_or(|best| nearer(candidate, best))
-            {
-                eligible = Some(candidate);
-            }
-        }
+) -> Option<&'a Target> {
+    let area = reach::Area::new(anchor, i32::from(radius));
+    let avoid = reach::Avoid::default().at(cx.evidence().tick);
+    // The thieving type, level gate and radius are chooser inputs: the
+    // shared chooser ranks eligible matches by walking distance inside the
+    // same anchor area. Fall back to any match so a level refusal still
+    // surfaces through the core's required-level gate.
+    if let Some(npc) = reach::choose_npc_matching(cx, area, &avoid, |npc| {
+        targets.iter().any(|target| {
+            matches_target(npc, target)
+                && level_ready(effective_level, target.required_level) == Some(true)
+        })
+    })
+    .any()
+    {
+        return targets.iter().find(|target| {
+            matches_target(npc, target)
+                && level_ready(effective_level, target.required_level) == Some(true)
+        });
     }
-    eligible.or(nearest)
+    let npc = reach::choose_npc_matching(cx, area, &avoid, |npc| {
+        targets.iter().any(|target| matches_target(npc, target))
+    })
+    .any()?;
+    targets.iter().find(|target| matches_target(npc, target))
 }
 
 #[cfg(test)]
@@ -622,7 +610,7 @@ mod tests {
     use super::*;
     use crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
     use crate::quester::families::tests::{
-        def, local_player, post_user_input_walk_receipt, with_tick,
+        def, local_player, post_user_input_walk_receipt, with_tick, with_tick_reach,
     };
     use api::snapshot::{
         ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
@@ -876,20 +864,126 @@ mod tests {
     #[test]
     fn target_without_a_thieving_action_is_not_dispatchable() {
         let targets = [target(1, 1)];
-        let mut npc = npc(19, 1, 1);
-        npc.actions = vec![Some("Talk-to".into())];
-        assert!(select_target(
-            &[npc],
-            &targets,
-            Some(WorldTile {
-                x: 3,
-                z: 4,
+        let mut bad = npc(19, 1, 1);
+        bad.actions = vec![Some("Talk-to".into())];
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![bad], vec![]);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(select_target(&tick.cx, &targets, Some(anchor), 12, Some(30)).is_none());
+        });
+    }
+    fn flood_view(
+        base: WorldTile,
+        size: i32,
+        flags: &[(WorldTile, i32)],
+        player: WorldTile,
+    ) -> api::query::ReachQueryView {
+        let mut scene = api::snapshot::SceneView {
+            available: true,
+            base_x: base.x,
+            base_z: base.z,
+            level: 0,
+            width: size,
+            height: size,
+            collision_flags: vec![0; (size * size) as usize],
+        };
+        for (tile, flag) in flags {
+            let index = ((tile.x - base.x) * size + tile.z - base.z) as usize;
+            scene.collision_flags[index] |= flag;
+        }
+        let flood = api::query::SceneQuery::new(&scene, Some(player)).flood_reach();
+        api::query::pack_reach_query(&scene, flood.as_ref())
+    }
+
+    fn pen(center: WorldTile) -> Vec<(WorldTile, i32)> {
+        (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+            .filter(|&(dx, dz)| dx != 0 || dz != 0)
+            .map(|(dx, dz)| {
+                (
+                    WorldTile {
+                        x: center.x + dx,
+                        z: center.z + dz,
+                        level: 0,
+                    },
+                    client::dash3d::CollisionFlag::SQ_BLOCKED,
+                )
+            })
+            .collect()
+    }
+
+    fn placed_npc(index: usize, at: WorldTile, from: WorldTile) -> NpcView {
+        let mut npc = npc(index, 1, (at.x - from.x).abs().max((at.z - from.z).abs()));
+        npc.tile = at;
+        npc.network = at;
+        npc.x = at.x;
+        npc.z = at.z;
+        npc
+    }
+
+    #[test]
+    fn thieving_pick_prefers_a_reachable_npc_over_a_nearer_one_behind_a_wall() {
+        let player = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        // The nearer mark sits inside a closed pen two tiles away; the
+        // reachable mark is eleven tiles away, past the shared probe but
+        // inside the authored twelve-tile radius.
+        let near_at = WorldTile {
+            x: 2,
+            z: 0,
+            level: 0,
+        };
+        let far_at = WorldTile {
+            x: 11,
+            z: 0,
+            level: 0,
+        };
+        let snapshot = game_snapshot(
+            player,
+            vec![
+                placed_npc(11, near_at, player),
+                placed_npc(22, far_at, player),
+            ],
+            vec![],
+        );
+        let view = flood_view(
+            WorldTile {
+                x: -8,
+                z: -8,
                 level: 0,
-            }),
-            12,
-            Some(30),
-        )
-        .is_none());
+            },
+            32,
+            &pen(near_at),
+            player,
+        );
+        let mut ledger = None;
+        let run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(player, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                    index: Some(22),
+                    ..
+                })
+            ),
+            "thieving must dispatch the reachable mark past the probe",
+        );
     }
 
     #[test]
