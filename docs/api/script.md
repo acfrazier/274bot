@@ -151,7 +151,15 @@ begins, without specializing the shared compiled Path. Omitted saved values use
 
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
 For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
-The other released IDs are `sheep`, `runemysteries`, `romeojuliet`, and `imp`.
+The released IDs in roster order are `cook` (Cook's Assistant), `sheep` (Sheep
+Shearer), `runemysteries` (Rune Mysteries), `romeojuliet` (Romeo & Juliet),
+`imp` (Imp Catcher), `vampire` (Vampire Slayer), `doric` (Doric's Quest),
+`gobdip` (Goblin Diplomacy), `hetty` (Witch's Potion), `prince` (Prince Ali
+Rescue), `hunt` (Pirate's Treasure), `demon` (Demon Slayer), `squire` (The
+Knight's Sword), `death` (Death Plateau), `desertrescue` (The Tourist Trap),
+`priestperil` (Priest in Peril), and `cog` (Clock Tower). The roster also
+carries one unavailable row, Haunted Mine, which pickers list as
+non-selectable with its reason.
 
 `max_deaths` defaults to **2**, using the Gatherer's `maxDeaths` limit policy:
 two deaths can recover, and the third stops Quester as blocked with a
@@ -713,7 +721,7 @@ qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
 
-Native Quester dialogue completion requires eight observed game ticks with
+Native Quester dialogue completion requires four observed game ticks with
 chat closed, rather than an elapsed host-millisecond gap. Inventory changes and
 active scripted work may re-arm this gap using a finite budget. This drains
 delayed reward/work pages without allowing unrelated activity to wait forever.
@@ -982,10 +990,14 @@ unchanged.
 - **Load** registers a picker card tagged **File** from an absolute/relative
   path (`~/.274bot/js-scripts.json` remembers `{name, path}`). Same path
   overwrites; different paths stay distinct even when stems match.
-- Compiled registry cards (currently Sherlock in `load` builds) are also in
-  Browse, grouped under **Treasure Trails** and tagged **Compiled**. Sherlock
-  has a known-empty schema version 1, distinct from unavailable metadata or an
-  unsupported saved schema. Compiled names remain reserved.
+- Compiled registry cards are also in Browse: Gatherer (Gathering), Quester
+  (Quests), and, in `load` builds, Sherlock, grouped under **Treasure Trails**
+  and tagged **Compiled**. Sherlock's schema version 1 carries only the three
+  walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
+  `allow_danger_zones`), distinct from unavailable metadata or an unsupported
+  saved schema. Compiled names remain reserved. Native v2 scripts use the
+  typed declarations in `crates/script/host-js/index.d.ts`
+  ([js-api-v2.md](js-api-v2.md)).
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
