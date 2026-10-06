@@ -1611,3 +1611,71 @@ fn unknown_work_area_still_requests_the_unclamped_rail_need() {
     assert_eq!(frame.resizes(), 1);
     assert_eq!(frame.moves(), 0, "no work area to move into");
 }
+
+#[test]
+fn record_arm_flags_a_capture_without_touching_shot_wanted() {
+    let mut shots = ShotState::default();
+    assert!(!shots.capture_pending());
+    shots.arm_record();
+    assert!(shots.capture_pending());
+    assert!(
+        shots.wanted.is_empty(),
+        "the recording lane never enters the PNG promotion queue"
+    );
+    // Idempotent: repeated pacer ticks arm one readback, not one per tick.
+    shots.arm_record();
+    assert!(shots.capture_pending());
+}
+
+#[test]
+fn record_readback_outcomes_route_to_record_done_not_the_png_ledger() {
+    use crate::headed_record::RECORD_LABEL;
+
+    fn capture(label: &str) -> ShotCapture {
+        ShotCapture {
+            label: label.into(),
+            snapshot_json: String::new(),
+            width: 2,
+            height: 2,
+            rgba: vec![0; 16],
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+        }
+    }
+
+    let mut shots = ShotState::default();
+    record_readback_outcomes(
+        &mut shots,
+        &[RECORD_LABEL.to_string(), "quester_path".to_string()],
+        vec![capture(RECORD_LABEL), capture("quester_path")],
+    );
+    assert_eq!(shots.done.len(), 1);
+    assert_eq!(shots.done[0].label, "quester_path");
+    assert_eq!(shots.record_done.len(), 1);
+    assert_eq!(shots.record_done[0].label, RECORD_LABEL);
+    assert_eq!(
+        shots.status("quester_path"),
+        ShotStatus::WritePending,
+        "ordinary shots keep their ledger stage"
+    );
+    assert_eq!(
+        shots.status(RECORD_LABEL),
+        ShotStatus::Missing,
+        "recording frames never enter the PNG ledger"
+    );
+    assert_eq!(shots.take_record().len(), 1);
+    assert!(shots.take_record().is_empty());
+}
+
+#[test]
+fn lost_record_frame_leaves_no_png_failure_behind() {
+    use crate::headed_record::RECORD_LABEL;
+
+    let mut shots = ShotState::default();
+    // The staged copy mapped nothing (device lost): the frame is simply
+    // absent from the video and the pacer stages the next one.
+    record_readback_outcomes(&mut shots, &[RECORD_LABEL.to_string()], vec![]);
+    assert!(shots.done.is_empty());
+    assert!(shots.record_done.is_empty());
+    assert_eq!(shots.status(RECORD_LABEL), ShotStatus::Missing);
+}
