@@ -121,7 +121,7 @@ impl Gatherer {
                     return;
                 }
                 let snapshot = tick.cx.snapshot();
-                let (Some(stats), Some(inventory), Some(equipment), Some(_)) = (
+                let (Some(stats), Some(_), Some(_), Some(_)) = (
                     snapshot.stats(),
                     snapshot.inventory(),
                     snapshot.equipment(),
@@ -129,14 +129,17 @@ impl Gatherer {
                 ) else {
                     return;
                 };
-                if SupplyPlan::due(
+                // The same admission as a live boundary (N7): a
+                // `Session`-known shortage fails in place, a `Hint` or an
+                // unknown bank earns one reprovision trip.
+                if self.admit_supply(SupplyPlan::plan(
                     &self.prepared,
                     stats.value,
-                    inventory.value,
-                    equipment.value,
-                ) {
-                    self.start_trip();
-                } else if snapshot
+                    snapshot.stock(),
+                )) {
+                    return;
+                }
+                if snapshot
                     .bank_session()
                     .is_some_and(|session| session.value.open)
                 {

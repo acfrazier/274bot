@@ -550,6 +550,8 @@ mod bank_memory_live;
 #[cfg(test)]
 mod bank_npc_live;
 #[cfg(test)]
+mod gather_bait_live;
+#[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
 

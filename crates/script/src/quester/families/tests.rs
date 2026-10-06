@@ -36,7 +36,16 @@ pub(crate) fn with_tick_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, None, Truth::Unknown, ledger, tick, output, f)
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        output,
+        None,
+        f,
+    )
 }
 
 pub(crate) fn with_tick_reach<R>(
@@ -53,6 +62,7 @@ pub(crate) fn with_tick_reach<R>(
         ledger,
         tick,
         &mut Output,
+        None,
         f,
     )
 }
@@ -65,7 +75,35 @@ pub(crate) fn with_tick_world<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, None, world_members, ledger, tick, &mut Output, f)
+    with_tick_output_reach(
+        snapshot,
+        None,
+        world_members,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        f,
+    )
+}
+
+pub(crate) fn with_tick_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        f,
+    )
 }
 
 fn with_tick_output_reach<R>(
@@ -75,6 +113,7 @@ fn with_tick_output_reach<R>(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     output: &mut dyn NativeOutput,
+    bank: Option<&api::bank_memory::BankMemory>,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -100,7 +139,8 @@ fn with_tick_output_reach<R>(
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
                 .with_reach(reach)
-                .with_world_members(world_members),
+                .with_world_members(world_members)
+                .with_bank_memory(bank),
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
@@ -119,7 +159,8 @@ fn with_tick_output_reach<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&data),
                 reach: None,
-                bank_memory: None,
+                bank_memory: bank,
+                collision: None,
                 hold: false,
                 world_members,
                 interacts: Some(Vec::new()),

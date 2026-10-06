@@ -9,7 +9,7 @@ use super::select::{
 };
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
-use super::supply::{self, SupplyPlan, SupplyPlanResult};
+use super::supply::{self, SupplyPlan, SupplyPlanResult, SupplyVerdict};
 use super::widen::{
     remember_group, site_anchor, SearchExclusions, SearchResult, TriedGroup, WidenCursor,
 };
@@ -269,6 +269,24 @@ impl Gatherer {
         self.set_event("bank trip due");
     }
 
+    /// Act on trip admission at a boundary (design-bank-snapshot §2.4): a
+    /// due trip starts, whether the bank memory planned it (`Trip`) or the
+    /// trip is the lookup (`TripToLearn`); a shortage the bank showed this
+    /// session fails in place, without the walk. `false` when nothing is due.
+    fn admit_supply(&mut self, verdict: SupplyVerdict) -> bool {
+        match verdict {
+            SupplyVerdict::NotDue => false,
+            SupplyVerdict::Trip(_) | SupplyVerdict::TripToLearn => {
+                self.start_trip();
+                true
+            }
+            SupplyVerdict::Missing(item) => {
+                self.fail("supply-missing", format!("supply-missing:{item}"));
+                true
+            }
+        }
+    }
+
     fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
         if self.settings().disposition.eq_ignore_ascii_case("Bank") {
             self.start_trip();
@@ -322,6 +340,16 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
                 avoided: &self.avoid,
+                collision: {
+                    #[cfg(feature = "load")]
+                    {
+                        tick.frame.compiled.collision
+                    }
+                    #[cfg(not(feature = "load"))]
+                    {
+                        None
+                    }
+                },
             },
         ) else {
             self.fail(
@@ -739,14 +767,16 @@ impl Gatherer {
         if self.trip != TripStep::Idle && self.trip != TripStep::Validate {
             return Validation::Ready;
         }
-        if SupplyPlan::due(
+        if self.admit_supply(SupplyPlan::plan(
             &self.prepared,
             stats.value,
-            inventory.value,
-            equipment.value,
-        ) {
-            self.start_trip();
-            return Validation::Ready;
+            snapshot.stock(),
+        )) {
+            return if self.failure.is_some() {
+                Validation::Pending
+            } else {
+                Validation::Ready
+            };
         }
         if let Some(tool) = tool {
             if skill != Skill::Fishing
@@ -1333,16 +1363,12 @@ impl Gatherer {
             return;
         }
         let snapshot = tick.cx.snapshot();
-        if let (Some(stats), Some(inventory), Some(equipment)) =
-            (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
-        {
-            if SupplyPlan::due(
+        if let Some(stats) = snapshot.stats() {
+            if self.admit_supply(SupplyPlan::plan(
                 &self.prepared,
                 stats.value,
-                inventory.value,
-                equipment.value,
-            ) {
-                self.start_trip();
+                snapshot.stock(),
+            )) {
                 return;
             }
         }
@@ -2158,5 +2184,194 @@ mod tests {
         assert!(ledger
             .as_ref()
             .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+
+    /// A Draynor-style Bait fishing Gatherer at its spot holding only the
+    /// rod, plus a `Session` memory of an empty bank and a `Hint` claiming
+    /// 20 bait.
+    struct BaitFixture {
+        config: Arc<PreparedConfig>,
+        prepared: Arc<Prepared>,
+        snapshot: api::snapshot::GameSnapshot,
+        session: api::bank_memory::BankMemory,
+        hint: api::bank_memory::BankMemory,
+    }
+
+    impl BaitFixture {
+        fn new() -> Self {
+            use crate::quester::families::tests::{def, local_player};
+            use api::bank_memory::{BankMemory, ObservedAt};
+            use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, WorldStateView};
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let mut bag = crate::native::SettingsBag::new();
+            for (key, value) in [
+                ("skill", serde_json::json!("Fishing")),
+                ("fishingMethod", serde_json::json!("fishing.saltfish.op3")),
+                ("baitTarget", serde_json::json!(10)),
+                ("disposition", serde_json::json!("Bank")),
+            ] {
+                bag.insert(key.into(), value);
+            }
+            let config = api::selected::FamilyPreparation::run(move |families| {
+                crate::slot::prepare_config(
+                    families,
+                    crate::CompiledId("Gatherer"),
+                    1,
+                    Arc::new(bag),
+                    selected,
+                    Arc::default(),
+                )
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+            let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+            let spot = known_rows(&prepared.catalog.methods()[prepared.methods[0]].spots)[0].origin;
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(spot));
+            snapshot.seed_world(WorldStateView {
+                map_base_x: spot.x - 50,
+                map_base_z: spot.z - 50,
+                level: spot.level,
+                ..Default::default()
+            });
+            snapshot.seed_stats(vec![StatView {
+                index: 10,
+                name: "fishing".into(),
+                base: 99,
+                effective: 99,
+                xp: 0,
+                used: true,
+            }]);
+            snapshot.seed_inventory(
+                vec![ItemView {
+                    def: def(307, "Fishing rod"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: Vec::new(),
+                    component_id: 3214,
+                }],
+                28,
+            );
+            snapshot.seed_equipment(vec![]);
+            snapshot.seed_locs(vec![]);
+            snapshot.seed_npcs(vec![]);
+            let mut session = BankMemory::default();
+            session.observe(
+                &[],
+                64,
+                ObservedAt {
+                    unix_secs: 1,
+                    tick: 1,
+                    bank_session: 1,
+                },
+            );
+            let bait = prepared.supply.bait.as_ref().unwrap().id;
+            let mut hint = BankMemory::default();
+            hint.load_hint(vec![(bait, 20)], 1).unwrap();
+            Self {
+                config,
+                prepared,
+                snapshot,
+                session,
+                hint,
+            }
+        }
+
+        fn gatherer(&self, retained: GatherRetained) -> Gatherer {
+            Gatherer::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                Arc::clone(&self.config),
+                Arc::clone(&self.prepared),
+                retained,
+            )
+        }
+
+        fn missing_message(&self) -> String {
+            format!(
+                "supply-missing:{}",
+                self.prepared.supply.bait.as_ref().unwrap().name
+            )
+        }
+    }
+
+    /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
+    /// bank showed this session fails in place with no trip and no action; a
+    /// `Hint` or an unknown bank starts the trip.
+    #[test]
+    fn validate_admits_supply_trips_from_the_bank_memory() {
+        use crate::quester::families::tests::with_tick_bank;
+        let fixture = BaitFixture::new();
+        for (bank, in_place) in [
+            (Some(&fixture.session), true),
+            (Some(&fixture.hint), false),
+            (None, false),
+        ] {
+            let mut gatherer = fixture.gatherer(GatherRetained::default());
+            let mut ledger = None;
+            let validation = with_tick_bank(&fixture.snapshot, bank, &mut ledger, 1, |tick| {
+                gatherer.validate(&mut tick.cx)
+            });
+            let origin = bank.map(api::bank_memory::BankMemory::origin);
+            if in_place {
+                assert_eq!(validation, Validation::Pending, "{origin:?}");
+                let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
+                assert_eq!(failure.code.as_ref(), "supply-missing");
+                assert_eq!(failure.message.as_ref(), fixture.missing_message());
+                assert_eq!(gatherer.trip, TripStep::Idle, "no walk is armed");
+            } else {
+                assert_eq!(validation, Validation::Ready, "{origin:?}");
+                assert!(gatherer.failure.is_none(), "{origin:?}");
+                assert_eq!(gatherer.trip, TripStep::Select, "{origin:?}");
+                assert_eq!(gatherer.last_event.as_ref(), "bank trip due");
+            }
+            assert!(ledger.is_none(), "admission emits no action");
+        }
+    }
+
+    /// N7: death recovery's reprovision step takes the same verdict.
+    #[test]
+    fn recovery_reprovision_takes_the_same_verdict() {
+        use crate::quester::families::tests::with_tick_bank;
+        let fixture = BaitFixture::new();
+        for (bank, in_place) in [
+            (Some(&fixture.session), true),
+            (Some(&fixture.hint), false),
+            (None, false),
+        ] {
+            let mut gatherer = fixture.gatherer(GatherRetained {
+                recovery: RecoveryState::Pending { step: 3 },
+                ..GatherRetained::default()
+            });
+            let mut ledger = None;
+            with_tick_bank(&fixture.snapshot, bank, &mut ledger, 1, |tick| {
+                gatherer.poll_recovery(tick)
+            });
+            let origin = bank.map(api::bank_memory::BankMemory::origin);
+            if in_place {
+                let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
+                assert_eq!(failure.code.as_ref(), "supply-missing", "{origin:?}");
+                assert_eq!(failure.message.as_ref(), fixture.missing_message());
+                assert_eq!(gatherer.trip, TripStep::Idle, "no reprovision walk");
+            } else {
+                assert!(gatherer.failure.is_none(), "{origin:?}");
+                assert_eq!(gatherer.trip, TripStep::Select, "{origin:?}");
+            }
+            assert_eq!(
+                gatherer.retained.recovery,
+                RecoveryState::Pending { step: 3 },
+                "{origin:?}"
+            );
+            assert!(ledger.is_none(), "admission emits no action");
+        }
     }
 }
