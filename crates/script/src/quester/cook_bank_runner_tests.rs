@@ -277,16 +277,19 @@ impl CookFixture {
                                 .unwrap();
                             assert!(row.count >= count);
                             row.count -= count;
-                            let mut held = row.clone();
-                            held.count = count;
-                            held.container = ItemContainer::Inventory;
-                            held.action_family = ItemActionFamily::Held;
-                            held.actions.clear();
                             let mut inventory = self.snapshot.inventory().to_vec();
-                            held.slot = (0..28)
-                                .find(|slot| !inventory.iter().any(|row| row.slot == *slot))
-                                .expect("withdrawal needs a real free slot");
-                            inventory.push(held);
+                            let rows = if row.def.stackable { 1 } else { count };
+                            for _ in 0..rows {
+                                let mut held = row.clone();
+                                held.count = if row.def.stackable { count } else { 1 };
+                                held.container = ItemContainer::Inventory;
+                                held.action_family = ItemActionFamily::Held;
+                                held.actions.clear();
+                                held.slot = (0..28)
+                                    .find(|slot| !inventory.iter().any(|row| row.slot == *slot))
+                                    .expect("withdrawal needs a real free slot");
+                                inventory.push(held);
+                            }
                             self.snapshot.seed_inventory(inventory, 28);
                             self.observe_bank(tick);
                             self.withdrawals += 1;
@@ -663,4 +666,211 @@ fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
     );
     assert_eq!(fixture.withdrawals, 3);
     assert_eq!(fixture.snapshot.inventory().len(), 28);
+}
+
+fn sheep_fixture(held_wool: usize, banked_goals: bool) -> CookFixture {
+    let mut fixture = CookFixture::new(false, false);
+    let document = serde_json::from_str(super::super::compile::SHEEP_JSON).unwrap();
+    fixture.script.path = super::super::compile::compile_uncached_for_test(
+        &document,
+        &fixture.script.selected,
+        &fixture.script.quests,
+    )
+    .unwrap();
+    fixture.snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Sheep Shearer".into(),
+            component_id: 43,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    fixture.snapshot.seed_inventory(
+        (0..held_wool)
+            .map(|slot| fixture.item("wool", slot as i32, ItemContainer::Inventory))
+            .collect(),
+        28,
+    );
+    if banked_goals {
+        fixture.stock = [("shears", 1), ("wool", 20), ("ball_of_wool", 20)]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, (alias, count))| ItemView {
+                count,
+                ..fixture.item(alias, slot as i32, ItemContainer::Bank)
+            })
+            .collect();
+    }
+    fixture
+}
+
+#[test]
+fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() {
+    for held_wool in [0, 20] {
+        let mut fixture = sheep_fixture(held_wool, false);
+        fixture.until_root_begin();
+        assert!(!fixture.script.parked, "{:?}", fixture.output.logs);
+        assert_eq!(fixture.deposits, 0);
+        assert_eq!(fixture.snapshot.inventory().len(), held_wool);
+    }
+}
+
+#[test]
+fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
+    let mut fixture = sheep_fixture(0, true);
+    fixture.until_root_begin();
+    assert!(!fixture.script.parked, "{:?}", fixture.output.logs);
+    assert_eq!(fixture.deposits, 0);
+    assert_eq!(fixture.snapshot.inventory().len(), 21);
+    assert_eq!(
+        fixture
+            .stock
+            .iter()
+            .find(|row| row.def.id == 1759)
+            .unwrap()
+            .count,
+        20,
+        "defer a later authored goal that does not fit beside this acquisition"
+    );
+}
+
+#[test]
+fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
+    let mut fixture = CookFixture::new(false, true);
+    fixture.until_root_begin();
+    for phase in ["scan", "withdraw"] {
+        for outcome in ["begin", "settled"] {
+            let expected = format!("quester cook: provision bank {phase} {outcome}");
+            assert!(
+                fixture.output.logs.iter().any(|line| line == &expected),
+                "missing {expected:?}: {:?}",
+                fixture.output.logs
+            );
+        }
+    }
+}
+
+#[test]
+fn r1_provisioner_capacity_deposit_is_traced() {
+    let mut fixture = CookFixture::new(false, true);
+    fixture.seed_junk(26);
+    fixture.until_root_begin();
+    for outcome in ["begin", "settled"] {
+        let expected = format!("quester cook: provision bank deposit-capacity {outcome}");
+        assert!(
+            fixture.output.logs.iter().any(|line| line == &expected),
+            "missing {expected:?}: {:?}",
+            fixture.output.logs
+        );
+    }
+}
+
+#[test]
+fn r1_finish_is_emitted_after_trace_event_cap() {
+    let mut fixture = CookFixture::new(false, false);
+    for event in 0..=RUN_TRACE_EVENT_LIMIT {
+        fixture.script.trace.record(
+            &mut fixture.output,
+            api::hostlog::Level::Info,
+            format_args!("quester cook: distinct event {event}"),
+        );
+    }
+    fixture.snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    with_tick_output(
+        &fixture.snapshot,
+        &mut fixture.ledger,
+        1,
+        &mut fixture.output,
+        |native| assert_eq!(fixture.script.tick(native).unwrap(), ScriptFlow::Complete),
+    );
+    assert_eq!(
+        fixture
+            .output
+            .logs
+            .iter()
+            .filter(|line| line.as_str() == "quester cook: finish")
+            .count(),
+        1,
+        "{:?}",
+        fixture.output.logs
+    );
+}
+
+#[test]
+fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
+    for entry in super::super::registry::BUNDLED_INDEX.paths.iter() {
+        let Some(bytes) = super::super::registry::bundled_path(&entry.id) else {
+            continue;
+        };
+        let mut fixture = CookFixture::new(false, false);
+        let document: super::super::path::PathDocument = serde_json::from_slice(bytes).unwrap();
+        fixture.script.path = super::super::compile::compile_uncached_for_test(
+            &document,
+            &fixture.script.selected,
+            &fixture.script.quests,
+        )
+        .unwrap();
+        if fixture.script.path.provisioning.owns_inventory {
+            continue;
+        }
+        fixture.snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: fixture
+                    .script
+                    .selected
+                    .quest_identity()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .find(|row| row.id == entry.id)
+                    .unwrap()
+                    .display
+                    .clone(),
+                component_id: 43,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        // Required supplies are available in the bank, not preloaded in the
+        // pack. This sweep tests inventory capacity, not a supply shortfall.
+        fixture.stock = fixture
+            .script
+            .path
+            .provisioning
+            .items
+            .iter()
+            .enumerate()
+            .map(|(slot, item)| {
+                let mut definition = def(item.id, &item.name);
+                definition.stackable = item.stackable;
+                ItemView {
+                    def: definition,
+                    container: ItemContainer::Bank,
+                    action_family: ItemActionFamily::Component,
+                    slot: slot as i32,
+                    count: item.qty as i32,
+                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                    component_id: 7,
+                }
+            })
+            .collect();
+        fixture.until_root_begin();
+        assert!(
+            !fixture.script.parked,
+            "{}: {:?}",
+            entry.id, fixture.output.logs
+        );
+        assert_eq!(
+            fixture.deposits, 0,
+            "empty {} pack needs no deposits",
+            entry.id
+        );
+    }
 }

@@ -236,7 +236,7 @@ Future or foreign-run evidence is never accepted.
 
 Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
 recreation and reconnect preserve its death count, consumed chat watermark,
-last quest stand, completion count and bank-retreat receipts. An old death
+last quest stand and completion count. An old death
 message does not count again; a new one received during recreation still does.
 The shared slot watchdog walks a displaced Quester back to that stand without
 recreating its instance. If it must recreate the card, Quester rereads server
@@ -282,15 +282,21 @@ The existing panel script section and TUI status show the native phase and the
 current wait or refusal reason, including how to resolve it before Stop/Start.
 
 For Paths that do not own their inventory, provisioning checks the pack before
-withdrawing or acquiring supplies, preserves tools when freshening the pack,
-and returns to the selected bank after completion before advancing the queue.
-An `acquirable` row with `acquire: null` is a withdrawal hint; its authored Path
-steps perform acquisition. Only `mustHave` shortfalls block. Tools are preservation
-and withdrawal hints, not additional `mustHave` requirements.
-Coin and loadout carry floats are drawn once per pass rather than replenished
-after every dose or meal; death resets those latches. Paths marked
-`owns_inventory` retain their authored inventory steps. Automatic coin funding
-is not provided.
+withdrawing or acquiring supplies. It preserves record items, tools and floats;
+there is no unconditional inventory freshen or deposit sweep. Preparation banks
+only enough unrelated rows for the next withdrawals or acquisition. Completion
+ends in place, and the next queued Path assesses the inventory it inherits.
+An `acquirable` row with `acquire: null` is a best-effort bank withdrawal hint;
+its authored Path steps perform acquisition. Future authored goals are not
+reserved as simultaneous inventory needs, and hints that cannot fit are deferred
+to those steps. Missing `mustHave` supplies still block. Tools are preservation
+hints only: missing tools do not cause a scan or withdrawal. An active recipe's
+declared inputs can independently request those items.
+Missing coin and active-loadout carry floats scan an unknown bank and draw
+available stock. Held floats skip that scan. A satisfied float is latched for
+the pass rather than replenished after every dose or meal; death resets those
+latches. Paths marked `owns_inventory` retain their authored inventory steps.
+Automatic coin funding is not provided.
 
 Acquisition recipes can call other recipes with `acquire` steps. The compiler
 binds dependencies first and compiles each recipe once, independent of its
@@ -302,8 +308,9 @@ knowledge once, before the parent recipe evaluates its next child or settlement
 predicate. This applies to authored acquisition steps and loadout provisioning.
 Recipe settlement receives its completed child's outcome, including outcome facts.
 An observed empty bank is known zero stock; missing bank evidence remains unknown.
-Finishing a provisioning recipe still invalidates the memo because the recipe
-may have changed inventory; cancel or Stop discards its pending child evidence.
+Finishing an acquisition outside the bank preserves the memo: inventory changes
+do not change bank stock. Cancel or Stop discards pending child evidence; a
+recreated Quester starts with an unknown memo.
 
 When an acquisition child fails, parked status retains its recipe and child
 step IDs alongside the failure reason. A settle-timeout park shows the timed-out
