@@ -629,3 +629,173 @@ fn the_post_session_route_resumes_from_the_bank() {
         }
     }
 }
+
+/// The toll world with its far corner `(4, 4)` solid: a radius walk there
+/// takes the unmodeled-solid stand search (`calculate_solid`), and an Area
+/// walk searches every standable tile around it at once.
+fn solid_toll_world() -> NavWorld {
+    let mut world = knife_nav_world_with_target(KNIFE, true);
+    world.graph.edges[0].worn_req.clear();
+    world.graph.edges[0].consumed_req = vec![(COINS, 10)];
+    world
+}
+
+/// The closed fixture bank at the origin, with the client's own `(4, 4)`
+/// solid as the world's is.
+fn solid_fixture() -> (Client, GameSnapshot) {
+    let (mut client, _) = fixture(0, 0, false);
+    client.collision[0].flags[4][4] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    (client, snapshot)
+}
+
+/// The one verifying trip for the 10-coin toll.
+fn toll_trip(world: &NavWorld) -> Vec<BankStep> {
+    vec![
+        access_walk(world),
+        BankStep::Open,
+        BankStep::Withdraw {
+            id: COINS,
+            count: 10,
+        },
+        BankStep::Close,
+    ]
+}
+
+/// H1 (REVIEW-BANK-SNAPSHOT-S5): the solid-radius and Area goal searches
+/// read a `Hint` as advisory, as the exact walk does. With the bank closed
+/// and a hint that holds no coins or too few, every goal around the solid
+/// `(4, 4)` is behind the 10-coin toll; the goal-set diagnosis is overlaid
+/// on the hint, so the search reaches a goal and plans the one verifying
+/// trip, and the post-session route goes to that goal. The same rows as a
+/// `Session` or `Unknown` memory stay `NoPath` in place.
+fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
+    let world = Arc::new(solid_toll_world());
+    let (_, closed) = solid_fixture();
+    let state = WorldState::from_snapshot(&closed);
+    let request = |bank_origin, rows: &[(i32, i32)]| ScriptRouteRequest {
+        generation: 1,
+        request_id: 1,
+        world: Arc::clone(&world),
+        from: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        },
+        radius: 1,
+        loc_id: None,
+        arrival,
+        opts: fetch_on(),
+        state: Some(state.clone()),
+        bank_origin,
+        bank: rows.to_vec(),
+        live_candidates: None,
+        exclusions: None,
+        completion: Default::default(),
+    };
+    for rows in [&[][..], &[(KNIFE, 20)][..], &[(COINS, 3)][..]] {
+        let (outcome, targets) = request(Origin::Hint, rows).calculate();
+        let RouteOutcome::BankSession { pending, route } = outcome else {
+            panic!("{arrival:?} with Hint rows {rows:?}: no verifying trip");
+        };
+        assert_eq!(
+            pending.steps.iter().cloned().collect::<Vec<_>>(),
+            toll_trip(&world),
+            "{arrival:?} with Hint rows {rows:?}"
+        );
+        assert!(targets.contains(&route.dest), "{:?}", route.dest);
+        assert_eq!(pending.dest, route.dest);
+        assert_eq!(pending.final_route.dest, route.dest);
+        for bank_origin in [Origin::Session, Origin::Unknown] {
+            assert!(
+                matches!(
+                    request(bank_origin, rows).calculate().0,
+                    RouteOutcome::NoPath
+                ),
+                "{arrival:?} with {bank_origin:?} rows {rows:?} is NoPath in place"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_solid_radius_walk_plans_the_trip_a_hint_lacks_the_toll_for() {
+    assert_one_trip_only_for_a_hint(nav::arrival::ArrivalKind::Reach);
+}
+
+#[test]
+fn an_area_walk_plans_the_trip_a_hint_lacks_the_toll_for() {
+    assert_one_trip_only_for_a_hint(nav::arrival::ArrivalKind::Area);
+}
+
+/// The enabled compat dispatch (`walk-near`, radius 1, fetch on) to a solid
+/// tile with the bank closed: a `Hint` memory without coins latches the one
+/// verifying trip; a `Session` memory without coins and no memory at all
+/// end the walk failed, with no session.
+#[test]
+fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
+    let world = Some(Arc::new(solid_toll_world()));
+    let (mut client, closed) = solid_fixture();
+    let state = WorldState::from_snapshot(&closed);
+    let mut walk = |memory: Option<&RwLock<BankMemory>>| {
+        let (navs, _) = empty_nav();
+        assert!(dispatch_script_interact_cached(
+            &mut client,
+            &closed,
+            None,
+            Some((0, 0, 0)),
+            &navs,
+            &world,
+            Some(state.clone()),
+            memory,
+            "alice",
+            [script::shim::InteractReq::WalkNear {
+                x: 4,
+                z: 4,
+                level: 0,
+                radius: 1,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: true,
+                request_id: 43,
+                avoid: Vec::new(),
+                cross: Vec::new(),
+            }],
+            None,
+            None,
+        ));
+        assert!(
+            wait_until(2_000, || navs.lock().unwrap().get("alice").is_some_and(
+                |bot| bot.bank_fetch.is_some() || bot.walk_outcome_failed
+            )),
+            "the route worker settled"
+        );
+        let navs = navs.lock().unwrap();
+        let bot = &navs["alice"];
+        (
+            bot.bank_fetch
+                .as_ref()
+                .map(|pending| pending.steps.iter().cloned().collect::<Vec<_>>()),
+            bot.walk_outcome_failed,
+        )
+    };
+    let hint = RwLock::new(hint_memory());
+    assert_eq!(
+        walk(Some(&hint)),
+        (Some(toll_trip(world.as_ref().unwrap())), false),
+        "a Hint without coins plans the one trip"
+    );
+    let session = RwLock::new(session_memory());
+    assert_eq!(
+        walk(Some(&session)),
+        (None, true),
+        "Session is NoPath in place"
+    );
+    assert_eq!(walk(None), (None, true), "Unknown is NoPath in place");
+}

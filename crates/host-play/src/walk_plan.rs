@@ -1,10 +1,13 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
+use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{fetchable_state, plan_bank_fetch, BankFetch, BankRows, BankStep};
+use nav::bank_fetch::{fetchable_state, plan_bank_fetch, planning_rows, BankFetch, BankStep};
 use nav::router::{
-    find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
-    find_with_avoid, missing_item_reqs, AvoidRect, FallbackRoute, FindOptions, Route,
+    find_first_missing_item_reqs_with_avoid, find_first_with_avoid, find_first_with_fallback_avoid,
+    find_missing_item_reqs_with_avoid, find_with_avoid, missing_item_reqs, AvoidRect,
+    FallbackRoute, FindOptions, Route,
 };
 use nav::transport::TransportEdge;
 use nav::world::NavWorld;
@@ -84,16 +87,18 @@ pub(super) enum RouteOutcome {
 
 /// Strict `find_with`, then — only when `allow_bank_fetch` is on and the
 /// failure is solely missing item/worn reqs — plan a BankBudget session
-/// over [`BankRows::planning_rows`] and re-find against the session's post
-/// state. Never inserts a virtual bank edge into Dijkstra. Every search
-/// keeps out of `avoid`.
+/// over [`planning_rows`] of the bank memory's `origin` and `bank` rows and
+/// re-find against the session's post state. Never inserts a virtual bank
+/// edge into Dijkstra. Every search keeps out of `avoid`.
+#[allow(clippy::too_many_arguments)] // search surface plus the memory's origin and rows
 pub(super) fn route_or_bank_fetch(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
     opts: FindOptions,
     state: &WorldState,
-    bank: &BankRows,
+    origin: Origin,
+    bank: &[(i32, i32)],
     avoid: &[AvoidRect],
 ) -> RouteOutcome {
     match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
@@ -111,7 +116,7 @@ pub(super) fn route_or_bank_fetch(
             plan_bank_fetch(
                 &missing,
                 state,
-                &bank.planning_rows(&missing),
+                &planning_rows(origin, bank, &missing),
                 world.banks(),
                 from,
                 &world.collision,
@@ -123,19 +128,50 @@ pub(super) fn route_or_bank_fetch(
     }
 }
 
-/// The facts a BankBudget session can establish ([`fetchable_state`]), when
+/// The facts a BankBudget session can establish ([`fetchable_state`]) for
+/// a first-goal search over `stands` with the `tiles` fallback, when
 /// BankBudget is on and they open a gate the real state refuses. A search
 /// under facts that open nothing would only repeat the strict one.
+/// `Session` and `Unknown` rows are the supply as they are. A `Hint` is
+/// advisory (design-bank-snapshot §2.4): before its stock can reject a
+/// goal, one goal-set diagnosis ([`find_first_missing_item_reqs_with_avoid`],
+/// the strict first-goal search's budgets) names what the chosen goal's
+/// route misses, and that diagnosis is overlaid on the hint
+/// ([`planning_rows`]), so a goal whose only route crosses a gate the hint
+/// lacks still reaches [`session_for`] and its one verifying trip.
+#[allow(clippy::too_many_arguments)] // goal set, search surface and the memory's origin and rows
 pub(super) fn fetchable_facts(
     world: &NavWorld,
+    from: WorldTile,
+    stands: &[WorldTile],
+    tiles: &[WorldTile],
     opts: FindOptions,
     state: &WorldState,
-    bank: &BankRows,
+    origin: Origin,
+    bank: &[(i32, i32)],
+    avoid: &[AvoidRect],
 ) -> Option<WorldState> {
     if !opts.allow_bank_fetch {
         return None;
     }
-    let fetchable = fetchable_state(state, &bank.rows, world.banks());
+    let diagnosis = (origin == Origin::Hint && !world.banks().is_empty())
+        .then(|| {
+            find_first_missing_item_reqs_with_avoid(
+                &world.collision,
+                &world.graph,
+                from,
+                stands,
+                tiles,
+                opts,
+                state,
+                avoid,
+            )
+        })
+        .flatten();
+    let rows = diagnosis.as_deref().map_or(Cow::Borrowed(bank), |missing| {
+        planning_rows(origin, bank, missing)
+    });
+    let fetchable = fetchable_state(state, &rows, world.banks());
     let opens_gate = |edge: &TransportEdge| fetchable.allows(edge) && !state.allows(edge);
     (world.graph.edges.iter().any(opens_gate)
         || opts.allow_teleports && world.graph.teleports.iter().any(opens_gate))
@@ -168,7 +204,8 @@ pub(super) fn fetch_stand(
     opts: FindOptions,
     state: &WorldState,
     fetchable: &WorldState,
-    bank: &BankRows,
+    origin: Origin,
+    bank: &[(i32, i32)],
     avoid: &[AvoidRect],
 ) -> StandFetch {
     let mut stands = stands.to_vec();
@@ -188,7 +225,7 @@ pub(super) fn fetch_stand(
             (Err(_), tile) => return StandFetch::Tiles(tile),
         };
         let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, bank, avoid) {
+        if let Some(outcome) = session_for(world, from, route, opts, state, origin, bank, avoid) {
             return StandFetch::Outcome(outcome);
         }
         stands.retain(|&tile| tile != target);
@@ -211,7 +248,8 @@ pub(super) fn fetch_tile(
     opts: FindOptions,
     state: &WorldState,
     fetchable: &WorldState,
-    bank: &BankRows,
+    origin: Origin,
+    bank: &[(i32, i32)],
     avoid: &[AvoidRect],
 ) -> RouteOutcome {
     let mut tiles = tiles.to_vec();
@@ -236,7 +274,7 @@ pub(super) fn fetch_tile(
             Some(FallbackRoute::Failed(_)) | None => return RouteOutcome::NoPath,
         };
         let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, bank, avoid) {
+        if let Some(outcome) = session_for(world, from, route, opts, state, origin, bank, avoid) {
             return outcome;
         }
         tiles.retain(|&tile| tile != target);
@@ -257,7 +295,8 @@ fn session_for(
     route: Route,
     opts: FindOptions,
     state: &WorldState,
-    bank: &BankRows,
+    origin: Origin,
+    bank: &[(i32, i32)],
     avoid: &[AvoidRect],
 ) -> Option<RouteOutcome> {
     let missing = missing_item_reqs(&route, state);
@@ -267,7 +306,7 @@ fn session_for(
     let fetch = plan_bank_fetch(
         &missing,
         state,
-        &bank.planning_rows(&missing),
+        &planning_rows(origin, bank, &missing),
         world.banks(),
         from,
         &world.collision,

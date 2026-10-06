@@ -7,7 +7,7 @@ use client::dash3d::CollisionFlag;
 
 use super::{
     bank_access_tiles, fetchable_state, nearest_bank_access, plan_bank_fetch as plan_with,
-    BankRows, BankStep,
+    planning_rows, BankRows, BankStep,
 };
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
@@ -940,7 +940,7 @@ fn toll_missing() -> Vec<MissingReq> {
 fn planning_rows_borrow_session_and_unknown_rows() {
     let missing = toll_missing();
     let session = rows(Origin::Session, &[(1, 3), (KNIFE, 1)]);
-    let planned = session.planning_rows(&missing);
+    let planned = planning_rows(session.origin, &session.rows, &missing);
     assert!(
         matches!(planned, Cow::Borrowed(_)),
         "Session rows are borrowed"
@@ -960,7 +960,7 @@ fn planning_rows_borrow_session_and_unknown_rows() {
 
     let unknown = BankRows::default();
     assert_eq!(unknown.origin, Origin::Unknown);
-    let planned = unknown.planning_rows(&missing);
+    let planned = planning_rows(unknown.origin, &unknown.rows, &missing);
     assert!(
         matches!(planned, Cow::Borrowed(_)),
         "Unknown rows are borrowed"
@@ -987,7 +987,7 @@ fn planning_rows_borrow_session_and_unknown_rows() {
 fn planning_rows_raise_hinted_carry_to_the_diagnosis() {
     let missing = toll_missing();
     let lacking = rows(Origin::Hint, &[(1, 3), (KNIFE, 1)]);
-    let planned = lacking.planning_rows(&missing);
+    let planned = planning_rows(lacking.origin, &lacking.rows, &missing);
     assert_eq!(&*planned, &[(1, 3), (KNIFE, 1), (995, 10)][..]);
     let fetch = plan_bank_fetch(
         &missing,
@@ -1009,10 +1009,13 @@ fn planning_rows_raise_hinted_carry_to_the_diagnosis() {
     assert_no_deposit(&fetch.steps);
 
     let short = rows(Origin::Hint, &[(995, 3)]);
-    assert_eq!(&*short.planning_rows(&missing), &[(995, 10)][..]);
+    assert_eq!(
+        &*planning_rows(short.origin, &short.rows, &missing),
+        &[(995, 10)][..]
+    );
     let rich = rows(Origin::Hint, &[(995, 50)]);
     assert_eq!(
-        &*rich.planning_rows(&missing),
+        &*planning_rows(rich.origin, &rich.rows, &missing),
         &[(995, 50)][..],
         "a hinted surplus is kept"
     );
@@ -1026,9 +1029,12 @@ fn planning_rows_add_one_wear_alternative_only_when_none_is_hinted() {
         ids: vec![1321, 1323],
     }];
     let none = rows(Origin::Hint, &[(995, 5)]);
-    assert_eq!(&*none.planning_rows(&wear), &[(995, 5), (1321, 1)][..]);
+    assert_eq!(
+        &*planning_rows(none.origin, &none.rows, &wear),
+        &[(995, 5), (1321, 1)][..]
+    );
     let second = rows(Origin::Hint, &[(1323, 1)]);
-    let planned = second.planning_rows(&wear);
+    let planned = planning_rows(second.origin, &second.rows, &wear);
     assert_eq!(
         &*planned,
         &[(1323, 1)][..],
@@ -1043,7 +1049,7 @@ fn planning_rows_add_one_wear_alternative_only_when_none_is_hinted() {
         MissingReq::WearAny { ids: vec![KNIFE] },
     ];
     let empty = rows(Origin::Hint, &[]);
-    let planned = empty.planning_rows(&both);
+    let planned = planning_rows(empty.origin, &empty.rows, &both);
     assert_eq!(&*planned, &[(KNIFE, 2)][..], "carry one and wear one");
     let fetch = plan_bank_fetch(
         &both,

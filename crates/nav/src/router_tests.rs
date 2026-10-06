@@ -19,10 +19,10 @@ use crate::quest_gates::tests::{
 };
 use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_with, find_first_with_fallback,
-    find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
-    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid,
-    find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
+    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs_with_avoid,
+    find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
+    find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
+    find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
     find_with_model, local_step_component, missing_item_reqs, step_ok, AvoidRect, CostModel,
     FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
@@ -1405,6 +1405,53 @@ fn worn_gated_room_is_proven_strictly_and_reached_only_with_the_obj_fetchable() 
     assert_eq!(search.route().err(), Some(RouteError::NoPath));
     assert_eq!(search.proof(), ReverseProof::Unreachable);
     assert!(search.settled() < 64, "{}", search.settled());
+}
+
+/// The goal-set BankBudget diagnosis is the relaxed first-goal search's:
+/// it names the chosen goal's missing facts, falls back to the fallback set
+/// when no preferred goal routes relaxed, and is `None` when no goal routes
+/// even with the carry/wear gates ignored.
+#[test]
+fn first_goal_diagnosis_names_the_chosen_goals_missing_facts() {
+    let from = tile(20, 20, 0);
+    let stands = [tile(202, 201, 0), tile(201, 202, 0)];
+    let opts = FindOptions {
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+    let diagnose = |wc: &WorldCollision,
+                    graph: &TransportGraph,
+                    targets: &[WorldTile],
+                    fallback: &[WorldTile]| {
+        find_first_missing_item_reqs_with_avoid(
+            wc,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            &state,
+            &[],
+        )
+    };
+    let worn = Some(vec![MissingReq::WearAny { ids: vec![2] }]);
+
+    let (wc, graph) = sealed_room(true);
+    assert_eq!(diagnose(&wc, &graph, &stands, &[]), worn);
+    // A preferred goal on the blocked ring never routes: the stands are the
+    // fallback set and their diagnosis is the answer.
+    let ring = [tile(201, 203, 0)];
+    assert_eq!(diagnose(&wc, &graph, &ring, &stands), worn);
+    // A goal reachable with nothing fetched wins over the gated room.
+    assert_eq!(
+        diagnose(&wc, &graph, &[tile(30, 30, 0), stands[0]], &[]),
+        Some(Vec::new())
+    );
+
+    let (wc, graph) = sealed_room(false);
+    assert_eq!(diagnose(&wc, &graph, &stands, &[]), None);
+    assert_eq!(diagnose(&wc, &graph, &ring, &stands), None);
 }
 
 /// Neither side decides: the start's corridor and the stand's backward
