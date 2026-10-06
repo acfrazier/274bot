@@ -808,8 +808,10 @@ fn select_with_access(
 }
 
 /// Banking can end inside the gathering bound while its resources remain
-/// unobserved. Return to a selected placement's observation stand, not the
-/// work-area centroid or a fishing actor's occupied tile.
+/// unobserved. Return to a selected placement's observation stand at the
+/// resource site — inside the gathering area or next to the resource — not
+/// a point clamped toward the player's current tile, the work-area centroid,
+/// or a fishing actor's occupied tile.
 pub fn resource_return_target(
     catalog: &GatherCatalog,
     method_indices: &[usize],
@@ -904,9 +906,17 @@ fn fishing_return_stand(
     {
         return None;
     }
+    // Observe the resource from the resource, never from `here`. Clamping
+    // toward the player is how a Draynor bank trip lands a stand inside the
+    // booth (the spots sit inside NPC view of the interior).
     observation_cells(movement_bounds(spot)?)
-        .map(|cell| observation_stand(cell, observation.here))
-        .min_by_key(|stand| distance(observation.here, *stand))
+        .map(|cell| observation_stand(cell, spot.origin))
+        .min_by_key(|stand| {
+            (
+                i64::from(!area.contains(*stand)),
+                distance(spot.origin, *stand),
+            )
+        })
 }
 
 fn consider_candidate<'a>(
@@ -1327,9 +1337,15 @@ mod tests {
             anchor: origin,
             radius: 1,
         };
-        let expected = WorldTile {
+        let expected_survey = WorldTile {
             x: bounds.max_x - OBSERVATION_RADIUS,
             z: here.z,
+            ..origin
+        };
+        // Return stands at the resource, not the cell nearest the player.
+        let expected_return = WorldTile {
+            x: origin.x + OBSERVATION_RADIUS,
+            z: origin.z + OBSERVATION_RADIUS,
             ..origin
         };
         let observation = ReturnObservation {
@@ -1340,16 +1356,16 @@ mod tests {
         };
         assert_eq!(
             fishing_return_stand(&catalog, method, &spot, area, &observation),
-            Some(expected),
+            Some(expected_return),
             "Return must not reject a spot solely because its movement spans nine cells"
         );
         let mut fishing = FishingSurvey::default();
         let survey = fishing.placement(0, spot.id.0);
-        assert_eq!(survey.next_stand(bounds, here), Some(expected));
-        survey.observe(bounds, &scene_around(expected), expected, 2);
+        assert_eq!(survey.next_stand(bounds, here), Some(expected_survey));
+        survey.observe(bounds, &scene_around(expected_survey), expected_survey, 2);
         assert_ne!(
-            survey.next_stand(bounds, expected),
-            Some(expected),
+            survey.next_stand(bounds, expected_survey),
+            Some(expected_survey),
             "arrival must record the ninth cell before selecting the next observation"
         );
     }
@@ -1951,6 +1967,179 @@ mod tests {
                 "every accepted radius-one arrival observes a selected movement cell"
             );
         }
+    }
+
+    #[test]
+    fn draynor_bank_return_stand_is_at_the_saltfish_spots_not_the_booth() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog
+            .method("fishing.saltfish.op3")
+            .expect("Draynor bait fishing");
+        let index = method_index(&catalog, method);
+        let bank_interior = WorldTile {
+            x: 3092,
+            z: 3241,
+            level: 0,
+        };
+        let north_door = WorldTile {
+            x: 3091,
+            z: 3247,
+            level: 0,
+        };
+        let spots = [
+            WorldTile {
+                x: 3085,
+                z: 3230,
+                level: 0,
+            },
+            WorldTile {
+                x: 3086,
+                z: 3227,
+                level: 0,
+            },
+        ];
+        let anchor = WorldTile {
+            x: 3086,
+            z: 3229,
+            level: 0,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: 8,
+            ..GathererSettings::default()
+        };
+        assert!(
+            complete_spots(method).unwrap().iter().any(|spot| {
+                let bounds = movement_bounds(spot).unwrap_or(SceneRegionInput {
+                    min_x: spot.origin.x,
+                    min_z: spot.origin.z,
+                    max_x: spot.origin.x,
+                    max_z: spot.origin.z,
+                    level: spot.origin.level,
+                });
+                spots.iter().any(|tile| region_contains(bounds, *tile))
+            }),
+            "pinned 289 content must include the Draynor saltfish envelope"
+        );
+        for (mode, radius) in [
+            (AreaMode::Custom, 8_u16),
+            (AreaMode::Start, 8),
+            (AreaMode::Auto, 40),
+        ] {
+            let area = WorkArea {
+                mode,
+                anchor,
+                radius,
+            };
+            let target = resource_return_target(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                ReturnObservation {
+                    here: bank_interior,
+                    now: 1,
+                    skill_stat: 10,
+                    avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                },
+            )
+            .expect("Draynor saltfish supplies a resource return stand");
+            assert_ne!(
+                target.tile, bank_interior,
+                "{mode:?}: clamp-toward-here used to pick the bank interior"
+            );
+            assert_ne!(target.tile, north_door);
+            assert!(
+                area.contains(target.tile)
+                    || spots.iter().any(|spot| distance(target.tile, *spot) <= 1),
+                "{mode:?}: stand {target:?} must sit in the gathering area or next to a spot"
+            );
+            assert!(
+                spots
+                    .iter()
+                    .any(|spot| distance(target.tile, *spot) <= i64::from(NPC_VIEW_RADIUS)),
+                "{mode:?}: the spots must stay in view from {target:?}"
+            );
+            assert!(
+                distance(target.tile, north_door) > i64::from(NPC_VIEW_RADIUS)
+                    || target.tile.z < north_door.z,
+                "{mode:?}: a north-door click route loses the spots (dz ≈ 17)"
+            );
+            assert_eq!(target.npc_index, NO_NPC_INDEX);
+            let player_clamp = observation_cells(
+                complete_spots(method)
+                    .unwrap()
+                    .iter()
+                    .find(|spot| {
+                        fishing_spot_eligible(spot, area)
+                            && known_resource_target(method, spot.entity)
+                    })
+                    .and_then(movement_bounds)
+                    .expect("eligible Draynor saltfish movement"),
+            )
+            .map(|cell| observation_stand(cell, bank_interior))
+            .min_by_key(|stand| distance(bank_interior, *stand))
+            .expect("a toward-player observation clamp");
+            assert_ne!(
+                target.tile, player_clamp,
+                "{mode:?}: return must not reuse the player-clamped observation stand {player_clamp:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loc_bank_return_uses_the_resource_origin_not_an_observation_clamp() {
+        let catalog = real_catalog();
+        let method = catalog.method("woodcutting.willow").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile {
+            x: 3092,
+            z: 3241,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: WorldTile {
+                x: 3083,
+                z: 3237,
+                level: 0,
+            },
+            radius: 16,
+        };
+        assert!(area.contains(here));
+        let settings = GathererSettings {
+            skill: "Woodcutting".into(),
+            woodcutting_resources: vec!["willow".into()],
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let target = resource_return_target(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            ReturnObservation {
+                here,
+                now: 1,
+                skill_stat: 30,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            },
+        )
+        .expect("willow origin is the loc return stand");
+        assert!(
+            catalog
+                .spots(method, &area.region())
+                .expect("willow placements")
+                .any(|spot| known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+                    && spot.origin == target.tile),
+            "loc return walks to a resource origin, not a player-clamped observation stand: {:?}",
+            target.tile
+        );
+        assert_ne!(target.tile, here);
     }
 
     #[test]
