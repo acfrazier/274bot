@@ -41,13 +41,24 @@ pub enum PathKind {
     Miniquest,
 }
 
+/// How a sequence picks its next step at each step boundary.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SequenceOrder {
+    /// Every boundary re-reads the steps from the top and starts the first
+    /// one whose `skip_if` is proven false.
     #[default]
     Authored,
+    /// Among the steps whose `skip_if` is proven false, start the one whose
+    /// anchor is closest to the player; every step needs an anchor.
     Nearest,
+    /// Steps run top to bottom through an in-memory cursor: a settled step
+    /// moves the cursor past itself, a proven-true `skip_if` jumps it forward,
+    /// and a failed step is retried in place. The cursor starts over when the
+    /// run starts or restarts (Start, Resume, death) or the stage changes, so
+    /// every step must be safe to repeat from the first one ("safe replay").
+    Ordered,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

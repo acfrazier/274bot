@@ -3377,7 +3377,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                     bank: &bank,
                 };
                 let crate::quester::select::SelectionDecision::Selected(selection) =
-                    crate::quester::select::select(&path, 1, &context)
+                    crate::quester::select::select(&path, 1, 0, &context)
                 else {
                     panic!("expected a known product-progress step");
                 };

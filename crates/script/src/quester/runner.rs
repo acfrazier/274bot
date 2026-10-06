@@ -256,6 +256,9 @@ pub struct Quester {
     selection_since: Option<Duration>,
     seq_index: usize,
     step_index: usize,
+    /// Resume index for an `Ordered` sequence: past the last settled step,
+    /// held on a failed one, zero after a restart or a sequence change.
+    cursor: usize,
     step: Option<Box<dyn StepRun>>,
     /// Freshness boundary for the active step; overwritten at each successful begin.
     step_after: api::quest_progress::EvidenceStamp,
@@ -576,6 +579,7 @@ impl Quester {
             selection_since: None,
             seq_index: 0,
             step_index: 0,
+            cursor: 0,
             step: None,
             step_after: api::quest_progress::EvidenceStamp {
                 run,
@@ -1430,6 +1434,23 @@ impl Quester {
         }
     }
 
+    /// Re-targets the sequence after a settle outcome. The ordered cursor moves
+    /// past a settled sequence step, holds on a failed one, and starts over
+    /// when the stage now names another sequence.
+    fn retarget_after_settle(&mut self, settled: bool) {
+        let Some(stage) = self.stage.as_ref() else {
+            return;
+        };
+        let sequence = sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
+        if sequence != self.seq_index {
+            self.cursor = 0;
+        } else if settled && !self.in_prelude {
+            self.cursor = self.step_index + 1;
+        }
+        self.seq_index = sequence;
+        self.step_index = 0;
+    }
+
     fn wait_for_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
         let since = self.unreadable_since.get_or_insert(tick.cx.active_now());
         if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(8) {
@@ -1629,6 +1650,7 @@ impl Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
+        let fresh = self.progress.is_none();
         self.progress = Some(progress);
         self.dirty = true;
         let sequence = stage
@@ -1661,6 +1683,13 @@ impl Quester {
             self.empty_reads = 0;
         }
         if retarget {
+            // Progress is dropped on every restart (Start, Resume, session
+            // change, death, random event), so a fresh adoption replays an
+            // ordered sequence from its first step; a same-stage re-read keeps
+            // the cursor, and another sequence starts at its top.
+            if fresh || self.seq_index != sequence {
+                self.cursor = 0;
+            }
             self.seq_index = sequence;
             self.step_index = 0;
             self.in_prelude = false;
@@ -2216,11 +2245,7 @@ impl Script for Quester {
                 self.settling = false;
                 self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
-                if let Some(stage) = self.stage.as_ref() {
-                    self.seq_index =
-                        sequence_for_stage(&self.path, stage.0.as_ref()).unwrap_or(self.seq_index);
-                    self.step_index = 0;
-                }
+                self.retarget_after_settle(true);
                 self.on_step_boundary(tick);
             } else {
                 if tick.cx.active_now() >= self.settle_deadline {
@@ -2264,11 +2289,7 @@ impl Script for Quester {
                     if self.parked {
                         self.parked_step = failed_step;
                     }
-                    if let Some(stage) = self.stage.as_ref() {
-                        self.seq_index =
-                            sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
-                        self.step_index = 0;
-                    }
+                    self.retarget_after_settle(false);
                 }
             }
             self.publish(tick.output);
@@ -2282,6 +2303,7 @@ impl Script for Quester {
             let selected = {
                 let path = &self.path;
                 let seq_index = self.seq_index;
+                let cursor = self.cursor;
                 let quests = &self.quests;
                 let progress = self
                     .progress
@@ -2306,7 +2328,7 @@ impl Script for Quester {
                     outcome,
                     bank,
                 };
-                match select_with_skips(path, seq_index, &pred, |step| {
+                match select_with_skips(path, seq_index, cursor, &pred, |step| {
                     trace.record(
                         output,
                         api::hostlog::Level::Info,
@@ -2380,6 +2402,25 @@ impl Script for Quester {
                 {
                     return Ok(self.finish_quest(tick));
                 }
+                if self
+                    .path
+                    .sequences
+                    .get(self.seq_index)
+                    .is_some_and(|seq| seq.order == super::path::SequenceOrder::Ordered)
+                {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: stage {stage} ordered sequence has no step left at cursor {}; rereading progress",
+                            self.path.id.0, self.cursor
+                        ),
+                    );
+                }
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
                     self.parked = true;
@@ -2392,6 +2433,10 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Continue);
             };
             self.step_index = index;
+            if !prelude {
+                // A proven-true skip_if jumps the ordered cursor forward.
+                self.cursor = index;
+            }
             self.advances = advances;
             self.empty_reads = 0;
             self.in_prelude = prelude;
@@ -3990,7 +4035,7 @@ mod tests {
             s,
         )
     }
-    fn status_fixture(
+    pub(super) fn status_fixture(
         mut document: super::super::path::PathDocument,
     ) -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5727,3 +5772,7 @@ mod cook_bank_tests;
 #[cfg(test)]
 #[path = "cook_dialogue_runner_tests.rs"]
 mod cook_dialogue_tests;
+
+#[cfg(test)]
+#[path = "ordered_runner_tests.rs"]
+mod ordered_tests;
