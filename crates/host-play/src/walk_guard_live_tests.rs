@@ -2853,7 +2853,12 @@ fn replay_walk_guard_w1_retained_receipts() {
 fn walk_guard_fixture_seeds_between_relog_and_stand() {
     // `quester_stage` relogs before the stand teleport (a fresh-account
     // relog resets position); the prayer/hitpoint seeds must stay between
-    // them.
+    // them. The removed workaround preserved colour-relog, seeds, stand, so
+    // pin that exact between-order on one food and one no-food row: every
+    // seed step sits strictly after the colour relog and strictly before
+    // the stand, and each row carries only its own seeds.
+    const COLOUR_RELOG: &str = "relog so the quest tab colour matches the seeded varp";
+    const STAND: &str = "stand at the quest start";
     let start = WorldTile {
         x: 2632,
         z: 3266,
@@ -2865,16 +2870,71 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
         let relog = scenario
             .steps
             .iter()
-            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .position(|step| step.name == COLOUR_RELOG)
             .expect("walk-guard fixture has a colour relog");
         let stand = scenario
             .steps
             .iter()
-            .position(|step| step.name == "stand at the quest start")
+            .position(|step| step.name == STAND)
             .expect("walk-guard fixture has a stand step");
         assert!(
             relog < stand,
-            "stand teleport must follow the relog (food={food:?})"
+            "stand teleport must follow the colour relog (food={food:?})"
         );
+        // The colour relog is the last relog: a seed between the tutorial
+        // relog and the colour relog would not survive to Start.
+        assert_eq!(
+            scenario
+                .steps
+                .iter()
+                .rposition(|step| matches!(step.kind, StepKind::Relog)),
+            Some(relog),
+            "the colour relog must be the last relog (food={food:?})"
+        );
+        let between = |name: &'static str| {
+            let hits: Vec<usize> = scenario
+                .steps
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| step.name == name)
+                .map(|(index, _)| index)
+                .collect();
+            assert!(
+                !hits.is_empty(),
+                "walk-guard fixture is missing {name:?} (food={food:?})"
+            );
+            for hit in hits {
+                assert!(
+                    relog < hit && hit < stand,
+                    "{name:?} at {hit} must sit between the colour relog ({relog}) and the stand ({stand}) (food={food:?})"
+                );
+            }
+        };
+        let absent = |name: &'static str| {
+            assert!(
+                scenario.steps.iter().all(|step| step.name != name),
+                "walk-guard fixture must not contain {name:?} (food={food:?})"
+            );
+        };
+        match food {
+            None => {
+                between("seed Prayer 43");
+                absent("seed Prayer 37");
+                absent("seed Hitpoints 40");
+                absent("seed HP near eat line");
+                absent("seed four lobsters");
+            }
+            Some(feed) => {
+                between("seed Prayer 37");
+                between("seed Hitpoints 40");
+                between("seed HP near eat line");
+                absent("seed Prayer 43");
+                if feed {
+                    between("seed four lobsters");
+                } else {
+                    absent("seed four lobsters");
+                }
+            }
+        }
     }
 }

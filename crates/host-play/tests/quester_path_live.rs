@@ -139,6 +139,8 @@ fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
 /// Path bytes plus where they came from. Loading a folder also publishes it
 /// to the registry snapshot `path_cell` reads, shadowing the embedded index;
 /// without a folder the bundled snapshot answers for the embedded index.
+/// Every failure after publishing the folder restores the previous source,
+/// so a failed reload never leaks `FolderSource` into later cells.
 fn resolve_source(quest: &str) -> Result<&'static str, String> {
     if let Some(folder) = std::env::var_os("QUESTER_PATH_FOLDER") {
         let folder = PathBuf::from(folder);
@@ -153,18 +155,27 @@ fn resolve_source(quest: &str) -> Result<&'static str, String> {
             enabled: true,
             folder,
         });
-        let selected = FamilyPreparation::run(|_| {
-            api::game_data::for_revision(ClientRevision::R289).expect("selected 289 data")
-        })
-        .map_err(|error| format!("selected data worker: {error:?}"))?
-        .join()
-        .map_err(|error| format!("selected data worker: {error:?}"))?;
-        let data = Arc::clone(&selected);
-        let loaded = FamilyPreparation::run(move |worker| registry::reload(&data, worker))
-            .map_err(|error| format!("folder reload worker: {error:?}"))?
+        let loaded = (|| {
+            let selected = FamilyPreparation::run(|_| {
+                api::game_data::for_revision(ClientRevision::R289).expect("selected 289 data")
+            })
+            .map_err(|error| format!("selected data worker: {error:?}"))?
             .join()
-            .map_err(|error| format!("folder reload worker: {error:?}"))?
-            .map_err(|error| format!("folder reload: {error:?}"))?;
+            .map_err(|error| format!("selected data worker: {error:?}"))?;
+            let data = Arc::clone(&selected);
+            FamilyPreparation::run(move |worker| registry::reload(&data, worker))
+                .map_err(|error| format!("folder reload worker: {error:?}"))?
+                .join()
+                .map_err(|error| format!("folder reload worker: {error:?}"))?
+                .map_err(|error| format!("folder reload: {error:?}"))
+        })();
+        let loaded = match loaded {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                registry::set_source(before.clone());
+                return Err(error);
+            }
+        };
         for diagnostic in loaded.diagnostics() {
             println!("PATH-DIAG {diagnostic}");
         }
@@ -337,6 +348,14 @@ mod smoke_tests {
 
     #[test]
     fn smoke_cell_serves_a_folder_cook_through_the_registry() {
+        let seeds = parse_seeds(COOK_SEEDS).unwrap();
+        // Baseline from the embedded index, before any folder is published.
+        let embedded_stats = cook_cell(&seeds)
+            .scenario
+            .steps
+            .iter()
+            .filter(|step| step.name == "stage qualification skill")
+            .count();
         let root = std::env::temp_dir().join(format!(
             "274bot-path-smoke-{}-{}",
             std::process::id(),
@@ -346,12 +365,37 @@ mod smoke_tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
+        // Folder-only marker: the embedded Cook carries no skill
+        // requirements, so one extra crafting gate must survive into the
+        // cell as exactly one more "stage qualification skill" step. An
+        // embedded-only read would still build the baseline cell and fail
+        // the count below.
+        let mut folder_cook: serde_json::Value =
+            serde_json::from_slice(script::quester::compile::path_bytes("cook").unwrap()).unwrap();
+        folder_cook["quest"]["requirements"] = serde_json::json!([{
+            "id": "crafting",
+            "kind": {"Skill": {"skill": "crafting", "level": 31}},
+            "at": "Start",
+            "source": "folder smoke marker",
+        }]);
         std::fs::write(
             root.join("cook.json"),
-            script::quester::compile::path_bytes("cook").unwrap(),
+            serde_json::to_vec(&folder_cook).unwrap(),
         )
         .unwrap();
         let before = registry::source();
+        // Restore the previous source on every exit: `set_source` resets the
+        // snapshot to Bundled, so a leaked FolderSource would shadow the
+        // embedded index for later tests.
+        struct SourceGuard(Option<FolderSource>);
+        impl Drop for SourceGuard {
+            fn drop(&mut self) {
+                if let Some(source) = self.0.take() {
+                    registry::set_source(source);
+                }
+            }
+        }
+        let _guard = SourceGuard(Some(before));
         registry::set_source(FolderSource {
             enabled: true,
             folder: root.clone(),
@@ -370,13 +414,29 @@ mod smoke_tests {
             .unwrap();
         let bytes = loaded.bytes("cook").expect("folder serves cook");
         assert_eq!(loaded.path_source("cook").label(), "folder");
-        registry::set_source(before);
         let path: script::quester::path::PathDocument =
             serde_json::from_slice(bytes.as_ref()).unwrap();
         assert_eq!(path.id.0.as_ref(), "cook");
-        let seeds = parse_seeds(COOK_SEEDS).unwrap();
+        // Build the cell while the folder source is still the snapshot
+        // `path_cell` reads; restoring first would test the embedded cell.
+        assert_eq!(
+            registry::snapshot().path_source("cook").label(),
+            "folder",
+            "the folder source must stay published across the cell build"
+        );
         let cell = cook_cell(&seeds);
         assert_eq!(cell.quest, "cook");
+        let folder_stats = cell
+            .scenario
+            .steps
+            .iter()
+            .filter(|step| step.name == "stage qualification skill")
+            .count();
+        assert_eq!(
+            folder_stats,
+            embedded_stats + 1,
+            "the folder-only crafting gate must survive into the cell"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }
