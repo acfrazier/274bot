@@ -1,14 +1,16 @@
 # Contributing
 
-274bot is **alpha** (`0.1.0` crate versions, no crates.io publish; public
-history tags `0.1.x`). The host, API, nav execute, random-event guardian,
-headless TUI, panel, script kernel (Browse / Start / Pause / Stop / Load /
-Reload, bulk Start all / Stop all, catalog refresh), and revision profiles
-are in-tree. Catalog compatibility remains **partial** — unsupported
-helpers fail closed; do not treat a green unit job as full script
-qualification. See [CHANGELOG.md](CHANGELOG.md).
+274bot is in **beta** for 0.2.0 (host workspace crate versions still
+`0.1.9`, no crates.io publish; public history tags `0.1.x`). The host, API,
+nav execute, random-event guardian, headless TUI, panel, script kernel
+(Browse / Start / Pause / Stop / Load / Reload, bulk Start all / Stop all,
+catalog refresh), revision profiles, the native Quester / Gatherer /
+Sherlock cards, and the shared panel+TUI Fleet are in-tree. Catalog
+compatibility remains **partial** — unsupported helpers fail closed; do not
+treat a green unit job as full script qualification. See
+[CHANGELOG.md](CHANGELOG.md).
 
-Alpha is not turnkey public-world automation: you run a **local** engine for
+Beta is not turnkey public-world automation: you run a **local** engine for
 the revision you care about and select a profile from `~/.274bot/servers.json`.
 The public built-in is `rs2b2t` (`--rs2b2t` or `--profile rs2b2t`):
 WSS/HTTPS on the configured rs2b2t roster, with served login keys and a baked
@@ -42,7 +44,7 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   engine checkout's `engine/` folder (or set it once under `[env]` in
   `~/.cargo/config.toml`); set `BOT_NAV_BUILD=skip` to build without bundling. The
   `nav-pack` CLI stays for custom bakes (`$NAV_PACK` or
-  `~/.274bot/274bot.navpack`, magic `274V`, version byte **12**; v11 and older
+  `~/.274bot/274bot.navpack`, magic `274V`, version byte **16**; v15 and older
   are `BadVersion`). Details:
   [docs/api/nav.md](docs/api/nav.md).
 
@@ -61,7 +63,8 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 `--release` matters: a debug `cargo run` looks frozen. Headed default is
 the wgpu GPU renderer in the client submodule; `BOT_CPU=1` is CpuPix3D.
 
-**host-play** upserts named users (`--user test` defaults to `test`/`test`).
+**host-play** upserts named users (missing users, including the default
+`test` user, are created with a fresh random game password).
 **panel-play** does not: an empty first-run vault stays empty until you
 Save credentials.
 
@@ -100,6 +103,27 @@ Rust **1.98.0** (`rust-toolchain.toml` in this repo and in
 `@stable`. Bump both files and both workflows together — do not
 `rustup update` into a new clippy `-D` set mid-tag.
 
+## Crate layout
+
+Workspace members (`Cargo.toml` `[workspace] members`):
+
+| Crate | Owns |
+| --- | --- |
+| `host` | Slot loops, login queue, session pump |
+| `vault` | Encrypted (AES-256-GCM) account profiles |
+| `api` | Agent surface (snapshot → query → interact → settle) plus selected game data |
+| `host-play` | Headless CLI and the shared `Play` session core the other front ends reuse |
+| `frontend-core` | Shared panel/TUI core: fleet marks, walk grants, operator session |
+| `panel` | `panel-play`: the ImGui operator window |
+| `tui` | `tui-play`: the headless ratatui operator panel |
+| `nav` | Baked collision + transport pack, router, `Traveller::follow` |
+| `script` | Script kernel: compiled cards (Quester, Gatherer, Sherlock) and the JS isolate compat surface |
+| `scenario` | Live scenario steps, proofs and fleet-start helpers |
+| `e2e` | Native suite runner and headed/headless live twins |
+
+`vendor/fr-client-rust` is the client submodule: a path dependency, not a
+workspace member (see Client submodule below).
+
 ## Tests
 
 **Local CI** is this checkout: host workspace and the vendored client
@@ -136,15 +160,30 @@ GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
 feature-gated test lanes (script `load` and V8-free `--no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
-`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture checker
+`memory-profile-no-alloc`, panel `render-diagnostics`, api/script
+`path-schema` for the generated Path schema, host-play `live-harness` for the
+`LIVE=1` ignored tests, and `test-support` fixture seams that frontend
+dev-dependencies enable — never production builds) and the architecture checker
 (no Rust toolchain). Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:
 `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
 not a headed or engine pass.
 
-Live harnesses need the engine for the profile under test. Failures print
-`FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
+## Live-test rules
+
+Live harnesses need the local engine for the profile under test. Failures
+print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
 `BOT_DEBUG=1`.
+
+- `LIVE=1` gates every ignored live test; without it, `-- --ignored` still
+  skips them. Default `cargo test` stays green with no engine running.
+- Run live tests single-threaded (`--test-threads=1`) against a throwaway
+  `HOME` (for example `HOME="$(mktemp -d)"`), so live runs never touch your
+  operator vault, profiles or cache.
+- Live twins mint per-run usernames on disposable local-engine profiles (the
+  engine auto-registers unknown accounts). Never substitute public accounts.
+- Live runs target local profiles only (`local-289` for the production
+  revision). Unit tests do not verify public login.
 
 ```bash
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1

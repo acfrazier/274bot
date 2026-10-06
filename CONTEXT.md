@@ -25,7 +25,7 @@ _Avoid_: empty `[]` forever; copying `api/ai/quests/defs`; gathering camp tables
 ### Script layers
 
 **Rust-native script**:
-A script compiled into the host that drives host verbs directly, with no isolate. Sherlock is the first.
+A script compiled into the host that drives host verbs directly, with no isolate. Sherlock was the first; Quester and Gatherer are compiled the same way.
 _Avoid_: compiled card as a JS wrapper, "native" meaning JS API v2
 
 **JS API v1**:
@@ -67,8 +67,7 @@ The runtime names in the published rs2b0t-api `index.d.ts` (exports and members,
 _Avoid_: their `src/bot/api` bodies, `abi.ts`, cloning the reference tree
 
 **Rewrite** vs **port**:
-A rewrite does the operator-facing job on this host's verbs. A port transplants the catalog's method (control flow, routers, quest `defs/`). Whales (GatheringBot, AIOQuester, ClueSolver) and quest-def cards (ArravSupplier, Barcrawl, RoguesPurse) are later rewrites or stay dim. A coordinate table in Rust is not a port.
-_Avoid_: honest script port, cloning QuestEngine / `defs/` / WalkExecutor bodies / ToolAcquire JS / gathering god-class
+A rewrite does the operator-facing job on this host's verbs. A port transplants the catalog's method (control flow, routers, quest `defs/`). Gatherer, Quester and Sherlock are shipped rewrites. Remaining whales (GatheringBot and the rest) and quest-def cards (ArravSupplier, Barcrawl, RoguesPurse) stay dim. A coordinate table in Rust is not a port.
 
 **World-port**:
 Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Traveller is nav), ToolAcquire JS, MarketMaker ledger, webwalk A*.
@@ -109,11 +108,11 @@ The Rust-native script that runs clue trails on the clue machine. It replaces ca
 _Avoid_: ClueSolver, lighting ClueSolver
 
 **Quester**:
-The Rust-native script that will drive a Path on host verbs. Not the whale catalog card `AIOQuester`. A later rewrite.
+The Rust-native script that drives a Path on host verbs. Not the whale catalog card `AIOQuester`, which stays dim as replaced by this card.
 _Avoid_: QuestEngine, AIOQuester, honest script port
 
 **Gatherer**:
-The Rust-native script that will replace catalog GatheringBot. Woodcutter / Miner / Fisher stay dim until then.
+The Rust-native script for woodcutting, mining and fishing (Start / Site / Auto / Custom areas; Power or Bank disposal). Catalog Woodcutter / Miner / Fisher rows stay dim.
 _Avoid_: GatheringBot, lighting dim gather cards, cloning camp tables
 
 **Path**:
@@ -148,6 +147,10 @@ _Avoid_: treating it as RequiredStats, padding with setstat
 How a Path obtains an item: inventory, then bank when that check exists, then gather/collect from server-content spawns (loc/obj/npc), then shop last.
 _Avoid_: shop-first, hardcoded tiles when content has a spawn, mining/gather as a named mill-only verb
 
+**Bank memory**:
+The host-owned last-seen whole bank of one account, filled from the open bank. Unknown until observed; never an observed zero.
+_Avoid_: treating unknown as empty, closed-bank inventory
+
 ### Families
 
 **Shop**:
@@ -157,3 +160,21 @@ _Avoid_: TradeView as shop, faking stock, shop policy in JSON, catalog `Shop.sel
 **Trade**:
 The host family for player-to-player trade (`TradeView`, baked `TRADEMAIN`). Catalog `Trade.*` name-maps here.
 _Avoid_: using this for NPC shops
+
+### Fleet and profiles
+
+**Fleet**:
+The marked bots, driven together from the panel Fleet window or the TUI fleet table (Start, Stop, Assign, Assign & restart, Log in/out, Walk N to one destination, Apply the focused bot's settings). One shared core; per-bot settings stay separate.
+_Avoid_: a second session model for multibox, per-frontend fleet state
+
+**Marks**:
+Identity-keyed bot selection shared by the panel and the TUI. Every marked-rows command reports each bot once with a short reason.
+_Avoid_: focused-only bulk, selection that diverges between front ends
+
+**Server profile**:
+One entry from `servers.json` binding revision and world roster for the whole process (`local-274`, `local-289`, `rs2b2t` built in). Immutable once the session binds it.
+_Avoid_: switching worlds mid-process, `--prod` / `BOT_TARGET` (removed)
+
+**Danger zone**:
+Content-derived nav exclusion (dangerous monsters and similar areas). Walks avoid it by default and name what blocks them; crossing needs the per-walk opt-in or the global grant.
+_Avoid_: hand-written monster lists, policy tables as routing

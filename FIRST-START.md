@@ -111,7 +111,7 @@ canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
 build-time nav revision should match the world you play. `nav-pack` stays
 for custom bakes: `cargo run -p nav --bin nav-pack` over the content maps
 tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
-version byte **11**; v10 and older are `BadVersion` and must be rebaked).
+version byte **16**; v15 and older are `BadVersion` and must be rebaked).
 Details: [docs/api/nav.md](docs/api/nav.md).
 
 Catalog scripts (optional): set **`$RS2B0T`** or pass `--catalog` to an
@@ -132,6 +132,12 @@ cargo run --release -p tui --bin tui-play -- --profile local-289
 # 274 (set ENGINE_DIR to the 274 engine root):
 # BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 ```
+
+A first `tui-play` run with no `--user` stops with "vault has no profiles"
+instead of seeding an account: pass `--user NAME` to create the first one
+(`host-play --user` also creates missing accounts with a fresh random game
+password). The panel never auto-creates an account: an empty first-run vault
+stays empty until you type a username/password and Save.
 
 Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):
 

@@ -1,15 +1,33 @@
 # 274bot
 
-**Alpha.** A Rust **bot host** for RuneScape revisions **274** and **289** (~2004-era Lost City stacks): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
+**Beta (0.2.0 Beta 1).** A Rust **bot host** for RuneScape revision **289** (~2004-era Lost City stack), with revision **274** on a best-effort path: N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
 
 The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start / Pause / Stop, bulk Start all / Stop all, catalog refresh, manual Reload, and JS/TS loading share the Rust host kernel. Catalog compatibility is **partial**: implemented banking, food, loadout and traversal helpers run through Rust; unsupported operations fail closed. This is not a claim that every catalog script or option matrix passes. See [CHANGELOG.md](CHANGELOG.md), [docs/api/script.md](docs/api/script.md), and the [reusable live harness](docs/harness.md) / [native suite runner](docs/e2e-suite.md).
 
+## What 0.2.0 does
+
+Native scripts compiled into the host, driven through the panel or TUI script chrome like any other card:
+
+- **Quester** — runs built-in quest Paths on revision 289, reading progress from the quest journal and picking up again after Stop/Start. Pick quests, skips and their order from lists; each run recovers from up to two deaths and stops on the next. Path format: [docs/quester-paths.md](docs/quester-paths.md).
+- **Gatherer** — woodcutting, mining and fishing at a named site, a start tile, a custom area, or Auto search for the nearest usable spots. Power disposition drops products; Bank disposition banks them at the nearest bank you can walk to (or a bank you pick) and walks back.
+- **Combat** — the shared native fight behind the native scripts: melee, ranged and magic with protection prayers, potion sips and eating. Prayers you turned on yourself stay on; only the prayers the bot raised are switched off afterwards.
+- **Clues (Sherlock)** — the Rust-native clue-trail solver: waits for a held clue and works it through the shared clue machine.
+- **Fleet** — mark bots once and drive them from the panel Fleet window or the TUI fleet table: Start, Stop, Assign, Assign & restart, Log in/out, Walk N to one destination, and Apply the focused bot's settings to the marks. Marks and per-bot outcomes are shared between the two front ends.
+
+Getting around and paying your way:
+
+- **Server profiles** — one entry from `~/.274bot/servers.json` per process (`local-274`, `local-289`, `rs2b2t` built in; see below).
+- **Danger-zone routing** — walks route around dangerous monsters and similar zones by default and say which monsters block the way when no safe route exists; WalkTo offers a per-walk "Route through danger zones" opt-in plus a global grant in Nav config.
+- **Fares and tolls** — boat and cart rides pay their real fares and the Lumbridge–Al Kharid gate takes its 10 coins; a walk that cannot pay refuses before boarding and says how many coins are missing.
+- **Bank choice** — Gatherer banks at Nearest by default or a named bank you pick; map-walk bank fetch withdraws only what the walk is missing.
+
 | | |
 |--|--|
-| **Revisions** | **274** and **289** (immutable per-process server profiles; see below) |
+| **Revisions** | **289** is the production revision; **274** is best-effort (immutable per-process server profiles; see below) |
 | **Engine** | A **local** Lost City engine for the selected revision (defaults differ by profile) |
 | **Client** | submodule [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) `r274-bh-modular` (bot-host fork of the modularized Fairy-Ring client) |
 | **This repo** | [acfrazier/274bot](https://github.com/acfrazier/274bot) — **MIT** ([LICENSE](LICENSE), [NOTICE.md](NOTICE.md)) |
+| **Packages** | macOS app plus standalone `panel-play` / `tui-play` binaries for macOS, Windows and Linux (see [FIRST-START.md](FIRST-START.md)) |
 
 ## Server profiles (revision + world)
 
@@ -67,13 +85,13 @@ The public WSS profile does not need an engine root.
 
 All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
 
-Alpha’s **tested** path is the **local** engine for the profile you run. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
+Beta's **tested** path is the **local** engine on revision **289**. Revision 274 is best-effort: it may run, but it is neither tested nor claimed. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
 
 ## What it is
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **12**; v11 and older are `BadVersion` and must be rebaked), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **16**; v15 and older are `BadVersion` and must be rebaked), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see above) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -109,7 +127,8 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 # Local 274: set ENGINE_DIR to the 274 engine root for this build/run.
 # BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 
-# CLI: run one or more vaulted profiles (upserts --user; default test/test).
+# CLI: run one or more vaulted profiles (missing users, including the default
+# test user, are created with a fresh random game password).
 # Asks for the vault passphrase on the terminal; a new vault asks twice.
 cargo run --release -p host-play -- --profile local-289 --user test
 
@@ -141,11 +160,11 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all** and bulk **Start all / Stop all** (script bulk is separate from login bulk). Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords and fresh UIDs. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api/vault.md](docs/api/vault.md)).
+**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords and fresh UIDs. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api…
 
 **Scripts:** panel **Browse / Load / Reload / Start / Pause / Stop** are live; MultiBox rail adds **Start all / Stop all**. Catalog **Refresh catalog** (with confirm when running/paused bots are affected). Successful Start persists a per-profile script assignment and settings bag in the vault. Transpile is content-addressed under `~/.274bot/js-cache` (raw-source SHA-256). WalkTo on the main chrome is host nav, not a script card. Catalog scripts come from your configured `$RS2B0T` / `--catalog` checkout; this repository does not copy their source. Details: [docs/api/script.md](docs/api/script.md).
 
-**Windows:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Watch **1 fps**, capture **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
+**Windows:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Unfocused slots paint on the **1 fps** watch cadence; the focused slot runs at **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
 ## Nav
 
@@ -173,9 +192,9 @@ table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **15**). **Rebake existing v14 and older packs after updating:** v15 adds count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`. Spell runes and script-deleted fares/passes are consumed; charged jewellery returns its content-declared `next_obj_stage` after a successful rub. Resource counts must be positive, and returned items require consumption. The v14 kind-byte flag still marks content-derived player-relative ladder/stair landings without added wire bytes. v15 retains the zone table, selected quest-family binding, typed quest-stage gates and per-edge approach geometry; `decode` rejects v14 and older as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **16**). **Rebake existing v15 and older packs after updating:** v16 adds the conjunctive `worn_all_req` list and an optional exact takeoff per edge. v15 added count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`. Spell runes and script-deleted fares/passes are consumed; charged jewellery returns its content-declared `next_obj_stage` after a successful rub. Resource counts must be positive, and returned items require consumption. The v14 kind-byte flag still marks content-derived player-relative ladder/stair landings without added wire bytes. v16 retains the zone table, selected quest-family binding, typed quest-stage gates and per-edge approach geometry; `decode` rejects v15 and older as `BadVersion`. Pass `[MAPS_DIR] [DOORS_D…
 
-**External v15 packs keep their baked routing data.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-derived from the current content tree. Rebake it with `nav-pack` after content or format changes to refresh its zone table, resource accounting and routing data.
+**External v16 packs keep their baked routing data.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-derived from the current content tree. Rebake it with `nav-pack` after content or format changes to refresh its zone table, resource accounting and routing data.
 
 ## Live tests and suite runner
 

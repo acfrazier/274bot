@@ -1,6 +1,6 @@
 # NOTICE
 
-**274bot** is an independent Rust **bot host** for a 274-era client. It is **not** a RuneScape official product, **not** endorsed by Jagex Ltd, **not** official Lost City / LostCityRS, and **not** a Fairy Ring release.
+**274bot** is an independent Rust **bot host** for a 289-era client (revision 274 is best-effort). It is **not** a RuneScape official product, **not** endorsed by Jagex Ltd, **not** official Lost City / LostCityRS, and **not** a Fairy Ring release.
 
 **RuneScape** and related marks are trademarks of Jagex Ltd. Period assets (jag files, cache, maps) remain Jagex IP where they exist in *other* trees — they are **not** redistributed from this git repository.
 
@@ -10,14 +10,14 @@ The macOS, Windows and Linux release packages include derived **WalkTo map image
 
 Headless clients in this process are [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) (`r274-bh-modular`), vendored at `vendor/fr-client-rust`. That tree is a bot-host fork of the modularized [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) 274 client (`r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork). Upstream is a derivation of open **Lost City / LostCityRS** client work (Client-TS 274, Client-Java 274) under MIT. See the submodule’s [NOTICE.md](vendor/fr-client-rust/NOTICE.md) and [LICENSE](vendor/fr-client-rust/LICENSE).
 
-This repository does **not** relicense Lost City–originated client code as original work of 274bot. Bot crates (`host`, `vault`, `api`, `host-play`, `panel`, `nav`, `script`, `scenario`, `e2e`) are original to this project under [LICENSE](LICENSE) (MIT).
+This repository does **not** relicense Lost City–originated client code as original work of 274bot. Bot crates (`host`, `vault`, `api`, `host-play`, `frontend-core`, `panel`, `tui`, `nav`, `script`, `scenario`, `e2e`) are original to this project under [LICENSE](LICENSE) (MIT).
 
 Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,” or “rs2b0t.”
 
 ## Ideas borrowed, not copied
 
 - **API shape:** snapshot → query → interact → settle is a **borrowed idea** from m8aq-style bot APIs. This is not a file port of m8aq (or any other bot framework).
-- **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless 274 clients, login queue, live harnesses), not a port of its TypeScript implementation. Script-API declarations in `crates/script/compat-js/index.d.ts` are generated from rs2b0t `00d39a17e0`, Copyright 2026 N64Jive (MIT), with host-specific type overlays; the emitted file retains the MIT notice. Listed TS for the 0.1.5 shim is loaded from an operator `$RS2B0T` checkout (`src/bot/scripts`), not vendored here.
+- **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless clients, login queue, live harnesses), not a port of its TypeScript implementation. Script-API declarations in `crates/script/compat-js/index.d.ts` are generated from rs2b0t `00d39a17e0`, Copyright 2026 N64Jive (MIT), with host-specific type overlays; the emitted file retains the MIT notice. Catalog script sources are loaded from an operator `$RS2B0T` checkout (`src/bot/scripts`), not vendored here.
 - **Quester Paths:** the quest Path documents under `crates/script/paths/` (and the Quester's queue order, safespot tiles and quest-specific numbers in them) are derived in part from rs2b0t's AIOQuester (`src/bot/api/ai/quests/` at `00d39a17e0`), Copyright 2026 N64Jive, used under the MIT license, and re-checked against the revision-289 game content. The Quester runtime itself is a Rust rewrite modelled on FFXIV Questionable's per-quest document approach, not a port of either.
 
 ## Vendored rendering backend
