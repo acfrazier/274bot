@@ -7,6 +7,8 @@
     { "id": "romeojuliet", "file": "romeojuliet.json" },
     { "id": "imp", "file": "imp.json" },
     { "id": "vampire", "file": "vampire.json" },
+    { "id": "death", "file": "death.json" },
+    { "id": "desertrescue", "file": "desertrescue.json" },
     {
       "id": "hauntedmine",
       "name": "Haunted Mine",
