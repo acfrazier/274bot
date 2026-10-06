@@ -301,8 +301,14 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                         .map(|index| api::snapshot::StatView {
                             index,
                             name: String::new(),
-                            effective: if aborted && index == 3 { 1 } else { 40 },
-                            base: 40,
+                            effective: if index == 5 {
+                                43
+                            } else if aborted && index == 3 {
+                                1
+                            } else {
+                                40
+                            },
+                            base: if index == 5 { 43 } else { 40 },
                             xp: 0,
                             used: api::snapshot::stat_used(index as usize),
                         })
@@ -379,11 +385,11 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                 let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
                     panic!("the compiled combat transition must submit a native walk");
                 };
-                assert_eq!(
-                    request.protect,
-                    protect || aborted,
-                    "{expected:?}: cross={cross}"
-                );
+                assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
+                if aborted {
+                    assert_eq!(request.allow.prayer, protect);
+                    assert!(request.allow.food);
+                }
                 if cross {
                     assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
                 } else {
@@ -1379,37 +1385,48 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
         z: 3000,
         level: 0,
     };
-    let mut snapshot = GameSnapshot::new();
-    seed_abort_scene(
-        &mut snapshot,
-        here,
-        40,
-        vec![
-            aborting_npc(
-                7,
-                heavy.id,
-                api::WorldTile {
-                    x: here.x + 1,
-                    ..here
-                },
-            ),
-            aborting_npc(
-                8,
-                light.id,
-                api::WorldTile {
-                    x: here.x - 1,
-                    ..here
-                },
-            ),
-        ],
-        Some(lobster.id),
-        lobster.name.as_deref(),
-    );
     let mut run = combat_test_run(
         imp_target(&data),
         None,
         Some(Arc::new(NeverStop)),
         Vec::new(),
+    );
+    let attack_animation = run
+        .tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id;
+    let mut attackers = vec![
+        aborting_npc(
+            7,
+            heavy.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        ),
+        aborting_npc(
+            8,
+            light.id,
+            api::WorldTile {
+                x: here.x - 1,
+                ..here
+            },
+        ),
+    ];
+    for attacker in &mut attackers {
+        attacker.animation = attack_animation;
+    }
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(
+        &mut snapshot,
+        here,
+        40,
+        attackers,
+        Some(lobster.id),
+        lobster.name.as_deref(),
     );
     run.protect = true;
     let aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
@@ -1450,28 +1467,32 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
     });
     assert!(matches!(first, Some(GuardOp::IfButton { .. })));
 
+    let mut attackers = vec![
+        aborting_npc(
+            7,
+            heavy.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        ),
+        aborting_npc(
+            8,
+            light.id,
+            api::WorldTile {
+                x: here.x - 1,
+                ..here
+            },
+        ),
+    ];
+    for attacker in &mut attackers {
+        attacker.animation = attack_animation;
+    }
     seed_abort_scene(
         &mut snapshot,
         here,
         1,
-        vec![
-            aborting_npc(
-                7,
-                heavy.id,
-                api::WorldTile {
-                    x: here.x + 1,
-                    ..here
-                },
-            ),
-            aborting_npc(
-                8,
-                light.id,
-                api::WorldTile {
-                    x: here.x - 1,
-                    ..here
-                },
-            ),
-        ],
+        attackers,
         Some(lobster.id),
         lobster.name.as_deref(),
     );
@@ -1576,7 +1597,62 @@ fn prep_abort_without_live_attacker_keeps_legacy_blocked_handoff() {
 }
 
 #[test]
-fn failed_abort_walk_keeps_guarded_hold_until_its_bound() {
+fn prep_abort_escapes_attack_animation_without_health_bar() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let attack_animation = run
+        .tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id;
+    let mut attacker = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    attacker.in_combat = false;
+    attacker.animation = attack_animation;
+    attacker.health = 0;
+    attacker.total_health = 0;
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, vec![attacker], None, None);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(
+            report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                crate::combat::PrepItem::Ammo,
+            ))),
+            cx,
+        )
+    })
+    .is_pending());
+    let crate::native::HostEffect::Walk(request) =
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+    else {
+        panic!("an attacking NPC without a health bar must still trigger escape");
+    };
+    assert!(request.target.x < here.x);
+}
+
+#[test]
+fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let lobster = data.item_by_alias("lobster").unwrap();
@@ -1585,8 +1661,21 @@ fn failed_abort_walk_keeps_guarded_hold_until_its_bound() {
         z: 3000,
         level: 0,
     };
-    let mut snapshot = GameSnapshot::new();
-    let attacker = aborting_npc(
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    run.protect = true;
+    let attack_animation = run
+        .tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id;
+    let mut attacker = aborting_npc(
         7,
         warlord.id,
         api::WorldTile {
@@ -1594,19 +1683,15 @@ fn failed_abort_walk_keeps_guarded_hold_until_its_bound() {
             ..here
         },
     );
+    attacker.animation = attack_animation;
+    let mut snapshot = GameSnapshot::new();
     seed_abort_scene(
         &mut snapshot,
         here,
-        1,
-        vec![attacker.clone()],
+        39,
+        vec![attacker],
         Some(lobster.id),
         lobster.name.as_deref(),
-    );
-    let mut run = combat_test_run(
-        imp_target(&data),
-        None,
-        Some(Arc::new(NeverStop)),
-        Vec::new(),
     );
     let mut ledger = None;
     assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
@@ -1644,33 +1729,197 @@ fn failed_abort_walk_keeps_guarded_hold_until_its_bound() {
     });
     assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
 
-    let hold = with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx));
-    assert!(
-        hold.is_pending(),
-        "route failure must enter bounded guarded hold"
-    );
-    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+    let (protect_varp, protect_button_com) = run
+        .tables
+        .prayer(crate::combat::tables::PrayerRole::Protect, 2)
+        .map(|prayer| (prayer.varp, prayer.button_com))
+        .expect("selected content includes Protect from Melee");
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    let raised = ledger.as_ref().unwrap().outbox.iter().find_map(|action| {
         matches!(
-            &action.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
-                action,
-                ..
-            }) if action == "Eat"
+            action.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+                component_id
+            }) if component_id == protect_button_com
         )
-    }));
-
-    let mut terminal = None;
-    for tick in 15..=80 {
-        let outcome = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
-        if outcome.is_ready() {
-            terminal = Some(outcome);
-            break;
-        }
-    }
-    let Some(Poll::Ready(Err(ActionError::Blocked(reason)))) = terminal else {
-        panic!("a failed abort route must end its guarded hold with a bounded reason");
+        .then_some(action.request_id.get())
+    });
+    let Some(raised) = raised else {
+        panic!("the abort hold must raise its allowed protect prayer");
     };
-    assert!(reason.to_ascii_lowercase().contains("hold"));
+    let protect_clicks = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| {
+            matches!(
+                action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+                    component_id
+                }) if component_id == protect_button_com
+            )
+        })
+        .count();
+    assert_eq!(
+        protect_clicks, 1,
+        "the hold must not immediately retire protection while the attacker is live"
+    );
+
+    snapshot.seed_varps(
+        (0..api::prayer::PRAYER_COUNT)
+            .map(|index| {
+                let varp = api::prayer::PRAYER_VARP0 + index as i32;
+                api::snapshot::VarpView {
+                    index: varp,
+                    value: i32::from(varp == protect_varp),
+                }
+            })
+            .chain([api::snapshot::VarpView {
+                index: crate::combat::OPTION_NODEF,
+                value: 0,
+            }])
+            .collect(),
+    );
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().interaction = Some(crate::native::InteractionReceipt {
+        request_id: raised,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 14,
+            sequence: 14,
+        },
+        accepted: true,
+        chat_since: 0,
+    });
+    for tick in 15..=26 {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "high HP and a long-running live threat must not end the hold at tick {tick}"
+        );
+    }
+    assert!(
+        ledger.as_ref().unwrap().outbox.iter().all(|action| {
+            !matches!(
+                action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::IfButton {
+                    component_id
+                }) if component_id == protect_button_com
+            )
+        }),
+        "protection must not be dropped while the attacker remains live"
+    );
+}
+
+#[test]
+fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let attack_animation = run
+        .tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id;
+    let mut attacker = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    attacker.animation = attack_animation;
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 1, vec![attacker], None, None);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(
+            report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                crate::combat::PrepItem::Ammo,
+            ))),
+            cx,
+        )
+    })
+    .is_pending());
+    let failed_walk = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        request_id: failed_walk,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 13,
+            sequence: 13,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("route fixture failure")),
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
+
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    assert_eq!(
+        outbox.len(),
+        1,
+        "supply exhaustion must start one escape walk"
+    );
+    let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+        panic!("supply exhaustion must escape with one native walk");
+    };
+    assert!(!request.protect);
+    assert!(!request.allow.prayer);
+    assert!(!request.allow.food);
+    let escape_walk = outbox[0].request_id.get();
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        request_id: escape_walk,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 16,
+            sequence: 16,
+        },
+        end: WalkEnd::Arrived,
+        blocked: None,
+        detail: None,
+    });
+    assert!(matches!(
+        with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)),
+        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("escape")
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
 #[test]
@@ -1730,7 +1979,7 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 }
 
 #[test]
-fn return_walks_retain_authored_protection_and_abort_walks_stay_protected() {
+fn return_and_abort_walks_use_only_authored_protection() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 3125,
@@ -1744,6 +1993,18 @@ fn return_walks_retain_authored_protection_and_abort_walks_stay_protected() {
         z: 3242,
         level: 0,
     }));
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| api::snapshot::StatView {
+                index,
+                name: String::new(),
+                effective: if index == 5 { 43 } else { 40 },
+                base: if index == 5 { 43 } else { 40 },
+                xp: 0,
+                used: api::snapshot::stat_used(index as usize),
+            })
+            .collect(),
+    );
     for (cross, protect) in [(false, false), (true, false), (false, true), (true, true)] {
         for end in [
             CombatEnd::TargetGone,
@@ -1772,7 +2033,7 @@ fn return_walks_retain_authored_protection_and_abort_walks_stay_protected() {
             };
             assert_eq!(request.target, stand);
             assert_eq!(request.radius, 1);
-            assert_eq!(request.protect, protect || aborting);
+            assert_eq!(request.protect, protect);
             if aborting {
                 assert_eq!(request.allow.prayer, protect);
                 assert!(request.allow.food);

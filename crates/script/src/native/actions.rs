@@ -445,6 +445,16 @@ impl<M: NativeMachine> Drop for ActionHandle<M> {
     }
 }
 
+impl<M: NativeMachine> ActionHandle<M> {
+    pub(crate) fn machine_prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        let machine = self.machine.borrow();
+        match machine.as_ref() {
+            Some(machine) => machine.prayer_cleanup(),
+            None => crate::combat::RaisedPrayers::empty(),
+        }
+    }
+}
+
 impl ActionHandle<crate::combat::Combat> {
     pub(crate) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();

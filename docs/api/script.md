@@ -626,16 +626,28 @@ the plan, then drives native `TargetGone` and `Aborted` reports to assert the
 emitted walks' crossing scope and protection independently.
 
 An abort with a live attacker retains a safety owner rather than immediately
-parking the step. Abort walks request the shared protection-and-food guard
-without expanding crossing permissions. If no engaged actor was recorded,
-retreat geometry uses the heaviest observed live attacker targeting the player.
+parking the step. Threat evidence requires an NPC facing or targeting the local
+player together with an attack animation, attack spot, or recent hitmark on the
+player; NPC health-bar visibility is not required. Product and live-proof
+receipts use the same evidence predicate.
+Abort walks retain food upkeep and the step's crossing permissions. They request
+protection only when prayer is allowed and the player's Prayer level can use
+Protect; otherwise the host runs a food-only guard without refusing the walk.
+If no engaged actor was recorded, retreat geometry uses the heaviest observed
+live attacker.
 An abort walk that fails or arrives while an attacker remains transfers into
-a guarded hold. The hold uses the shared food policy, ends when the attacker
-disengages or HP clears the guard food line, and otherwise reaches a twelve-tick
-bound with an explicit blocked reason. Prayer-disallowed or low-prayer holds
-use food-only upkeep; ordinary protected-walk admission is unchanged, so such
-walks may be refused and fall back to that hold. This bounded fallback is not
-a general escape guarantee.
+a guarded hold. The hold continues eating and permitted protection even at high
+HP, and ends only after three consecutive ticks without threat evidence.
+There is no tick-based hold timeout. If no food remains and protection is
+unavailable or disallowed, the hold instead makes one unguarded escape walk away
+from the attacker before parking, when a destination can be formed. It does not
+retry that escape indefinitely. Cancellation releases protection owned by the
+hold.
+
+The shared combat request's acquisition radius defaults to twelve tiles.
+Quester combat tactics require an explicit `engage_radius`; a ranged tactic
+authored with radius six cannot acquire a target nine tiles away. Ranged live
+qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
 

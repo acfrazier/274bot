@@ -16,7 +16,7 @@ use api::selected::ClientRevision;
 use api::snapshot::SnapshotView;
 use std::sync::{Arc, LazyLock};
 
-const LOWEST_PROTECT: i32 = 37;
+pub const MIN_PROTECT_PRAYER_LEVEL: i32 = 37;
 const PRAYER_STAT: i32 = 5;
 const HITPOINTS_STAT: i32 = 3;
 
@@ -168,24 +168,50 @@ impl WalkGuard {
             return Err(GuardRefusal::PrayerDisallowed);
         }
         let base = prayer_base(snapshot).ok_or(GuardRefusal::Snapshot)?;
-        if base < LOWEST_PROTECT {
+        if base < MIN_PROTECT_PRAYER_LEVEL {
             return Err(GuardRefusal::PrayerTooLow);
         }
         Ok(Self::new(tables, request.allow.food, false))
     }
 
-    /// Begin abort-hold upkeep when only food is allowed or protect is too
-    /// high-level. This never observes or toggles prayers.
-    pub fn begin_food_only_with(
+    /// Begin food-only upkeep for a route when protection is not allowed.
+    pub fn begin_food_only(
         request: &WalkRequest,
         snapshot: &SnapshotView<'_>,
+    ) -> Result<Self, GuardRefusal> {
+        Self::begin_food_only_with(request, snapshot, shared_tables()?)
+    }
+
+    /// Host/tests supply the pin's tables explicitly.
+    pub fn begin_food_only_with(
+        request: &WalkRequest,
+        _snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
         if !request.allow.food {
             return Err(GuardRefusal::FoodDisallowed);
         }
-        Frame::borrow(*snapshot).ok_or(GuardRefusal::Snapshot)?;
         Ok(Self::new(tables, true, true))
+    }
+
+    /// Whether any recognized food remains in the observed inventory.
+    /// Missing inventory is unknown, not exhausted.
+    pub fn has_food(&self, snapshot: &SnapshotView<'_>) -> Option<bool> {
+        if self.flags & FLAG_FOOD_ALLOWED == 0 {
+            return Some(false);
+        }
+        let inventory = snapshot.inventory()?;
+        Some(
+            inventory
+                .value
+                .iter()
+                .any(|row| row.count > 0 && self.tables.food(row.def.id).is_some()),
+        )
+    }
+
+    /// Prayers this guard has observed being raised by its admitted click.
+    pub fn prayer_cleanup(&self) -> RaisedPrayers {
+        self.raised_prayers
     }
 
     fn new(tables: Arc<CombatTables>, food_allowed: bool, food_only: bool) -> Self {

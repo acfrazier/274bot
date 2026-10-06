@@ -650,7 +650,10 @@ pub trait NativeMachine: Send + 'static {
     where
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
-    fn cancel(&mut self);
+    fn cancel(&mut self) {}
+    fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        crate::combat::RaisedPrayers::empty()
+    }
 }
 
 #[cfg(test)]
