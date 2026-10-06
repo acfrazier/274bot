@@ -1061,6 +1061,60 @@ fn ownership_lost_before_close_retries_without_closing_another_modal() {
 }
 
 #[test]
+fn journal_modal_timeout_retries_the_read_instead_of_parking() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    assert!(matches!(
+        ack(&mut ledger, 2),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+    // The accepted click never shows the journal within the acquire window.
+    for tick in 3..=7 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    assert!(script.journal.is_none(), "the timed-out machine is dropped");
+    assert!(!script.parked, "one missed acquire is not terminal");
+    assert!(script.journal_retry_pending);
+    for tick in 8..=11 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    finish_read(&mut script, &mut snapshot, &mut ledger, 12, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+}
+
+#[test]
+fn repeated_journal_modal_timeouts_cap_row_clicks_and_name_the_cause() {
+    let (mut script, snapshot) = fixture(true);
+    let mut ledger = None;
+    let mut clicks = 0;
+    for tick in 1..80 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            assert!(matches!(
+                ack(&mut ledger, tick),
+                HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+            ));
+            clicks += 1;
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked);
+    assert_eq!(clicks, 3, "a logical read must not spray row clicks");
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "journal read retry limit reached (journal modal repeatedly timed out)"
+    );
+}
+
+#[test]
 fn transient_journal_retry_requires_continuously_closed_observed_ticks() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
