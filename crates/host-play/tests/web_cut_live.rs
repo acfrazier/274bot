@@ -641,6 +641,10 @@ fn follow_webs(
     (outcome, attempts, observed_failures, web_observations)
 }
 
+/// Render the arrival frame (needs the client) and hand the pixels plus the
+/// JSON receipt to a background evidence writer for encode and write, then
+/// wait bounded for the files before returning. Names and contents match the
+/// old synchronous capture; the RGB layout is preserved byte-for-byte.
 fn save_capture(
     root: &Path,
     scenario: &str,
@@ -648,6 +652,10 @@ fn save_capture(
     receipt: &Value,
     client: &mut client::client::Client,
 ) -> PathBuf {
+    use host_play::evidence_writer::{
+        EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor, DEFAULT_FLUSH_WAIT,
+        DEFAULT_QUEUE_BOUND,
+    };
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -655,36 +663,42 @@ fn save_capture(
     let run_dir = root.join(format!("web_cut_{scenario}_{account}_{millis}"));
     fs::create_dir_all(&run_dir).expect("create per-account evidence folder");
     let stem = format!("{millis}_01-cross-both-webs");
-    fs::write(
-        run_dir.join(format!("{stem}.json")),
-        serde_json::to_vec_pretty(receipt).expect("serialize evidence receipt"),
-    )
-    .expect("write matching JSON receipt");
-
+    let render_start = Instant::now();
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let client::render::backend::FrameOutput::PixMap(pixels) = renderer.mainredraw(client) else {
         panic!("CPU arrival capture returned a GPU frame");
     };
-    let mut rgb = Vec::with_capacity(pixels.pixels.len() * 3);
-    for pixel in pixels.pixels {
-        rgb.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-        ]);
+    println!(
+        "capture-render site=web_cut {stem} {}x{} render_ms={:.1}",
+        pixels.width,
+        pixels.height,
+        render_start.elapsed().as_secs_f64() * 1000.0,
+    );
+    let writer = EvidenceWriter::new(DEFAULT_QUEUE_BOUND);
+    let job = writer.submit(EvidenceRequest {
+        png_path: run_dir.join(format!("{stem}.png")),
+        width: std::convert::TryFrom::try_from(pixels.width).expect("positive pixmap width"),
+        height: std::convert::TryFrom::try_from(pixels.height).expect("positive pixmap height"),
+        pixels: pixels.pixels,
+        color: PngColor::Rgb,
+        sidecar: Some(EvidenceSidecar {
+            path: run_dir.join(format!("{stem}.json")),
+            receipt: receipt.clone(),
+            patch_error: None,
+        }),
+    });
+    match writer.wait(&job, DEFAULT_FLUSH_WAIT) {
+        Some(outcome) if outcome.error.is_none() => {}
+        Some(outcome) => panic!(
+            "write web-cut evidence {}: {}",
+            run_dir.display(),
+            outcome.error.unwrap_or_else(|| "unknown".into()),
+        ),
+        None => panic!(
+            "web-cut evidence writer did not finish before its deadline: {}",
+            run_dir.display(),
+        ),
     }
-    let file =
-        fs::File::create(run_dir.join(format!("{stem}.png"))).expect("create matching PNG capture");
-    let width = std::convert::TryFrom::try_from(pixels.width).expect("positive pixmap width");
-    let height = std::convert::TryFrom::try_from(pixels.height).expect("positive pixmap height");
-    let mut encoder = png::Encoder::new(file, width, height);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .expect("write PNG header")
-        .write_image_data(&rgb)
-        .expect("write actual CPU arrival frame");
     println!("LIVE_EVIDENCE {}", run_dir.display());
     run_dir
 }

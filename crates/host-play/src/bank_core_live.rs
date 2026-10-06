@@ -49,7 +49,10 @@ use script::bank::{Close, Open, OpenArgs, Select, SelectArgs, Withdraw, Withdraw
 use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
 use vault::{Profile, ProfileSettings};
 
-use super::bank_npc_live::write_teller_png;
+use super::bank_npc_live::render_teller_frame;
+use super::evidence_writer::{
+    write_failure_sidecar, EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
+};
 use super::{run_with_template, tele_args, ProfileOptions, SharedClientTemplate};
 
 const COINS: i32 = 995;
@@ -170,6 +173,10 @@ pub(super) struct Cell {
     capture_started: bool,
     pub(super) capture_written: bool,
     pub(super) capture_error: Option<String>,
+    /// Shared background evidence writer; the hook submits the rendered
+    /// frame and marks the capture written only once the files are durable.
+    writer: Arc<EvidenceWriter>,
+    capture_job: Option<EvidenceJob>,
     /// The frame snapshot, rebuilt in place as the host keeps its own: the
     /// bank session generation is tracked across frames.
     snapshot: Option<GameSnapshot>,
@@ -209,6 +216,10 @@ impl Cell {
             capture_started: false,
             capture_written: false,
             capture_error: None,
+            writer: Arc::new(EvidenceWriter::new(
+                super::evidence_writer::DEFAULT_QUEUE_BOUND,
+            )),
+            capture_job: None,
             snapshot: None,
         }
     }
@@ -505,21 +516,35 @@ fn save_evidence(
     directory: &Path,
     passed: bool,
     mut receipt: serde_json::Value,
-) -> Result<(), String> {
+    writer: &EvidenceWriter,
+) -> Result<EvidenceJob, String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     let step = if passed { "01-final" } else { "FAIL-final" };
     let png = directory.join(format!("{step}.png"));
-    let png_result = write_teller_png(client, &png);
-    receipt["png"] = serde_json::json!(png.file_name().and_then(|name| name.to_str()));
-    receipt["png_error"] = serde_json::json!(png_result.as_ref().err());
     let json = directory.join(format!("{step}.json"));
-    std::fs::write(
-        &json,
-        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| format!("write {}: {error}", json.display()))?;
-    png_result
+    receipt["png"] = serde_json::json!(png.file_name().and_then(|name| name.to_str()));
+    receipt["png_error"] = serde_json::Value::Null;
+    let sidecar = EvidenceSidecar {
+        path: json,
+        receipt,
+        patch_error: Some(Box::new(|receipt, error| {
+            receipt["png_error"] = serde_json::Value::String(error.to_owned());
+        })),
+    };
+    match render_teller_frame(client) {
+        Ok(frame) => Ok(writer.submit(EvidenceRequest {
+            png_path: png,
+            width: frame.width,
+            height: frame.height,
+            pixels: frame.pixels,
+            color: PngColor::Rgba,
+            sidecar: Some(sidecar),
+        })),
+        // Render needs the client, so its failure is reported inline; the
+        // sidecar still lands with the error recorded, as before.
+        Err(error) => Err(write_failure_sidecar(sidecar, &error)),
+    }
 }
 
 fn read_facts(snapshot: &GameSnapshot, watch: &[i32], last: &Facts) -> Facts {
@@ -645,10 +670,35 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
         }
     };
     if let Some((directory, passed, receipt)) = capture {
-        let result = save_evidence(client, &directory, passed, receipt);
+        let writer = shared.lock().writer.clone();
+        match save_evidence(client, &directory, passed, receipt, &writer) {
+            Ok(job) => {
+                shared.lock().capture_job = Some(job);
+            }
+            Err(error) => {
+                let mut cell = shared.lock();
+                cell.capture_written = true;
+                cell.capture_error = Some(error);
+            }
+        }
+    }
+    // The driver loop already polls `capture_written` under the cell
+    // deadline; this marks it only once the background writer has the PNG
+    // and sidecar durable, which is the bounded cell-end flush.
+    let completed = {
+        let cell = shared.lock();
+        if cell.capture_written {
+            None
+        } else {
+            cell.capture_job
+                .clone()
+                .and_then(|job| cell.writer.poll(&job))
+        }
+    };
+    if let Some(outcome) = completed {
         let mut cell = shared.lock();
         cell.capture_written = true;
-        cell.capture_error = result.err();
+        cell.capture_error = outcome.error;
     }
     shared.lock().snapshot = Some(snapshot);
 }
