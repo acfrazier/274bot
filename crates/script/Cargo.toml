@@ -22,6 +22,10 @@ path-schema = ["dep:schemars", "api/path-schema"]
 [dependencies]
 ab_glyph = "=0.2.32"
 api = { path = "../api" }
+# The bank hint's account identity is the client's own login decoder
+# (`bank_hints::account_component`); `api` and `nav` already build `client`,
+# so this adds no crate to the graph.
+client = { workspace = true }
 nav = { path = "../nav" }
 schemars = { version = "=1.2.2", optional = true }
 # TS parse for import scans (always, V8-free); `load` adds the TS -> JS
@@ -50,9 +54,6 @@ libc = "0.2"
 allocation-counter = "=0.8.1"
 # Integration tests use isolate seams without exposing them in normal builds.
 script = { path = ".", features = ["test-hooks", "path-schema"] }
-# The ctx unit test builds an `ObjType` table; the compiled crate itself
-# never touches `client`.
-client = { workspace = true }
 [[test]]
 name = "load_isolate"
 required-features = ["load"]
