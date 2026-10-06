@@ -26,25 +26,36 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+/// Blocked reason after a combat abort walk arrives with no live attacker.
+pub const ABORTED_COMBAT_STEP_REASON: &str = "combat aborted; caller must handle the failure";
+/// Blocked reason when a combat abort walk cannot be formed or does not arrive.
+pub const ABORT_WALK_FAILED_REASON: &str = "combat abort walk did not reach a safe tile";
+/// Blocked reason when the guarded abort hold observes disengagement.
+pub const ABORT_HOLD_SAFE_REASON: &str =
+    "combat abort guarded hold ended after three consecutive threat-free ticks";
+/// Blocked reason when the guarded abort hold cannot admit its guard.
+pub const ABORT_HOLD_UNAVAILABLE_REASON: &str =
+    "combat abort safety hold could not start its food guard";
+/// Blocked reason after the single supplies-exhausted escape walk arrives.
+pub const ABORT_HOLD_ESCAPED_REASON: &str =
+    "combat abort exhausted guard supplies; completed one escape walk and parked";
+
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
-    std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
+    std::sync::LazyLock::new(|| Arc::from(ABORTED_COMBAT_STEP_REASON));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
-    std::sync::LazyLock::new(|| Arc::from("combat abort walk did not reach a safe tile"));
+    std::sync::LazyLock::new(|| Arc::from(ABORT_WALK_FAILED_REASON));
 static COMBAT_FINISH_TIMEOUT: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat finish exceeded its tick budget"));
 static COMBAT_FINISH_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat finish dialogue failed"));
 static COMBAT_FINISH_INTERRUPTED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat interrupted the post-transform dialogue"));
-static ABORT_HOLD_SAFE: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
-    Arc::from("combat abort guarded hold ended after three consecutive threat-free ticks")
-});
-static ABORT_HOLD_UNAVAILABLE: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
-    Arc::from("combat abort safety hold could not start its food guard")
-});
-static ABORT_HOLD_ESCAPED: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| {
-    Arc::from("combat abort exhausted guard supplies; completed one escape walk and parked")
-});
+static ABORT_HOLD_SAFE: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from(ABORT_HOLD_SAFE_REASON));
+static ABORT_HOLD_UNAVAILABLE: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from(ABORT_HOLD_UNAVAILABLE_REASON));
+static ABORT_HOLD_ESCAPED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from(ABORT_HOLD_ESCAPED_REASON));
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -1248,7 +1259,7 @@ impl CombatRun {
                         .map(|npc| AbortThreat {
                             actor: engaged,
                             npc_type,
-                            tile: npc.tile,
+                            tile: npc.network,
                             weight: 0,
                         })
                 }
@@ -1260,7 +1271,7 @@ impl CombatRun {
                     .map(|player| AbortThreat {
                         actor: engaged,
                         npc_type: -1,
-                        tile: player.actor.tile,
+                        tile: player.network,
                         weight: 0,
                     }),
             };
@@ -1306,7 +1317,7 @@ impl CombatRun {
                         index,
                     },
                     npc_type,
-                    tile: npc.tile,
+                    tile: npc.network,
                     weight,
                 };
                 if heaviest.is_none_or(|current| weight > current.weight) {
@@ -1335,7 +1346,7 @@ impl CombatRun {
                         index,
                     },
                     npc_type: -1,
-                    tile: player.actor.tile,
+                    tile: player.network,
                     weight: player.combat_level.max(0),
                 };
                 if heaviest.is_none_or(|current| candidate.weight > current.weight) {
@@ -1352,7 +1363,10 @@ impl CombatRun {
         cx: &StepContext<'_, '_>,
     ) -> Option<api::WorldTile> {
         let snapshot = cx.tick.cx.snapshot();
-        let here = snapshot.here()?.value;
+        snapshot.here()?;
+        // Retreat geometry compares packet-time network tiles. Rendered poses
+        // interpolate and can point the retreat toward the attacker.
+        let here = snapshot.local_player()?.value.player.network;
         let Some(reference) = self.abort_reference(report, &snapshot) else {
             return self.request.stand;
         };
@@ -1428,6 +1442,7 @@ impl CombatRun {
         let snapshot = cx.tick.cx.snapshot();
         let allow_prayer = self.abort_protection_allowed(&snapshot);
         request.protect = allow_prayer;
+        request.food_guard = !allow_prayer;
         request.allow = WalkAllow {
             prayer: allow_prayer,
             food: true,

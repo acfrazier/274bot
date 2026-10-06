@@ -1255,6 +1255,7 @@ mod tests {
                 loc_id: None,
                 cross: Box::new([]),
                 protect: false,
+                food_guard: false,
                 allow: Default::default(),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
@@ -1765,6 +1766,7 @@ mod tests {
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
                 protect: false,
+                food_guard: false,
                 allow: Default::default(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -1862,6 +1864,7 @@ mod tests {
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
                             protect: false,
+                            food_guard: false,
                             allow: Default::default(),
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();

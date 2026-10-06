@@ -753,6 +753,7 @@ mod tests {
                 evidence: None,
                 cross: Box::default(),
                 protect: true,
+                food_guard: false,
                 allow: Default::default(),
             }
         }
