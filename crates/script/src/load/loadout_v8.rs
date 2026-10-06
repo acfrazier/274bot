@@ -28,14 +28,14 @@ pub(super) fn post(rows: Vec<Loadout>) {
     POSTED.with(|posted| *posted.borrow_mut() = rows);
 }
 
-/// `selectedLoadout(bag)`: the posted loadout the `loadout` setting names
-/// (case-insensitive, trimmed), else the first one, else `null`, in the
-/// persisted shape (`{ name, worn, carry, unassigned? }`).
-pub(super) fn selected_compat(wanted: &str) -> serde_json::Value {
+/// `selectedLoadout(bag)`: the resolved saved script loadout, in the persisted
+/// shape (`{ name, worn, carry, unassigned? }`).
+pub(super) fn selected_compat(wanted: &str) -> Result<serde_json::Value, String> {
     POSTED.with(|posted| {
-        crate::loadouts_store::selected_compat_loadout(&posted.borrow(), wanted)
-            .and_then(|row| serde_json::to_value(row).ok())
-            .unwrap_or(serde_json::Value::Null)
+        let rows = posted.borrow();
+        let row = crate::loadouts_store::resolve_script_loadout(rows.as_slice(), wanted)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(row).map_err(|error| format!("serialize selected loadout: {error}"))
     })
 }
 

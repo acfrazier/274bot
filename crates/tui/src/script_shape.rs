@@ -1118,4 +1118,91 @@ mod tests {
         assert!(text.contains("Stop/Start Quester"), "{text:?}");
         assert!(!text.contains("script: running"), "{text:?}");
     }
+
+    #[test]
+    fn folder_path_marking_is_visible_at_common_sizes() {
+        let live = std::env::var_os("QUESTER_PATHS_LIVE_STATUS").map(|path| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap()
+        });
+        let fields = live
+            .as_ref()
+            .map(|receipt| &receipt["final_status"]["fields"]);
+        let source = fields
+            .map(|fields| fields["path_source"].as_str().unwrap())
+            .unwrap_or("folder");
+        let comment = fields
+            .map(|fields| fields["step_comment"].as_str().unwrap())
+            .unwrap_or("Folder Path live-edit witness: accept Cook's request");
+        let mut status = script::native::ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            card: script::CompiledId("Quester"),
+            phase: script::native::NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            fields: std::sync::Arc::from([
+                script::native::StatusField {
+                    key: "path_source",
+                    label: "Path source",
+                    value: script::native::StatusValue::Text(source.into()),
+                },
+                script::native::StatusField {
+                    key: "step_comment",
+                    label: "Step comment",
+                    value: script::native::StatusValue::Text(comment.into()),
+                },
+            ]),
+            failure: None,
+        };
+        for (width, height) in [(80, 24), (120, 40)] {
+            let text = render(
+                ScriptPane::new(
+                    RunState::Running,
+                    None,
+                    &[],
+                    &[],
+                    false,
+                    false,
+                    false,
+                    "",
+                    false,
+                    None,
+                )
+                .with_native_status(Some(&status)),
+                width,
+                height,
+            );
+            assert!(text.contains("Path source: folder"), "{text:?}");
+            assert!(
+                text.contains(&format!("Step comment: {comment}")),
+                "{text:?}"
+            );
+            if let Some(directory) = std::env::var_os("QUESTER_PATHS_TUI_EVIDENCE") {
+                let directory = std::path::PathBuf::from(directory);
+                std::fs::create_dir_all(&directory).unwrap();
+                let mut rows = String::with_capacity(text.len() + usize::from(height));
+                for (index, character) in text.chars().enumerate() {
+                    if index > 0 && index % usize::from(width) == 0 {
+                        rows.push('\n');
+                    }
+                    rows.push(character);
+                }
+                std::fs::write(
+                    directory.join(format!("path-source-{width}x{height}.txt")),
+                    rows,
+                )
+                .unwrap();
+            }
+        }
+        status.fields = std::sync::Arc::from([status.fields[1].clone()]);
+        assert!(
+            frontend_core::views::script_status_rows(&status)
+                .next()
+                .is_none(),
+            "a bundled-only status retains the existing short rows"
+        );
+    }
 }

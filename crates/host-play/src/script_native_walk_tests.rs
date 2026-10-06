@@ -24,6 +24,7 @@ struct Walker {
     later_target: Option<WorldTile>,
     radius: u16,
     arrival: nav::arrival::ArrivalKind,
+    options: script::native::WalkOptions,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
     events: Vec<WalkEvent>,
@@ -80,7 +81,7 @@ impl Script for WalkerScript {
                 radius: shared.radius,
                 arrival: shared.arrival,
                 loc_id: None,
-                options: script::FindOptions::default(),
+                options: shared.options,
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
@@ -289,33 +290,21 @@ fn zoned_open_world() -> NavWorld {
     world
 }
 fn catalog_open_world() -> NavWorld {
-    let mut world = open_world(40, 1);
+    let mut world = open_world(40, 10);
+    let tile = |x, z| WorldTile { x, z, level: 0 };
     let mut zones = vec![
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 2,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 3,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
+        nav::zones::Zone::npc(tile(2, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(30, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
     ];
     zones[0].group = 0;
-    zones[1].group = 1;
+    for zone in &mut zones[1..5] {
+        zone.group = 1;
+    }
+    zones[5].group = 2;
     let kinds = vec![nav::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
@@ -341,13 +330,25 @@ fn catalog_open_world() -> NavWorld {
             "draynor-jail-guards",
             "Draynor jail guards",
             nav::router::AvoidRect {
-                min_x: 3,
-                max_x: 3,
+                min_x: 9,
+                max_x: 21,
+                min_z: 1,
+                max_z: 7,
+                level: Some(0),
+            },
+            vec![1, 2, 3, 4].into_boxed_slice(),
+        ),
+        nav::zones::ZoneGroup::new(
+            "death-plateau-throwers",
+            "Death Plateau thrower trolls",
+            nav::router::AvoidRect {
+                min_x: 30,
+                max_x: 30,
                 min_z: 0,
                 max_z: 0,
                 level: Some(0),
             },
-            vec![1].into_boxed_slice(),
+            vec![5].into_boxed_slice(),
         ),
     ];
     let table = nav::zones::ZoneTable::from_parts(
@@ -824,9 +825,30 @@ fn seed_missile_launch(snapshot: &mut GameSnapshot) {
             kind: api::snapshot::ActorKind::Player,
             index: me,
         }),
-        t1: 0,
-        t2: 30,
+        t1: 32,
+        t2: 37,
     }]);
+}
+
+fn seed_melee_attack(snapshot: &mut GameSnapshot) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let melee_npc = data.npc_by_config("khazard_warlord").unwrap();
+    let melee_sequence = data
+        .style_seqs()
+        .iter()
+        .find(|row| row.style & 0x01 != 0)
+        .unwrap()
+        .seq_id;
+    seed_missile_launch(snapshot);
+    let mut npcs = snapshot.npcs().to_vec();
+    let npc = &mut npcs[0];
+    npc.r#type = Some(melee_npc.id as usize);
+    npc.name = melee_npc.display.clone();
+    npc.in_combat = false;
+    npc.animation = melee_sequence;
+    npc.animation_frame = 0;
+    snapshot.seed_npcs(npcs);
+    snapshot.seed_projectiles(Vec::new());
 }
 
 fn seed_protect_state(snapshot: &mut GameSnapshot, varp: Option<i32>) {
@@ -1228,6 +1250,198 @@ fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user
 }
 
 #[test]
+fn a_dropped_switch_retires_the_guard_owned_old_protect() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623],
+        "the guard admits a switch from its owned Missiles style to Melee"
+    );
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    for tick in 5..=7 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623, 5622],
+        "when the server drops Melee, cleanup turns off the still-on owned Missiles"
+    );
+}
+
+#[test]
+fn a_dropped_switch_cleanup_does_not_restart_navigation_deferral() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623]);
+    abort_script_walk(&rig.navs, "alice");
+    rig.shared.lock().protect = false;
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    rig.observe(5);
+    rig.snapshot.seed_tick(6);
+    rig.step();
+    rig.observe(6);
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(7);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623, 5622]);
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    assert!(
+        rig.driver.move_calls > moves,
+        "retiring the fallback must not start a second navigation deferral window"
+    );
+}
+
+#[test]
+fn a_dropped_switch_does_not_turn_off_a_user_owned_old_protect() {
+    let mut rig = protected_rig();
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5623]);
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    for tick in 3..=5 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5623],
+        "the old Missiles style was user-owned, so expiry cannot click it off"
+    );
+}
+
+#[test]
+fn a_real_switch_retires_the_new_protect_without_restoring_the_old_one() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5623]);
+
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let melee_varp = data.prayer_by_name("Protect from Melee").unwrap().varp;
+    seed_protect_state(&mut rig.snapshot, Some(melee_varp));
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5623, 5623],
+        "a real switch transfers cleanup to Melee without clicking old Missiles"
+    );
+}
+
+#[test]
+fn a_long_hold_gives_unavailable_owned_on_debt_a_fresh_cleanup_window() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+
+    rig.snapshot.seed_ingame(1);
+    rig.snapshot.seed_tick(40);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "the first cleanup pump starts a new clock instead of expiring at stale guard time"
+    );
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(41);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "a newly readable on-varp is still retired within the fresh attempt window"
+    );
+}
+
+#[test]
+fn a_long_hold_gives_a_refused_cleanup_click_a_fresh_attempt_window() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice", None);
+
+    rig.snapshot.seed_main_modal(-1, Vec::new());
+    rig.snapshot.seed_tick(40);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "a refused first-pump dispatch keeps the newly started debt alive"
+    );
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(41);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "the cleanup click is admitted when its widget resolves on the next pump"
+    );
+}
+
+#[test]
+fn timed_guard_cleanup_drops_report_unavailable_varps_and_refused_clicks() {
+    for (missing_varps, reason) in [
+        (true, "owned protect varp unavailable within cleanup window"),
+        (false, "off click refused within cleanup window"),
+    ] {
+        let mark = crate::walk_map::test_log::mark();
+        let mut rig = protected_rig();
+        raise_owned_missiles(&mut rig);
+        rig.slot().lock().unwrap().stop();
+        reset_script_nav(&rig.navs, "alice", None);
+        if missing_varps {
+            rig.snapshot.seed_ingame(1);
+        } else {
+            rig.snapshot.seed_main_modal(-1, Vec::new());
+        }
+        rig.snapshot.seed_tick(4);
+        rig.step();
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+
+        rig.snapshot.seed_tick(7);
+        rig.step();
+        assert!(
+            rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none(),
+            "unresolved cleanup remains bounded"
+        );
+        assert_eq!(rig.driver.if_button_components, vec![5622]);
+        assert!(
+            crate::walk_map::test_log::records_since(mark)
+                .iter()
+                .any(|(slot, message)| slot == "alice"
+                    && message.starts_with("prayer cleanup drops protect debt component=5622 ")
+                    && message.contains(reason)),
+            "timed cleanup drop must explain its unresolved cause: {reason}"
+        );
+    }
+}
+
+#[test]
 fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry() {
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
@@ -1279,7 +1493,7 @@ fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
     assert_eq!(rig.shared.lock().begun, 2);
     rig.wait_routed();
     let moves = rig.driver.move_calls;
-    rig.snapshot.seed_tick(6);
+    rig.snapshot.seed_tick(7);
     rig.step();
     assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
     assert!(
@@ -1542,21 +1756,277 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 }
 
 #[test]
-fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
+fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+    use script::native::WalkBit;
+    for (global, bit, permitted) in [
+        (false, WalkBit::Inherit, false),
+        (false, WalkBit::Allow, true),
+        (false, WalkBit::Forbid, false),
+        (true, WalkBit::Inherit, true),
+        (true, WalkBit::Allow, true),
+        (true, WalkBit::Forbid, false),
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let globals = Arc::new(Mutex::new(WalkGlobals {
+            allow_danger_zones: global,
+            allow_bank_fetch: true,
+            ..Default::default()
+        }));
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(globals);
+        rig.shared.lock().options.allow_danger_zones = bit;
+        assert!(
+            !crate::walk_permissions::native_options(
+                &rig.navs,
+                "alice",
+                rig.shared.lock().options,
+            )
+            .allow_bank_fetch,
+            "global fetch stays manual-only at the native admission"
+        );
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        {
+            let all = rig.navs.lock().unwrap();
+            let bot = &all["alice"];
+            assert_eq!(
+                bot.route.is_some(),
+                permitted,
+                "global={global}, walk={bit:?}"
+            );
+            assert!(
+                bot.bank_fetch.is_none(),
+                "native walks never use BankBudget"
+            );
+            if permitted {
+                assert!(!bot.requested_route.unwrap().4);
+            } else {
+                assert!(bot.native_walk_failure.is_some());
+                assert!(
+                    bot.requested_route.is_none(),
+                    "a failed admission retires its route request"
+                );
+            }
+            assert!(
+                bot.walk_guard.is_none(),
+                "danger crossing does not start protection"
+            );
+        }
+        if !permitted {
+            rig.observe(2);
+            assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        }
+    }
+}
+
+#[test]
+fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
+    use script::native::WalkBit;
+    for bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+        let mut rig = open_rig(false);
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        rig.shared.lock().options = script::native::WalkOptions {
+            allow_teleports: bit,
+            allow_wilderness: bit,
+            ..Default::default()
+        };
+        rig.observe(1);
+        rig.wait_routed();
+        let all = rig.navs.lock().unwrap();
+        let request = all["alice"].requested_route.unwrap();
+        assert_eq!(request.2, bit != WalkBit::Forbid);
+        assert_eq!(request.3, bit != WalkBit::Forbid);
+        assert!(!request.4);
+    }
+}
+
+#[test]
+fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+    {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().protect = true;
+        seed_prayer(&mut rig.snapshot, 43);
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk_failure.is_some())
+        }));
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    }
+    for names in [
+        vec![Arc::from("unknown-danger-zone")],
+        vec![Arc::from("test-barrier@2,0,0"); 9],
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().cross_first = names;
+        rig.observe(1);
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard.is_none());
+    }
+}
+
+#[test]
+fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(84);
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "allow_teleports": true,
+                "allow_wilderness": true,
+                "allow_danger_zones": true,
+            }))
+            .unwrap(),
+        ),
+        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert!(wait_until(5_000, || {
+        slot.observe_lifecycle();
+        slot.state() == script::RunState::Running
+    }));
+    let permissions = slot.native_walk_permissions().unwrap();
+    for compiled in [true, false] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let mut all = rig.navs.lock().unwrap();
+        let bot = all.entry("alice".into()).or_default();
+        bot.native_permissions = compiled.then_some(permissions);
+        bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        drop(all);
+        let options = crate::walk_permissions::compiled_options(
+            &rig.navs,
+            "alice",
+            nav::router::FindOptions::default(),
+        );
+        assert_eq!(options.allow_teleports, compiled);
+        assert_eq!(options.allow_wilderness, compiled);
+        assert!(!options.allow_bank_fetch);
+        assert_eq!(options.zones.is_all(), compiled);
+        assert!(dispatch_script_interact(
+            &mut rig.client,
+            &rig.snapshot,
+            None,
+            Some((0, 0, 0)),
+            &rig.navs,
+            &rig.world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Walk {
+                x: 4,
+                z: 0,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 1,
+                avoid: vec![],
+                cross: vec![],
+            }],
+        ));
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        let all = rig.navs.lock().unwrap();
+        let bot = &all["alice"];
+        assert_eq!(bot.route.is_some(), compiled);
+        if compiled {
+            let request = bot.requested_route.unwrap();
+            assert!(request.2 && request.3 && request.5.is_all());
+            assert!(!request.4);
+        } else {
+            assert!(bot.requested_route.is_none());
+            assert!(bot.walk_outcome_failed);
+        }
+    }
+}
+
+#[test]
+fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
+    let table = world.graph.zones.as_ref().expect("zone table");
+    let group = |id: &str| {
+        table
+            .groups()
+            .iter()
+            .find(|group| group.id.as_ref() == id)
+            .expect("catalog group")
+    };
+    let white_wolf_rect = group("white-wolf-mountain").rect;
+    let jail_group = group("draynor-jail-guards");
+    let jail_rect = jail_group.rect;
+    let jail_member_rects: Vec<_> = jail_group
+        .members
+        .iter()
+        .map(|member| {
+            let zone = &table.zones()[usize::from(*member)];
+            nav::router::AvoidRect {
+                min_x: zone.min_x,
+                max_x: zone.max_x,
+                min_z: zone.min_z,
+                max_z: zone.max_z,
+                level: Some(i32::from(zone.level)),
+            }
+        })
+        .collect();
+    assert_eq!(jail_member_rects.len(), 4);
     let outside = WorldTile {
         x: 0,
         z: 0,
         level: 0,
     };
     let inside_jail = WorldTile {
-        x: 3_100,
-        z: 3_230,
-        level: 0,
+        x: jail_member_rects[0].min_x,
+        z: jail_member_rects[0].min_z,
+        level: jail_member_rects[0].level.unwrap(),
     };
-    let resolve_avoid = |from, state: &WorldState, id: &str| {
+    let bbox_gap = WorldTile {
+        x: 15,
+        z: 4,
+        level: jail_rect.level.unwrap(),
+    };
+    assert!(jail_rect.contains(bbox_gap));
+    assert!(
+        !jail_member_rects.iter().any(|rect| rect.contains(bbox_gap)),
+        "the fixture gap is inside the group bounding box but outside every guard rectangle"
+    );
+    let resolve_avoid = |from, to, state: &WorldState, id: &str| {
         let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
         exclusions
             .avoid_wire
@@ -1565,40 +2035,49 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
             nav::router::FindOptions::default(),
             &world,
             from,
-            outside,
+            to,
             state,
             exclusions,
         )
     };
 
     let state = WorldState::empty();
-    let (_, white_wolf) = resolve_avoid(outside, &state, "white-wolf-mountain").unwrap();
-    assert_eq!(white_wolf.avoid.len(), 1);
+    let (_, white_wolf) = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
+    assert_eq!(white_wolf.avoid, [white_wolf_rect]);
+
+    let (_, jail) = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(jail.avoid, jail_member_rects);
+    assert!(
+        !jail.avoid.iter().any(|rect| rect.contains(bbox_gap)),
+        "a tile inside the bounding box but outside every actual rectangle is not avoided"
+    );
+    let (_, gap_origin) = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
-        (
-            white_wolf.avoid[0].min_x,
-            white_wolf.avoid[0].max_x,
-            white_wolf.avoid[0].min_z,
-            white_wolf.avoid[0].max_z,
-            white_wolf.avoid[0].level,
-        ),
-        (2828, 2878, 3468, 3538, None)
+        gap_origin.avoid, jail_member_rects,
+        "an endpoint in the bounding-box gap does not exempt the jail"
+    );
+    let (_, gap_destination) =
+        resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(
+        gap_destination.avoid, jail_member_rects,
+        "a destination in the bounding-box gap does not exempt the jail"
     );
 
-    let (_, jail) = resolve_avoid(outside, &state, "draynor-jail-guards").unwrap();
-    assert_eq!(jail.avoid.len(), 4);
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
     let (_, skipped_for_combat) =
-        resolve_avoid(outside, &high_combat, "draynor-jail-guards").unwrap();
+        resolve_avoid(outside, outside, &high_combat, "draynor-jail-guards").unwrap();
     assert!(skipped_for_combat.avoid.is_empty());
-    let (_, skipped_for_endpoint) =
-        resolve_avoid(inside_jail, &state, "draynor-jail-guards").unwrap();
-    assert!(skipped_for_endpoint.avoid.is_empty());
+    let (_, skipped_for_source_endpoint) =
+        resolve_avoid(inside_jail, outside, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_source_endpoint.avoid.is_empty());
+    let (_, skipped_for_destination_endpoint) =
+        resolve_avoid(outside, inside_jail, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_destination_endpoint.avoid.is_empty());
 }
 
 #[test]
-fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
+fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
@@ -1623,6 +2102,22 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "avoidZones: unknown zone \"no-such-zone\""
+    );
+    let mut nonfrozen = crate::script_runtime::ScriptRouteExclusions::default();
+    nonfrozen.avoid_wire.push(InspectAvoidWire::Catalog(
+        "death-plateau-throwers".to_string(),
+    ));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            nonfrozen,
+        )
+        .unwrap_err(),
+        "avoidZones: unknown zone \"death-plateau-throwers\""
     );
 
     let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
@@ -1655,6 +2150,34 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "crossZones: more than 8 zone names"
+    );
+}
+
+#[test]
+fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
+    use script::shim::InspectAvoidWire;
+
+    let world = zoned_open_world();
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
+    exclusions
+        .avoid_wire
+        .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &WorldState::empty(),
+            exclusions,
+        )
+        .unwrap_err(),
+        "avoidZones: catalog zone \"white-wolf-mountain\" has no baked group geometry"
     );
 }
 
@@ -2851,11 +3374,18 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     .unwrap();
     let args = &mut document["roles"][0]["sequences"][0]["steps"][0]["args"];
     args["target"]["npc"] = serde_json::json!("ardougne_archer");
-    let path = script::quester::compile::compile_path(
-        &serde_json::to_vec(&document).unwrap(),
-        &selected,
-        &quests,
-    )
+    let path = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&quests);
+        move |cap| {
+            script::quester::compile::compile_path(
+                &serde_json::to_vec(&document).unwrap(),
+                &selected,
+                &quests,
+                cap,
+            )
+        }
+    })
     .unwrap();
     let quester = script::quester::runner::Quester::new(
         api::selected::RunKey {
@@ -2949,4 +3479,186 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     rig.observe_with_here(u64::from(raised_tick + 2), here);
     assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
+}
+
+fn combat_prayer(name: &str) -> (i32, i32) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("R289 prayer facts");
+    let row = data
+        .prayer_by_name(name)
+        .unwrap_or_else(|| panic!("R289 lacks prayer {name}"));
+    (row.varp, row.button_com)
+}
+
+/// Slot-less bot with an attached, ingame scene and prayer widgets: only the
+/// combat-prayer debt arm acts on `step`.
+fn combat_debt_rig() -> Rig {
+    let mut rig = open_rig(false);
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.navs
+        .lock()
+        .unwrap()
+        .insert("alice".to_string(), NavBot::default());
+    rig
+}
+
+fn owe_combat_debt(rig: &Rig, varps: &[i32], tick: u16) {
+    let owned = script::combat::RaisedPrayers::from_test_varps(varps);
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").expect("debt bot");
+    owe_combat_prayers_off(bot, owned, tick);
+}
+
+fn set_combat_varp(snapshot: &mut GameSnapshot, varp: i32, value: i32) {
+    let mut rows = snapshot.varps().to_vec();
+    for row in &mut rows {
+        if row.index == varp {
+            row.value = value;
+        }
+    }
+    snapshot.seed_varps(rows);
+}
+
+#[test]
+fn combat_prayer_off_sends_exactly_one_bounded_retry() {
+    let (varp, component) = combat_prayer("Protect from Missiles");
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, varp, 1);
+    owe_combat_debt(&rig, &[varp], 0);
+    assert!(rig.navs.lock().unwrap()["alice"]
+        .combat_prayer_off
+        .is_some());
+    for tick in 0u32..=12 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        if tick == 0 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component],
+                "Stop debt opens with one off-click"
+            );
+        } else if tick <= 2 {
+            assert_eq!(
+                rig.driver.if_button_components.len(),
+                1,
+                "no re-send while the off receipt is outstanding"
+            );
+        } else if tick == 3 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component, component],
+                "exactly one bounded retry"
+            );
+        }
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![component, component],
+        "a dropped retry must not admit a third off-click"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "the expired retry drops the debt"
+    );
+}
+
+#[test]
+fn combat_prayer_off_refused_retry_spends_the_retry_without_a_loop() {
+    let (varp, component) = combat_prayer("Protect from Missiles");
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, varp, 1);
+    owe_combat_debt(&rig, &[varp], 0);
+    for tick in 0u32..=10 {
+        rig.snapshot.seed_tick(tick);
+        if tick == 1 {
+            // The retry's target vanishes, so the retry is refused at the
+            // send gate after the first off-click was accepted.
+            rig.snapshot.seed_main_modal(5608, Vec::new());
+        }
+        if tick == 4 {
+            // Restore the retry target so an unbounded retry becomes visible.
+            seed_prayer_widgets(&mut rig.snapshot);
+        }
+
+        rig.step();
+        if tick == 0 {
+            assert_eq!(
+                rig.driver.if_button_components,
+                vec![component],
+                "the first off-click is accepted"
+            );
+        }
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![component],
+        "a refused retry is never re-sent"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "the refused retry still expires the debt on its deadline"
+    );
+}
+
+#[test]
+fn combat_prayer_off_clears_two_prayers_serially_in_table_order() {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("R289 prayer facts");
+    let missiles = data
+        .prayer_by_name("Protect from Missiles")
+        .expect("R289 missiles");
+    let melee = data
+        .prayer_by_name("Protect from Melee")
+        .expect("R289 melee");
+    let (missiles_varp, missiles_com) = (missiles.varp, missiles.button_com);
+    let (melee_varp, melee_com) = (melee.varp, melee.button_com);
+    let first_varp = data
+        .prayers()
+        .iter()
+        .map(|row| row.varp)
+        .find(|varp| *varp == missiles_varp || *varp == melee_varp)
+        .expect("an owned prayer in table order");
+    let (first_varp, first_com, second_varp, second_com) = if first_varp == missiles_varp {
+        (missiles_varp, missiles_com, melee_varp, melee_com)
+    } else {
+        (melee_varp, melee_com, missiles_varp, missiles_com)
+    };
+    let mut rig = combat_debt_rig();
+    set_combat_varp(&mut rig.snapshot, missiles_varp, 1);
+    set_combat_varp(&mut rig.snapshot, melee_varp, 1);
+    owe_combat_debt(&rig, &[missiles_varp, melee_varp], 0);
+    rig.snapshot.seed_tick(0);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com],
+        "one off-click in flight at a time"
+    );
+    set_combat_varp(&mut rig.snapshot, first_varp, 0);
+    rig.snapshot.seed_tick(1);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com, second_com],
+        "the next owned prayer is serviced after the first settles"
+    );
+    set_combat_varp(&mut rig.snapshot, second_varp, 0);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .combat_prayer_off
+            .is_none(),
+        "both owned prayers retired"
+    );
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![first_com, second_com],
+        "settled prayers are never re-clicked"
+    );
 }

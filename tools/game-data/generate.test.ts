@@ -14,6 +14,8 @@ import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisi
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
+import './dialogue-ui.test.ts';
+import { extractKaramjaFacts } from './extractors/karamja.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -52,6 +54,9 @@ const pack = path.join(content, 'pack');
 const consumption = path.join(content, 'scripts/player/configs/consumption');
 const consumeScript = path.join(content, 'scripts/player/scripts/consumption');
 const thieving = path.join(content, 'scripts/skill_thieving/configs/pickpocking');
+const digsiteScript = path.join(content, 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2');
+const trollGuardScript = path.join(content, 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2');
+for (const file of [digsiteScript, trollGuardScript]) fs.mkdirSync(path.dirname(file), { recursive: true });
 for (const directory of [pack, consumption, consumeScript, thieving]) fs.mkdirSync(directory, { recursive: true });
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n6=category_5\n');
 fs.writeFileSync(path.join(pack, 'enum.pack'), '0=potion_prayerrestore\n');
@@ -111,6 +116,18 @@ data=pocket,coins
 data=loot,coin,1,5,10
 data=loot,coin,2,3,20
 `);
+fs.writeFileSync(digsiteScript, `[opnpc3,digworkman1] @pickpocket_digworkman1;
+[opnpc3,digworkman2] @pickpocket_digworkman1;
+if (stat (thieving) < 25) {
+    return;
+}
+`);
+fs.writeFileSync(trollGuardScript, `[opnpc3,troll_prison_guard1]
+[opnpc3,troll_prison_guard2]
+if (stat(thieving) < 30) {
+    return;
+}
+`);
 const facts = extractFacts(content,
     [
         { id: 1, debugname: 'bread', name: 'Bread', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map() },
@@ -124,6 +141,10 @@ const facts = extractFacts(content,
     [
         { id: 10, debugname: 'guard1', name: 'Guard' },
         { id: 11, debugname: 'guard2', name: 'Guard' },
+        { id: 12, debugname: 'digworkman1', name: 'Digsite workman' },
+        { id: 13, debugname: 'digworkman2', name: 'Digsite workman' },
+        { id: 14, debugname: 'troll_prison_guard1', name: 'Twig' },
+        { id: 15, debugname: 'troll_prison_guard2', name: 'Berry' },
     ],
 );
 assert.equal(facts.consumption.length, 5);
@@ -153,9 +174,33 @@ assert.equal(potionFact.skill_delay_arg, null);
 assert.equal(potionFact.message_delay, 1);
 assert.equal(potionFact.dose_family, 'potion_prayerrestore');
 assert.equal(potionFact.dose_count, 1);
-assert.deepEqual(facts.pickpocket[0].npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
-assert.equal(facts.pickpocket[0].loot.length, 2);
-assert.deepEqual(facts.pickpocket[0].success_chance, { numerator: 1, denominator: 2 });
+const fullPickpocket = facts.pickpocket.find((fact) => !('kind' in fact))!;
+assert.deepEqual(fullPickpocket.npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
+assert.equal(fullPickpocket.loot.length, 2);
+assert.deepEqual(fullPickpocket.success_chance, { numerator: 1, denominator: 2 });
+const levelOnlyPickpocket = facts.pickpocket.filter((fact) => 'kind' in fact);
+assert.deepEqual(
+    levelOnlyPickpocket.map((fact) => ({
+        alias: fact.npcs[0].alias,
+        id: fact.npcs[0].id,
+        level: fact.level,
+        kind: fact.kind,
+        source_file: fact.source_file,
+        target_row: fact.target_row,
+        source_row: fact.source_row,
+    })),
+    [
+        { alias: 'digworkman1', id: 12, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman1] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'digworkman2', id: 13, level: 25, kind: 'level_only', source_file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', target_row: '[opnpc3,digworkman2] @pickpocket_digworkman1;', source_row: 'if (stat (thieving) < 25) {' },
+        { alias: 'troll_prison_guard1', id: 14, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard1]', source_row: 'if (stat(thieving) < 30) {' },
+        { alias: 'troll_prison_guard2', id: 15, level: 30, kind: 'level_only', source_file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', target_row: '[opnpc3,troll_prison_guard2]', source_row: 'if (stat(thieving) < 30) {' },
+    ],
+);
+for (const fact of levelOnlyPickpocket) {
+    for (const key of ['experience', 'stun_ticks', 'stun_damage', 'success_chance', 'loot', 'pocket']) {
+        assert.equal(Object.hasOwn(fact, key), false, `${fact.npcs[0].alias} must stay level-only`);
+    }
+}
 
 const combat = path.join(content, 'scripts/skill_combat/configs/magic');
 const magic = path.join(content, 'scripts/skill_magic/configs');
@@ -193,9 +238,22 @@ data=levelrequired,75
 data=maxhit,15
 data=members,true
 data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
 data=anim,^test_magic_seq
 data=staffanim,^test_magic_seq
 data=runesrequired,bloodrune,1,firerune,7,airrune,5
+data=spotanim_target,fire_impact,10
+data=continue_by_autocast,true
+[magic_spell_crumble_test]
+data=spellcom,crumble_button
+data=spell,^test_crumble
+data=levelrequired,39
+data=maxhit,8
+data=members,false
+data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
+data=spotanim_target,crumble_test_impact,5
+data=runesrequired,chaosrune,1,airrune,2,earthrune,2
 data=continue_by_autocast,true
 `);
 fs.writeFileSync(path.join(magic, 'magic_staff.dbrow'), `[magic_staff_fire]
@@ -209,18 +267,27 @@ data=rune,earthrune
 data=staff,staff_of_air
 data=rune,airrune
 `);
+fs.writeFileSync(path.join(pack, 'interface.pack'), '3001=wind_strike_button\n3002=fire_wave_button\n3003=crumble_button\n');
+fs.writeFileSync(path.join(pack, 'spotanim.pack'), '5=spell_target\n6=fire_impact\n7=crumble_test_impact\n85=failedspell_impact\n');
+const autoCastDir = path.join(content, 'scripts/skill_combat/scripts/player');
+fs.mkdirSync(autoCastDir, { recursive: true });
+fs.writeFileSync(path.join(autoCastDir, 'auto_cast.rs2'), `[if_button,staff_spells:ssb0] @set_autocast_spell(^test_spell);\n[if_button,staff_spells:ssb1] @set_autocast_spell(^fire_wave);\n`);
+const magicInterfaces = path.join(content, 'scripts/skill_magic/interfaces');
+fs.mkdirSync(magicInterfaces, { recursive: true });
+fs.writeFileSync(path.join(magicInterfaces, 'magic.if'), `[test_spell]\naction=Wind strike\n[fire_wave]\naction=Fire wave\n[test_crumble]\naction=Crumble test\n`);
 const magicItems = [
     { id: 1, debugname: 'mindrune', name: 'Mind rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 2, debugname: 'airrune', name: 'Air rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 3, debugname: 'firerune', name: 'Fire rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 4, debugname: 'bloodrune', name: 'Blood rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 5, debugname: 'earthrune', name: 'Earth rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 9, debugname: 'chaosrune', name: 'Chaos rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 6, debugname: 'staff_of_fire', name: 'Staff of fire', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 7, debugname: 'lava_battlestaff', name: 'Lava battlestaff', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 8, debugname: 'staff_of_air', name: 'Staff of air', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
 ];
 const magicFacts = extractMagicFacts(content, magicItems);
-assert.equal(magicFacts.spells.length, 2, 'unnamed autocast rows are not SPELL_DB');
+assert.equal(magicFacts.spells.length, 3, 'manual combat spells join the table; rows without a spell button stay out');
 assert.equal(magicFacts.spells[0].name, 'Wind Strike');
 assert.equal(magicFacts.spells[0].ssb, 0);
 assert.deepEqual(magicFacts.spells[0].runes.map((rune) => [rune.name, rune.count]), [['Mind rune', 1], ['Air rune', 1]]);
@@ -236,6 +303,24 @@ assert.equal(magicFacts.spells[1].spellcom, 'fire_wave_button');
 assert.equal(magicFacts.spells[1].maxhit, 15);
 assert.equal(magicFacts.spells[1].members, true);
 assert.equal(magicFacts.spells[1].wornrequired, 'staff_of_fire');
+assert.equal(magicFacts.spells[0].autocast_selectable, true);
+assert.equal(magicFacts.spells[0].component_id, 3001);
+assert.equal(magicFacts.spells[0].source_row, 'magic_spell_wind_strike');
+assert.equal(magicFacts.spells[1].autocast_selectable, true);
+assert.equal(magicFacts.spells[1].component_id, 3002);
+assert.equal(magicFacts.spells[0].impact_spotanim, 5);
+assert.equal(magicFacts.spells[1].impact_spotanim, 6);
+const crumble = magicFacts.spells.find((spell) => spell.source_row === 'magic_spell_crumble_test')!;
+assert.equal(crumble.name, 'Crumble test');
+assert.equal(crumble.autocast_selectable, false, 'the staff chooser excludes manual-only spells');
+assert.equal(crumble.ssb, -1);
+assert.equal(crumble.component_id, 3003);
+assert.equal(crumble.maxhit, 8);
+assert.equal(crumble.members, false);
+assert.deepEqual(crumble.runes.map((rune) => [rune.name, rune.count]), [['Chaos rune', 1], ['Air rune', 2], ['Earth rune', 2]]);
+assert.equal(crumble.worn_reqmessage, 'You need a fire staff.');
+assert.equal(crumble.impact_spotanim, 7);
+assert.equal(magicFacts.failed_spell_impact, 85, 'the miss splash is one selected scalar, not per-spell data');
 const npcSource = path.join(content, 'scripts/npc/config/combat.npc');
 const npcScriptDir = path.join(content, 'scripts/npc/scripts');
 fs.mkdirSync(path.dirname(npcSource), { recursive: true });
@@ -249,6 +334,7 @@ fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
     '1=arrow_launch', '2=arrow_travel', '3=spell_origin', '4=spell_projectile',
     '5=spell_target', '6=failedspell_impact', '7=firebreath_attack',
     '8=fireblast_travel', '9=fireblast_impact',
+    '10=fire_impact', '11=crumble_test_impact',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n22=arrows\n');
 fs.writeFileSync(npcSource, `[test_npc]
@@ -269,15 +355,19 @@ param=proj_launch,arrow_launch
 param=proj_travel,arrow_travel
 [dragon_npc]
 name=Dragon NPC
+wanderrange=0
 op1=Attack
 hitpoints=60
 param=attackrate,4
 [zamorak_like]
 name=Zamorak Like
+wanderrange=6
+maxrange=0
 op1=Attack
 hitpoints=80
 [saradomin_like]
 name=Saradomin Like
+wanderrange=9
 op1=Attack
 hitpoints=120
 `);
@@ -390,7 +480,19 @@ fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
 const combatScripts = parseCombatScripts(content);
 assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
-const npcFacts = extractNpcNamesFacts(content, combatScripts);
+const npcFacts274 = extractNpcNamesFacts(content, 274, combatScripts);
+const npcFacts = extractNpcNamesFacts(content, 289, combatScripts);
+for (const [facts, expected] of [
+    [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
+    [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],
+] as const) {
+    for (const [config, wanderrange, maxrange] of expected) {
+        const row = facts.rows.find((entry) => entry.config === config)!;
+        assert.equal(row.wanderrange, wanderrange, `${config}: runtime wander default`);
+        assert.equal(row.maxrange, maxrange, `${config}: pinned runtime maxrange derivation/clamp`);
+    }
+}
+assert.throws(() => extractNpcNamesFacts(content, 275, combatScripts), /unsupported revision 275/);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
 assert.equal(testNpc.headicon, 8);
@@ -413,16 +515,16 @@ const saradominLike = npcFacts.rows.find((row) => row.config === 'saradomin_like
 assert.equal(saradominLike.attack_kind, 'mixed');
 assert.equal(saradominLike.counter_protect, true);
 fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
-const changedDefaults = extractNpcNamesFacts(content, combatScripts);
+const changedDefaults = extractNpcNamesFacts(content, 289, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
 fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
-assert.throws(() => extractNpcNamesFacts(content, combatScripts), /attackrate is out of range/);
+assert.throws(() => extractNpcNamesFacts(content, 289, combatScripts), /attackrate is out of range/);
 fs.writeFileSync(npcSource, npcSourceBytes);
 // combat_axe is intentionally absent so a recognized but unresolved root must stay null.
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n352=combat_staff_2:auto_spell\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
 const interfacePackPath = path.join(content, 'pack/interface.pack');
 fs.appendFileSync(interfacePackPath, [
     '20001=combat_heavysword:heavy0',
@@ -535,6 +637,7 @@ fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
 fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n286=dueloptions\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
+assert.equal(autocast.spell_text_component, 352);
 assert.equal(autocast.choose_com, 353);
 assert.equal(autocast.spell_panel_root, 1829);
 assert.equal(autocast.spell_grid_base, 1830);
@@ -1431,6 +1534,60 @@ assert.deepEqual(questStarts.rows, [{
 }]);
 assert.doesNotThrow(() => extractQuestIdentityFacts(questRoot, 274));
 
+const constantJournalRoot = questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] += '[priest]\ny=6\ntext=The Restless Ghost\n';
+    files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:priest, %prieststart, ^priest_complete);\n';
+    files['scripts/general/configs/quest.constant'] += '^priest_complete = 5\n^priest_questpoints = 1\n';
+    files['pack/varp.pack'] += '107=prieststart\n';
+    files['scripts/quests/quest_priest/scripts/priest_journal.rs2'] = `[if_button,questlist:priest]
+def_string $x;
+def_string $quest_title = "The Restless Ghost";
+if (%prieststart = 0) {
+    $x = "Speak to Father Aereck.";
+    ~quest_journal($quest_title, $x);
+    return;
+}
+~quest_journal($quest_title, "Quest complete.");
+`;
+    files['scripts/quests/quest_cook/scripts/cook_journal.rs2'] = `[if_button,questlist:cook]
+~quest_journal("Cook's Assistant", "Speak to the Cook.");
+`;
+});
+for (const revision of [274, 289]) {
+    const rows = extractQuestIdentityFacts(constantJournalRoot, revision).rows;
+    assert.equal(rows.find((row) => row.id === 'priest')?.journal_title, 'The Restless Ghost');
+    assert.equal(rows.find((row) => row.id === 'priest')?.journal_script, 'scripts/quests/quest_priest/scripts/priest_journal.rs2');
+    assert.equal(rows.find((row) => row.id === 'cook')?.journal_title, "Cook's Assistant");
+}
+fs.rmSync(constantJournalRoot, { recursive: true, force: true });
+
+for (const body of [
+    `[proc,unrelated]
+def_string $title = "Not Cook's Assistant";
+[if_button,questlist:cook]
+~quest_journal($title, "");
+`,
+    `[if_button,questlist:cook]
+def_string $title = ~runtime_title;
+~quest_journal($title, "");
+`,
+    `[if_button,questlist:cook]
+def_string $title = "Cook's Assistant";
+if (%cookquest = 2) {
+    $title = "A different title";
+}
+~quest_journal($title, "");
+`,
+]) {
+    const root = questFixture((files) => {
+        files['scripts/quests/quest_cook/scripts/cook_journal.rs2'] = body;
+    });
+    const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+    assert.equal(row?.journal_title, null, 'nonconstant or foreign-script bindings stay unknown');
+    assert.equal(row?.journal_script, null);
+    fs.rmSync(root, { recursive: true, force: true });
+}
+
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/scripts/quests.rs2']; }), 274), /quests\.rs2/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.constant']; }), 274), /quest\.constant/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/player/interfaces/questlist.if']; }), 274), /questlist\.if/);
@@ -1485,6 +1642,26 @@ const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
 const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
 assertQuestRows(pinQuest274);
 assertQuestRows(pinQuest289);
+const constantJournalTitles = [
+    ['priest', 'The Restless Ghost'],
+    ['itwatchtower', 'Watch Tower'],
+    ['itexam', 'The Dig Site'],
+    ['hero', "Heroes' Quest"],
+    ['zombiequeen', 'Shilo Village'],
+    ['ikov', 'Temple of Ikov'],
+    ['desertrescue', 'Tourist Trap'],
+    ['upass', 'Underground Pass'],
+] as const;
+for (const facts of [pinQuest274, pinQuest289]) {
+    for (const [id, title] of constantJournalTitles) {
+        const row = facts.rows.find((entry) => entry.id === id);
+        assert.equal(row?.journal_title, title, `pinned local-constant journal title: ${id}`);
+        assert.equal(row?.journal_script?.endsWith('_journal.rs2'), true, `pinned local-constant journal script: ${id}`);
+    }
+    assert.equal(facts.rows.find((row) => row.id === 'barcrawl')?.journal_title, null, 'miniquest without a journal remains unknown');
+}
+assert.equal(pinQuest289.rows.find((row) => row.id === 'misc')?.journal_title, 'Throne of Miscellania');
+assert.equal(pinQuest289.rows.find((row) => row.id === 'hauntedmine')?.journal_title, null, 'stub without a journal remains unknown');
 assert.equal(pinQuest289.rows.length, 69);
 assert.equal(pinQuest274.rows.some((row) => row.id === 'routequest'), false);
 assert.equal(pinQuest274.coverage.length, 1);
@@ -2440,6 +2617,9 @@ const gatheringPins = [
     { revision: 274, root: pinContentRoot(274) },
     { revision: 289, root: pinContentRoot(289) },
 ];
+const hemensterFishingScript = 'scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2';
+const hemensterSpot = '0_41_53_sinisterfishspot';
+const hemensterCarpMethod = `fishing.${hemensterSpot}.op1`;
 
 function gatherView(family: GatheringFamily) {
     const alias = new Map<string, string>();
@@ -2526,7 +2706,7 @@ for (const { revision, root } of gatheringPins) {
     const facts: GatheringFacts = family.payload;
     assert.equal(family.schema, GATHERING_SCHEMA);
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
-    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 15 }, `${revision} method inventory`);
+    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 16 }, `${revision} method inventory`);
 
     // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
     // a global handler fails closed at index time, so reaching here proves there is none
@@ -2620,6 +2800,58 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(bigNet.state, revision === 289 ? 'partial' : 'known', `${revision} the 289 monkey-form gate is not modelled, so big-net requirements are partial there; 274 has no such gate`);
     assert.equal(bigNet.state !== 'partial' || bigNet.gaps.every((each) => each.code === 'monkey-form-forbidden'), true);
     assert.equal(targetsOf(view.method('fishing.freshfish.op1'), 'hazard').map((target) => view.name('npc', target.id)).join(), 'macro_whirlpool_freshfish', `${revision} whirlpool spots are hazards, not fishing targets`);
+    const method = view.method(hemensterCarpMethod);
+    const target = targetsOf(method, 'resource')[0]!;
+    const npcPack = parsePack(fs.readFileSync(path.join(root, 'pack/npc.pack'), 'utf8'));
+    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
+    assert.equal(method.id, hemensterCarpMethod);
+    assert.equal(target.kind, 'npc');
+    assert.equal(target.id, npcPack.get(hemensterSpot));
+    assert.equal(target.id, 234);
+    assert.equal(target.op, 1);
+    assert.equal(view.name('npc', target.id), hemensterSpot);
+    assert.equal(target.respawn.state, 'known');
+    assert.equal(target.respawn.state === 'known' ? target.respawn.value : undefined, null);
+    assert.deepEqual(fishing(hemensterCarpMethod), {
+        tools: ['fishing_rod'],
+        consumes: ['red_vine_wormx1'],
+        products: ['raw_giant_carp@10'],
+        op: { slot: 1, label: 'Fish' },
+    });
+    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, objPack.get('fishing_rod'));
+    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, 307);
+    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, objPack.get('red_vine_worm'));
+    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, 25);
+    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, objPack.get('raw_giant_carp'));
+    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, 338);
+    assert.equal(method.resources[0], 'raw_giant_carp');
+    assert.equal(gatherMethodGap(method), 'varp-gate', 'quest progress stays an explicit blocker, not a fabricated gather requirement');
+    assert.equal(method.requirements.state, 'partial');
+    assert.deepEqual(method.requirements.state === 'partial' ? method.requirements.gaps.map((each) => each.code) : [], ['varp-gate']);
+    assert.deepEqual(knownValue(method.requirements, `${method.id} requirements`).map((each) =>
+        each.kind === 'skill' ? [each.kind, each.skill, each.level] : [each.kind]), [['skill', 10, 10]]);
+    assert.ok(method.sources.some((source) => source.startsWith(`${hemensterFishingScript}:`)));
+
+    const targetId = new Set([target.id]);
+    const sourcePlacements = mapRowKeys(root, 'NPC', targetId);
+    const northRow = revision === 289 ? 'maps/m41_53.jm2:7631:0:13:52:234' : 'maps/m41_53.jm2:7630:0:13:52:234';
+    assert.ok(sourcePlacements.has(northRow), 'the exact north-spot NPC row comes from the selected map');
+    assert.deepEqual([...familyRowKeys(family, 'n', targetId)].sort(), [...sourcePlacements].sort());
+
+    const contestSource = fs.readFileSync(path.join(root, hemensterFishingScript), 'utf8');
+    assert.match(contestSource, /p_delay\(4\);\s*@hemenster_catch\(\$bait\);/);
+    const catchStart = contestSource.indexOf('[label,hemenster_catch]');
+    const catchEnd = contestSource.indexOf('[label,attempt_fish_hemenster]', catchStart);
+    assert.ok(catchStart >= 0 && catchEnd > catchStart, 'the selected carp catch handler is present');
+    assert.doesNotMatch(contestSource.slice(catchStart, catchEnd), /stat_advance\(fishing,/);
+    assert.match(contestSource, /if\s*\(%hemenster_comp_stage = \^hemenster_comp_all_fish_caught\)[\s\S]*?~bonzo_handover_catch/);
+    const contestConstants = fs.readFileSync(path.join(root, 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant'), 'utf8');
+    const stageValue = (name: string) => {
+        const match = new RegExp(`^\\^${name}\\s*=\\s*(\\d+)\\s*$`, 'm').exec(contestConstants);
+        assert.ok(match, `${name} is a selected content constant`);
+        return Number(match[1]);
+    };
+    assert.equal(stageValue('hemenster_comp_all_fish_caught') - stageValue('hemenster_comp_paidfee'), 3, 'the third catch reaches the handover check; the handler only calls Bonzo when he is within 12 tiles');
 
     // Placements are the map rows themselves.
     for (const [id, kind] of [['mining.iron', 'l'], ['mining.coal', 'l'], ['woodcutting.oak', 'l'], ['fishing.freshfish.op1', 'n']] as const) {
@@ -2658,7 +2890,7 @@ for (const { revision, root } of gatheringPins) {
         `${revision} woodcutting/mining resource rows follow family content order`,
     );
     const fishingRows = resourceRows.filter((row) => row.skill === 'fishing');
-    assert.equal(fishingRows.length, 12, `${revision} fishing groups`);
+    assert.equal(fishingRows.length, 13, `${revision} fishing groups`);
     assert.equal(new Set(fishingRows.map((row) => row.label)).size, fishingRows.length, `${revision} fishing labels are unique`);
     assert.deepEqual(
         fishingRows.flatMap((row) => row.methods).sort(compareCodepoint),
@@ -2672,6 +2904,11 @@ for (const { revision, root } of gatheringPins) {
         true,
         `${revision} fishing members and legacy aliases are sorted together`,
     );
+    const contestPicker = fishingRows.find((row) => row.methods.includes(hemensterCarpMethod));
+    assert.ok(contestPicker, 'the direct carp method keeps its own operation/tool/bait/product option');
+    assert.equal(contestPicker.selectable, false);
+    assert.equal(contestPicker.gap, 'varp-gate');
+    assert.equal(contestPicker.level, 10);
     const resourceRow = (skill: string, key: string): GatherResourceWire => {
         const found = rowByKey.get(`${skill}:${key}`);
         assert.ok(found, `${revision} ${skill}:${key} is published`);
@@ -2712,10 +2949,10 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, revision === 289 ? 310 : 307, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, revision === 289 ? 311 : 308, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 31, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
+        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
     const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
     const site = (id: string): GatherSiteWire => {
@@ -2723,6 +2960,12 @@ for (const { revision, root } of gatheringPins) {
         assert.ok(found, `${revision} site ${id} is published`);
         return found!;
     };
+    const contestSitePicker = namedResourceRows.find((row) => row.methods.includes(hemensterCarpMethod));
+    assert.ok(contestSitePicker);
+    const contestSites = siteResult.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
+    assert.equal(contestSites.length, 1, 'the method site is joined to its selected NPC placement');
+    assert.equal(contestSites[0]!.label, 'Hemenster W18 · Fish');
+    assert.deepEqual(contestSites[0]!.region, { min_x: 2637, min_z: 3444, max_x: 2637, max_z: 3444, level: 0 });
     // Direct content names on both revisions, with the Waterfall loc camp keeping its bearing label.
     assert.equal(site('fishing.musa_point').label, 'Musa Point · Bait, Cage, Harpoon, Net');
     assert.deepEqual(site('fishing.musa_point').region, { min_x: 2923, min_z: 3179, max_x: 2926, max_z: 3181, level: 0 });
@@ -2779,13 +3022,13 @@ for (const { revision, root } of gatheringPins) {
     siteRowsByRevision.set(revision, siteResult.rows);
 
 }
-// Both revisions publish the same site ids but the three 289 tree scraps.
+// Both revisions share 308 base sites; 289 adds the three tree scraps.
 {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 307, '307 shared site ids');
-    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only rows');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 308, '308 shared site ids');
+    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), ['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw'], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
     assert.ok(rows289.some((row) => row.label.startsWith(`Mort'ton · `)), '289 keeps the Mortton camp');
     assert.ok(rows289.some((row) => row.label.includes('Troll Stronghold')), '289 keeps the Troll Stronghold scraps');
@@ -2826,6 +3069,21 @@ assert.equal(family289Rows(baseline, 'mining.copper'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
+assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
+    replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
+assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');
+const changedContestLoose = changedContestYield.payload.loose.find((each) => each.gap?.code === 'quest-handler-shape');
+assert.ok(changedContestLoose);
+assert.equal(gatherView(changedContestYield).name('npc', changedContestLoose.id), hemensterSpot);
+const missingContestSource = extractGatheringFamily(gatheringFixture((rootDir) =>
+    fs.rmSync(path.join(rootDir, hemensterFishingScript))));
+assert.equal(missingContestSource.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a missing quest handler is not promoted');
+const missingContestView = gatherView(missingContestSource);
+const missingContestLoose = missingContestSource.payload.loose.find((each) =>
+    each.gap?.code === 'no-handler' && missingContestView.name('npc', each.id) === hemensterSpot);
+assert.ok(missingContestLoose);
+assert.equal(missingContestView.name('npc', missingContestLoose.id), hemensterSpot);
 
 const sourceNpcPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/npc.pack'), 'utf8'));
 const sourceObjPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/obj.pack'), 'utf8'));
@@ -3006,7 +3264,14 @@ for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `stub ${relative}\n`);
 }
-for (const relative of baseContentFileList()) {
+const baseContentFiles = baseContentFileList();
+for (const relative of [
+    'scripts/quests/quest_itexam/scripts/digsite_workman.rs2',
+    'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2',
+]) {
+    assert.ok(baseContentFiles.includes(relative), `${relative} must be pinned as a base content input`);
+}
+for (const relative of baseContentFiles) {
     const file = path.join(isoContent, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `stub ${relative}\n`);
@@ -3270,6 +3535,31 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
     assert.deepEqual(result.rows.map((row) => [row.id, row.label]), [['woodcutting.p.e', 'P E20 · Oak logs 2'], ['woodcutting.p.e.2', 'P E40 (2) · Oak logs 3']]);
 }
+
+// Place names sort before their bearing siblings, independently of the label separator.
+{
+    const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[unrelated]');
+    const oak = synMethod(
+        'woodcutting.oak',
+        'woodcutting',
+        ['oak'],
+        synKnownIds([{ item: 1521, level: 15 }]),
+        synKnownIds([]),
+        { targets: { state: 'known', value: [synTarget(7), synTarget(8)] } },
+    );
+    const facts = synSiteFacts(
+        [oak],
+        [],
+        [],
+        [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l7 0', '2 0 50 10 l8 0'])],
+    );
+    const result = gatherSites(facts, gatherResources(facts, new Map([[1521, 'Oak logs']])), content, []);
+    assert.deepEqual(
+        result.rows.map((row) => row.label),
+        ['Test Water · Oak logs 1', 'Test Water E40 · Oak logs 1'],
+    );
+}
+
 // A category-suffixed enum stem is not a direct name.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[coalfish]\nparam=fishing_movement_enum,fishing_movement_coalfish_enum');
@@ -3278,4 +3568,91 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
     assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
 }
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-karamja-fixture-'));
+    const write = (relative: string, text: string) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    write('pack/loc.pack', '700=bananacrate\n701=bananatreefull\n702=bananatreeone\n703=bananatreeempty\n');
+    write('pack/npc.pack', '500=luthas\n');
+    write('scripts/areas/area_karamja/configs/plantation.loc', [
+        '[bananatreefull]', 'category=banana_tree', 'param=next_loc_stage,bananatreeone',
+        '[bananatreeone]', 'category=banana_tree', 'param=next_loc_stage,bananatreeempty',
+        '[bananatreeempty]',
+    ].join('\n'));
+    write('scripts/areas/area_karamja/scripts/banana_tree.rs2', [
+        '[oploc1,_banana_tree]',
+        'loc_change(loc_param(next_loc_stage), 500);',
+        'inv_add(inv, banana, 1);',
+        '[oploc1,bananatreeempty]',
+    ].join('\n'));
+    write('scripts/quests/quest_hunt/scripts/banana_crate.rs2', [
+        '[oploc1,bananacrate]',
+        'if (%crate_bananas = 0 & %crate_rum = 0) {',
+        '    mes("The crate is completely empty.");',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("The crate is full of bananas.");',
+        '}',
+    ].join('\n'));
+    const luthasPath = 'scripts/quests/quest_hunt/scripts/luthas.rs2';
+    const luthasScript = [
+        '[opnpc1,luthas]',
+        'if (testbit(%hunt_store_employed, ^hunt_not_started) = ^false) {',
+        '    @multi2("Offer employment?", luthas_employment, "Other choice", other);',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("Luthas hands you 43 coins.");',
+        '    inv_add(inv, coins, 43);',
+        '    @multi4("Another crate?", again, "Thanks!", thanks, "Delivery?", delivery, "Other?", other);',
+        '}',
+        '@multi4("Repeat?", repeat, "Not yet.", incomplete, "Delivery?", delivery, "Other?", other);',
+    ].join('\n');
+    write(luthasPath, luthasScript);
+    write('maps/m45_49.jm2', [
+        '==== LOC ====',
+        '0 1 2: 700 10 0',
+        '0 4 5: 701 10 0',
+        '0 5 6: 702 10 0',
+        '==== NPC ====',
+    ].join('\n'));
+    execFileSync('git', ['init', '-q'], { cwd: content });
+    execFileSync('git', ['add', 'maps/m45_49.jm2'], { cwd: content });
+    const npcNames = { rows: [{ id: 500, config: 'luthas', display: 'Fixture Luthas', ops: ['Talk-to'] }] };
+    const locNames = { rows: [
+        { id: 700, config: 'bananacrate', display: 'Crate', ops: ['Search'] },
+        { id: 701, config: 'bananatreefull', display: 'Banana Tree', ops: ['Search'] },
+        { id: 702, config: 'bananatreeone', display: 'Banana Tree', ops: ['Search'] },
+        { id: 703, config: 'bananatreeempty', display: 'Banana Tree', ops: ['Search'] },
+    ] };
+    const npcPlacements = { rows: [{ npc_id: 500, x: 2882, z: 3139, plane: 0, mapsquare: 'm45_49' }] };
+    const result = extractKaramjaFacts(content, npcNames, locNames, npcPlacements);
+    assert.deepEqual(result.facts, {
+        luthas_spawn: { config: 'luthas', x: 2882, z: 3139, plane: 0 },
+        crate_spawn: { config: 'bananacrate', x: 2881, z: 3138, plane: 0 },
+        banana_tree_configs: ['bananatreefull', 'bananatreeone'],
+        banana_tree_spawns: [
+            { config: 'bananatreefull', x: 2884, z: 3141, plane: 0 },
+            { config: 'bananatreeone', x: 2885, z: 3142, plane: 0 },
+        ],
+        crate_capacity: 7,
+        coin_payout: 43,
+        dialogue: { employment: 'Offer employment?', paid: 'Thanks!', incomplete: 'Not yet.' },
+    });
+    assert(result.inputs.some((input) => input.path === 'maps/m45_49.jm2'), 'placement map is a family provenance input');
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, { rows: [] }),
+        /expected one Luthas NPC placement, got 0/,
+        'missing content placement refuses instead of guessing an anchor',
+    );
+    write(luthasPath, luthasScript.replace('inv_add(inv, coins, 43);', 'inv_add(inv, coins, 44);'));
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, npcPlacements),
+        /Luthas coin message\/grant disagree \(43\/44\)/,
+        'the full-crate payout is the amount the content actually grants',
+    );
+}
+
 console.log('generate fixture passed');

@@ -1047,6 +1047,7 @@ export default class T extends TaskBot {
             name: "Casket".to_string(),
             action: "Open".to_string(),
             slot: None,
+            target_item_id: None,
         }],
         "the casket Open is a held-item request"
     );
@@ -1134,6 +1135,7 @@ export default class T extends TaskBot {
             name: "Spade".into(),
             action: "Dig".into(),
             slot: None,
+            target_item_id: None,
         }],
         "after travel settles the same clue token reaches its Dig"
     );
@@ -1266,6 +1268,7 @@ export default class T extends TaskBot {
             name: "Spade".into(),
             action: "Dig".into(),
             slot: None,
+            target_item_id: None,
         }]
     );
     let callback_logs = json(&iso, "JSON.stringify(globalThis.__logs)");
@@ -1435,6 +1438,7 @@ export default class T extends TaskBot {
             name: "Casket".to_string(),
             action: "Open".to_string(),
             slot: None,
+            target_item_id: None,
         }],
         "the casket Open is the landed held step"
     );
@@ -1686,6 +1690,7 @@ export default class T extends TaskBot {
             name: "Spade".to_string(),
             action: "Dig".to_string(),
             slot: None,
+            target_item_id: None,
         }],
         "the posted Spade is the Dig"
     );
@@ -1891,7 +1896,7 @@ export default class T extends TaskBot {
     tick(&iso, 5);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
+        vec![InteractReq::ContinueDialog { component_id: None }],
         "a posted continue is continued before the Talk-to"
     );
 
@@ -2112,7 +2117,7 @@ export default class T extends TaskBot {
     tick(&iso, 5);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
+        vec![InteractReq::ContinueDialog { component_id: None }],
         "the posted continue is the landed continue step"
     );
 
@@ -2136,6 +2141,7 @@ export default class T extends TaskBot {
             name: "Spade".to_string(),
             action: "Dig".to_string(),
             slot: None,
+            target_item_id: None,
         }],
         "the held trio is the fall-through to the Dig"
     );
@@ -2619,6 +2625,7 @@ export default class T extends TaskBot {
             name: "Casket".to_string(),
             action: "Open".to_string(),
             slot: None,
+            target_item_id: None,
         }],
         "the held casket's own Open"
     );

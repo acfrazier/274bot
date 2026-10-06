@@ -289,6 +289,14 @@ fn script_app() -> TuiApp {
     app
 }
 
+fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| app.draw_params_overlay(frame, loadouts, None))
+        .unwrap();
+    text(&crate::test_support::rows(terminal.backend().buffer()))
+}
+
 fn thiever_schema() -> Vec<script::SettingDef> {
     vec![script::SettingDef {
         id: "target".into(),
@@ -573,6 +581,68 @@ fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
 }
 
 #[test]
+fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes() {
+    for (width, height) in [(80, 24), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.show_screen(Screen::Overview);
+        assert_eq!(app.on_key(ch('o')), AppAction::None);
+        assert!(
+            app.settings_state.open,
+            "Settings opens at {width}x{height}"
+        );
+
+        for _ in 0..10 {
+            app.on_key(key(KeyCode::Down));
+        }
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains(frontend_core::quester_paths::LOAD_PATHS_LABEL),
+            "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
+        );
+        assert!(!app.quester_paths.enabled, "folder Paths start disabled");
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        assert!(app.quester_paths.enabled, "the gate toggles on");
+
+        app.on_key(key(KeyCode::Down));
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("Paths folder:"),
+            "the folder field stays visible at {width}x{height}: {rows:?}"
+        );
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        let previous = app.quester_paths.folder.to_string_lossy().chars().count();
+        for _ in 0..previous {
+            app.on_key(key(KeyCode::Backspace));
+        }
+        let selected_folder = "/tmp/quester-checkout/paths";
+        for character in selected_folder.chars() {
+            app.on_key(ch(character));
+        }
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::None,
+            "Enter commits the editable folder field"
+        );
+        assert_eq!(
+            app.quester_paths.folder,
+            std::path::PathBuf::from(selected_folder)
+        );
+
+        app.on_key(key(KeyCode::Down));
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains(frontend_core::quester_paths::RELOAD_PATHS_LABEL),
+            "Reload Paths stays visible at {width}x{height}: {rows:?}"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::ReloadPaths,
+            "the settings command routes reload without starting a Path"
+        );
+    }
+}
+
+#[test]
 fn settings_enter_flips_random_events_and_marks_dirty() {
     let mut app = TuiApp::new("274bot headless");
     app.settings = ProfileSettings::default();
@@ -588,10 +658,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     let mut app = TuiApp::new("274bot headless");
     assert!(app.pause_script_on_manual_walk_abort);
     app.settings_state.open = true;
-    for _ in 0..6 {
+    for _ in 0..7 {
         assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     }
-    assert_eq!(app.settings_state.row, 6);
+    assert_eq!(app.settings_state.row, 7);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(!app.pause_script_on_manual_walk_abort);
     assert!(app.pause_script_on_manual_walk_abort_dirty);
@@ -600,8 +670,27 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 8,
-        "memory remains reachable at the last row"
+        app.settings_state.row, 12,
+        "Reload Paths remains reachable at the final settings row"
+    );
+}
+
+#[test]
+fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
+    let mut app = TuiApp::new("274bot headless");
+    app.settings_state.open = true;
+    app.settings_state.row = 6;
+    let rows = draw(&mut app, 60, 14);
+    let (col, row) = find(&rows, "Route through danger zones:")
+        .expect("the selected global remains visible in a compact terminal");
+    app.on_click(col, row + 1);
+    assert!(
+        app.nav.allow_danger_zones,
+        "the wrapped continuation belongs to the danger setting"
+    );
+    assert!(
+        app.pause_script_on_manual_walk_abort,
+        "a continuation never activates the next setting"
     );
 }
 
@@ -671,7 +760,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     assert!(app.map_find_options().zones.is_all());
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(
-        crossing.contains("zones: crossing (z)"),
+        crossing.contains("crossing (z)"),
         "Map info must show the live zone choice: {crossing}"
     );
 
@@ -683,7 +772,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     assert!(!app.map_route_through_zones);
     let avoided = text(&draw(&mut app, 120, 40));
     assert!(
-        avoided.contains("zones: avoided"),
+        avoided.contains("avoided"),
         "a fresh Map open starts with zones avoided: {avoided}"
     );
 
@@ -693,6 +782,142 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
+    app.nav.allow_danger_zones = false;
+    app.map_route_through_zones = true;
+    app.settings_state.open = true;
+    app.settings_state.row = 6;
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    app.settings_state.open = false;
+    assert!(app.nav.allow_danger_zones);
+    assert!(
+        !app.map_route_through_zones,
+        "enabling global danger clears any hidden one-shot grant"
+    );
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(
+        !app.map_route_through_zones,
+        "global danger makes the one-shot z control unavailable"
+    );
+    assert!(app.map_find_options().zones.is_all());
+    let global = text(&draw(&mut app, 120, 40));
+    let global_lower = global.to_lowercase();
+    assert!(
+        global_lower.contains("danger") && global_lower.contains("global"),
+        "global danger replaces the one-shot label with a warning: {global}"
+    );
+}
+
+#[test]
+fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
+    let root = std::env::temp_dir().join(format!(
+        "274bot-tui-walk-permissions-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("panel-ui.json");
+    let loadouts = script::LoadoutsStore::at(root.join("loadouts.json"));
+    let mut app = open_map_world();
+    app.restore_preferences(path.clone());
+    app.script_sel = Some(ScriptSel::Loaded(
+        ScriptSource::Catalog,
+        "WalkPermissions".into(),
+    ));
+    let mut schema = thiever_schema();
+    schema[0].id = "allow_danger_zones".into();
+    schema[0].ty = "boolean".into();
+    schema[0].label = Some("Danger routing".into());
+    schema[0].default = Some("false".into());
+    app.params_schema = schema;
+    app.open_script_params(script::merge_bag(
+        &app.params_schema,
+        &serde_json::Map::new(),
+        None,
+    ));
+    app.params_state.open = false;
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+
+    let initial = text(&draw(&mut app, 120, 40));
+    assert!(initial.contains("avoided"), "{initial}");
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(app.map_route_through_zones);
+    assert!(app.map_find_options().zones.is_all());
+    let crossing = text(&draw(&mut app, 120, 40));
+    assert!(crossing.contains("crossing (z)"), "{crossing}");
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(true),
+    )
+    .unwrap();
+    let globally_on = text(&draw(&mut app, 120, 40));
+    let globally_on_lower = globally_on.to_lowercase();
+    assert!(
+        globally_on_lower.contains("danger")
+            && globally_on_lower.contains("global")
+            && !globally_on.contains("crossing (z)"),
+        "{globally_on}"
+    );
+    assert!(
+        !app.map_route_through_zones,
+        "global-on clears the one-shot"
+    );
+    assert!(app.map_find_options().zones.is_all());
+    app.params_state.open = true;
+    let inherited = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        inherited.contains("On (inherited globally; script cannot veto)"),
+        "{inherited}"
+    );
+    app.params_state.open = false;
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    let globally_off = text(&draw(&mut app, 120, 40));
+    assert!(
+        globally_off.contains("avoided") && !globally_off.contains("crossing (z)"),
+        "{globally_off}"
+    );
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    app.params_state.open = true;
+    let local = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        local.contains("Danger routing: Off")
+            && !local.contains("On (inherited globally; script cannot veto)"),
+        "{local}"
+    );
+    app.params_state.open = false;
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(app.map_route_through_zones);
+    assert!(app.map_find_options().zones.is_all());
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(!app.map_route_through_zones);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+
+    std::fs::write(&path, "{corrupt").unwrap();
+    let corrupt = text(&draw(&mut app, 120, 40));
+    assert!(
+        corrupt.contains("avoided") && !corrupt.contains("crossing (z)"),
+        "{corrupt}"
+    );
+    assert!(!app.map_route_through_zones);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    app.params_state.open = true;
+    let fail_closed = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        !fail_closed.contains("On (inherited globally; script cannot veto)"),
+        "{fail_closed}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

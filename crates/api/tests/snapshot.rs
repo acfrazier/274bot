@@ -3015,9 +3015,15 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
 #[test]
 fn packed_shop_interfaces_post_main_stock_and_player_pack() {
     let Some(cache) = configured_engine_cache_dir() else {
+        eprintln!(
+            "skip: packed_shop_interfaces_post_main_stock_and_player_pack requires ENGINE_DIR"
+        );
         return;
     };
     if !cache.join("interface").is_file() {
+        eprintln!(
+            "skip: packed_shop_interfaces_post_main_stock_and_player_pack requires an interface file in ENGINE_DIR"
+        );
         return;
     }
     let c = Client::new(ClientConfig {
@@ -5240,9 +5246,13 @@ fn main_make_posts_anvil_rows_and_ignores_chat_make_and_shop() {
 #[test]
 fn packed_interfaces_include_a_make_type_inv() {
     let Some(cache) = configured_engine_cache_dir() else {
+        eprintln!("skip: packed_interfaces_include_a_make_type_inv requires ENGINE_DIR");
         return;
     };
     if !cache.join("interface").is_file() {
+        eprintln!(
+            "skip: packed_interfaces_include_a_make_type_inv requires an interface file in ENGINE_DIR"
+        );
         return;
     }
     let c = Client::new(ClientConfig {

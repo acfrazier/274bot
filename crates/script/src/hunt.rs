@@ -629,6 +629,7 @@ impl<K: Kind> Hunt<K> {
                     name: string(effect, "name"),
                     action: "Bury".into(),
                     slot: None,
+                    target_item_id: None,
                 });
                 self.reply = Some(json!({ "buried": true }));
             }
@@ -650,7 +651,7 @@ impl<K: Kind> Hunt<K> {
                 };
                 self.walk(effect, kind == "walk", radius, cx);
             }
-            "continue" => cx.emit(InteractReq::ContinueDialog),
+            "continue" => cx.emit(InteractReq::ContinueDialog { component_id: None }),
             "if-button" => {
                 cx.emit(InteractReq::IfButton {
                     component_id: int(effect, "component_id"),
@@ -894,6 +895,7 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
             name: string(effect, "name"),
             action: string(effect, "action"),
             slot: None,
+            target_item_id: None,
         },
         "close" => InteractReq::Close,
         _ => return None,

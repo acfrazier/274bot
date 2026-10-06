@@ -148,6 +148,19 @@ fn transmitted_varps(content_root: &Path) -> HashSet<i32> {
 pub(crate) struct VarpGateAudit {
     pub(crate) converted: usize,
     pub(crate) omitted: HashMap<i32, usize>,
+    /// Ephemeral source-path witnesses, bound to every final edge field.
+    /// These are not pack data and cannot authorize a modified/foreign edge.
+    member_paths: Vec<TransportEdge>,
+}
+
+impl VarpGateAudit {
+    pub(super) fn record_member_path(&mut self, edge: &TransportEdge) {
+        self.member_paths.push(edge.clone());
+    }
+
+    pub(super) fn proves_member_path(&self, edge: &TransportEdge) -> bool {
+        self.member_paths.iter().any(|proven| proven == edge)
+    }
 }
 
 /// Shared source facts for transport producers. Resolve each gated edge
@@ -170,16 +183,24 @@ impl ObservableGates {
             journal: JournalLinks::from_content(content_root),
         }
     }
+    pub(super) fn completed_quest_name(
+        &self,
+        varp: &str,
+        completion_constant: &str,
+    ) -> Option<&str> {
+        let completion = self.journal.constant(completion_constant)?;
+        self.journal.completed_name(varp, completion)
+    }
 
     pub(super) fn admit_edge(
         &self,
         graph: &mut TransportGraph,
         mut edge: TransportEdge,
         audit: &mut VarpGateAudit,
-    ) {
+    ) -> bool {
         if edge.varp_req.is_empty() {
             graph.edges.push(edge);
-            return;
+            return true;
         }
         let mut proofs = Vec::new();
         for &(id, min) in &edge.varp_req {
@@ -192,7 +213,7 @@ impl ObservableGates {
                 .and_then(|varp| self.journal.completed_name(varp, min));
             let Some(name) = name else {
                 *audit.omitted.entry(id).or_default() += 1;
-                return;
+                return false;
             };
             proofs.push(name);
         }
@@ -201,6 +222,7 @@ impl ObservableGates {
         edge.varp_req
             .retain(|(id, _)| self.transmitted.contains(id));
         graph.edges.push(edge);
+        true
     }
 }
 

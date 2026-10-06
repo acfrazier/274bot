@@ -1,9 +1,12 @@
 //! Typed Path, compiler, colour-only runner, and the Quester card.
 pub mod bank_memo;
 pub mod card;
+pub mod choices;
 pub mod compile;
 pub mod eligibility;
 pub mod families;
+pub mod gang;
+pub mod handlers;
 pub mod loadouts;
 mod nav_coverage;
 pub mod pair;
@@ -11,7 +14,9 @@ pub mod path;
 pub mod progress;
 pub mod provision;
 pub mod queue;
+pub mod registry;
 pub mod runner;
+pub mod schema;
 pub mod select;
 pub mod watchdog;
 

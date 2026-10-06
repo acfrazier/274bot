@@ -348,6 +348,7 @@ fn validate_batch(
             return Err(batch_shape_error());
         }
         let (cost, terminal) = match request {
+            InteractReq::SideTab { tab: 0 } if len == 1 => (0, true),
             InteractReq::IfButton { .. }
             | InteractReq::Wear { .. }
             | InteractReq::SetRetaliate { .. } => (1, false),
@@ -692,6 +693,41 @@ mod tests {
     }
 
     #[test]
+    fn shared_action_revoker_fences_already_queued_input_before_slot_cleanup() {
+        struct Pending;
+        impl NativeMachine for Pending {
+            type Args = ();
+            type Output = ();
+            fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                cx.emit(InteractReq::CloseModal)?;
+                Ok(Self)
+            }
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+            fn cancel(&mut self) {}
+        }
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<Pending>((), cx).unwrap();
+            let queued = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(queued.live());
+            let revoker = handle.revoker();
+            assert_eq!(revoker.run(), cx.run());
+            std::thread::spawn(move || revoker.revoke()).join().unwrap();
+            assert!(
+                !queued.live(),
+                "the pair cancellation fences the drain without a slot lock"
+            );
+            assert!(matches!(
+                actions.poll(&handle, cx),
+                Poll::Ready(Err(ActionError::Cancelled))
+            ));
+        });
+    }
+
+    #[test]
     fn handle_drop_contains_panicking_cancellation_payload_destructor() {
         struct Payload;
         impl Drop for Payload {
@@ -779,6 +815,7 @@ mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(slot),
+            target_item_id: None,
         }
     }
     fn install_owner(cx: &mut ActionContext<'_>) -> Arc<Owner> {
@@ -802,6 +839,7 @@ mod tests {
             name: name.into(),
             action: "Eat".into(),
             slot: None,
+            target_item_id: None,
         }
     }
 
@@ -810,6 +848,7 @@ mod tests {
             name: "Prayer potion".into(),
             action: "Drink".into(),
             slot: None,
+            target_item_id: None,
         }
     }
 
@@ -872,6 +911,7 @@ mod tests {
     #[test]
     fn batch_accepts_each_native_combat_interaction_variant() {
         let requests = [
+            InteractReq::SideTab { tab: 0 },
             InteractReq::IfButton { component_id: 900 },
             eat_request("Shrimp"),
             drink_request(),
@@ -916,6 +956,42 @@ mod tests {
     }
 
     #[test]
+    fn autocast_side_tab_is_one_serial_zero_wire_event_batch() {
+        let revision = api::selected::ClientRevision::R289;
+        assert_eq!(
+            validate_batch(&one_row(InteractReq::SideTab { tab: 0 }), revision),
+            Ok(1)
+        );
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            for rows in [
+                [
+                    Some(InteractReq::SideTab { tab: 0 }),
+                    Some(InteractReq::IfButton { component_id: 353 }),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some(InteractReq::IfButton { component_id: 353 }),
+                    Some(InteractReq::SideTab { tab: 0 }),
+                    None,
+                    None,
+                    None,
+                ],
+                one_row(InteractReq::SideTab { tab: 1 }),
+            ] {
+                assert_shape_refusal(cx, &owner, rows);
+            }
+            cx.emit_batch(one_row(InteractReq::SideTab { tab: 0 }))
+                .unwrap();
+            assert_eq!(cx.emit(npc_attack()), Err(ActionError::BudgetExhausted));
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
+    }
+
+    #[test]
     fn batch_rejects_invalid_shapes_and_host_grammar_without_side_effects() {
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::ZERO, |cx| {
@@ -936,6 +1012,7 @@ mod tests {
                         name: "Bones".into(),
                         action: "Bury".into(),
                         slot: None,
+                        target_item_id: None,
                     }),
                     None,
                     None,
@@ -1162,7 +1239,7 @@ mod tests {
                 },
                 radius: 0,
                 arrival: nav::arrival::ArrivalKind::Reach,
-                options: FindOptions::default(),
+                options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
                 loc_id: None,
@@ -1378,6 +1455,7 @@ mod tests {
                     name: food_name,
                     action: food_action,
                     slot: None,
+                    target_item_id: None,
                 }),
                 Some(InteractReq::Npc {
                     name: npc_name,
@@ -1672,7 +1750,7 @@ mod tests {
                 loc_id: None,
                 radius: 0,
                 arrival: nav::arrival::ArrivalKind::Reach,
-                options: FindOptions::default(),
+                options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
@@ -1769,7 +1847,7 @@ mod tests {
                             loc_id: None,
                             radius,
                             arrival: nav::arrival::ArrivalKind::Reach,
-                            options: FindOptions::default(),
+                            options: WalkOptions::default(),
                             required_after: cx.evidence(),
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),

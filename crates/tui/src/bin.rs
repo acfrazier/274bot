@@ -1499,12 +1499,11 @@ impl TuiSession {
             z: h.z,
             level: h.level,
         });
-        let command = match app.map_model.confirm(
-            ActionKind::Teleport,
-            &context,
-            from,
-            app.map_find_options(),
-        ) {
+        let options = app.map_find_options();
+        let command = match app
+            .map_model
+            .confirm(ActionKind::Teleport, &context, from, options)
+        {
             Ok(command) => command,
             Err(error) => {
                 app.clear_consumed_map_selection();
@@ -2097,8 +2096,44 @@ impl TuiSession {
             }
         }
     }
-    /// Persist a changed global nav toggle and apply it to current and future
-    /// slots through the shared operator session.
+    /// Persist only user-changed globals and publish the latest durable
+    /// projection to the session on every pump.
+    fn project_walk_globals(&mut self, app: &mut TuiApp) {
+        let before = app.walk_permissions;
+        let after = frontend_core::WalkGlobalsView {
+            globals: app.nav,
+            script_scope_notice_ack: app.script_scope_notice_ack,
+        };
+        let preferences = std::mem::take(&mut app.nav_preferences_dirty);
+        let path = app
+            .shared_preferences_path()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(host_play::panel_ui_path);
+        self.core.set_walk_globals_store(path.clone());
+
+        if !preferences.is_empty() && self.persist_ui {
+            match frontend_core::WalkGlobalsView::persist_changed_at(&path, before, after) {
+                Ok(()) => {
+                    if app
+                        .error
+                        .as_deref()
+                        .is_some_and(|error| error.starts_with("settings: walk permissions:"))
+                    {
+                        app.error = None;
+                    }
+                }
+                Err(error) => {
+                    app.error = Some(format!("settings: walk permissions: {error}"));
+                }
+            }
+        }
+
+        app.refresh_walk_permissions();
+        self.core.set_walk_globals(app.walk_permissions.globals);
+    }
+
+    /// Persist the shared manual-walk pause preference and apply it to the
+    /// current and future slots.
     fn project_manual_walk_pause(&mut self, app: &mut TuiApp) {
         self.core
             .set_pause_script_on_manual_walk_abort(app.pause_script_on_manual_walk_abort);
@@ -2128,7 +2163,6 @@ impl TuiSession {
             }
         }
     }
-
     /// Set the global pause policy before binding or arming a TUI live run.
     pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
         self.core.set_pause_script_on_manual_walk_abort(enabled);
@@ -2145,10 +2179,49 @@ impl TuiSession {
             app.error = Some(format!("settings: map bake: {e}"));
         }
     }
+    /// Persist changed source settings and service the shared Path controller.
+    fn project_quester_paths(&mut self, app: &mut TuiApp) {
+        let selected = self
+            .template
+            .as_ref()
+            .and_then(|template| template.game_data());
+        self.project_quester_paths_with_game_data(app, selected);
+    }
+
+    fn project_quester_paths_with_game_data(
+        &mut self,
+        app: &mut TuiApp,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) {
+        if std::mem::take(&mut app.quester_paths_dirty) {
+            let path = app
+                .shared_preferences_path()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(host_play::panel_ui_path);
+            let _ = app.quester_paths_controller.apply_changed_at(
+                &path,
+                app.quester_paths.clone(),
+                selected.clone(),
+                self.persist_ui,
+            );
+            app.quester_paths = app.quester_paths_controller.settings().clone();
+        }
+        app.quester_paths_controller.advance(selected);
+    }
+
+    fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
+        let selected = self
+            .template
+            .as_ref()
+            .and_then(|template| template.game_data());
+        app.quester_paths_controller.request_reload(selected);
+    }
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_quester_paths(app);
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
@@ -3113,6 +3186,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MapWalkGroup => session.map_walk_group(app),
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
+        AppAction::ReloadPaths => session.start_quester_paths_reload(app),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),

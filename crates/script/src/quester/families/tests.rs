@@ -10,6 +10,9 @@ use api::snapshot::{
     SnapshotView,
 };
 use std::time::Instant;
+fn test_args<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
+    serde_json::from_value(value).expect("valid typed family test args")
+}
 
 struct Output;
 impl NativeOutput for Output {
@@ -100,6 +103,22 @@ fn with_tick_output_reach<R>(
         },
     };
     f(&mut native)
+}
+fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted,
+            chat_since: 0,
+        },
+    );
 }
 fn ready() -> GameSnapshot {
     let mut s = GameSnapshot::new();
@@ -195,16 +214,20 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
 
 pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
     Box::new(AcquireRun {
-        steps: vec![CompiledAcquireStep {
+        recipe: Arc::from("policy-s2-recipe"),
+        steps: Arc::from(vec![CompiledAcquireStep {
+            id: FactKey::new("policy-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
+            skip_if_summary: Arc::from("never"),
             settle: Arc::new(AllPlan { items: vec![] }),
             plan: Arc::new(WaitPlan {
                 until: Arc::new(AllPlan { items: vec![] }),
                 max_ticks: 2,
             }),
-        }],
+        }]),
         current: Some(child),
+        child_outcome: None,
         index: 0,
         chat_since: 0,
         settling: false,
@@ -213,6 +236,7 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
         selection_since: None,
         prayer_cleanup_owned: crate::combat::RaisedPrayers::empty(),
         clear_prayers: None,
+        trace_events: std::collections::VecDeque::new(),
     })
 }
 
@@ -333,6 +357,8 @@ fn reach_args(kind: reach::ReachKind, wait: bool) -> reach::ReachArgs {
         anchor: Some(tile(3227, 3300)),
         radius: 2,
         wait_if_missing: wait,
+        target_tile: None,
+        reachable_only: false,
     }
 }
 fn egg(wait: bool) -> reach::ReachArgs {
@@ -367,6 +393,47 @@ fn reach_takes_the_observed_stack_not_the_anchor() {
             z: 3302,
             ..
         }
+    ));
+}
+
+#[test]
+fn reach_held_transports_exact_item_identity() {
+    let mut snapshot = ready();
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(758, "IOU"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 7,
+            count: 1,
+            actions: vec![Some("Read".into())],
+            component_id: 0,
+        }],
+        28,
+    );
+    let mut args = reach_args(
+        reach::ReachKind::Held {
+            id: 758,
+            obj: Arc::from("IOU"),
+        },
+        false,
+    );
+    args.op = Arc::from("Read");
+    let mut ledger = None;
+    let _handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<reach::Reach>(args, &mut tick.cx)
+            .unwrap()
+    });
+
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Held {
+            name,
+            action,
+            slot: Some(7),
+            target_item_id: Some(758),
+        } if name == "IOU" && action == "Read"
     ));
 }
 #[test]
@@ -800,10 +867,129 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
         let mut replacement = original;
         replacement.tile.x += 1;
         s.seed_locs(vec![replacement]);
+        accept_last(&mut ledger, 2, false);
         assert!(matches!(
             with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)),
             Poll::Ready(Ok(false))
         ));
+    }
+}
+
+#[test]
+fn vanished_clicked_loc_with_accepted_dispatch_does_not_retarget_replacements() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1551),
+            name: Some(Arc::from("Door")),
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Door"),
+        },
+    ] {
+        for replacement_offset in [None, Some(0), Some(1)] {
+            let mut snapshot = ready();
+            let original = loc(1551, "Door", "Open");
+            snapshot.seed_locs(vec![original.clone()]);
+            let mut args = reach_args(kind.clone(), false);
+            args.op = Arc::from("Open");
+            args.radius = 4;
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<reach::Reach>(args, &mut tick.cx)
+                    .unwrap()
+            });
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_locs(
+                replacement_offset
+                    .map(|offset| {
+                        let mut opened = loc(1552, "Door", "Close");
+                        opened.tile = original.tile;
+                        opened.tile.x += offset;
+                        vec![opened]
+                    })
+                    .unwrap_or_default(),
+            );
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                }),
+                Poll::Ready(Ok(true))
+            ));
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn vanished_clicked_loc_with_rejected_dispatch_fails_without_retargeting() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1551),
+            name: Some(Arc::from("Door")),
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Door"),
+        },
+    ] {
+        for replacement_offset in [None, Some(0), Some(1)] {
+            let mut snapshot = ready();
+            let original = loc(1551, "Door", "Open");
+            snapshot.seed_locs(vec![original.clone()]);
+            let mut args = reach_args(kind.clone(), false);
+            args.op = Arc::from("Open");
+            args.radius = 4;
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<reach::Reach>(args, &mut tick.cx)
+                    .unwrap()
+            });
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    accepted: false,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_locs(
+                replacement_offset
+                    .map(|offset| {
+                        let mut opened = loc(1552, "Door", "Close");
+                        opened.tile = original.tile;
+                        opened.tile.x += offset;
+                        vec![opened]
+                    })
+                    .unwrap_or_default(),
+            );
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                }),
+                Poll::Ready(Ok(false))
+            ));
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
     }
 }
 fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>) -> R) -> R {
@@ -824,6 +1010,7 @@ fn with_step_banks<R>(
         required_after,
         bank: &bank,
         banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 
@@ -834,6 +1021,8 @@ fn path_bank_context<'a>(
 ) -> CompileContext<'a> {
     CompileContext {
         path: base.path,
+        kind: base.kind,
+        pair: base.pair,
         progress: base.progress,
         selected: base.selected,
         quests: base.quests,
@@ -844,6 +1033,7 @@ fn path_bank_context<'a>(
         bank_required: required,
         bank_items: base.bank_items,
         loadouts: base.loadouts,
+        keep_ids: base.keep_ids,
     }
 }
 
@@ -889,7 +1079,11 @@ fn bank_pick_for_plan(
 #[test]
 fn bank_without_candidates_fails_before_walk_or_open() {
     compile_context_test(|compile| {
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), compile).unwrap();
+        let plan = s2::compile_bank(
+            test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+            compile,
+        )
+        .unwrap();
         let mut snapshot = ready();
         seed_dialogue_combat(&mut snapshot, false);
         let mut ledger = None;
@@ -916,7 +1110,11 @@ fn bank_without_candidates_fails_before_walk_or_open() {
 #[test]
 fn native_bank_without_explicit_selection_opens_the_context_bank() {
     compile_context_test(|compile| {
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), compile).unwrap();
+        let plan = s2::compile_bank(
+            test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+            compile,
+        )
+        .unwrap();
         let mut snapshot = ready();
         seed_dialogue_combat(&mut snapshot, false);
         let bank_tile = snapshot.local_player().unwrap().player.actor.tile;
@@ -1000,7 +1198,11 @@ fn authored_draynor_varrock_and_unmatched_tiles_select_nearest_without_explicit_
         ]));
         for authored in [draynor, varrock_west, tile(3200, 3200)] {
             let compile = path_bank_context(base, authored, false);
-            let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+            let plan = s2::compile_bank(
+                test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+                &compile,
+            )
+            .unwrap();
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player(tile(3100, 3240)));
             let mut ledger = None;
@@ -1023,14 +1225,22 @@ fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(3100, 3240)));
         let compile = path_bank_context(base, draynor, true);
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let plan = s2::compile_bank(
+            test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+            &compile,
+        )
+        .unwrap();
         let mut ledger = None;
         let request = bank_pick_for_plan(plan, &snapshot, &banks, &mut ledger).unwrap();
         assert_eq!(request.explicit_bank, Some(0));
 
         let unmatched = tile(3200, 3200);
         let compile = path_bank_context(base, unmatched, true);
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let plan = s2::compile_bank(
+            test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+            &compile,
+        )
+        .unwrap();
         let mut ledger = None;
         assert!(matches!(
             bank_pick_for_plan(plan, &snapshot, &banks, &mut ledger),
@@ -1050,7 +1260,11 @@ fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
         let bank = api::named_banks::NamedBank::new("Path bank", bank_tile);
         let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
         let compile = path_bank_context(base, bank_tile, false);
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let plan = s2::compile_bank(
+            test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
+            &compile,
+        )
+        .unwrap();
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(3100, 3200)));
         let mut ledger = None;
@@ -1127,7 +1341,19 @@ fn interact_false_is_failure_not_success() {
         settle_duration: Duration::from_secs(20),
         walk: None,
         reach: Some(handle),
+        default_dialogue: true,
+        dialogue_options: None,
+        dialogue: None,
         started: true,
+        dialogue_started: None,
+        dialogue_completed: false,
+        accepted_tick: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
+        round_before: None,
+        round_deadline: None,
+        round_accepted: false,
     };
     assert!(matches!(
         with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))),
@@ -1146,6 +1372,11 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        default_dialogue: true,
+        dialogue_options: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1162,6 +1393,7 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
 #[test]
 fn missing_spawn_recovers_when_the_observed_stack_respawns() {
     let mut s = ready();
+    s.seed_local_player(local_player(tile(3229, 3302)));
     let mut ledger = None;
     let plan = InteractPlan {
         kind: egg(true).kind,
@@ -1171,6 +1403,11 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         wait_if_missing: true,
         settle_ms: Some(20_000),
         ambiguous: false,
+        default_dialogue: true,
+        dialogue_options: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1196,11 +1433,64 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         }],
         28,
     );
+    assert!(with_tick(&s, &mut ledger, 102, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(matches!(
-        with_tick(&s, &mut ledger, 102, |t| with_step(t, |cx| run.poll(cx))),
+        with_tick(&s, &mut ledger, 103, |t| with_step(t, |cx| run.poll(cx))),
         Poll::Ready(Ok(_))
     ));
 }
+#[test]
+fn use_on_item_target_emits_inventory_kind() {
+    compile_context_test(|cx| {
+        let source_id = resolve_obj(cx, "shears").unwrap();
+        let target_id = resolve_obj(cx, "wool").unwrap();
+        let source = ItemView {
+            def: def(source_id, "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let target = ItemView {
+            def: def(target_id, "Wool"),
+            slot: 7,
+            ..source.clone()
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![source, target], 28);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears",
+                "target": {"item": "wool"},
+                "settle_ms": 20_000,
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                source_item_id: Some(source),
+                source_item_slot: Some(3),
+                target_item_id: Some(target),
+                target_item_slot: Some(7),
+                ..
+            } if kind == "inv" && *source == source_id && *target == target_id
+        ));
+    });
+}
+
 #[test]
 fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -1211,6 +1501,8 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let recipes = Default::default();
     let compile = CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -1220,9 +1512,10 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
-    let plan = compile_use_on(&serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 }), &compile).unwrap();
+    let plan = compile_use_on(test_args::<UseOnArgs>(serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 })), &compile).unwrap();
     let id = resolve_obj(&compile, "grain").unwrap();
     let loc_id = resolve_loc(&compile, "hopper_lumbridge").unwrap();
     let mut s = ready();
@@ -1247,8 +1540,418 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     s.seed_locs(vec![loc(loc_id, "Hopper", "Use")]);
     assert!(with_tick(&s, &mut ledger, 3, |t| with_step(t, |cx| run.poll(cx))).is_pending());
     assert!(
-        matches!(emitted(&ledger), InteractReq::UseOn { name, x: 3167, z: 3308, source_item_id: Some(source), source_item_slot: Some(7), .. } if name == "Grain" && *source == id)
+        matches!(emitted(&ledger), InteractReq::UseOn { name, x: 3167, z: 3308, source_item_id: Some(source), source_item_slot: Some(7), target_item_id: Some(target), .. } if name == "Grain" && *source == id && *target == loc_id)
     );
+}
+
+#[test]
+fn use_on_product_continues_post_use_modal_before_settling() {
+    compile_context_test(|cx| {
+        for (product_goal, chat_root) in [(true, 2100), (false, 2100), (true, -1), (false, -1)] {
+            let source_id = resolve_obj(cx, "doogleleaves").unwrap();
+            let target_id = resolve_obj(cx, "raw_sardine").unwrap();
+            let product_id = resolve_obj(cx, "seasoned_sardine").unwrap();
+            let source = ItemView {
+                def: def(source_id, "Doogle leaves"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            };
+            let target = ItemView {
+                def: def(target_id, "Raw sardine"),
+                slot: 1,
+                ..source.clone()
+            };
+            let product = ItemView {
+                def: def(product_id, "Seasoned sardine"),
+                slot: 2,
+                ..source.clone()
+            };
+            let mut snapshot = ready();
+            snapshot.seed_inventory(vec![source, target], 28);
+            let plan = compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "doogleleaves",
+                    "target": {"item": "raw_sardine"},
+                    "product": product_goal.then_some("seasoned_sardine"),
+                    "settle_ms": 20_000
+                })),
+                cx,
+            )
+            .unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(matches!(
+                emitted(&ledger),
+                InteractReq::UseOn {
+                    kind, source_item_id: Some(source), target_item_id: Some(target), ..
+                } if kind == "inv" && *source == source_id && *target == target_id
+            ));
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 3,
+                        sequence: 3,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_chat_modal(
+                chat_root,
+                vec!["You rub the doogle leaves over the sardine.".into()],
+            );
+            snapshot.seed_chat_options(vec![], 2105);
+            for tick in 3..=4 {
+                assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            assert!(
+                matches!(
+                    emitted(&ledger),
+                    InteractReq::ContinueDialog { component_id: None }
+                ),
+                "accepted use-on must drain root {chat_root} before product or no-product settlement"
+            );
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 5,
+                        sequence: 5,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_chat_modal(-1, vec![]);
+            snapshot.seed_chat_options(vec![], -1);
+            snapshot.seed_inventory(vec![product], 28);
+            let mut settled = Poll::Pending;
+            for tick in 5..=15 {
+                settled = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                });
+                if settled.is_ready() {
+                    break;
+                }
+            }
+            assert!(
+                matches!(settled, Poll::Ready(Ok(_))),
+                "product goal {product_goal} must settle only after root {chat_root} is drained"
+            );
+        }
+    });
+}
+
+#[test]
+fn use_on_explicit_none_leaves_visible_pages_to_the_next_owner() {
+    compile_context_test(|cx| {
+        for goal in ["until", "product", "none"] {
+            for root in [2100, -1] {
+                let source_id = resolve_obj(cx, "doogleleaves").unwrap();
+                let target_id = resolve_obj(cx, "raw_sardine").unwrap();
+                let product_id = resolve_obj(cx, "seasoned_sardine").unwrap();
+                let source = ItemView {
+                    def: def(source_id, "Doogle leaves"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                };
+                let target = ItemView {
+                    def: def(target_id, "Raw sardine"),
+                    slot: 1,
+                    ..source.clone()
+                };
+                let product = ItemView {
+                    def: def(product_id, "Seasoned sardine"),
+                    slot: 2,
+                    ..source.clone()
+                };
+                let mut args = serde_json::json!({
+                    "item": "doogleleaves",
+                    "target": {"item": "raw_sardine"},
+                    "dialogue": "none"
+                });
+                match goal {
+                    "until" => {
+                        args["until"] = serde_json::json!({"obj":"seasoned_sardine","qty":1})
+                    }
+                    "product" => args["product"] = serde_json::json!("seasoned_sardine"),
+                    _ => {}
+                }
+                let plan = compile_use_on(test_args::<UseOnArgs>(args), cx).unwrap();
+                let mut snapshot = ready();
+                snapshot.seed_inventory(vec![source, target], 28);
+                if goal == "until" {
+                    snapshot.seed_chat_modal(root, vec!["An existing page.".into()]);
+                    snapshot.seed_chat_options(vec![], 2105);
+                }
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                assert!(
+                    matches!(emitted(&ledger), InteractReq::UseOn { kind, .. } if kind == "inv"),
+                    "explicit none must not auto-continue before an until attempt"
+                );
+                let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+                ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: EvidenceStamp {
+                            run: authority.run(),
+                            tick: 3,
+                            sequence: 3,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                snapshot.seed_chat_modal(root, vec!["A post-use page.".into()]);
+                snapshot.seed_chat_options(vec![], 2105);
+                snapshot.seed_inventory(vec![product], 28);
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 3, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Ok(_))
+                    ),
+                    "explicit none leaves root {root} to the next owner for {goal}"
+                );
+                assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+                assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+                    tick.cx
+                        .snapshot()
+                        .chat_modal()
+                        .is_some_and(|chat| chat.value.continue_component_id == 2105)
+                }));
+            }
+        }
+    });
+}
+
+fn use_on_footprint_fixture(
+    cx: &CompileContext<'_>,
+    from: WorldTile,
+) -> (GameSnapshot, LocView, api::snapshot::SceneView) {
+    let mut target = loc(
+        resolve_loc(cx, "hopper_lumbridge").unwrap(),
+        "Hopper",
+        "Use",
+    );
+    target.shape = 10;
+    target.angle = 1;
+    target.width = 2;
+    target.length = 3;
+    target.footprint_width = 3;
+    target.footprint_length = 2;
+    target.force_approach = 14; // Rotates to 13: only the east side is open.
+    target.distance = (from.x - target.tile.x)
+        .abs()
+        .max((from.z - target.tile.z).abs());
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: target.tile.x - 4,
+        base_z: target.tile.z - 3,
+        level: target.tile.level,
+        width: 10,
+        height: 8,
+        collision_flags: vec![0; 80],
+    };
+    for x in target.tile.x..target.tile.x + target.footprint_width {
+        for z in target.tile.z..target.tile.z + target.footprint_length {
+            let index = ((x - scene.base_x) * scene.height + z - scene.base_z) as usize;
+            scene.collision_flags[index] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(from));
+    snapshot.seed_scene(scene.clone());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(resolve_obj(cx, "grain").unwrap(), "Grain"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 7,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    snapshot.seed_locs(vec![target.clone()]);
+    (snapshot, target, scene)
+}
+
+#[test]
+fn use_on_loc_walks_to_rotated_footprint_before_dispatch() {
+    compile_context_test(|cx| {
+        let origin = tile(3167, 3308);
+        for offset in [-1, -3, 3] {
+            let from = tile(origin.x + offset, origin.z);
+            let (mut snapshot, mut target, mut scene) = use_on_footprint_fixture(cx, from);
+            if offset == 3 {
+                let index =
+                    ((from.x - scene.base_x) * scene.height + from.z - scene.base_z) as usize;
+                scene.collision_flags[index] |= client::dash3d::CollisionFlag::W_W;
+                snapshot.seed_scene(scene.clone());
+            }
+            assert_eq!(
+                api::query::loc_approach::can_operate_from(&target, &scene, from),
+                Some(false)
+            );
+            let plan = compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+                })),
+                cx,
+            )
+            .unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(&ledger.as_ref().unwrap().outbox[0].effect,
+                    HostEffect::Walk(request) if request.target == origin
+                        && request.loc_id == Some(target.id) && request.radius == 1),
+                "offset {offset} must approach the selected footprint before use-on"
+            );
+            let walk_request = ledger.as_ref().unwrap().outbox[0].request_id;
+            assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+
+            let stand = tile(origin.x + target.footprint_width, origin.z);
+            let index = ((stand.x - scene.base_x) * scene.height + stand.z - scene.base_z) as usize;
+            scene.collision_flags[index] = 0;
+            snapshot.seed_scene(scene.clone());
+            snapshot.seed_local_player(local_player(stand));
+            target.distance = target.footprint_width;
+            let mut nearer_same_id = target.clone();
+            nearer_same_id.tile.x = stand.x + 1;
+            nearer_same_id.distance = 1;
+            let mut co_located_decoy = target.clone();
+            co_located_decoy.id += 1;
+            co_located_decoy.distance = 0;
+            snapshot.seed_locs(vec![co_located_decoy, nearer_same_id, target.clone()]);
+            assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, walk_request);
+            assert!(matches!(
+                emitted(&ledger),
+                InteractReq::UseOn {
+                    kind, x, z, target_name: Some(name),
+                    source_item_id: Some(source), source_item_slot: Some(7),
+                    target_item_id: Some(id), ..
+                } if kind == "loc" && name == "Hopper"
+                    && (*x, *z) == (origin.x, origin.z)
+                    && *source == resolve_obj(cx, "grain").unwrap() && *id == target.id
+            ));
+        }
+    });
+}
+
+#[test]
+fn use_on_loc_ready_dispatch_keeps_exact_id_among_same_name_decoys() {
+    compile_context_test(|cx| {
+        let stand = tile(3170, 3308);
+        let (mut snapshot, target, scene) = use_on_footprint_fixture(cx, stand);
+        assert_eq!(
+            api::query::loc_approach::can_operate_from(&target, &scene, stand),
+            Some(true)
+        );
+        let mut decoy = target.clone();
+        decoy.id += 1;
+        decoy.distance = 0;
+        snapshot.seed_locs(vec![decoy, target.clone()]);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn { target_item_id: Some(id), .. } if *id == target.id
+        ));
+    });
+}
+
+#[test]
+fn use_on_loc_unknown_scene_cannot_prove_readiness() {
+    compile_context_test(|cx| {
+        let (mut snapshot, target, mut scene) = use_on_footprint_fixture(cx, tile(3170, 3308));
+        scene.available = false;
+        snapshot.seed_scene(scene);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        for tick in 2..=4 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            assert!(matches!(&ledger.as_ref().unwrap().outbox[0].effect,
+                HostEffect::Walk(request) if request.loc_id == Some(target.id)));
+        }
+    });
 }
 
 #[test]
@@ -1264,9 +1967,11 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
     s.seed_chat_lines(vec![line(2)]);
     let plan = AcquirePlan {
         recipe: Arc::from("flour"),
-        steps: vec![CompiledAcquireStep {
+        steps: Arc::from(vec![CompiledAcquireStep {
+            id: FactKey::new("flour-child"),
             advances: false,
             skip_if: Arc::new(AnyPlan { items: vec![] }),
+            skip_if_summary: Arc::from("never"),
             settle: Arc::new(Message {
                 needles: vec!["grain in the hopper".into()],
             }),
@@ -1274,7 +1979,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
                 until: Arc::new(AllPlan { items: vec![] }),
                 max_ticks: 2,
             }),
-        }],
+        }]),
     };
     let mut ledger = None;
     let mut run = with_tick(&s, &mut ledger, 5000, |t| {
@@ -1332,6 +2037,10 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
         with_step(tick, |cx| run.poll(cx))
     })
     .is_pending());
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
     let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
     assert!(matches!(
         &action.effect,
@@ -1345,8 +2054,8 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
             request_id: authority.request_id().get(),
             evidence: EvidenceStamp {
                 run: authority.run(),
-                tick: 3,
-                sequence: 3,
+                tick: 4,
+                sequence: 4,
             },
             accepted: true,
             chat_since: 0,
@@ -1354,7 +2063,7 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
     );
     snapshot.seed_varps(varps(false));
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
             with_step(tick, |cx| run.poll(cx))
         }),
         Poll::Ready(Ok(_))
@@ -1534,12 +2243,21 @@ fn test_progress() -> crate::quester::progress::CompiledProgress {
 }
 
 fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
+    compile_context_test_with_keep(&[], f)
+}
+
+fn compile_context_test_with_keep<R>(
+    keep_ids: &[i32],
+    f: impl FnOnce(&CompileContext<'_>) -> R,
+) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = FactKey::new("cook");
     let progress = test_progress();
     f(&CompileContext {
         path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
         progress: &progress,
         selected: &data,
         quests: &quests,
@@ -1549,8 +2267,48 @@ fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids,
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
+}
+
+#[test]
+fn unequip_all_keeps_shared_protected_equipment() {
+    let protected_id = 7;
+    let plan = compile_context_test_with_keep(&[protected_id], |cx| {
+        super::s2::compile_unequip(
+            test_args::<s2::EquipArgs>(serde_json::json!({"all": true})),
+            cx,
+        )
+        .unwrap()
+    });
+    let equipment = |id, name| ItemView {
+        def: def(id, name),
+        container: ItemContainer::Equipment,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: vec![],
+        component_id: 0,
+    };
+    let mut snapshot = ready();
+    snapshot.seed_equipment(vec![
+        equipment(protected_id, "Protected"),
+        equipment(42, "Other"),
+    ]);
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Unequip { name } if name == "Other"
+    ));
 }
 
 #[test]
@@ -1587,12 +2345,17 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
             z: 0,
             yaw: 0,
         }]);
-        let present = compile_npc_present(&serde_json::json!({"npc":"king_bolren"}), cx).unwrap();
+        let present = compile_npc_present(
+            test_args::<NpcArg>(serde_json::json!({"npc":"king_bolren"})),
+            cx,
+        )
+        .unwrap();
         let mut ledger = None;
         with_tick(&s, &mut ledger, 1, |t| {
             assert_eq!(
                 present.evaluate(&PredicateContext {
                     cx: &t.cx,
+                    pairs: t.pairs,
                     quests: cx.quests,
                     progress: &[],
                     required_after: t.cx.evidence(),
@@ -1603,17 +2366,20 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
                 Truth::True
             );
         });
-        for (compile, args) in [
-            (
-                compile_talk as super::super::compile::CompileStep,
-                serde_json::json!({"npc":"king_bolren"}),
-            ),
-            (
-                compile_interact as super::super::compile::CompileStep,
-                serde_json::json!({"target":{"npc":"king_bolren"},"op":"Talk-to"}),
-            ),
+        for plan in [
+            compile_talk(
+                test_args::<TalkArgs>(serde_json::json!({"npc":"king_bolren"})),
+                cx,
+            )
+            .unwrap(),
+            compile_interact(
+                test_args::<InteractArgs>(
+                    serde_json::json!({"target":{"npc":"king_bolren"},"op":"Talk-to"}),
+                ),
+                cx,
+            )
+            .unwrap(),
         ] {
-            let plan = compile(&args, cx).unwrap();
             let mut ledger = None;
             let mut run = with_tick(&s, &mut ledger, 1, |t| {
                 with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1661,7 +2427,11 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
         };
         let mut far = ready();
         far.seed_npcs(vec![npc(8)]);
-        let plan = compile_talk(&serde_json::json!({"npc":"king_bolren"}), cx).unwrap();
+        let plan = compile_talk(
+            test_args::<TalkArgs>(serde_json::json!({"npc":"king_bolren"})),
+            cx,
+        )
+        .unwrap();
         let mut ledger = None;
         let mut run = with_tick(&far, &mut ledger, 1, |t| {
             with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1742,12 +2512,12 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
             28,
         );
         let plan = compile_use_on(
-            &serde_json::json!({
+            test_args::<UseOnArgs>(serde_json::json!({
                 "item": "shears",
                 "target": {"npc": "sheepunsheered"},
                 "anchor": {"tile": [3200, 3270, 0], "source": "test"},
                 "radius": 4
-            }),
+            })),
             cx,
         )
         .unwrap();
@@ -1846,16 +2616,16 @@ fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
             };
             snapshot.seed_chat_lines(vec![message(5, 0, None)]);
             let plan = compile_use_on(
-            &serde_json::json!({
-                "item": "shears",
-                "target": {"npc": "sheepunsheered"},
-                "radius": 8,
-                "product": "wool",
-                "no_product": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["The sheep manages to get away from you!"]}}},
-                "settle_ms": 240_000
-            }),
-            cx,
-        )
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "shears",
+                    "target": {"npc": "sheepunsheered"},
+                    "radius": 8,
+                    "product": "wool",
+                    "no_product": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["The sheep manages to get away from you!"]}}},
+                    "settle_ms": 240_000
+                })),
+                cx,
+            )
         .unwrap();
             let mut ledger = None;
             let mut run = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -1937,17 +2707,18 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
             ..shears.clone()
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears.clone()], 28);
         // The target is held to isolate round settlement from movement. This
         // drives the same compiled UseOn machine used by the sheep Path.
         let plan = compile_use_on(
-            &serde_json::json!({
+            test_args::<UseOnArgs>(serde_json::json!({
                 "item": "shears", "target": {"item": "shears"},
                 "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000,
                 "no_product": {"Fact": {"kind": "message", "version": 1, "args": {
                     "any": ["The sheep manages to get away from you!"]
                 }}}
-            }),
+            })),
             cx,
         )
         .unwrap();
@@ -2035,12 +2806,13 @@ fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![shears], 28);
         let plan = compile_use_on(
-            &serde_json::json!({
+            test_args::<UseOnArgs>(serde_json::json!({
                 "item": "shears", "target": {"item": "shears"},
                 "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
-            }),
+            })),
             cx,
         )
         .unwrap();
@@ -2121,10 +2893,10 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
         snapshot.seed_chat_modal(2100, vec!["You get some wool.".into()]);
         snapshot.seed_chat_options(vec![], 2105);
         let plan = compile_use_on(
-            &serde_json::json!({
+            test_args::<UseOnArgs>(serde_json::json!({
                 "item": "shears", "target": {"item": "shears"},
                 "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
-            }),
+            })),
             cx,
         )
         .unwrap();
@@ -2137,7 +2909,20 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
         })
         .is_pending());
         assert!(
-            matches!(emitted(&ledger), InteractReq::ContinueDialog),
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "begin the shared driver without dispatching another product round"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                emitted(&ledger),
+                InteractReq::ContinueDialog { component_id: None }
+            ),
             "objbox from a successful shear must be continued before the next UseOn"
         );
     });
@@ -2159,10 +2944,14 @@ fn use_on_negative_feedback_is_authored_and_not_a_sheep_special_case() {
             }],
             28,
         );
-        let plan = compile_use_on(&serde_json::json!({
-            "item": "shears", "target": {"item": "shears"}, "product": "wool",
-            "no_product": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["Nothing is produced."]}}}
-        }), cx).unwrap();
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears", "target": {"item": "shears"}, "product": "wool",
+                "no_product": {"Fact": {"kind": "message", "version": 1, "args": {"any": ["Nothing is produced."]}}}
+            })),
+            cx,
+        )
+            .unwrap();
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())
@@ -2433,6 +3222,7 @@ fn with_sheep_step<R>(
         required_after: evidence,
         bank: &bank,
         banks: &banks,
+        choices: &crate::quester::choices::QuestChoices::default(),
     })
 }
 
@@ -2468,6 +3258,7 @@ fn sheep_partial_hand_in_use_on_stops_at_only_the_missing_raw_count() {
             component_id: 3214,
         };
         let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(
             vec![
                 item(1735, "Shears", 0, 1),
@@ -2570,6 +3361,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                 let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
                 let context = PredicateContext {
                     cx: &tick.cx,
+                    pairs: tick.pairs,
                     quests: cx.quests,
                     progress: &progress,
                     required_after: tick.cx.evidence(),
@@ -2592,7 +3384,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
 fn wait_observes_until_and_expires_at_the_authored_bound() {
     compile_context_test(|cx| {
         let args = serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":3});
-        let plan = compile_wait(&args, cx).unwrap();
+        let plan = compile_wait(test_args::<WaitArgs>(args), cx).unwrap();
         let mut s = ready();
         let mut ledger = None;
         let mut run = with_tick(&s, &mut ledger, 1, |t| {
@@ -2626,20 +3418,21 @@ fn wait_observes_until_and_expires_at_the_authored_bound() {
             with_tick(&s, &mut ledger, 6, |t| with_step(t, |cx| run.poll(cx))),
             Poll::Ready(Ok(_))
         ));
-        for args in [
-            serde_json::json!({}),
-            serde_json::json!({"until":{"All":[]},"max_ticks":0}),
-            serde_json::json!({"until":{"All":[]},"max_ticks":"three"}),
-        ] {
-            assert!(compile_wait(&args, cx).is_err());
-        }
+        assert!(serde_json::from_value::<WaitArgs>(serde_json::json!({})).is_err());
+        let zero_bound =
+            test_args::<WaitArgs>(serde_json::json!({"until":{"All":[]},"max_ticks":0}));
+        assert!(compile_wait(zero_bound, cx).is_err());
+        assert!(serde_json::from_value::<WaitArgs>(
+            serde_json::json!({"until":{"All":[]},"max_ticks":"three"})
+        )
+        .is_err());
     });
 }
 
 #[test]
 fn wait_message_until_requires_an_event_after_begin() {
     compile_context_test(|cx| {
-        let plan = compile_wait(&serde_json::json!({"until":{"Fact":{"kind":"message","version":1,"args":{"any":["ready"]}}},"max_ticks":4}),cx).unwrap();
+        let plan = compile_wait(test_args::<WaitArgs>(serde_json::json!({"until":{"Fact":{"kind":"message","version":1,"args":{"any":["ready"]}}},"max_ticks":4})),cx).unwrap();
         let mut s = ready();
         s.seed_chat_lines(vec![ChatLineView {
             sequence: 1,
@@ -2668,10 +3461,15 @@ fn wait_message_until_requires_an_event_after_begin() {
 #[test]
 fn public_chat_cannot_settle_or_set_message_state() {
     compile_context_test(|cx| {
-        let message =
-            compile_message(&serde_json::json!({"any":["grain in the hopper"]}), cx).unwrap();
+        let message = compile_message(
+            test_args::<MessageArg>(serde_json::json!({"any":["grain in the hopper"]})),
+            cx,
+        )
+        .unwrap();
         let state = compile_message_state(
-            &serde_json::json!({"set":["grain in the hopper"],"clear":["hopper is empty"]}),
+            test_args::<MessageStateArg>(
+                serde_json::json!({"set":["grain in the hopper"],"clear":["hopper is empty"]}),
+            ),
             cx,
         )
         .unwrap();
@@ -2685,6 +3483,7 @@ fn public_chat_cannot_settle_or_set_message_state() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -2695,7 +3494,9 @@ fn public_chat_cannot_settle_or_set_message_state() {
             assert_eq!(message.evaluate(&pred), Truth::False);
             assert_eq!(state.evaluate(&pred), Truth::False);
         });
-        assert!(compile_message(&serde_json::json!({"any":[""]}), cx).is_err());
+        assert!(
+            compile_message(test_args::<MessageArg>(serde_json::json!({"any":[""]})), cx).is_err()
+        );
     });
 }
 
@@ -2795,6 +3596,7 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -2857,6 +3659,7 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
         with_tick(&s, &mut None, 1, |t| {
             let pred = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -2895,6 +3698,7 @@ fn progress_predicates_require_known_same_run_evidence() {
         with_tick(&snapshot, &mut ledger, 1, |t| {
             let unknown = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &[],
                 required_after: t.cx.evidence(),
@@ -2925,6 +3729,7 @@ fn progress_predicates_require_known_same_run_evidence() {
             }];
             let known = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &progress,
                 required_after: EvidenceStamp {
@@ -3097,6 +3902,7 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
             }];
             let known = PredicateContext {
                 cx: &t.cx,
+                pairs: t.pairs,
                 quests: cx.quests,
                 progress: &progress,
                 required_after: evidence,
@@ -3127,7 +3933,7 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
 
 #[test]
 fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
     seed_dialogue_combat(&mut snapshot, false);
@@ -3135,11 +3941,16 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
         t.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Aubury"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Aubury"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3161,12 +3972,12 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(-1, vec![]);
-    for tick in 5..9 {
+    for tick in 5..13 {
         with_tick(&snapshot, &mut ledger, tick, |t| {
             assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
         });
     }
-    with_tick(&snapshot, &mut ledger, 9, |t| {
+    with_tick(&snapshot, &mut ledger, 13, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
             Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3176,7 +3987,7 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
 
 #[test]
 fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4893, vec!["Give 'em here then.".into()]);
     snapshot.seed_chat_options(vec![], 4899);
@@ -3194,11 +4005,16 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut tick.cx,
             )
@@ -3228,17 +4044,20 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 24..29 {
+    for tick in 24..33 {
         assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 29, |tick| {
+        with_tick(&snapshot, &mut ledger, 33, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3247,7 +4066,7 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
 
 #[test]
 fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     let item = ItemView {
         def: def(1759, "Ball of wool"),
@@ -3264,11 +4083,16 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut tick.cx,
             )
@@ -3281,7 +4105,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     .is_pending());
     // One starting unit plus four slack updates may re-arm; later unrelated
     // updates keep happening but must not postpone the fifth quiet deadline.
-    for game_tick in 3..11 {
+    for game_tick in 3..15 {
         snapshot.seed_inventory(
             vec![ItemView {
                 slot: (game_tick % 2) as i32,
@@ -3296,7 +4120,7 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
     }
     snapshot.seed_inventory(vec![ItemView { slot: 1, ..item }], 28);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 11, |tick| {
+        with_tick(&snapshot, &mut ledger, 15, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -3341,7 +4165,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
 
 #[test]
 fn dialogue_hostile_close_never_reports_success() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
     seed_dialogue_combat(&mut snapshot, false);
@@ -3349,11 +4173,16 @@ fn dialogue_hostile_close_never_reports_success() {
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
         t.actions
             .begin::<Dialogue>(
-                DialogueArgs {
-                    id: 0,
-                    npc: Arc::from("Aubury"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Aubury"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3383,7 +4212,7 @@ fn dialogue_hostile_close_never_reports_success() {
 
 #[test]
 fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
-    use super::dialogue::{Dialogue, DialogueArgs};
+    use super::dialogue::Dialogue;
     use crate::dialogue_outcome::DialogueOutcome;
     for continue_component in [None, Some(4883), Some(-1)] {
         let mut snapshot = ready();
@@ -3406,11 +4235,16 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
             t.actions
                 .begin::<Dialogue>(
-                    DialogueArgs {
-                        id: 0,
-                        npc: Arc::from("Aubury"),
-                        prefer: Arc::from([]),
-                        choose: None,
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Npc {
+                            id: 0,
+                            name: Arc::from("Aubury"),
+                        },
+                        options: dialogue::DialogueOptions {
+                            prefer: Arc::from([]),
+                            choose: (continue_component == Some(-1)).then_some(1),
+                            ..Default::default()
+                        },
                     },
                     &mut t.cx,
                 )
@@ -3468,10 +4302,15 @@ fn assert_reused_dialogue_page_is_acknowledged(
         t.actions
             .begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
-                    id: 0,
-                    npc: Arc::from(npc),
-                    prefer: Arc::from([]),
-                    choose: None,
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from(npc),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3480,7 +4319,10 @@ fn assert_reused_dialogue_page_is_acknowledged(
     with_tick(&snapshot, &mut ledger, 2, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
     ledger.as_mut().unwrap().outbox.clear();
     // A fresh snapshot of the old page is not an acknowledgement.
     with_tick(&snapshot, &mut ledger, 3, |t| {
@@ -3496,7 +4338,10 @@ fn assert_reused_dialogue_page_is_acknowledged(
     with_tick(&snapshot, &mut ledger, 5, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
 }
 
 #[test]
@@ -3538,10 +4383,15 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         t.actions
             .begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
-                    id: 758,
-                    npc: Arc::from("Fred the Farmer"),
-                    prefer: Arc::from([]),
-                    choose: None,
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 758,
+                        name: Arc::from("Fred the Farmer"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
                 },
                 &mut t.cx,
             )
@@ -3567,7 +4417,10 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
     with_tick(&snapshot, &mut ledger, 37, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
 }
 
 #[test]
@@ -3625,6 +4478,9 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             with_sheep_step(tick, 12, |cx| step.plan.begin(cx).unwrap())
         });
         for game_tick in 2..=4 {
+            if game_tick == 3 {
+                accept_last(&mut ledger, game_tick, true);
+            }
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 with_sheep_step(tick, 12, |cx| run.poll(cx))
             });
@@ -3678,6 +4534,7 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
         let settle = |cx: &mut StepContext<'_, '_>| {
             step.settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -3759,7 +4616,11 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             step: vec![0; 9],
             canlight: vec![],
         };
-        let plan = compile_talk(&serde_json::json!({"npc":"fred_the_farmer"}), cx).unwrap();
+        let plan = compile_talk(
+            test_args::<TalkArgs>(serde_json::json!({"npc":"fred_the_farmer"})),
+            cx,
+        )
+        .unwrap();
         let mut ledger = None;
         let mut run = with_tick_reach(&snapshot, &blocked, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())
@@ -3827,6 +4688,7 @@ fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
     let plan = WalkPlan {
         tile: tile(3200, 3200),
         radius: 1,
+        options: crate::native::WalkOptions::default(),
         cross: Box::default(),
         protect: true,
     };
@@ -3896,12 +4758,18 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
     let snapshot = ready();
     let mut ledger = None;
     let mut run = TalkRun {
-        id: 42,
-        npc: Arc::from("test npc"),
+        target: dialogue::DialogueTarget::Npc {
+            id: 42,
+            name: Arc::from("test npc"),
+        },
         tile: Some(tile(3200, 3200)),
         leash: 1,
-        prefer: Arc::from([]),
-        choose: None,
+        options: dialogue::DialogueOptions {
+            prefer: Arc::from([]),
+            choose: None,
+            ..Default::default()
+        },
+        expect_combat: None,
         walk: None,
         dialogue: None,
         started: false,
@@ -3933,16 +4801,22 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
         }));
         let mut ledger = None;
         let mut run = TalkRun {
-            id: 42,
-            npc: Arc::from("test npc"),
+            target: dialogue::DialogueTarget::Npc {
+                id: 42,
+                name: Arc::from("test npc"),
+            },
             tile: Some(WorldTile {
                 x: 3103,
                 z: 3163,
                 level: 2,
             }),
             leash: 6,
-            prefer: Arc::from([]),
-            choose: None,
+            options: dialogue::DialogueOptions {
+                prefer: Arc::from([]),
+                choose: None,
+                ..Default::default()
+            },
+            expect_combat: None,
             walk: None,
             dialogue: None,
             started: false,
@@ -3994,6 +4868,13 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         round_before: None,
         round_deadline: None,
         chat_since: 0,
+        target_tile: None,
+        default_dialogue: true,
+        dialogue_options: None,
+        dialogue: None,
+        dialogue_started: None,
+        dialogue_completed: false,
+        accepted_tick: None,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))
@@ -4010,4 +4891,594 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         .outbox
         .iter()
         .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
+}
+#[test]
+fn path_walk_permissions_decode_as_tri_state_options() {
+    let inherited = super::parse_walk_plan(test_args::<WalkArgs>(serde_json::json!({
+        "tile": [3224, 3200, 0],
+        "source": "walk opt-in test",
+        "radius": 1,
+    })))
+    .unwrap();
+    assert_eq!(inherited.options, crate::native::WalkOptions::default());
+
+    let explicit = super::parse_walk_plan(test_args::<WalkArgs>(serde_json::json!({
+        "tile": [3224, 3200, 0],
+        "source": "walk opt-in test",
+        "radius": 1,
+        "allow_teleports": true,
+        "allow_wilderness": false,
+    })))
+    .unwrap();
+    assert_eq!(
+        explicit.options,
+        crate::native::WalkOptions {
+            allow_teleports: crate::native::WalkBit::Allow,
+            allow_wilderness: crate::native::WalkBit::Forbid,
+            allow_danger_zones: crate::native::WalkBit::Inherit,
+        }
+    );
+}
+
+#[test]
+fn path_walk_crossing_and_protection_are_independent() {
+    compile_context_test(|cx| {
+        for protect in [false, true] {
+            let mut args = serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "walk opt-in test",
+                "radius": 1,
+            });
+            if protect {
+                args["guard"] = serde_json::json!("protect");
+            } else {
+                args["cross"] = serde_json::json!(["death-plateau-throwers"]);
+            }
+            let plan = super::compile_walk(test_args::<WalkArgs>(args), cx).unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3100, 3200)));
+            let mut ledger = None;
+            let _run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the compiled Path must emit a real native walk");
+            };
+            assert_eq!(request.protect, protect);
+            if protect {
+                assert!(request.cross.is_empty());
+            } else {
+                assert_eq!(request.cross.len(), 1);
+                assert_eq!(&*request.cross[0], "death-plateau-throwers");
+            }
+        }
+    });
+}
+
+#[test]
+fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
+    compile_context_test(|compile| {
+        let expected = compile
+            .selected
+            .npc_by_config("desertminingcaptain")
+            .unwrap();
+        for (target_kind, target_index, opponent_type, attacking_local, succeeds) in [
+            (
+                api::snapshot::ActorKind::Npc,
+                42,
+                Some(expected.id as usize),
+                true,
+                true,
+            ),
+            (
+                api::snapshot::ActorKind::Npc,
+                43,
+                Some(expected.id as usize),
+                true,
+                false,
+            ),
+            (
+                api::snapshot::ActorKind::Player,
+                42,
+                Some(expected.id as usize),
+                true,
+                false,
+            ),
+            (api::snapshot::ActorKind::Npc, 42, Some(0), true, false),
+            (api::snapshot::ActorKind::Npc, 42, None, true, false),
+            (
+                api::snapshot::ActorKind::Npc,
+                42,
+                Some(expected.id as usize),
+                false,
+                false,
+            ),
+        ] {
+            let plan = compile_talk(
+                test_args::<TalkArgs>(serde_json::json!({
+                    "npc":"desertminingcaptain",
+                    "expect_combat":{"npc":"desertminingcaptain"}
+                })),
+                compile,
+            )
+            .unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_chat_modal(4882, vec!["It's a funny captain...".into()]);
+            let mut player = local_player(tile(3270, 3029));
+            snapshot.seed_local_player(player.clone());
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            snapshot.seed_chat_modal(-1, vec![]);
+            player.player.actor.in_combat = true;
+            player.player.actor.target = Some(api::snapshot::ActorTargetView {
+                kind: target_kind,
+                index: target_index,
+            });
+            snapshot.seed_local_player(player);
+            snapshot.seed_npcs(vec![api::snapshot::NpcView {
+                index: 42,
+                r#type: opponent_type,
+                name: expected.display.clone(),
+                actions: vec![],
+                tile: tile(3271, 3029),
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 40,
+                total_health: 40,
+                face_entity: -1,
+                target: attacking_local.then_some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: 0,
+                }),
+                moving: false,
+                running: false,
+                in_combat: false,
+                level: 40,
+                size: 1,
+                network: tile(3271, 3029),
+                x: 0,
+                z: 0,
+                yaw: 0,
+            }]);
+            let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if succeeds {
+                let Poll::Ready(Ok(outcome)) = result else {
+                    panic!("expected authored captain combat handoff");
+                };
+                assert!(matches!(
+                    outcome.receipt.as_ref().unwrap().as_any().downcast_ref::<TalkReceipt>(),
+                    Some(TalkReceipt::HandedToCombat { npc_type, npc_index: 42 })
+                        if *npc_type == expected.id
+                ));
+            } else {
+                assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+            }
+        }
+    });
+}
+
+#[test]
+fn talk_expected_combat_rejects_unknown_npc_config() {
+    compile_context_test(|cx| {
+        let result = compile_talk(
+            test_args::<TalkArgs>(
+                serde_json::json!({"npc":"desertminingcaptain","expect_combat":{"npc":"missing"}}),
+            ),
+            cx,
+        );
+        assert!(
+            matches!(result, Err(CompileError { code, .. }) if code.as_ref() == "unresolved-npc")
+        );
+    });
+}
+
+#[path = "extension_tests.rs"]
+mod extension_tests;
+fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
+    compile_context_test(|base| {
+        let row = crate::loadouts_store::Loadout::new("cook/disguise")
+            .with_slot("torso", "Desert shirt")
+            .with_slot("feet", "Desert boots");
+        let loadouts =
+            crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
+        f(&CompileContext {
+            loadouts: &loadouts,
+            ..*base
+        })
+    })
+}
+
+fn loadout_test_item(alias: &str, container: ItemContainer, slot: i32) -> ItemView {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias(alias).unwrap();
+    ItemView {
+        def: def(item.id, item.name.as_deref().unwrap()),
+        container,
+        action_family: if container == ItemContainer::Equipment {
+            ItemActionFamily::Component
+        } else {
+            ItemActionFamily::Held
+        },
+        slot,
+        count: 1,
+        actions: vec![],
+        component_id: 0,
+    }
+}
+
+fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) -> Truth {
+    let mut ledger = None;
+    with_tick(snapshot, &mut ledger, 1, |tick| {
+        plan.evaluate(&PredicateContext {
+            cx: &tick.cx,
+            quests: &api::quest_facts::QuestCatalog::empty(),
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            outcome: None,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            pairs: None,
+        })
+    })
+}
+
+#[test]
+fn loadout_waits_for_inventory_observation_before_bank_plan() {
+    compile_context_test(|base| {
+        let row = crate::loadouts_store::Loadout::new("cook/carry").with_carry("Lobster", 1);
+        let loadouts =
+            crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
+        let cx = CompileContext {
+            loadouts: &loadouts,
+            ..*base
+        };
+        let plan = s2::compile_loadout(
+            test_args::<s2::LoadoutArgs>(serde_json::json!({"loadout":"carry","at":"nearest"})),
+            &cx,
+        )
+        .unwrap();
+        let lobster_id = resolve_obj(&cx, "lobster").unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "Loadout must wait until inventory and equipment are posted"
+        );
+        assert!(
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "Loadout must not select a bank from unposted observations"
+        );
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(lobster_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "inventory alone must not stand in for an unposted equipment observation"
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+        snapshot.seed_equipment(vec![]);
+        let ready_plan = s2::compile_loadout_ready(
+            test_args::<s2::LoadoutArgs>(serde_json::json!({"loadout":"carry"})),
+            &cx,
+        )
+        .unwrap();
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::True,
+            "fixture carries the complete loadout"
+        );
+        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Ok(_))),
+            "Loadout must settle from fresh observations without a bank request"
+        );
+        assert!(
+            ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()),
+            "the observed held carry must not be withdrawn again"
+        );
+    });
+}
+
+#[test]
+fn exclusive_loadout_removes_extra_then_equips_held_item_without_banking() {
+    with_loadout_context(|cx| {
+        let args = serde_json::json!({"loadout":"disguise","exclusive":true});
+        let plan = s2::compile_loadout(test_args::<s2::LoadoutArgs>(args.clone()), cx).unwrap();
+        let ready_plan = s2::compile_loadout_ready(test_args::<s2::LoadoutArgs>(args), cx).unwrap();
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let boots = loadout_test_item("desert_boots", ItemContainer::Inventory, 0);
+        let helmet = loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0);
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![shirt.clone(), helmet.clone()]);
+        snapshot.seed_inventory(vec![boots.clone()], 28);
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::False
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Unequip { name } if name == "Rune full helm")
+        );
+
+        let mut held_helmet = helmet;
+        held_helmet.container = ItemContainer::Inventory;
+        held_helmet.slot = 1;
+        snapshot.seed_equipment(vec![shirt.clone()]);
+        snapshot.seed_inventory(vec![boots.clone(), held_helmet.clone()], 28);
+        for tick in 4..=5 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(matches!(emitted(&ledger), InteractReq::Wear { name } if name == "Desert boots"));
+        let mut worn_boots = boots;
+        worn_boots.container = ItemContainer::Equipment;
+        worn_boots.slot = 10;
+        snapshot.seed_equipment(vec![shirt, worn_boots]);
+        snapshot.seed_inventory(vec![held_helmet], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 6, |tick| {
+                with_step(tick, |step| run.poll(step))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(
+            loadout_predicate_truth(ready_plan.as_ref(), &snapshot),
+            Truth::True
+        );
+        // Admitting Wear revokes the prior Unequip owner's outbox.
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(ledger.as_ref().unwrap().outbox.iter().all(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Wear { .. } | InteractReq::Unequip { .. })
+            )
+        }));
+    });
+}
+
+#[test]
+fn exclusive_loadout_resumes_partial_outfit_without_stripping_correct_items() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            test_args::<s2::LoadoutArgs>(
+                serde_json::json!({"loadout":"disguise","exclusive":true}),
+            ),
+            cx,
+        )
+        .unwrap();
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let mut boots = loadout_test_item("desert_boots", ItemContainer::Inventory, 0);
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![shirt.clone()]);
+        snapshot.seed_inventory(vec![boots.clone()], 28);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(matches!(emitted(&ledger), InteractReq::Wear { name } if name == "Desert boots"));
+        boots.container = ItemContainer::Equipment;
+        boots.slot = 10;
+        snapshot.seed_equipment(vec![shirt, boots]);
+        snapshot.seed_inventory(vec![], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |step| run.poll(step))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    });
+}
+
+#[test]
+fn exclusive_loadout_blocks_before_removal_when_inventory_is_full() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            test_args::<s2::LoadoutArgs>(
+                serde_json::json!({"loadout":"disguise","exclusive":true}),
+            ),
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_equipment(vec![
+            loadout_test_item("desert_shirt", ItemContainer::Equipment, 4),
+            loadout_test_item("desert_boots", ItemContainer::Equipment, 10),
+            loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0),
+        ]);
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| loadout_test_item("lobster", ItemContainer::Inventory, slot))
+                .collect(),
+            28,
+        );
+        let mut ledger = None;
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap().poll(step))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "exclusive loadout: inventory space required to remove worn items")
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    });
+}
+
+#[test]
+fn exclusive_loadout_can_remove_ammo_into_a_held_stack_with_full_inventory() {
+    with_loadout_context(|cx| {
+        let plan = s2::compile_loadout(
+            test_args::<s2::LoadoutArgs>(
+                serde_json::json!({"loadout":"disguise","exclusive":true}),
+            ),
+            cx,
+        )
+        .unwrap();
+        let mut arrows = loadout_test_item("bronze_arrow", ItemContainer::Equipment, 13);
+        arrows.def.stackable = true;
+        arrows.count = 20;
+        let mut held_arrows = arrows.clone();
+        held_arrows.container = ItemContainer::Inventory;
+        held_arrows.slot = 27;
+        let mut inventory = (0..27)
+            .map(|slot| loadout_test_item("lobster", ItemContainer::Inventory, slot))
+            .collect::<Vec<_>>();
+        inventory.push(held_arrows);
+        let mut snapshot = ready();
+        snapshot.seed_inventory(inventory, 28);
+        snapshot.seed_equipment(vec![
+            loadout_test_item("desert_shirt", ItemContainer::Equipment, 4),
+            loadout_test_item("desert_boots", ItemContainer::Equipment, 10),
+            arrows,
+        ]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        for tick in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+        }
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Unequip { name } if name == "Bronze arrow")
+        );
+    });
+}
+
+#[test]
+fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
+    with_loadout_context(|cx| {
+        let predicate = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "equipment_only".into(),
+                version: 1,
+                args: serde_json::json!({"objs":["desert_shirt","desert_boots"]}),
+            },
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::Unknown
+        );
+        let shirt = loadout_test_item("desert_shirt", ItemContainer::Equipment, 4);
+        let boots = loadout_test_item("desert_boots", ItemContainer::Equipment, 10);
+        let helmet = loadout_test_item("rune_full_helm", ItemContainer::Equipment, 0);
+        for (worn, expected) in [
+            (vec![], Truth::False),
+            (vec![shirt.clone()], Truth::False),
+            (vec![shirt.clone(), boots.clone(), helmet], Truth::False),
+            (vec![shirt, boots], Truth::True),
+        ] {
+            snapshot.seed_equipment(worn);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                expected
+            );
+        }
+        let empty = s2::compile_equipment_only(
+            test_args::<s2::EquipmentOnlyArgs>(serde_json::json!({"objs":[]})),
+            cx,
+        )
+        .unwrap();
+        assert_eq!(
+            loadout_predicate_truth(empty.as_ref(), &snapshot),
+            Truth::False
+        );
+        snapshot.seed_equipment(vec![]);
+        assert_eq!(
+            loadout_predicate_truth(empty.as_ref(), &snapshot),
+            Truth::True
+        );
+    });
+}
+
+#[test]
+fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
+    with_loadout_context(|cx| {
+        for conflict in ["strip", "allow_lower_tier"] {
+            let mut args = serde_json::json!({"loadout":"disguise","exclusive":true});
+            args[conflict] = true.into();
+            assert_eq!(
+                s2::compile_loadout(test_args::<s2::LoadoutArgs>(args.clone()), cx)
+                    .err()
+                    .unwrap()
+                    .code
+                    .as_ref(),
+                "exclusive-loadout-requires-exact-items"
+            );
+            assert_eq!(
+                s2::compile_loadout_ready(test_args::<s2::LoadoutArgs>(args), cx)
+                    .err()
+                    .unwrap()
+                    .code
+                    .as_ref(),
+                "exclusive-loadout-requires-exact-items"
+            );
+        }
+    });
 }

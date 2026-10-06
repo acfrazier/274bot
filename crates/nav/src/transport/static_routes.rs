@@ -91,6 +91,8 @@ const UNGUARDED_BOARD_PLANKS: &[BoardPlank] = &[
 /// anchor.
 fn gangplank_edge(loc_id: i32, at: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: Some(WorldTile {
             x: (to.x - at.x).signum() * 3,
@@ -357,6 +359,8 @@ pub(super) fn boat_edges(
         gates.admit_edge(
             graph,
             TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
                 kind: TransportKind::Boat,
                 player_delta: None,
                 at: r.at,
@@ -409,18 +413,18 @@ pub(super) struct CartRoute {
     /// `(obj id, count)` minimum fare: the live percentage is evaluated
     /// against the carried balance by [`cart_fare`].
     fare: Option<(i32, i32)>,
-    /// The quest journal name gating the journey, if any.
-    quest: Option<&'static str>,
+    /// Whether the content's Zombie Queen completion gates this direction.
+    requires_zombie_queen: bool,
 }
 
 /// The 2004 cart journeys: destinations from the `p_teleport(` calls in
 /// `content/scripts/areas/area_brimhaven/scripts/hajedy.rs2` /
 /// `content/scripts/areas/area_shilo/scripts/vigroy.rs2`, origin tiles from
 /// the `==== NPC ====` placements in `content/maps/*.jm2`, and ids from
-/// `pack/npc.pack`. The fare is `calc_shilocart_cost` in both scripts:
+/// `pack/npc.pack`. Both routes use `calc_shilocart_cost`:
 /// `(coins carried * 5) / 100`, clamped to 10–200 coins — packed supply
-/// holds the 10-coin minimum, not the maximum. Hajedy refuses the ride
-/// until Shilo Village is complete (`%zombiequeen >= ^zombiequeen_complete`);
+/// holds the 10-coin minimum, not the maximum. Hajedy's completion gate is
+/// resolved to the quest journal's display name from current content;
 /// Vigroy's block carries no gate.
 pub(super) const CART_ROUTES: &[CartRoute] = &[
     // Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
@@ -439,7 +443,7 @@ pub(super) const CART_ROUTES: &[CartRoute] = &[
             level: 0,
         },
         fare: Some((995, 10)),
-        quest: Some("Shilo Village"),
+        requires_zombie_queen: true,
     },
     // Vigroy (shilocartdriver, npc 511) at the Shilo Village cart
     // (m44_46 local (18,10) = 2834,2954): `p_teleport(0_43_50_24_14)`
@@ -457,7 +461,7 @@ pub(super) const CART_ROUTES: &[CartRoute] = &[
             level: 0,
         },
         fare: Some((995, 10)),
-        quest: None,
+        requires_zombie_queen: false,
     },
 ];
 
@@ -481,9 +485,24 @@ pub(super) fn cart_fare(edge: &TransportEdge, id: i32, carried: i32) -> Option<i
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
-pub(super) fn cart_edges(graph: &mut TransportGraph) {
+pub(super) fn cart_edges(
+    graph: &mut TransportGraph,
+    zombie_queen_name: Option<&str>,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
     for r in CART_ROUTES {
+        let quest_req = if r.requires_zombie_queen {
+            let Some(name) = zombie_queen_name else {
+                bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
+                continue;
+            };
+            vec![name.to_string()]
+        } else {
+            Vec::new()
+        };
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Npc,
             player_delta: None,
             at: r.at,
@@ -497,7 +516,7 @@ pub(super) fn cart_edges(graph: &mut TransportGraph) {
             item_req: vec![],
             consumed_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
             item_returns: vec![],
-            quest_req: r.quest.map(|q| vec![q.to_string()]).unwrap_or_default(),
+            quest_req,
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,

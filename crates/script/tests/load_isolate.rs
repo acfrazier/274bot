@@ -191,6 +191,65 @@ fn item_row<'a>(
     }
 }
 
+/// The bank-side backpack's root and deposit grid in these fixtures.
+const SIDE_ROOT: i32 = 700;
+const SIDE_GRID: i32 = 701;
+
+/// A bank-side row posted at `slot` of the deposit grid.
+fn side_row<'a>(
+    id: i32,
+    name: Option<&'a str>,
+    count: i32,
+    ops: &'a [String],
+    slot: i32,
+) -> script::isolate_fb::ItemRowInput<'a> {
+    script::isolate_fb::ItemRowInput {
+        slot,
+        ..item_row(id, name, count, ops, false, -1, SIDE_GRID)
+    }
+}
+
+/// The 289 deposit grid's ops.
+fn deposit_ops() -> Vec<String> {
+    [
+        "Deposit-1",
+        "Deposit-5",
+        "Deposit-10",
+        "Deposit-All",
+        "Deposit-X",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// Deposit-All of side row `id` at `slot` in bank session `generation`.
+fn deposit_all(id: i32, slot: i32, generation: u64) -> script::shim::InteractReq {
+    script::shim::InteractReq::InvButton {
+        id,
+        slot,
+        component: SIDE_GRID,
+        operation: 4,
+        bank_generation: generation,
+    }
+}
+
+/// Post `input` with the bank's side root up, as the host does while the
+/// bank-side backpack is shown.
+fn post_with_side_root(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotInput<'_>) {
+    post_side(iso, input, SIDE_ROOT);
+}
+
+/// Post `input` with the posted side root `side` (`-1` none).
+fn post_side(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotInput<'_>, side: i32) {
+    let native = script::isolate_fb::NativeFactsInput {
+        side_modal_id: Some(side),
+        ..Default::default()
+    };
+    let (bytes, _) =
+        script::isolate_fb::encode_snapshot_delta_with_native(None, input, native, false);
+    iso.post_snapshot(bytes);
+}
+
 /// The empty fail-closed snapshot; tests override the fields they post.
 fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
     script::isolate_fb::SnapshotInput {
@@ -4044,6 +4103,7 @@ export default class T extends LoopingBot {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
+            target_item_id: None,
         }],
         "first().interact('Bury') queues the held op"
     );
@@ -4921,27 +4981,26 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
+    let ops = deposit_ops();
     let bank_side = (0..27)
-        .map(|_| nc(Some("Willow shortbow (u)"), 1))
+        .map(|slot| side_row(62, Some("Willow shortbow (u)"), 1, &ops, slot))
         .collect::<Vec<_>>();
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Deposit {
-            name: "Willow shortbow (u)".into()
-        }],
+        vec![deposit_all(62, 0, 0)],
         "one helper step must queue one deposit, not one request per duplicate row"
     );
     iso.join();
 }
 
-/// `Bank.depositAllExcept(keep)` takes the first row whose name is not kept
-/// (case-insensitive), with no script predicate.
+/// `Bank.depositAllExcept(keep)` resolves the kept names (case-insensitive)
+/// to ids and presses the first other row by id, with no script predicate.
 #[test]
 fn isolate_bank_deposit_all_except_skips_kept_names() {
     let src = r#"
@@ -4956,18 +5015,52 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let bank_side = [nc(Some("Knife"), 1), nc(Some("Bones"), 1)];
+    let ops = deposit_ops();
+    let bank_side = [
+        side_row(946, Some("Knife"), 1, &ops, 0),
+        side_row(526, Some("Bones"), 1, &ops, 1),
+    ];
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 1, 0)]);
+    iso.join();
+}
+
+/// L-except's frozen half: `bankRules.depositAllExcept(keep)` is a
+/// synchronous `(name) => boolean` matcher, not the host deposit. An empty
+/// keep name does not keep `'Coins'`, an empty candidate is never
+/// deposited, and a kept name matches case-insensitively.
+#[test]
+fn frozen_deposit_all_except_matcher_rejects_empty_candidates_not_empty_keeps() {
+    let src = r#"
+import { depositAllExcept } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__m = {
+            emptyKeep: depositAllExcept([''])('Coins'),
+            emptyCandidate: depositAllExcept([])(''),
+            folded: depositAllExcept(['coins'])('Coins'),
+            other: depositAllExcept(['coins'])('Bones'),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Deposit {
-            name: "Bones".into()
-        }]
+        iso.probe("globalThis.__m").unwrap(),
+        serde_json::json!({
+            "emptyKeep": true,
+            "emptyCandidate": false,
+            "folded": false,
+            "other": true,
+        })
     );
     iso.join();
 }
@@ -4990,18 +5083,20 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let bank_side = [nc(Some("Bones"), 1), nc(Some("Coins"), 25)];
+    let ops = deposit_ops();
+    let bank_side = [
+        side_row(526, Some("Bones"), 1, &ops, 0),
+        side_row(995, Some("Coins"), 25, &ops, 1),
+    ];
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Deposit {
-            name: "Bones".into()
-        }],
+        vec![deposit_all(526, 0, 0)],
         "the async matcher's Promise is truthy for the first row"
     );
     iso.join();
@@ -5061,8 +5156,10 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![script::shim::InteractReq::Close]
     );
+    // The host's close: shut, and the bank session generation acknowledges it.
     snap.bank_open = false;
     snap.bank_loaded = false;
+    snap.bank_generation += 1;
     for n in 2..=4 {
         snap.tick = n;
         post_snapshot_input(&iso, &snap);
@@ -5077,8 +5174,11 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// One press of the matched row by id, then the loop waits for that id to
+/// leave the pack; a posted side holding only refused rows ends it with no
+/// side-view wait.
 #[test]
-fn isolate_banking_deposit_waits_for_observed_host_result() {
+fn isolate_banking_deposit_waits_for_the_pressed_id_to_leave_the_pack() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -5091,35 +5191,33 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let deposit_ops = ["Deposit All".to_string()];
-    let first = [item_row(1, Some("Bones"), 3, &deposit_ops, false, -1, 0)];
+    let ops = deposit_ops();
+    let first = [
+        side_row(526, Some("Bones"), 3, &ops, 0),
+        side_row(995, Some("Coins"), 5, &ops, 1),
+    ];
     let mut snap = base_snapshot();
     snap.bank_side = &first;
+    snap.inv = &first;
+    snap.inv_size = 28;
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Deposit {
-            name: "Bones".into(),
-        }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 7)]);
     assert!(
         iso.probe("__depositDone").is_err(),
         "the helper stays parked"
     );
 
-    // The backpack still holds a row the predicate refuses, so the loop
-    // ends on the result without the side-view wait.
-    let rest = [item_row(995, Some("Coins"), 5, &deposit_ops, false, -1, 1)];
+    // The pressed id left the pack; only a refused row remains.
+    let rest = [side_row(995, Some("Coins"), 5, &ops, 1)];
     snap.tick = 2;
     snap.bank_side = &rest;
-    snap.bank_op_result_seq = 1;
-    snap.bank_op_result = true;
-    post_snapshot_input(&iso, &snap);
+    snap.inv = &rest;
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__depositDone").unwrap(), true);
@@ -5156,12 +5254,13 @@ export default class T extends LoopingBot {
     let iso =
         LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
             .unwrap();
-    let bank_side = [item_row(405, Some("Mystery box"), 1, &[], false, -1, 0)];
+    let ops = deposit_ops();
+    let bank_side = [side_row(405, Some("Mystery box"), 1, &ops, 0)];
     let mut snap = base_snapshot();
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     let value: serde_json::Value = iso.probe("globalThis.__common").unwrap();
@@ -5181,9 +5280,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Deposit {
-            name: "Mystery box".into()
-        }],
+        vec![deposit_all(405, 0, 0)],
         "the observed id reaches the Rust predicate even when its name is unrelated"
     );
     iso.join();
@@ -5393,6 +5490,7 @@ export default class T extends LoopingBot {
 
     snap.tick = 5;
     snap.bank_open = false;
+    snap.bank_generation += 1;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(5);
     assert_eq!(
@@ -5434,6 +5532,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// `withdrawLoad` through its Rust family: one exact Withdraw-All press on
+/// the named row (no host-owned load result), true once the posted pack
+/// grew in the same bank session; a reopened session settles it false.
 #[test]
 fn isolate_bank_withdraw_load_keeps_item_updates_but_rejects_reopened_sessions() {
     use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput};
@@ -5448,8 +5549,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let ops = ["Withdraw All".into()];
-    let bank = [item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 0)];
+    let ops = [
+        "Withdraw-1",
+        "Withdraw-5",
+        "Withdraw-10",
+        "Withdraw-All",
+        "Withdraw-X",
+    ]
+    .map(String::from);
+    let bank = [script::isolate_fb::ItemRowInput {
+        slot: 3,
+        ..item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 601)
+    }];
+    let filled: Vec<_> = (0..28).map(|_| nc(Some("Yew logs"), 1)).collect();
     for reopened in [false, true] {
         let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
         let mut snap = base_snapshot();
@@ -5468,17 +5580,19 @@ export default class T extends LoopingBot {
         assert_eq!(iso.probe("typeof globalThis.__ok").unwrap(), "undefined");
         assert_eq!(
             iso.drain_interacts(),
-            vec![script::shim::InteractReq::WithdrawLoad {
-                name: "Yew logs".into(),
+            vec![script::shim::InteractReq::InvButton {
+                id: 1515,
+                slot: 3,
+                component: 601,
+                operation: 4,
                 bank_generation: 12,
             }],
-            "the action carries the session, not item snapshot 40"
+            "the press carries the session, not item snapshot 40"
         );
 
         snap.tick = 2;
         snap.bank_generation = if reopened { 14 } else { 12 };
-        snap.withdraw_load_result_seq = 1;
-        snap.withdraw_load_result = true;
+        snap.inv = &filled;
         native.bank_snapshot_generation = Some(41);
         let (bytes, _) = encode_snapshot_delta_with_native(Some(&first), &snap, native, false);
         iso.post_snapshot(bytes);
@@ -5488,6 +5602,7 @@ export default class T extends LoopingBot {
             !reopened,
             "item updates preserve the withdrawal; a replaced session invalidates it"
         );
+        assert!(iso.drain_interacts().is_empty());
         iso.join();
     }
 }
@@ -5610,6 +5725,10 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// `Bank.close()` through its Rust family: one Close, then true only once
+/// the bank is shut, its old side root released and the session
+/// generation acknowledged. An explicit `timeoutMs` reaches Rust as the
+/// bound: `close(0)` on a bank that stays open is false.
 #[test]
 fn isolate_bank_close_waits_until_posted_shut() {
     let src = r#"
@@ -5627,7 +5746,8 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    snap.bank_generation = 3;
+    post_side(&iso, &snap, SIDE_ROOT);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
@@ -5641,20 +5761,64 @@ export default class T extends LoopingBot {
         serde_json::Value::Null,
         "close must not resolve while the posted bank is still open"
     );
+    snap.tick = 2;
     snap.bank_open = false;
     snap.bank_loaded = false;
-    post_snapshot_input(&iso, &snap);
+    snap.bank_generation = 4;
+    post_side(&iso, &snap, SIDE_ROOT);
     iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        serde_json::Value::Null,
+        "main shut with the old side root up is not closed"
+    );
+    snap.tick = 3;
+    post_side(&iso, &snap, -1);
+    iso.on_game_tick(3);
     let ok = iso.probe("__ok").unwrap();
     assert_eq!(ok, true, "close resolves after the posted bank shuts");
     iso.join();
+
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Bank.close(0);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_side(&iso, &snap, SIDE_ROOT);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Close]
+    );
+    snap.tick = 2;
+    post_side(&iso, &snap, SIDE_ROOT);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        false,
+        "the caller's bound, not Rust's 4 s default"
+    );
+    iso.join();
 }
 
-// Task 7 — a bank deposit request never matches a name the 274 obj table
-// does not know (the host resolves names through ObjNames): a blob row
-// with a null name is skipped, and a missing member still throws.
+// A nameless bank-side row (a cache-miss name) is still an item taking a
+// slot: the matcher decides and the press names its id, slot and
+// component, never a name. A missing member still throws.
 #[test]
-fn isolate_banking_deposit_skips_unknown_names_and_missing_members_throw() {
+fn isolate_banking_deposit_presses_nameless_rows_by_id_and_missing_members_throw() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -5670,17 +5834,18 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
-    let bank_side = [nc(None, 3)];
+    let ops = deposit_ops();
+    let bank_side = [side_row(4242, None, 3, &ops, 0)];
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
+    post_with_side_root(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
         iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
-        "a null-name row never queues a deposit"
+        vec![deposit_all(4242, 0, 0)],
+        "a null-name row is pressed by id"
     );
     iso.join();
 
@@ -5839,7 +6004,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog],
+        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
         "ChatDialog.continue queues the continue interact op"
     );
     iso.join();
@@ -7036,7 +7201,7 @@ export default class T extends TaskBot {
     let _ = iso.probe("__rs_bot");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog],
+        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
         "awaited execute() queues ContinueDialog.continue"
     );
     iso.join();
@@ -9185,6 +9350,7 @@ export default class T extends LoopingBot {
             name: "Logs".into(),
             action: "Use".into(),
             slot: None,
+            target_item_id: None,
         }],
         "heldOp must not treat slot as a packed-array index"
     );

@@ -25,19 +25,37 @@ pub struct OneOpArgs {
 }
 
 pub struct OneOp {
-    args: OneOpArgs,
+    kind: OneOpKind,
     request_id: u64,
     deadline: u64,
     continued_root: Option<i32>,
 }
 
 impl OneOpArgs {
+    /// Shared Gatherer policy for a stray skill/unlock page or main modal.
+    pub(crate) fn stray_modal(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {
+        if snapshot
+            .chat_continue()
+            .is_some_and(|button| button.value >= 0)
+        {
+            Some(Self::continue_dialog())
+        } else if snapshot
+            .main_modal()
+            .is_some_and(|modal| modal.value.root >= 0)
+        {
+            Some(Self::close_modal())
+        } else {
+            None
+        }
+    }
+
     pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
         Self {
             request: InteractReq::Held {
                 name: name.to_string(),
                 action: action.into(),
                 slot: None,
+                target_item_id: None,
             },
             kind: OneOpKind::Wear { item_id },
             bound_ticks: 8,
@@ -50,6 +68,7 @@ impl OneOpArgs {
                 name: name.into(),
                 action: "Eat".into(),
                 slot: None,
+                target_item_id: None,
             },
             kind: OneOpKind::Eat {
                 item_id,
@@ -70,7 +89,7 @@ impl OneOpArgs {
 
     pub fn continue_dialog() -> Self {
         Self {
-            request: InteractReq::ContinueDialog,
+            request: InteractReq::ContinueDialog { component_id: None },
             kind: OneOpKind::ContinueDialog,
             bound_ticks: 8,
         }
@@ -87,10 +106,10 @@ impl NativeMachine for OneOp {
         } else {
             None
         };
-        let request_id = cx.emit(args.request.clone())?;
+        let request_id = cx.emit(args.request)?;
         Ok(Self {
             deadline: cx.evidence().tick.saturating_add(args.bound_ticks),
-            args,
+            kind: args.kind,
             request_id,
             continued_root,
         })
@@ -102,7 +121,7 @@ impl NativeMachine for OneOp {
                 return Poll::Ready(Ok(false));
             }
         }
-        let settled = match self.args.kind {
+        let settled = match self.kind {
             OneOpKind::Wear { item_id } => cx
                 .snapshot()
                 .equipment()

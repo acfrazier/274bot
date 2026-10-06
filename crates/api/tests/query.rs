@@ -2710,9 +2710,13 @@ fn configured_engine_cache_dir() -> Option<std::path::PathBuf> {
 #[test]
 fn packed_combat_unarmed_posts_aggressive_from_tab_0() {
     let Some(cache) = configured_engine_cache_dir() else {
+        eprintln!("skip: packed_combat_unarmed_posts_aggressive_from_tab_0 requires ENGINE_DIR");
         return;
     };
     if !cache.join("interface").is_file() {
+        eprintln!(
+            "skip: packed_combat_unarmed_posts_aggressive_from_tab_0 requires an interface file in ENGINE_DIR"
+        );
         return;
     }
     let mut c = Client::new(ClientConfig {

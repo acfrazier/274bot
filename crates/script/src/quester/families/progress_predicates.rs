@@ -5,18 +5,19 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct StageInArgs {
+pub(super) struct StageInArgs {
+    /// Symbolic quest key whose journal progress is read.
     quest: String,
+    /// Stage keys accepted as a match; this list must be non-empty.
     any: Vec<String>,
 }
 
-pub fn compile_stage_in(
-    args: &serde_json::Value,
+pub(super) fn compile_stage_in(
+    args: StageInArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: StageInArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     validate_progress_quest(cx, &args.quest)?;
     if args.any.is_empty() || args.any.iter().any(|stage| stage.is_empty()) {
         return Err(CompileError::code("invalid-args"));
@@ -58,24 +59,28 @@ impl PredicatePlan for StageIn {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct FlagArgs {
+pub(super) struct FlagArgs {
+    /// Symbolic quest key whose journal progress is read.
     quest: String,
+    /// Declared progress flag to query.
     flag: String,
+    /// Optional expected Boolean state.
     #[serde(default)]
     is: Option<bool>,
+    /// Optional exact count expected on a counted flag.
     #[serde(default)]
     count: Option<u32>,
+    /// Optional minimum count expected on a counted flag.
     #[serde(default)]
     at_least: Option<u32>,
 }
 
-pub fn compile_flag(
-    args: &serde_json::Value,
+pub(super) fn compile_flag(
+    args: FlagArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: FlagArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     validate_progress_quest(cx, &args.quest)?;
     if args.flag.is_empty() || (args.count.is_some() && args.at_least.is_some()) {
         return Err(CompileError::code("invalid-args"));
@@ -139,9 +144,11 @@ impl PredicatePlan for Flag {
 }
 
 fn validate_progress_quest(cx: &CompileContext<'_>, quest: &str) -> Result<(), CompileError> {
-    cx.quests
-        .quest(quest)
-        .map_err(|_| CompileError::code("unresolved-quest"))?;
+    if cx.kind != super::super::path::PathKind::Miniquest {
+        cx.quests
+            .quest(quest)
+            .map_err(|_| CompileError::code("unresolved-quest"))?;
+    }
     if cx.path.0.as_ref() != quest {
         return Err(CompileError::code("foreign-progress-quest"));
     }

@@ -58,6 +58,21 @@ impl ScriptOwner {
             .or_else(|| dropped.err())
             .map(|payload| format!("script teardown panic: {}", panic_message(&payload)))
     }
+    pub(super) fn stop_with_output(
+        &mut self,
+        reason: StopReason,
+        output: &mut dyn NativeOutput,
+    ) -> Option<String> {
+        let mut script = self.0.take()?;
+        let stopped = catch_unwind(AssertUnwindSafe(|| {
+            script.on_stop_with_output(reason, output)
+        }));
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(script)));
+        stopped
+            .err()
+            .or_else(|| dropped.err())
+            .map(|payload| format!("script teardown panic: {}", panic_message(&payload)))
+    }
 }
 impl Drop for ScriptOwner {
     fn drop(&mut self) {
@@ -327,7 +342,39 @@ impl CompiledRun {
         ctx: &mut ScriptCtx<'_>,
         retained: &mut RetainedMemory,
         runtime: &mut crate::native::ledger::Runtime,
+        pairs: Option<&dyn crate::quester::pair::QuestPairPort>,
     ) -> Result<ScriptFlow, ScriptFailure> {
+        if let Some(port) = pairs {
+            let dead = crate::native::death::hitpoints_zero(
+                ctx.snapshot.map(api::snapshot::GameSnapshot::stats),
+            );
+            if dead {
+                port.invalidate(self.run);
+            }
+            let ready = ctx
+                .snapshot
+                .is_some_and(api::snapshot::GameSnapshot::ingame)
+                && !dead
+                && !ctx.compiled.hold;
+            let evidence = EvidenceStamp {
+                run: self.run,
+                tick: ctx.tick,
+                sequence: ctx.tick,
+            };
+            let binding = self.script.pair_binding();
+            let inventory = binding
+                .and_then(|_| api::snapshot::SnapshotView::new(ctx.snapshot, evidence).inventory());
+            port.observe(
+                crate::quester::pair::PairRegistration {
+                    run: self.run,
+                    pin: Arc::clone(&self.pin),
+                    settings: self.script.pair_settings(),
+                    ready,
+                    evidence,
+                },
+                crate::quester::pair::PairFrame { binding, inventory },
+            );
+        }
         #[cfg(feature = "load")]
         let interacts = ctx.compiled.interacts.take();
         let result = {
@@ -335,7 +382,7 @@ impl CompiledRun {
                 actions: &mut self.actions,
                 cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
                 output: &mut self.output,
-                pairs: None,
+                pairs,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
@@ -515,7 +562,7 @@ pub(super) fn prepare_run(
 }
 
 pub(super) fn destroy_run(mut run: Box<CompiledRun>, reason: StopReason) -> Option<String> {
-    let stopped = run.script.stop(reason);
+    let stopped = run.script.stop_with_output(reason, &mut run.output);
     let dropped = catch_unwind(AssertUnwindSafe(|| drop(run)));
     stopped.or_else(|| {
         dropped
@@ -540,6 +587,9 @@ impl SlotScript {
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartError> {
+        if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
+            return Err(StartError::Unavailable("Stop this pair first".into()));
+        }
         if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
             return Err(StartError::Busy);
         }
@@ -548,6 +598,14 @@ impl SlotScript {
         }
         let card = crate::compiled_card(id)
             .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
+        if id == crate::CompiledId("Quester")
+            && self.quest_pairs.is_none()
+            && crate::quester::card::requires_pairs(&bag).map_err(StartError::Config)?
+        {
+            return Err(StartError::Unavailable(
+                "partner capability is not installed in this Play".into(),
+            ));
+        }
         let generation = self
             .control_generation
             .max(self.runtime_generation)
@@ -728,6 +786,14 @@ impl SlotScript {
     pub fn native_run(&self) -> Option<RunKey> {
         self.compiled.as_ref().map(|run| run.run)
     }
+    /// Permissions frozen in this instance's effective committed revision.
+    /// Pending boundary/restart edits are not grants until the card applies them.
+    pub fn native_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
+        self.compiled
+            .as_ref()
+            .map(|run| run.config.walk_permissions())
+    }
+
     pub fn native_status(&self) -> Option<Arc<ScriptStatus>> {
         let status = self
             .compiled
@@ -820,6 +886,11 @@ impl SlotScript {
         let Some(run) = self.compiled.as_mut() else {
             return;
         };
+        if matches!(event, Interrupt::Pause | Interrupt::SessionEnded) {
+            if let Some(pairs) = &self.quest_pairs {
+                pairs.invalidate(run.run);
+            }
+        }
         if let Err(payload) = catch_unwind(AssertUnwindSafe(|| run.script.interrupt(event))) {
             self.fail_compiled(ScriptFailure {
                 code: "interrupt-panic".into(),
@@ -830,6 +901,10 @@ impl SlotScript {
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
         self.native_runtime.revoke();
+        if let (Some(pairs), Some(run)) = (&self.quest_pairs, &self.compiled) {
+            pairs.invalidate(run.run);
+        }
+        self.pair_evidence = None;
         if let Some(run) = self.compiled.take() {
             if let Some(error) = destroy_run(run, reason) {
                 self.last_error = Some(error);

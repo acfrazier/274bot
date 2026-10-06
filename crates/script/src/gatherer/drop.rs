@@ -122,6 +122,7 @@ impl NativeMachine for DropBatch {
                 name: name.to_string(),
                 action: "Drop".into(),
                 slot: Some(row.slot),
+                target_item_id: None,
             };
             match cx.emit_disposal(request) {
                 Ok(request_id) => {

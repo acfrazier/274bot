@@ -1488,13 +1488,14 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                 stage: FactKey::new(stage),
                 required: Vec::new(),
                 terminal: *stage == "rm:6",
+                order: script::quester::path::SequenceOrder::Authored,
                 recovery_entry: None,
                 steps: Vec::new(),
             };
             if !sequence.terminal {
                 let mut step = template.steps[0].clone();
                 step.id = FactKey::new(&format!("synthetic-rm-step-{index}"));
-                step.advances = *stage == "rm:3";
+                step.advances = Some(*stage == "rm:3");
                 step.skip_if = PredicateDocument::Any(Vec::new());
                 if *stage == "rm:3" {
                     // This is the real content branch: at varp 3 the journal

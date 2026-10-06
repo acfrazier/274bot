@@ -25,6 +25,7 @@ use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
 use host_play::walk_map::{MapModel, RouteSource};
+use script::IsolatedEnv;
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
 // lock for every test that mutates picker statics (incl. Session drop →
@@ -422,6 +423,84 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
             "the next open resets the per-WalkTo choice"
         );
     }
+}
+
+#[test]
+fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
+    let _guard = crate::test_support::imgui_context_guard();
+    assert_eq!(
+        super::GLOBAL_DANGER_WARNING,
+        "Global danger-zone override is enabled."
+    );
+    let _isolated = IsolatedEnv::enter("picker-durable-danger");
+    let mut ctx = dear_imgui_rs::Context::create();
+    let world = open_world(3, 3);
+
+    super::note_closed();
+    let mut session = Session::new();
+    session.ui.nav.allow_danger_zones = false;
+    session.walkto_open = true;
+    let path = crate::ui_state::path();
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    let checkbox = super::last_picker_layout().route_zones_rect;
+    assert_ne!(checkbox, [[0.0, 0.0], [0.0, 0.0]]);
+    let checkbox = [
+        (checkbox[0][0] + checkbox[1][0]) * 0.5,
+        (checkbox[0][1] + checkbox[1][1]) * 0.5,
+    ];
+
+    session.route_through_zones = true;
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(true),
+    )
+    .unwrap();
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert_eq!(
+        super::last_picker_layout().route_zones_rect,
+        [[0.0, 0.0], [0.0, 0.0]],
+        "the latest durable global replaces the one-shot checkbox"
+    );
+    assert!(
+        !session.route_through_zones,
+        "global-on consumes the one-shot"
+    );
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+    assert!(
+        !session.route_through_zones,
+        "the hidden checkbox cannot grant danger"
+    );
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert_ne!(
+        super::last_picker_layout().route_zones_rect,
+        [[0.0, 0.0], [0.0, 0.0]],
+        "a peer turning the global off restores the one-shot control"
+    );
+    assert!(!session.ui.nav.allow_danger_zones);
+
+    std::fs::write(&path, b"{corrupt").unwrap();
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert_ne!(
+        super::last_picker_layout().route_zones_rect,
+        [[0.0, 0.0], [0.0, 0.0]],
+        "corrupt preferences fail closed and show the guarded one-shot control"
+    );
+    assert!(!session.ui.nav.allow_danger_zones);
 }
 
 fn picker_click_frame(
@@ -1083,6 +1162,7 @@ fn test_route() -> nav::router::Route {
             },
             Leg::Transport {
                 edge: Box::new(TransportEdge {
+                    takeoff: None,
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: wt(3, 0),
@@ -1099,6 +1179,7 @@ fn test_route() -> nav::router::Route {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    worn_all_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,

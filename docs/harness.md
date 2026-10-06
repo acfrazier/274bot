@@ -12,6 +12,74 @@ ownership, prefer the tracked suite entrypoint
 record — not automatic script qualification. Captures that require human
 readback stay `pending_visual_review`; raw failures stay preserved.
 
+## Path-backed Quester qualification
+
+New quest fixtures use `scenario::quester::quester_stage(QuesterStage { ... })`.
+The older numeric `scenario::quester_stage` remains available to the shipped
+S2, combat and WalkGuard cells; it does not apply the new qualification profile.
+
+Add a `QuestFixtureProfile { quest, profile }` row to `FIXTURE_PROFILES` in
+`crates/scenario/src/quester.rs`. `Base40` and `Base60` set Attack, Strength,
+Defence, Hitpoints, Magic and Ranged to the named floor, and Prayer to 43.
+The builder adds the Path's declared skill requirements, at their exact levels
+for noncombat skills and without reducing a combat floor. The six harder
+quests named by the operator already have Base60 rows. A profile is a fixture
+plan, not an eligibility requirement or evidence of a successful live run.
+
+`QuesterStage` takes a scenario name, the selected quest-tab display,
+the decoded `PathDocument`, its selected `QuestIdentityRow` and
+`SelectedGameData`, a stage key, an optional loadout, extra carried items,
+and the starting tile. Each stage needs a `progress.rules` varp hint;
+missing or contradictory hints fail rather than becoming stage zero.
+
+Paired quests use `quester_role_stage(request, gang, stage_varp, seed_vars)`.
+It selects an explicitly authored Phoenix or Black Arm role, seeds that role's
+real content variable, and keeps prerequisite variables in pre-Start setup.
+`run_pair(PairCell { roles, mode })` prepares both accounts before either Start,
+adds reciprocal account settings, and starts each account's own Quester. Role 0
+is Phoenix; role 1 is Black Arm. Restart cells explicitly Stop and restart both
+accounts; an ordinary paired step never starts or stops the other account.
+Set `BOT_LIVE_NAME_PREFIX` for role 0 and `BOT_LIVE_PARTNER_NAME_PREFIX` for
+role 1. Both names use the same invocation token; the token budget uses the
+longer prefix so each account stays within the engine's 12-character limit.
+Reserved-phase death cells use `PairMode::Death`: inject during the named
+owned combat, observe cancellation, then explicitly Stop both accounts and
+restart them without reseeding. Ordinary-role fights outside a reserved phase
+use `PairMode::DeathIndependent`: the affected account recovers in its original
+run, both finish with one Start and no Stop, and the peer must remain alive.
+Miniquests use `miniquest_stage(MiniquestStage { ... })`, with explicit content
+variable seeds and a proof predicate instead of an invented quest-tab identity.
+Their terminal proof also requires the Path's owned progress reader to publish
+completion; a closed card or successful click alone is not completion.
+
+`FixtureLoadout::Path(name)` seeds that Path's actual kit.
+`FixtureLoadout::Standard(StandardKit::{Melee, Magic, Ranged})` supplies the
+operator's starting gear. Gear never raises the profile to make it wearable:
+an item refusal fails the fixture and is a real qualification limit.
+Product Path loadout headers require selected config aliases. Fixture lookup
+also accepts case-insensitive display names; this does not relax product header
+validation. The builder emits only resolved config aliases in `give` commands
+and merges carried kit/extras by item ID.
+
+The returned `QuesterFixture` has independently owned `scenario`,
+`start_settings`, `seed_commands` and a cloneable `seed`. Move `scenario`
+into `ScenarioRunner`, and retain `seed` and `start_settings` in the live cell.
+Use the returned settings for the compiled Start; they select only this quest.
+The scenario clears carried and worn items, sets the profile and quest stage,
+seeds and equips the chosen kit, then relogs and teleports to the authored
+starting tile. Teleporting after relog prevents the mainland login hop from
+overwriting the fixture origin. Its final pre-Start observation gate requires
+the exact posted base/effective stats, every carried/worn seed and the exact
+starting tile. It reads actual skill slots, including Agility, not the energy
+proof. At Start, record `seed.observe_start(snapshot)` with the live receipt;
+that receipt includes the observed tile. Only actual observations may be used
+to write the Path's `tested_stats`.
+
+All builder cheats occur before Start. After Start it only observes completion.
+Sequence, Stop/restart and death assertions belong to the live cell. Additional
+bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
+never into the gameplay proof. Shared world entities must remain real content.
+
 ## Ordinary scenarios
 
 Start the local engine for the profile under test and provide its client

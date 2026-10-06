@@ -1,15 +1,18 @@
 //! Shared `script::combat` adapter for typed Quester Path combat steps.
 use super::super::compile::{
     CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
-    StepOutcome, StepPlan, StepRun,
+    StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::super::path::PredicateDocument;
+use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::reach::{self, Reach, ReachArgs, ReachKind};
+use super::{compile_dialogue_options, DialogueOptionsDocument, LineRuleDocument};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
     CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, RangedMode,
-    Style, Tactic, Target,
+    SpellRef, Style, Tactic, Target,
 };
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
@@ -24,6 +27,12 @@ static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat abort walk did not reach a safe tile"));
+static COMBAT_FINISH_TIMEOUT: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat finish exceeded its tick budget"));
+static COMBAT_FINISH_FAILED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat finish dialogue failed"));
+static COMBAT_FINISH_INTERRUPTED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat interrupted the post-transform dialogue"));
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -45,78 +54,193 @@ impl FamilyReceipt for CombatReceipt {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CombatArgs {
-    target: TargetArgs,
-    tactic: TacticArgs,
-    #[serde(default)]
-    melee_mode: Option<MeleeMode>,
-    #[serde(default)]
-    loadout: Option<String>,
-    #[serde(default)]
-    spells: Option<Vec<String>>,
-    #[serde(default, alias = "anchor")]
-    stand: Option<super::AnchorArg>,
-    #[serde(default)]
-    area: Option<AreaArg>,
-    lost_radius: u8,
-    kill_budget_ticks: u16,
-    #[serde(default)]
-    loot: Vec<String>,
-    #[serde(default)]
-    until: Option<PredicateDocument>,
-    #[serde(default)]
-    win: Option<PredicateDocument>,
+/// Proof that the combat target transformed into its post-combat NPC and its
+/// continuation dialogue completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinishReceipt {
+    pub npc_type: i32,
+    pub npc_name: Arc<str>,
+    pub npc_index: usize,
+}
+
+impl FamilyReceipt for FinishReceipt {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct CombatArgs {
+    /// Target selector; exactly one supported target mode is required.
+    target: TargetArgs,
+    /// Combat action and style configuration.
+    tactic: TacticArgs,
+    /// Optional melee attack mode.
+    #[serde(default)]
+    melee_mode: Option<MeleeMode>,
+    /// Optional named loadout for the encounter.
+    #[serde(default)]
+    loadout: Option<String>,
+    /// Selected spell aliases in explicit manual order; null uses native selection.
+    #[serde(default)]
+    spells: Option<Vec<String>>,
+    /// Permit native selection after the explicit manual order is exhausted.
+    #[serde(default)]
+    fallback_spells: bool,
+    /// Optional sourced stand tile; `anchor` is accepted as an alias.
+    #[serde(default, alias = "anchor")]
+    stand: Option<super::AnchorArg>,
+    /// Danger-zone permissions for this step's return and abort walks.
+    #[serde(default)]
+    cross: Vec<String>,
+    /// Use protect to enable WalkGuard protection on this step's own walks.
+    #[serde(default)]
+    guard: Option<String>,
+    /// Optional named or inline search area.
+    #[serde(default)]
+    area: Option<AreaArg>,
+    /// Maximum distance in tiles before the target is considered lost.
+    lost_radius: u8,
+    /// Maximum game ticks to spend on a combat attempt.
+    kill_budget_ticks: u16,
+    /// Optional loot configs with per-kill inventory thresholds, not total requirements.
+    #[serde(default)]
+    loot: Vec<LootArg>,
+    /// Optional dialogue with the exact NPC produced by the defeated target.
+    #[serde(default)]
+    finish: Option<FinishArgs>,
+    /// Optional predicate that ends the combat loop when true.
+    #[serde(default)]
+    until: Option<PredicateDocument>,
+    /// Optional success predicate that ends the combat loop when true.
+    #[serde(default)]
+    win: Option<PredicateDocument>,
+}
+/// One optional loot item, either a single-item or explicit per-kill threshold.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+enum LootArg {
+    /// Optionally take a selected item when its inventory count is below one.
+    Alias(String),
+    /// Optionally take a selected item below its authored inventory threshold.
+    Quantity(LootQuantityArg),
+}
+
+/// Optional per-kill looting threshold for one selected item.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct LootQuantityArg {
+    /// Selected item config, resolved to an exact item identity.
+    obj: String,
+    /// Positive inventory threshold for optional looting; caller until/settle proves the total.
+    qty: u32,
+}
+
+/// Dialogue which completes the post-combat transformation phase.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct FinishArgs {
+    /// Selected config of the transformed NPC.
+    npc: String,
+    /// Ordered text fragments used by the shared dialogue answer selector.
+    #[serde(default)]
+    prefer: Vec<String>,
+    /// Optional one-based dialogue option index.
+    #[serde(default)]
+    choose: Option<i32>,
+    /// Current-page text rules checked before the general preferences.
+    #[serde(default)]
+    line_rules: Vec<LineRuleDocument>,
+    /// Refuse missing or ambiguous answer text instead of choosing a fallback.
+    #[serde(default)]
+    strict: bool,
+    /// Positive game-tick budget for the complete transformation and dialogue.
+    max_ticks: u32,
+}
+
+#[derive(Clone)]
+struct FinishConfig {
+    npc_type: i32,
+    npc_name: Arc<str>,
+    original_npc_types: Arc<[i32]>,
+    options: DialogueOptions,
+    max_ticks: u32,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetArgs {
+    /// One or more NPC config names to target.
     #[serde(default)]
     npc: Option<NpcArg>,
+    /// Select NPCs or players that are already attacking the player.
     #[serde(default)]
     attacker: Option<AttackerArgs>,
+    /// Player targeting is represented in the wire format but is unsupported.
     #[serde(default)]
     player: Option<serde_json::Value>,
+    /// Require the chosen NPC not to be targeting another player.
     #[serde(default)]
     not_targeting_others: Option<bool>,
+    /// Policy used when choosing among matching targets.
     #[serde(default)]
     pick: Option<PickArg>,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum NpcArg {
+    /// A single NPC config name.
     One(String),
+    /// Several alternative NPC config names.
     Many(Vec<String>),
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AttackerArgs {
+    /// Include NPC attackers.
     npcs: bool,
+    /// Include player attackers.
     players: bool,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum PickArg {
+    /// Choose the closest matching target.
     Nearest,
+    /// Choose a matching target at random.
     Random,
+    /// Choose the matching target with the lowest health.
     LowestHealth,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TacticArgs {
+    /// Combat opening mode; only `open` is currently supported.
     kind: String,
+    /// Attack style; `melee`, `ranged`, and `mage` are supported.
     style: String,
     #[serde(default)]
     ranged_style: RangedMode,
+    /// Maximum distance at which to engage a target.
     engage_radius: u8,
+    /// Whether to enable auto-retaliation; defaults to true.
     #[serde(default = "default_auto_retaliate")]
     auto_retaliate: bool,
+    /// Optional fallback; only `abort` is currently supported.
     #[serde(default)]
     fallback: Option<String>,
 }
@@ -133,29 +257,39 @@ fn validate_style_options(style: Style, melee_mode: Option<MeleeMode>) -> Result
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum AreaArg {
+    /// Name of an area declared in the quest header.
     Named(String),
+    /// Inline one or more sourced region boxes.
     Inline(InlineArea),
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct InlineArea {
+    /// Optional single region box `[x1, z1, x2, z2, level]`.
     #[serde(default, rename = "box")]
     one: Option<[i32; 5]>,
+    /// Optional list of region boxes `[x1, z1, x2, z2, level]`.
     #[serde(default)]
     boxes: Option<Vec<[i32; 5]>>,
+    /// Source citation for these authored region boxes.
     source: String,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct CombatEndArgs {
+pub(super) struct CombatEndArgs {
+    /// Combat outcome to match.
     end: CombatEndName,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum CombatEndName {
     Killed,
@@ -168,28 +302,46 @@ enum CombatEndName {
 }
 
 pub(super) fn compile(
-    args: &serde_json::Value,
+    args: CombatArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: CombatArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if args
-        .spells
-        .as_ref()
-        .is_some_and(|spells| !spells.is_empty())
+    Ok(Arc::new(compile_plan(args, cx)?))
+}
+
+fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan, CompileError> {
+    let protect = match args.guard.as_deref() {
+        None | Some("") => false,
+        Some("protect") => true,
+        Some(_) => {
+            return Err(
+                CompileError::code("invalid-args").with_detail("combat: guard must be protect")
+            );
+        }
+    };
+    let style = match args.tactic.style.as_str() {
+        "melee" => Style::Melee,
+        "ranged" => Style::Ranged,
+        "mage" => Style::Mage,
+        _ => return Err(CompileError::code("unsupported-combat-style")),
+    };
+    validate_style_options(style, args.melee_mode)?;
+    if style != Style::Mage
+        && args
+            .spells
+            .as_ref()
+            .is_some_and(|spells| !spells.is_empty())
     {
         return Err(CompileError::code("unsupported-combat-spells"));
     }
     let target = compile_target(args.target, cx)?;
+    let finish = args
+        .finish
+        .map(|finish| compile_finish(finish, &target, cx))
+        .transpose()?;
     if args.tactic.kind != "open" {
         return Err(CompileError::code("unsupported-combat-tactic"));
     }
-    let style = match args.tactic.style.as_str() {
-        "melee" => Style::Melee,
-        "ranged" => Style::Ranged,
-        _ => return Err(CompileError::code("unsupported-combat-style")),
-    };
-    validate_style_options(style, args.melee_mode)?;
+
     if args.tactic.engage_radius == 0 || args.lost_radius == 0 {
         return Err(CompileError::code("invalid-combat-radius"));
     }
@@ -222,6 +374,31 @@ pub(super) fn compile(
         .map(|predicate| super::compile_predicate(predicate, cx))
         .transpose()?;
     let tables = build_tables(cx)?;
+    let spells = if style == Style::Mage {
+        args.spells
+            .map(|names| {
+                if names.is_empty() || names.len() > u8::MAX as usize {
+                    return Err(CompileError::code("invalid-combat-spells"));
+                }
+                names
+                    .into_iter()
+                    .map(|name| {
+                        let index = crate::combat::style::magic::spell_index(&tables, &name)
+                            .ok_or_else(|| CompileError::code("unresolved-combat-spell"))?;
+                        Ok(SpellRef {
+                            alias: Arc::from(
+                                tables.selected().spells()[usize::from(index)]
+                                    .source_row
+                                    .as_str(),
+                            ),
+                        })
+                    })
+                    .collect::<Result<Arc<[SpellRef]>, CompileError>>()
+            })
+            .transpose()?
+    } else {
+        None
+    };
 
     let request = CombatRequest {
         target,
@@ -230,7 +407,8 @@ pub(super) fn compile(
         melee_mode: args.melee_mode,
         ranged_style: args.tactic.ranged_style,
         kit,
-        spells: None,
+        spells,
+        fallback_spells: args.fallback_spells,
         stand,
         search_bounds,
         engage_radius: args.tactic.engage_radius,
@@ -241,24 +419,25 @@ pub(super) fn compile(
         intruder: IntruderPolicy::default(),
         retaliate: args.tactic.auto_retaliate,
         prayer_mode: PrayerMode::Hold,
-        until_ticks: 0,
+        ..CombatRequest::default()
     };
 
-    Ok(Arc::new(CombatPlan {
+    Ok(CombatPlan {
         request: Arc::new(request),
         tables,
+        cross: args.cross.into_iter().map(Arc::from).collect(),
+        protect,
         until,
         win,
         loot: Arc::from(loot),
-    }))
+        finish,
+    })
 }
 
 pub(super) fn compile_end_predicate(
-    args: &serde_json::Value,
+    args: CombatEndArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: CombatEndArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(CombatEndPredicate { expected: args.end }))
 }
 
@@ -322,6 +501,41 @@ fn compile_target(args: TargetArgs, cx: &CompileContext<'_>) -> Result<Target, C
     Ok(Target::Attacker {
         npcs: attacker.npcs,
         players: attacker.players,
+    })
+}
+
+fn compile_finish(
+    args: FinishArgs,
+    target: &Target,
+    cx: &CompileContext<'_>,
+) -> Result<FinishConfig, CompileError> {
+    if args.max_ticks == 0 {
+        return Err(CompileError::code("invalid-combat-finish-budget"));
+    }
+    let Target::Npc { types, .. } = target else {
+        return Err(CompileError::code("invalid-combat-finish-target"));
+    };
+    let npc_type = super::resolve_npc(cx, &args.npc)?;
+    if types.contains(&npc_type) {
+        return Err(CompileError::code("invalid-combat-finish-target"));
+    }
+    let npc_name = cx
+        .selected
+        .npc_by_config(&args.npc)
+        .and_then(|row| row.display.as_deref())
+        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+    let options = compile_dialogue_options(DialogueOptionsDocument {
+        prefer: args.prefer,
+        choose: args.choose,
+        line_rules: args.line_rules,
+        strict: args.strict,
+    })?;
+    Ok(FinishConfig {
+        npc_type,
+        npc_name: Arc::from(npc_name),
+        original_npc_types: Arc::clone(types),
+        options,
+        max_ticks: args.max_ticks,
     })
 }
 fn compile_search_bounds(
@@ -412,14 +626,25 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
     }))
 }
 
-fn compile_loot(loot: &[String], cx: &CompileContext<'_>) -> Result<Vec<LootItem>, CompileError> {
+fn compile_loot(loot: &[LootArg], cx: &CompileContext<'_>) -> Result<Vec<LootItem>, CompileError> {
     let mut rows = Vec::with_capacity(loot.len());
-    for name in loot {
+    for entry in loot {
+        let (name, qty) = match entry {
+            LootArg::Alias(name) => (name.as_str(), 1),
+            LootArg::Quantity(row) => (row.obj.as_str(), row.qty),
+        };
+        if qty == 0 {
+            return Err(CompileError::code("invalid-combat-loot-quantity"));
+        }
         let (id, display) = resolve_loadout_item(cx, name)?;
         if rows.iter().any(|row: &LootItem| row.id == id) {
             return Err(CompileError::code("duplicate-combat-loot-item"));
         }
-        rows.push(LootItem { id, name: display });
+        rows.push(LootItem {
+            id,
+            name: display,
+            qty,
+        });
     }
     Ok(rows)
 }
@@ -428,19 +653,9 @@ fn resolve_loadout_item(
     cx: &CompileContext<'_>,
     name: &str,
 ) -> Result<(i32, Arc<str>), CompileError> {
-    if let Some(item) = cx.selected.item_by_alias(name) {
-        let display = item.name.as_deref().unwrap_or(name);
-        return Ok((item.id, Arc::from(display)));
-    }
     let item = cx
         .selected
-        .items()
-        .iter()
-        .find(|item| {
-            item.name
-                .as_deref()
-                .is_some_and(|known| known.eq_ignore_ascii_case(name))
-        })
+        .resolve_item_name(name)
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     Ok((item.id, Arc::from(item.name.as_deref().unwrap_or(name))))
 }
@@ -461,17 +676,22 @@ fn build_tables(cx: &CompileContext<'_>) -> Result<Arc<CombatTables>, CompileErr
     CombatTables::build(selected).map_err(|_| CompileError::code("combat-tables-unavailable"))
 }
 
+#[derive(Clone)]
 struct LootItem {
     id: i32,
     name: Arc<str>,
+    qty: u32,
 }
 
 struct CombatPlan {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
+    cross: Arc<[Arc<str>]>,
+    protect: bool,
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
+    finish: Option<FinishConfig>,
 }
 
 impl StepPlan for CombatPlan {
@@ -479,9 +699,12 @@ impl StepPlan for CombatPlan {
         let mut run = CombatRun {
             request: Arc::clone(&self.request),
             tables: Arc::clone(&self.tables),
+            cross: Arc::clone(&self.cross),
+            protect: self.protect,
             until: self.until.as_ref().map(Arc::clone),
             win: self.win.as_ref().map(Arc::clone),
             loot: Arc::clone(&self.loot),
+            finish: self.finish.clone(),
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
@@ -490,6 +713,10 @@ impl StepPlan for CombatPlan {
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
             walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
+            finish_target_index: None,
+            finish_ticks_elapsed: 0,
+            finish_last_tick: None,
+            trace_event: None,
         };
         run.begin_combat(cx)?;
         Ok(Box::new(run))
@@ -505,6 +732,8 @@ enum Phase {
     ReturningToStand,
     WalkingOutAfterAbort,
     Loot,
+    FinishWait,
+    FinishDialogue,
 }
 
 #[allow(
@@ -515,6 +744,7 @@ enum Action {
     Combat(ActionHandle<Combat>),
     Walk(ActionHandle<Walk>),
     Loot(ActionHandle<Reach>),
+    Dialogue(ActionHandle<Dialogue>),
 }
 
 enum ActionPoll {
@@ -523,6 +753,7 @@ enum ActionPoll {
     Combat(CombatReport),
     Walk(WalkReceipt),
     Loot(bool),
+    Dialogue(DialogueOutcome),
 }
 
 enum LootStart {
@@ -534,6 +765,8 @@ enum LootStart {
 struct CombatRun {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
+    cross: Arc<[Arc<str>]>,
+    protect: bool,
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
@@ -545,6 +778,11 @@ struct CombatRun {
     target_gone_restarts: u8,
     raised_prayers: RaisedPrayers,
     walk_outcome_seq_at_begin: u64,
+    finish: Option<FinishConfig>,
+    finish_target_index: Option<usize>,
+    finish_ticks_elapsed: u64,
+    finish_last_tick: Option<u64>,
+    trace_event: Option<StepTraceEvent>,
 }
 
 /// Whether walk outcome `seq` was cancelled by user input. The cancel reason
@@ -571,6 +809,54 @@ impl CombatRun {
         }
     }
 
+    /// Pin only the current local combat target, then follow that NPC slot
+    /// through its transform. An unrelated NPC with the finish type cannot
+    /// start the dialogue.
+    fn observe_finish_transform(&mut self, cx: &StepContext<'_, '_>) -> bool {
+        let Some(finish) = self.finish.as_ref() else {
+            return false;
+        };
+        let snapshot = cx.tick.cx.snapshot();
+        let Some(npcs) = snapshot.npcs() else {
+            return false;
+        };
+        let Some(combat) = snapshot.in_combat() else {
+            return false;
+        };
+        if let Some(target) = combat.value.target {
+            if target.kind != api::snapshot::ActorKind::Npc {
+                self.finish_target_index = None;
+                return false;
+            }
+            let original = npcs
+                .value
+                .iter()
+                .find(|npc| npc.index == target.index)
+                .and_then(|npc| npc.r#type)
+                .is_some_and(|npc_type| {
+                    finish
+                        .original_npc_types
+                        .iter()
+                        .any(|original| usize::try_from(*original).ok() == Some(npc_type))
+                });
+            if combat.value.in_combat && original {
+                self.finish_target_index = Some(target.index);
+                return false;
+            }
+            if self.finish_target_index != Some(target.index) {
+                self.finish_target_index = None;
+                return false;
+            }
+        }
+        let Some(index) = self.finish_target_index else {
+            return false;
+        };
+        let finish_type = usize::try_from(finish.npc_type).ok();
+        npcs.value
+            .iter()
+            .any(|npc| npc.index == index && npc.r#type == finish_type)
+    }
+
     fn prayer_cleanup(&self) -> RaisedPrayers {
         match self.action.as_ref() {
             Some(Action::Combat(handle)) => handle.prayer_cleanup(),
@@ -587,6 +873,9 @@ impl CombatRun {
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
+        self.finish_target_index = None;
+        self.finish_ticks_elapsed = 0;
+        self.finish_last_tick = None;
         let handle = cx.tick.actions.begin::<Combat>(
             (Arc::clone(&self.request), Arc::clone(&self.tables)),
             &mut cx.tick.cx,
@@ -600,10 +889,10 @@ impl CombatRun {
         stand: api::WorldTile,
         cx: &mut StepContext<'_, '_>,
     ) -> Result<(), ActionError> {
-        let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(stand, 1, None, cx.required_after),
-            &mut cx.tick.cx,
-        )?;
+        let mut request = reach::walk_request(stand, 1, None, cx.required_after);
+        request.cross = self.cross.iter().cloned().collect();
+        request.protect = self.protect;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::ReturningToStand;
         self.action = Some(Action::Walk(handle));
         Ok(())
@@ -694,10 +983,10 @@ impl CombatRun {
         let destination = self
             .abort_walk_destination(report, cx)
             .ok_or_else(|| ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))?;
-        let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(destination, 1, None, cx.required_after),
-            &mut cx.tick.cx,
-        )?;
+        let mut request = reach::walk_request(destination, 1, None, cx.required_after);
+        request.cross = self.cross.iter().cloned().collect();
+        request.protect = self.protect;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::WalkingOutAfterAbort;
         self.action = Some(Action::Walk(handle));
         Ok(())
@@ -731,6 +1020,10 @@ impl CombatRun {
         self.raised_prayers = RaisedPrayers::empty();
         self.last_report = Some(report);
         self.refresh_outcome();
+        self.trace_event = Some(StepTraceEvent::CombatSubOperationEnd {
+            target: self.request.target.clone(),
+            end: report.end,
+        });
         match report.end {
             // Loot begins only after the combat machine reports `Killed`
             // (design-combat.md §2.3, §5; combat-s3a-ReviewCombatFable.md F5).
@@ -829,9 +1122,9 @@ impl CombatRun {
                 .value
                 .iter()
                 .filter(|row| row.def.id == item.id)
-                .map(|row| row.count)
-                .sum::<i32>();
-            if held > 0 {
+                .map(|row| i64::from(row.count))
+                .sum::<i64>();
+            if held >= i64::from(item.qty) {
                 continue;
             }
             let handle = cx.tick.actions.begin::<Reach>(
@@ -844,6 +1137,8 @@ impl CombatRun {
                     anchor: self.request.stand,
                     radius: i32::from(self.request.lost_radius),
                     wait_if_missing: false,
+                    target_tile: None,
+                    reachable_only: false,
                 },
                 &mut cx.tick.cx,
             )?;
@@ -851,6 +1146,80 @@ impl CombatRun {
             return Ok(LootStart::Started);
         }
         Ok(LootStart::Complete)
+    }
+
+    fn spend_finish_tick_budget(&mut self, tick: u64) -> bool {
+        let elapsed = match self.finish_last_tick {
+            Some(last_tick) => {
+                self.finish_last_tick = Some(last_tick.max(tick));
+                tick.saturating_sub(last_tick)
+            }
+            None => {
+                self.finish_last_tick = Some(tick);
+                0
+            }
+        };
+        self.finish_ticks_elapsed = self.finish_ticks_elapsed.saturating_add(elapsed);
+        self.finish
+            .as_ref()
+            .is_some_and(|finish| self.finish_ticks_elapsed <= u64::from(finish.max_ticks))
+    }
+
+    fn wait_for_finish_dialogue(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        let ready_and_quiet = {
+            let snapshot = cx.tick.cx.snapshot();
+            let chat_ready = snapshot.chat_modal().is_some_and(|chat| {
+                super::dialogue::chat_page_open(chat.value.root, chat.value.continue_component_id)
+            });
+            let combat_ended = snapshot
+                .in_combat()
+                .is_some_and(|combat| !combat.value.in_combat);
+            chat_ready && combat_ended
+        };
+        if !ready_and_quiet {
+            return Poll::Pending;
+        }
+        let Some(finish) = self.finish.as_ref() else {
+            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(&COMBAT_FINISH_FAILED))));
+        };
+        let handle = cx.tick.actions.begin::<Dialogue>(
+            DialogueArgs {
+                target: DialogueTarget::Continuation,
+                options: finish.options.clone(),
+            },
+            &mut cx.tick.cx,
+        );
+        match handle {
+            Ok(handle) => {
+                self.phase = Phase::FinishDialogue;
+                self.action = Some(Action::Dialogue(handle));
+                Poll::Pending
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
+    fn finish_completed(
+        &mut self,
+        cx: &StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        self.action = None;
+        let (Some(finish), Some(npc_index)) = (self.finish.as_ref(), self.finish_target_index)
+        else {
+            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(&COMBAT_FINISH_FAILED))));
+        };
+        Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: Some(Arc::new(FinishReceipt {
+                npc_type: finish.npc_type,
+                npc_name: Arc::clone(&finish.npc_name),
+                npc_index,
+            })),
+        }))
     }
 
     fn next_loot_or_reengage(
@@ -878,6 +1247,7 @@ impl CombatRun {
         let chat_since = reach::last_chat_seq(&cx.tick.cx);
         let context = PredicateContext {
             cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
             quests: cx.quests,
             progress: cx.progress,
             required_after: cx.required_after,
@@ -918,6 +1288,30 @@ impl StepRun for CombatRun {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
         }
+        if matches!(self.phase, Phase::FinishWait | Phase::FinishDialogue)
+            && !self.spend_finish_tick_budget(cx.tick.cx.evidence().tick)
+        {
+            self.action = None;
+            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                &COMBAT_FINISH_TIMEOUT,
+            ))));
+        }
+        if matches!(self.phase, Phase::FinishWait) {
+            return self.wait_for_finish_dialogue(cx);
+        }
+        if matches!(self.phase, Phase::Combat)
+            && matches!(self.action.as_ref(), Some(Action::Combat(_)))
+            && self.observe_finish_transform(cx)
+        {
+            self.capture_prayer_cleanup();
+            self.action = None;
+            self.phase = Phase::FinishWait;
+            self.finish_ticks_elapsed = 0;
+            self.finish_last_tick = Some(cx.tick.cx.evidence().tick);
+            self.last_report = None;
+            self.last_outcome = None;
+            return Poll::Pending;
+        }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
             match self.begin_loot(cx) {
                 Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,
@@ -930,7 +1324,11 @@ impl StepRun for CombatRun {
                 Err(error) => return Poll::Ready(Err(error)),
             }
         }
-        if !matches!(self.phase, Phase::Loot) && self.should_stop(cx) {
+        if !matches!(
+            self.phase,
+            Phase::Loot | Phase::FinishWait | Phase::FinishDialogue
+        ) && self.should_stop(cx)
+        {
             return self.finish(cx);
         }
         let polled = match self.action.as_ref() {
@@ -950,6 +1348,11 @@ impl StepRun for CombatRun {
                 Poll::Ready(Err(error)) => ActionPoll::Failed(error),
             },
             None => ActionPoll::Pending,
+            Some(Action::Dialogue(handle)) => match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => ActionPoll::Pending,
+                Poll::Ready(Ok(outcome)) => ActionPoll::Dialogue(outcome),
+                Poll::Ready(Err(error)) => ActionPoll::Failed(error),
+            },
         };
         match polled {
             ActionPoll::Pending => Poll::Pending,
@@ -969,6 +1372,15 @@ impl StepRun for CombatRun {
                 self.action = None;
                 self.next_loot_or_reengage(cx)
             }
+            ActionPoll::Failed(ActionError::Failed(reason))
+                if matches!(&self.phase, Phase::FinishDialogue) =>
+            {
+                self.action = None;
+                Poll::Ready(Err(ActionError::Blocked(Arc::from(format!(
+                    "{}: {reason}",
+                    COMBAT_FINISH_FAILED.as_ref()
+                )))))
+            }
             ActionPoll::Failed(error) => {
                 self.action = None;
                 Poll::Ready(Err(error))
@@ -986,6 +1398,17 @@ impl StepRun for CombatRun {
                 }
                 self.next_loot_or_reengage(cx)
             }
+            ActionPoll::Dialogue(DialogueOutcome::Completed) => self.finish_completed(cx),
+            ActionPoll::Dialogue(DialogueOutcome::Failed) => {
+                self.action = None;
+                Poll::Ready(Err(ActionError::Blocked(Arc::clone(&COMBAT_FINISH_FAILED))))
+            }
+            ActionPoll::Dialogue(DialogueOutcome::CombatInterrupted) => {
+                self.action = None;
+                Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                    &COMBAT_FINISH_INTERRUPTED,
+                ))))
+            }
         }
     }
 
@@ -997,6 +1420,9 @@ impl StepRun for CombatRun {
         CombatRun::prayer_cleanup(self)
     }
 
+    fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
+        self.trace_event.take()
+    }
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
         self.last_outcome.as_ref()
     }

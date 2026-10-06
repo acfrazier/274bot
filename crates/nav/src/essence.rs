@@ -89,6 +89,8 @@ pub fn in_essence_mine(t: WorldTile) -> bool {
 /// router from the live session — never packed.
 pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::EssenceExit,
         player_delta: None,
         at,

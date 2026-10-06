@@ -1,38 +1,61 @@
-//! Rust-owned bank item ops: the `bank_op` [`crate::machine`] family, the
-//! `bank_note_mode` family, and the pieces the bank sequences
-//! (`bank_deposit`, `bank_withdraw_to`, `bank_nearest`) share.
+//! Rust-owned bank item ops: the `bank_op`, `bank_withdraw_load`,
+//! `bank_close` and `bank_note_mode` [`crate::machine`] families, and the
+//! pieces the bank sequences (`bank_deposit`, `bank_withdraw_to`,
+//! `bank_nearest`) share.
 //!
-//! Deposit and labelled withdraw are one verb and one awaited host result
-//! on `bank_op_result_seq`. `withdrawX*` is the frozen whole request: the
-//! [`crate::bank::ops`] kernel picks each click, every click awaits its
-//! `withdraw_x_result_seq`, and the request completes on the held count
-//! (or a full pack after progress). A closed bank or a new bank session
-//! settles false. JavaScript passes the caller's arguments and awaits the
-//! boolean.
+//! A labelled withdraw is one verb and one awaited host result on
+//! `bank_op_result_seq`. `Bank.deposit(name, op)` presses that exact
+//! bank-side row's own op ([`ops::deposit_click`], never a name) and answers
+//! whether it was pressed, as frozen. `withdrawX*` and `withdrawLoad`'s fill
+//! are the frozen whole request: the [`crate::bank::ops`] kernel picks each
+//! click, every click awaits its `withdraw_x_result_seq`, and the request
+//! completes on the held count (or a full pack after progress).
+//! `withdrawLoad`'s Withdraw-All and `Bank.close` settle on the posted
+//! observation. A closed bank or a new bank session settles false.
+//! JavaScript passes the caller's arguments and awaits the boolean.
 
-use crate::bank::ops::{self, NoteIntent, Progress, WithdrawGoal};
+use crate::bank::ops::{
+    self, CloseBaseline, CloseScan, DepositRequest, LoadClick, NoteIntent, Progress, WithdrawGoal,
+    TRANSFER_BOUND,
+};
 use crate::machine::{self, Begin, Cx, Family, Step};
-use crate::observed::{self, ItemRow, Scene};
+use crate::observed::{self, ItemRow, Lens, Scene};
 use crate::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::Value;
 use std::cell::Cell;
 use std::sync::Arc;
+use std::time::Duration;
 
-/// `Bank.close()`'s own bound.
-pub const CLOSE_MS: u64 = 3_000;
-
-/// Families that drive bank item ops. One runs at a time, as the shim's
+/// Families that drive bank transfers. One runs at a time, as the shim's
 /// pending guards allowed: a second start settles false.
 const BANK_OP_FAMILIES: &[&str] = &[
     BankOp::NAME,
+    BankWithdrawLoad::NAME,
+    BankClose::NAME,
     crate::bank_deposit::BankDeposit::NAME,
     crate::bank_withdraw::WithdrawTo::NAME,
 ];
 
-/// Whether a bank-op family row is live.
+/// Whether a bank transfer family row is live.
 pub(crate) fn busy() -> bool {
     BANK_OP_FAMILIES.iter().any(|family| machine::live(family))
+}
+
+/// A bound as the machine clock's milliseconds.
+fn millis(bound: Duration) -> u64 {
+    u64::try_from(bound.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The posted bank-side backpack ([`ops::side_observation`]): `None` while
+/// the side root is down, whatever list is left over; `Some(&[])` is a
+/// posted empty pack.
+pub(crate) fn posted_side(session: Lens<'_>) -> Option<&[ItemRow]> {
+    ops::side_observation(
+        session.bank_open().unwrap_or(false),
+        session.side_modal_id().unwrap_or(-1),
+        session.bank_side().map(Vec::as_slice).unwrap_or_default(),
+    )
 }
 
 /// The posted bank facts an op decides and settles from.
@@ -43,6 +66,10 @@ pub(crate) struct BankView {
     /// `Bank.loaded()`: the item list is non-empty.
     pub(crate) has_rows: bool,
     pub(crate) generation: u64,
+    /// `modals().side` (`-1` none).
+    side: i32,
+    /// The scene's login mark ([`Scene::login_mark`]).
+    login: u64,
     op_seq: u64,
     op_result: bool,
     x_seq: u64,
@@ -58,6 +85,8 @@ impl BankView {
             loaded: session.bank_loaded().unwrap_or(false),
             has_rows: session.bank().is_some_and(|rows| !rows.is_empty()),
             generation: session.bank_generation().unwrap_or(0),
+            side: session.side_modal_id().unwrap_or(-1),
+            login: scene.login_mark(),
             op_seq: session.bank_op_result_seq().unwrap_or(0),
             op_result: session.bank_op_result().unwrap_or(false),
             x_seq: session.withdraw_x_result_seq().unwrap_or(0),
@@ -177,12 +206,22 @@ fn note_intent(generation: u64) -> NoteIntent {
     ops::note_intent(stored_generation, stored, generation)
 }
 
+/// Where a by-name withdraw from `row` lands. Frozen counts the backpack by
+/// name, so a noted landing counts: in Note mode the row lands as its note.
+fn landing_id(row: &ItemRow, generation: u64) -> i32 {
+    match note_intent(generation) {
+        NoteIntent::Noted if !row.noted && row.cert >= 0 => row.cert,
+        _ => row.id,
+    }
+}
+
 /// One `Bank` item op, as the caller passed it.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub(crate) enum Op {
-    /// `Bank.deposit(name)`: Deposit-All of the named backpack row.
-    Deposit { name: String },
+    /// `Bank.deposit(name, op)`: the labelled op of the first bank-side row
+    /// with that name (frozen `clickInvButton`).
+    Deposit { name: String, op: String },
     /// `Bank.withdraw(name, amount)`: an action label, or a number.
     Withdraw {
         name: String,
@@ -224,23 +263,29 @@ impl Op {
             let session = scene.since_login();
             let bank = session.bank().map(Vec::as_slice).unwrap_or_default();
             match self {
-                Op::Deposit { name } => {
-                    let side = session.bank_side().map(Vec::as_slice).unwrap_or_default();
-                    let Some(row) = side.iter().find(|row| {
-                        row.name
-                            .as_deref()
-                            .is_some_and(|got| ops::same_name(got, name))
-                    }) else {
+                Op::Deposit { name, op } => {
+                    if !view.ready() || busy {
                         return Sent::Settled(false);
-                    };
-                    op_request(
-                        &view,
-                        busy,
-                        InteractReq::Deposit {
-                            name: row.name_or_empty().to_string(),
-                        },
-                        cx,
-                    )
+                    }
+                    // The first side row with the name, then that row's own
+                    // op: a missing label presses nothing (never an All).
+                    let click = posted_side(session)
+                        .and_then(|side| {
+                            side.iter().find(|row| {
+                                row.name
+                                    .as_deref()
+                                    .is_some_and(|got| ops::same_name(got, name))
+                            })
+                        })
+                        .and_then(|row| ops::deposit_click(row, DepositRequest::Label(op)));
+                    match click {
+                        // Frozen answers whether the press was sent.
+                        Some(click) => {
+                            cx.emit(ops::deposit_req(click, view.generation));
+                            Sent::Settled(true)
+                        }
+                        None => Sent::Settled(false),
+                    }
                 }
                 Op::Withdraw { name, amount } => {
                     let action = withdraw_action(bank, name, amount);
@@ -284,13 +329,15 @@ impl Op {
                     }) else {
                         return Sent::Settled(false);
                     };
-                    // Frozen counts the backpack by name, so a noted landing
-                    // counts: in Note mode the row lands as its note id.
-                    let lands_as = match note_intent(view.generation) {
-                        NoteIntent::Noted if !row.noted && row.cert >= 0 => row.cert,
-                        _ => row.id,
-                    };
-                    withdraw_x(&view, busy, row, amount, f64::from(lands_as), scene, cx)
+                    withdraw_x(
+                        &view,
+                        busy,
+                        row,
+                        amount,
+                        f64::from(landing_id(row, view.generation)),
+                        scene,
+                        cx,
+                    )
                 }
                 Op::WithdrawXId {
                     id,
@@ -507,27 +554,212 @@ pub(crate) fn is_safe_integer(n: f64) -> bool {
     n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0
 }
 
-/// `Bank.close()`: nothing to do when the bank is already closed.
-pub(crate) struct Closing;
+/// A sent Close waiting for its posted acknowledgement: the bank shut, the
+/// side root it had released, and a newer bank session generation.
+pub(crate) struct Closing {
+    baseline: CloseBaseline,
+    login: u64,
+}
 
 impl Closing {
-    /// `None` when the bank is not open (the close is already true).
-    pub(crate) fn begin(view: &BankView, cx: &mut Cx<'_>) -> Option<Self> {
-        if !view.open {
+    /// Send the Close with `deadline` as its wait bound. `None` when the
+    /// bank is already shut: the close is true with no verb.
+    pub(crate) fn begin(view: &BankView, deadline: Duration, cx: &mut Cx<'_>) -> Option<Self> {
+        if ops::close_begin(view.open).is_some() {
             return None;
         }
-        cx.clock().arm(CLOSE_MS);
+        cx.clock().arm(millis(deadline));
         cx.emit(InteractReq::Close);
-        Some(Self)
+        Some(Self {
+            baseline: CloseBaseline {
+                generation: view.generation,
+                side: view.side,
+            },
+            login: view.login,
+        })
     }
 
     pub(crate) fn poll(&self, view: &BankView, cx: &mut Cx<'_>) -> Option<bool> {
-        if !view.open {
-            Some(true)
-        } else if cx.clock().bound_reached() {
-            Some(false)
-        } else {
-            None
+        match ops::close_progress(
+            view.open,
+            view.side,
+            view.generation,
+            self.baseline,
+            view.login == self.login,
+            cx.clock().bound_reached(),
+        ) {
+            CloseScan::Complete | CloseScan::AlreadyShut => Some(true),
+            CloseScan::SessionReplaced | CloseScan::TimedOut => Some(false),
+            CloseScan::Waiting | CloseScan::SideHeld => None,
+        }
+    }
+}
+
+/// `Bank.close(timeoutMs)`'s argument.
+#[derive(Deserialize)]
+pub(crate) struct CloseArgs {
+    #[serde(default)]
+    timeout_ms: Value,
+}
+
+impl CloseArgs {
+    /// The caller's `timeoutMs` is the wait bound (a negative or non-finite
+    /// one is already reached); omitted is [`ops::TRANSFER_BOUND`].
+    fn deadline(&self) -> Duration {
+        let explicit = match &self.timeout_ms {
+            Value::Null => None,
+            value => {
+                let ms = js_number(value);
+                // Float-to-int `as` saturates; NaN is 0.
+                Some(if ms > 0.0 { ms as u64 } else { 0 })
+            }
+        };
+        ops::close_deadline(explicit)
+    }
+}
+
+/// Frozen `Bank.close(timeoutMs)`: already shut is true with no verb; else
+/// one Close, true once the posted bank acknowledged it inside the bound.
+pub(crate) struct BankClose(Closing);
+
+impl Family for BankClose {
+    const NAME: &'static str = "bank_close";
+    type Args = CloseArgs;
+    type Output = bool;
+
+    fn begin(args: CloseArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let view = BankView::now();
+        if view.open && busy() {
+            return Begin::Done(false);
+        }
+        match Closing::begin(&view, args.deadline(), cx) {
+            Some(closing) => Begin::Run(Self(closing)),
+            None => Begin::Done(true),
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        self.0
+            .poll(&BankView::now(), cx)
+            .map_or(Step::Wait, Step::Done)
+    }
+}
+
+/// `Bank.withdrawLoad(name)`'s argument.
+#[derive(Deserialize)]
+pub(crate) struct LoadArgs {
+    name: String,
+}
+
+/// Occupied pack slots (frozen `Inventory.used()`).
+fn used_slots(inv: &[ItemRow]) -> i32 {
+    i32::try_from(inv.iter().filter(|row| row.count > 0).count()).unwrap_or(i32::MAX)
+}
+
+/// Frozen `Bank.withdrawLoad(name)`: fill the pack from the named bank row.
+/// Withdraw-All when the row has it, settled on the posted observation
+/// (more slots used, a full pack, or that row emptied); else the withdraw
+/// ladder for the free slots, as a frozen `withdrawX`.
+pub(crate) enum BankWithdrawLoad {
+    All {
+        item_id: i32,
+        used_before: i32,
+        generation: u64,
+    },
+    Fill(Awaiting),
+}
+
+impl Family for BankWithdrawLoad {
+    const NAME: &'static str = "bank_withdraw_load";
+    type Args = LoadArgs;
+    type Output = bool;
+
+    fn begin(args: LoadArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let view = BankView::now();
+        if !view.ready() || busy() {
+            return Begin::Done(false);
+        }
+        observed::with(|scene| {
+            let session = scene.since_login();
+            let inv = session.inv().map(Vec::as_slice).unwrap_or_default();
+            let size = session.inv_size().unwrap_or(0);
+            let used = used_slots(inv);
+            if size <= 0 {
+                return Begin::Done(false);
+            }
+            if used >= size {
+                return Begin::Done(true);
+            }
+            let free = size - used;
+            let bank = session.bank().map(Vec::as_slice).unwrap_or_default();
+            let Some(row) = bank.iter().find(|row| {
+                row.count > 0
+                    && row
+                        .name
+                        .as_deref()
+                        .is_some_and(|got| ops::same_name(got, &args.name))
+            }) else {
+                return Begin::Done(false);
+            };
+            let lands_as = landing_id(row, view.generation);
+            let goal = WithdrawGoal::available_limited(
+                row.id,
+                Arc::from(row.name_or_empty()),
+                lands_as,
+                free,
+                row.count,
+                ops::count_id(inv, lands_as),
+                view.generation,
+            );
+            match ops::load_click(row, free, &goal) {
+                Some(LoadClick::All(req)) => {
+                    cx.emit(req);
+                    cx.clock().arm(millis(TRANSFER_BOUND));
+                    Begin::Run(Self::All {
+                        item_id: row.id,
+                        used_before: used,
+                        generation: view.generation,
+                    })
+                }
+                Some(LoadClick::Fill(req)) if !view.count_dialog_open => {
+                    let mut waiting = Awaiting::send(Channel::WithdrawX, &view, req, cx);
+                    waiting.withdraw = Some(goal);
+                    Begin::Run(Self::Fill(waiting))
+                }
+                _ => Begin::Done(false),
+            }
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        let view = BankView::now();
+        let (item_id, used_before, generation) = match self {
+            Self::Fill(waiting) => return waiting.poll(&view, cx).map_or(Step::Wait, Step::Done),
+            Self::All {
+                item_id,
+                used_before,
+                generation,
+            } => (*item_id, *used_before, *generation),
+        };
+        let same_session = view.open && view.generation == generation;
+        let progress = observed::with(|scene| {
+            let session = scene.since_login();
+            match (session.inv(), session.bank()) {
+                (Some(inv), Some(bank)) => ops::load_all_progress(
+                    used_before,
+                    used_slots(inv),
+                    ops::pack_full(inv, session.inv_size().unwrap_or(0)),
+                    ops::count_id(bank, item_id),
+                    same_session,
+                ),
+                _ if !same_session => Progress::SessionGone,
+                _ => Progress::Incomplete,
+            }
+        });
+        match progress {
+            Progress::Complete => Step::Done(true),
+            Progress::Incomplete if !cx.clock().bound_reached() => Step::Wait,
+            _ => Step::Done(false),
         }
     }
 }
@@ -964,5 +1196,355 @@ mod tests {
             machine::take(handle),
             Take::Settled(Outcome::Done(json!(false)))
         );
+    }
+
+    const SIDE_ROOT: i32 = 700;
+
+    /// A posted row at `slot` of `component`.
+    fn placed(name: &str, id: i32, count: i32, ops: &[&str], slot: i32, component: i32) -> ItemRow {
+        ItemRow {
+            slot: Some(slot),
+            component_id: Some(component),
+            ..row(name, id, count, ops)
+        }
+    }
+
+    /// An open, loaded bank in `generation` with its side root `side`, the
+    /// bank rows, the bank-side rows and a 28-slot pack.
+    fn post_bank(
+        tick: u64,
+        generation: u64,
+        side: i32,
+        bank: Vec<ItemRow>,
+        bank_side: Vec<ItemRow>,
+        inv: Vec<ItemRow>,
+    ) {
+        observed::post(tick, |post| {
+            post.session(true)
+                .bank_open(true)
+                .bank_loaded(true)
+                .bank_generation(generation)
+                .side_modal_id(side)
+                .inv_size(28)
+                .inv(inv)
+                .bank(bank)
+                .bank_side(bank_side);
+        });
+    }
+
+    /// `n` occupied pack slots of other items.
+    fn pack(n: i32) -> Vec<ItemRow> {
+        (0..n).map(|i| held(2000 + i, 1)).collect()
+    }
+
+    fn start_load(name: &str) -> Started {
+        machine::start(
+            BankWithdrawLoad::NAME,
+            json!({ "name": name }),
+            Vec::new(),
+            0,
+        )
+    }
+
+    fn settled(handle: machine::Handle) -> Take {
+        machine::step(&mut NoJs);
+        machine::take(handle)
+    }
+
+    /// P-load: `withdrawLoad` is one transfer. Withdraw-All is one exact
+    /// `InvButton` settled on the posted pack (more slots used, a full pack
+    /// or that row emptied), never on the click; a stackable that still has
+    /// bank stock after the pack grew is done. A row without All is the
+    /// ladder for the free slots, and one fallback click is not the
+    /// request. Another transfer in flight, a new session or a lapsed bound
+    /// is false.
+    #[test]
+    fn p_load_withdraw_all_settles_on_the_pack_and_fill_loops() {
+        let all_ops = [
+            "Withdraw-1",
+            "Withdraw-5",
+            "Withdraw-10",
+            "Withdraw-All",
+            "Withdraw-X",
+        ];
+        let feathers = |count| placed("Feather", 314, count, &all_ops, 2, 601);
+        let all_click = InteractReq::InvButton {
+            id: 314,
+            slot: 2,
+            component: 601,
+            operation: 4,
+            bank_generation: 3,
+        };
+
+        // Serialized: a running bank op refuses the load with no verb.
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        assert!(matches!(
+            start(json!({ "kind": "withdraw", "name": "Feather", "amount": "all" })),
+            Started::Running(_)
+        ));
+        let _ = drain();
+        assert_eq!(
+            start_load("Feather"),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        assert!(drain().is_empty(), "a refused load sends nothing");
+
+        // All, then the posted outcomes that complete it.
+        let used_grew = {
+            let mut inv = pack(8);
+            inv.push(held(314, 200));
+            inv
+        };
+        let completions = [
+            // The pack grew; the bank row still has stock.
+            ("used grew", vec![feathers(100)], used_grew),
+            ("row emptied", Vec::new(), pack(8)),
+        ];
+        for (label, bank_after, inv_after) in completions {
+            reset();
+            post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+            let Started::Running(handle) = start_load("feather") else {
+                panic!("{label}: expected a running load");
+            };
+            assert_eq!(drain(), vec![all_click.clone()], "{label}: one All press");
+            post_bank(2, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+            assert_eq!(
+                settled(handle),
+                Take::Pending,
+                "{label}: the press is not the load"
+            );
+            post_bank(3, 3, SIDE_ROOT, bank_after, Vec::new(), inv_after);
+            assert_eq!(
+                settled(handle),
+                Take::Settled(Outcome::Done(json!(true))),
+                "{label}"
+            );
+            assert!(drain().is_empty(), "{label}: no second press");
+        }
+
+        // A new bank session, or the bound with nothing landed, is false.
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        let Started::Running(handle) = start_load("Feather") else {
+            panic!("expected a running load");
+        };
+        let _ = drain();
+        post_bank(2, 4, SIDE_ROOT, Vec::new(), Vec::new(), pack(9));
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(false))));
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        let Started::Running(handle) = start_load("Feather") else {
+            panic!("expected a running load");
+        };
+        let _ = drain();
+        assert_eq!(settled(handle), Take::Pending);
+        machine::tests::expire_deadlines();
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(false))));
+
+        // No All: free 3 is the ladder; one click of 1 is not the load.
+        let fixed = ["Withdraw-1", "Withdraw-5", "Withdraw-10"];
+        let logs = |count| placed("Logs", 1511, count, &fixed, 0, 601);
+        reset();
+        post_x(vec![logs(40)], pack(25), 3, 1, false);
+        let Started::Running(handle) = start_load("Logs") else {
+            panic!("expected a running fill");
+        };
+        assert_eq!(x_click(), ("Withdraw-1".into(), 1, 1511));
+        let mut inv = pack(25);
+        inv.push(held(1511, 1));
+        post_x(vec![logs(39)], inv.clone(), 3, 2, true);
+        assert_eq!(settled(handle), Take::Pending, "one fallback click");
+        assert_eq!(x_click(), ("Withdraw-1".into(), 1, 1511));
+        inv.push(held(1511, 1));
+        post_x(vec![logs(38)], inv.clone(), 3, 3, true);
+        assert_eq!(settled(handle), Take::Pending);
+        assert_eq!(x_click(), ("Withdraw-1".into(), 1, 1511));
+        inv.push(held(1511, 1));
+        post_x(vec![logs(37)], inv, 3, 4, true);
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
+        assert!(drain().is_empty());
+
+        // A full pack is already loaded; no row is false; both send nothing.
+        reset();
+        post_bank(1, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(28));
+        assert_eq!(
+            start_load("Feather"),
+            Started::Settled(Outcome::Done(json!(true)))
+        );
+        post_bank(2, 3, SIDE_ROOT, vec![feathers(300)], Vec::new(), pack(8));
+        assert_eq!(
+            start_load("Arrow"),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        assert!(drain().is_empty());
+    }
+
+    fn start_close(timeout_ms: Value) -> Started {
+        machine::start(
+            BankClose::NAME,
+            json!({ "timeout_ms": timeout_ms }),
+            Vec::new(),
+            0,
+        )
+    }
+
+    /// The bank as the close sees it.
+    fn post_close(tick: u64, open: bool, side: i32, generation: u64) {
+        observed::post(tick, |post| {
+            post.session(true)
+                .bank_open(open)
+                .bank_loaded(open)
+                .bank_generation(generation)
+                .side_modal_id(side);
+        });
+    }
+
+    /// P-close (compat): already shut is true with no verb. One Close is
+    /// true only once the bank is shut, the old side root released and the
+    /// session generation newer; main shut with the old side still up is
+    /// not done. An omitted bound is 4 s, an explicit `timeoutMs` is the
+    /// bound either way, a reopened or logged-out session is false, and a
+    /// close during another transfer is false.
+    #[test]
+    fn p_close_waits_for_the_acknowledged_close_inside_its_bound() {
+        reset();
+        post_close(1, false, -1, 4);
+        assert_eq!(
+            start_close(Value::Null),
+            Started::Settled(Outcome::Done(json!(true)))
+        );
+        assert!(drain().is_empty(), "already shut sends no verb");
+
+        reset();
+        post_close(1, true, SIDE_ROOT, 3);
+        let Started::Running(handle) = start_close(Value::Null) else {
+            panic!("an open bank closes");
+        };
+        assert_eq!(drain(), vec![InteractReq::Close]);
+        post_close(2, false, SIDE_ROOT, 4);
+        assert_eq!(settled(handle), Take::Pending, "main shut, side held");
+        post_close(3, false, -1, 3);
+        assert_eq!(
+            settled(handle),
+            Take::Pending,
+            "no generation acknowledgement"
+        );
+        post_close(4, false, -1, 4);
+        assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
+
+        // Bounds: omitted 4 s, explicit 1.5 s fails while open, 8 s may
+        // still succeed after 4 s.
+        for (timeout, aged, expect) in [
+            (Value::Null, 3_900, Take::Pending),
+            (
+                Value::Null,
+                4_000,
+                Take::Settled(Outcome::Done(json!(false))),
+            ),
+            (
+                json!(1500),
+                1_500,
+                Take::Settled(Outcome::Done(json!(false))),
+            ),
+            (json!(8000), 4_100, Take::Pending),
+        ] {
+            reset();
+            post_close(1, true, SIDE_ROOT, 3);
+            let Started::Running(handle) = start_close(timeout.clone()) else {
+                panic!("{timeout}: an open bank closes");
+            };
+            let _ = drain();
+            machine::age(handle, aged);
+            post_close(2, true, SIDE_ROOT, 3);
+            let pending = expect == Take::Pending;
+            assert_eq!(settled(handle), expect, "{timeout} aged {aged} ms");
+            if pending {
+                post_close(3, false, -1, 4);
+                assert_eq!(settled(handle), Take::Settled(Outcome::Done(json!(true))));
+            }
+        }
+
+        // Reopened in another session, or logged out: false.
+        for logout in [false, true] {
+            reset();
+            post_close(1, true, SIDE_ROOT, 3);
+            let Started::Running(handle) = start_close(Value::Null) else {
+                panic!("an open bank closes");
+            };
+            let _ = drain();
+            if logout {
+                observed::post(2, |post| {
+                    post.session(false);
+                });
+                post_close(3, false, -1, 4);
+            } else {
+                post_close(2, true, SIDE_ROOT, 5);
+            }
+            assert_eq!(
+                settled(handle),
+                Take::Settled(Outcome::Done(json!(false))),
+                "logout={logout}"
+            );
+        }
+
+        // Another transfer in flight: false, no verb.
+        reset();
+        post(vec![row("Lobster", 379, 12, &[])], 0, false);
+        assert!(matches!(
+            start(json!({ "kind": "withdraw", "name": "Lobster", "amount": 1 })),
+            Started::Running(_)
+        ));
+        let _ = drain();
+        assert_eq!(
+            start_close(Value::Null),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        assert!(drain().is_empty());
+    }
+
+    /// P-dispatch (compat): two side rows share a name. `deposit(name,
+    /// 'Deposit-1')` presses the first such row's own Deposit-1 by id, slot
+    /// and component (here the noted row), never a name and never an All on
+    /// the other id. A missing label presses nothing.
+    #[test]
+    fn p_dispatch_deposit_presses_the_selected_row_and_label() {
+        let ops = [
+            "Deposit-1",
+            "Deposit-5",
+            "Deposit-10",
+            "Deposit-All",
+            "Deposit-X",
+        ];
+        let mut noted = placed("Trout", 334, 9, &ops, 0, 701);
+        noted.noted = true;
+        let side = vec![noted, placed("Trout", 333, 2, &ops, 1, 701)];
+        reset();
+        post_bank(1, 6, SIDE_ROOT, Vec::new(), side.clone(), Vec::new());
+        assert_eq!(
+            start(json!({ "kind": "deposit", "name": "trout", "op": "Deposit-1" })),
+            Started::Settled(Outcome::Done(json!(true)))
+        );
+        assert_eq!(
+            drain(),
+            vec![InteractReq::InvButton {
+                id: 334,
+                slot: 0,
+                component: 701,
+                operation: 1,
+                bank_generation: 6,
+            }]
+        );
+        assert_eq!(
+            start(json!({ "kind": "deposit", "name": "Trout", "op": "Deposit-2" })),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        // The side root is down: no posted side, no press.
+        post_bank(2, 6, -1, Vec::new(), side, Vec::new());
+        assert_eq!(
+            start(json!({ "kind": "deposit", "name": "Trout", "op": "Deposit-1" })),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        assert!(drain().is_empty());
     }
 }

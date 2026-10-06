@@ -2,32 +2,41 @@
 
 pub mod combat;
 pub mod dialogue;
+pub mod gather;
+pub mod item_arg;
+pub mod partner;
 pub mod progress_predicates;
 pub mod reach;
 pub mod s2;
+pub mod setting;
+pub mod thieve;
 
 use super::compile::{
-    CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
-    StepPlan, StepRun,
+    AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
+    StepContext, StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions, WalkReceipt};
 use crate::shim::InteractReq;
-use api::selected::Truth;
+use api::selected::{FactKey, Truth};
 use api::snapshot::{ChatLineView, QuestListStatus};
 use api::WorldTile;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct NoArgs {}
 pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
-/// One UseOn attempt inside an `until` loop. A silent miss must not consume
-/// the whole step `settle_ms` (240s for Sheep Shearer). Successful shear is
-/// two `p_delay(0)` ticks; 8s also covers a lagged inventory post.
-const USE_ON_ROUND_MS: u64 = 8_000;
+/// Shared idle bound for one attempt inside a finite inventory-count loop.
+/// Active primary animations keep the current attempt alive.
+const ACTION_ROUND_MS: u64 = 8_000;
 
 pub(super) fn manual_movement_message() -> Arc<str> {
     static REASON: std::sync::LazyLock<Arc<str>> =
@@ -44,198 +53,227 @@ fn walk_step_evidence(
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
-    &[
-        super::compile::StepHandler {
-            kind: "walk",
-            version: 1,
-            compile: compile_walk,
-        },
-        super::compile::StepHandler {
-            kind: "talk",
-            version: 1,
-            compile: compile_talk,
-        },
-        super::compile::StepHandler {
-            kind: "interact",
-            version: 1,
-            compile: compile_interact,
-        },
-        super::compile::StepHandler {
-            kind: "use_on",
-            version: 1,
-            compile: compile_use_on,
-        },
-        super::compile::StepHandler {
-            kind: "acquire",
-            version: 1,
-            compile: compile_acquire,
-        },
-        super::compile::StepHandler {
-            kind: "wait",
-            version: 1,
-            compile: compile_wait,
-        },
-        super::compile::StepHandler {
-            kind: "bank",
-            version: 1,
-            compile: s2::compile_bank,
-        },
-        super::compile::StepHandler {
-            kind: "buy",
-            version: 1,
-            compile: s2::compile_buy,
-        },
-        super::compile::StepHandler {
-            kind: "make",
-            version: 1,
-            compile: s2::compile_make,
-        },
-        super::compile::StepHandler {
-            kind: "equip",
-            version: 1,
-            compile: s2::compile_equip,
-        },
-        super::compile::StepHandler {
-            kind: "unequip",
-            version: 1,
-            compile: s2::compile_unequip,
-        },
-        super::compile::StepHandler {
-            kind: "loadout",
-            version: 1,
-            compile: s2::compile_loadout,
-        },
-        super::compile::StepHandler {
-            kind: "combat",
-            version: 1,
-            compile: combat::compile,
-        },
-    ]
+    static HANDLERS: &[super::compile::StepHandler] = &[
+        super::compile::step!("walk", 1, Default, WalkArgs, compile_walk),
+        super::compile::step!("talk", 1, Explicit, TalkArgs, compile_talk),
+        super::compile::step!("interact", 1, Explicit, InteractArgs, compile_interact),
+        super::compile::step!("use_on", 1, Explicit, UseOnArgs, compile_use_on),
+        super::compile::step!("acquire", 1, Default, AcquireArgs, compile_acquire),
+        super::compile::step!("wait", 1, Default, WaitArgs, compile_wait),
+        super::compile::step!("bank", 1, Default, s2::BankArgs, s2::compile_bank),
+        super::compile::step!("buy", 1, Default, s2::BuyArgs, s2::compile_buy),
+        super::compile::step!("make", 1, Explicit, s2::MakeArgs, s2::compile_make),
+        super::compile::step!("equip", 1, Default, s2::EquipArgs, s2::compile_equip),
+        super::compile::step!("unequip", 1, Default, s2::EquipArgs, s2::compile_unequip),
+        super::compile::step!("loadout", 1, Default, s2::LoadoutArgs, s2::compile_loadout),
+        super::compile::step!(
+            "setting",
+            1,
+            Default,
+            setting::SettingArgs,
+            setting::compile_setting
+        ),
+        super::compile::step!("combat", 1, Explicit, combat::CombatArgs, combat::compile),
+        super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
+        super::compile::step!("gather", 1, Explicit, gather::Args, gather::compile),
+        super::compile::step!("thieve", 1, Explicit, thieve::Args, thieve::compile),
+    ];
+    HANDLERS
 }
 
 pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
-    &[
-        super::compile::PredicateHandler {
-            kind: "has_item",
-            version: 1,
-            compile: compile_has_item,
-        },
-        super::compile::PredicateHandler {
-            kind: "near",
-            version: 1,
-            compile: compile_near,
-        },
-        super::compile::PredicateHandler {
-            kind: "message",
-            version: 1,
-            compile: compile_message,
-        },
-        super::compile::PredicateHandler {
-            kind: "message_state",
-            version: 1,
-            compile: compile_message_state,
-        },
-        super::compile::PredicateHandler {
-            kind: "quest_colour",
-            version: 1,
-            compile: compile_quest_colour,
-        },
-        super::compile::PredicateHandler {
-            kind: "in_combat",
-            version: 1,
-            compile: compile_in_combat,
-        },
-        super::compile::PredicateHandler {
-            kind: "npc_present",
-            version: 1,
-            compile: compile_npc_present,
-        },
-        super::compile::PredicateHandler {
-            kind: "loc_present",
-            version: 1,
-            compile: compile_loc_present,
-        },
-        super::compile::PredicateHandler {
-            kind: "ground_item_near",
-            version: 1,
-            compile: compile_ground_item_near,
-        },
-        super::compile::PredicateHandler {
-            kind: "modal_open",
-            version: 1,
-            compile: compile_modal_open,
-        },
-        super::compile::PredicateHandler {
-            kind: "item_count_at_least",
-            version: 1,
-            compile: compile_item_count_at_least,
-        },
-        super::compile::PredicateHandler {
-            kind: "worn",
-            version: 1,
-            compile: compile_worn,
-        },
-        super::compile::PredicateHandler {
-            kind: "on_level",
-            version: 1,
-            compile: compile_on_level,
-        },
-        super::compile::PredicateHandler {
-            kind: "in_area",
-            version: 1,
-            compile: compile_in_area,
-        },
-        super::compile::PredicateHandler {
-            kind: "npc_absent",
-            version: 1,
-            compile: compile_npc_absent,
-        },
-        super::compile::PredicateHandler {
-            kind: "skill_at_least",
-            version: 1,
-            compile: compile_skill_at_least,
-        },
-        super::compile::PredicateHandler {
-            kind: "hp_fraction_below",
-            version: 1,
-            compile: compile_hp_fraction_below,
-        },
-        super::compile::PredicateHandler {
-            kind: "prayer_points_at_least",
-            version: 1,
-            compile: compile_prayer_points,
-        },
-        super::compile::PredicateHandler {
-            kind: "combat_end",
-            version: 1,
-            compile: combat::compile_end_predicate,
-        },
-        super::compile::PredicateHandler {
-            kind: "stage_in",
-            version: 1,
-            compile: progress_predicates::compile_stage_in,
-        },
-        super::compile::PredicateHandler {
-            kind: "flag",
-            version: 1,
-            compile: progress_predicates::compile_flag,
-        },
-        super::compile::PredicateHandler {
-            kind: "bank_known",
-            version: 1,
-            compile: s2::compile_bank_known,
-        },
-        super::compile::PredicateHandler {
-            kind: "bank_has",
-            version: 1,
-            compile: s2::compile_bank_has,
-        },
-        super::compile::PredicateHandler {
-            kind: "loadout_ready",
-            version: 1,
-            compile: s2::compile_loadout_ready,
-        },
-    ]
+    static HANDLERS: &[super::compile::PredicateHandler] = &[
+        super::compile::fact!(
+            "has_item",
+            1,
+            super::compile::ProgressRead::None,
+            ObjArg,
+            compile_has_item
+        ),
+        super::compile::fact!(
+            "near",
+            1,
+            super::compile::ProgressRead::None,
+            NearArg,
+            compile_near
+        ),
+        super::compile::fact!(
+            "message",
+            1,
+            super::compile::ProgressRead::None,
+            MessageArg,
+            compile_message
+        ),
+        super::compile::fact!(
+            "message_state",
+            1,
+            super::compile::ProgressRead::None,
+            MessageStateArg,
+            compile_message_state
+        ),
+        super::compile::fact!(
+            "quest_colour",
+            1,
+            super::compile::ProgressRead::Colour,
+            ColourArg,
+            compile_quest_colour
+        ),
+        super::compile::fact!(
+            "in_combat",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_in_combat
+        ),
+        super::compile::fact!(
+            "npc_present",
+            1,
+            super::compile::ProgressRead::None,
+            NpcArg,
+            compile_npc_present
+        ),
+        super::compile::fact!(
+            "loc_present",
+            1,
+            super::compile::ProgressRead::None,
+            LocArg,
+            compile_loc_present
+        ),
+        super::compile::fact!(
+            "ground_item_near",
+            1,
+            super::compile::ProgressRead::None,
+            GroundArg,
+            compile_ground_item_near
+        ),
+        super::compile::fact!(
+            "modal_open",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_modal_open
+        ),
+        super::compile::fact!(
+            "item_count_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            CountArg,
+            compile_item_count_at_least
+        ),
+        super::compile::fact!(
+            "worn",
+            1,
+            super::compile::ProgressRead::None,
+            ObjArg,
+            compile_worn
+        ),
+        super::compile::fact!(
+            "on_level",
+            1,
+            super::compile::ProgressRead::None,
+            LevelArg,
+            compile_on_level
+        ),
+        super::compile::fact!(
+            "in_area",
+            1,
+            super::compile::ProgressRead::None,
+            AreaArg,
+            compile_in_area
+        ),
+        super::compile::fact!(
+            "npc_absent",
+            1,
+            super::compile::ProgressRead::None,
+            NpcArg,
+            compile_npc_absent
+        ),
+        super::compile::fact!(
+            "skill_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            SkillArg,
+            compile_skill_at_least
+        ),
+        super::compile::fact!(
+            "hp_fraction_below",
+            1,
+            super::compile::ProgressRead::None,
+            FractionArg,
+            compile_hp_fraction_below
+        ),
+        super::compile::fact!(
+            "prayer_points_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            LevelArg,
+            compile_prayer_points
+        ),
+        super::compile::fact!(
+            "combat_end",
+            1,
+            super::compile::ProgressRead::None,
+            combat::CombatEndArgs,
+            combat::compile_end_predicate
+        ),
+        super::compile::fact!(
+            "stage_in",
+            1,
+            super::compile::ProgressRead::Journal,
+            progress_predicates::StageInArgs,
+            progress_predicates::compile_stage_in
+        ),
+        super::compile::fact!(
+            "flag",
+            1,
+            super::compile::ProgressRead::Journal,
+            progress_predicates::FlagArgs,
+            progress_predicates::compile_flag
+        ),
+        super::compile::fact!(
+            "bank_known",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            s2::compile_bank_known
+        ),
+        super::compile::fact!(
+            "bank_has",
+            1,
+            super::compile::ProgressRead::None,
+            s2::BankHasArgs,
+            s2::compile_bank_has
+        ),
+        super::compile::fact!(
+            "loadout_ready",
+            1,
+            super::compile::ProgressRead::None,
+            s2::LoadoutArgs,
+            s2::compile_loadout_ready
+        ),
+        super::compile::fact!(
+            "retaliate",
+            1,
+            super::compile::ProgressRead::None,
+            setting::SettingArgs,
+            setting::compile_predicate
+        ),
+        super::compile::fact!(
+            "equipment_only",
+            1,
+            super::compile::ProgressRead::None,
+            s2::EquipmentOnlyArgs,
+            s2::compile_equipment_only
+        ),
+        super::compile::fact!(
+            "partner_item_count_at_least",
+            1,
+            super::compile::ProgressRead::None,
+            partner::PartnerItemCountArgs,
+            partner::compile_partner_item_count
+        ),
+    ];
+    HANDLERS
 }
 
 pub fn compile_predicate(
@@ -257,8 +295,7 @@ pub fn compile_predicate(
             version,
             args,
         } => {
-            let handler = predicate_handlers()
-                .iter()
+            let handler = super::compile::predicate_handlers()
                 .find(|handler| handler.kind == kind && handler.version == *version)
                 .ok_or_else(|| CompileError::code("unknown-predicate"))?;
             (handler.compile)(args, cx)
@@ -305,35 +342,35 @@ fn resolve_obj(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError
     cx.selected
         .item_by_alias(alias)
         .map(|item| item.id)
-        .ok_or_else(|| CompileError::code("unresolved-obj"))
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))
 }
 
 fn resolve_npc(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError> {
     cx.selected
         .npc_by_config(alias)
         .map(|row| row.id)
-        .ok_or_else(|| CompileError::code("unresolved-npc"))
+        .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(alias))
 }
 
 fn resolve_loc(cx: &CompileContext<'_>, alias: &str) -> Result<i32, CompileError> {
     cx.selected
         .loc_by_config(alias)
         .map(|row| row.id)
-        .ok_or_else(|| CompileError::code("unresolved-loc"))
+        .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(alias))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ObjArg {
+    /// Symbolic object config name resolved in selected game data.
     obj: String,
 }
 
 fn compile_has_item(
-    args: &serde_json::Value,
+    arg: ObjArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ObjArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(HasItem {
         id: resolve_obj(cx, &arg.obj)?,
     }))
@@ -355,19 +392,21 @@ impl PredicatePlan for HasItem {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct NearArg {
+    /// Observed target tile as x, z, level.
     tile: [i32; 3],
+    /// Maximum distance in tiles.
     radius: i32,
 }
 
 fn compile_near(
-    args: &serde_json::Value,
+    arg: NearArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NearArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    validate_tile_coordinates(arg.tile)?;
     Ok(Arc::new(Near {
         tile: WorldTile {
             x: arg.tile[0],
@@ -391,18 +430,18 @@ impl PredicatePlan for Near {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MessageArg {
+    /// Case-insensitive chat substrings; any one match is true.
     any: Vec<String>,
 }
 
 fn compile_message(
-    args: &serde_json::Value,
+    arg: MessageArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: MessageArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if arg.any.iter().any(|needle| needle.trim().is_empty()) {
         return Err(CompileError::code("invalid-args"));
     }
@@ -448,18 +487,19 @@ fn contains_any(line: &ChatLineView, needles: &[String]) -> bool {
 /// A recoverable observed state, unlike `message`'s post-step settle event.
 /// The newest matching event in the available chat history wins; a clearing
 /// event prevents a previous successful operation from being replayed forever.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MessageStateArg {
+    /// Events which set the observed state.
     set: Vec<String>,
+    /// Events which clear the observed state.
     clear: Vec<String>,
 }
 fn compile_message_state(
-    args: &serde_json::Value,
+    arg: MessageStateArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: MessageStateArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if arg
         .set
         .iter()
@@ -503,28 +543,37 @@ impl PredicatePlan for MessageState {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ColourArg {
+    /// Symbolic quest config name.
     quest: String,
-    is: String,
+    /// Desired tab colour state.
+    is: ColourIs,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+enum ColourIs {
+    NotStarted,
+    InProgress,
+    Complete,
 }
 
 fn compile_quest_colour(
-    args: &serde_json::Value,
+    arg: ColourArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ColourArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let facts = cx
         .quests
         .quest(&arg.quest)
         .map_err(|_| CompileError::code("unresolved-quest"))?;
-    let want = match arg.is.as_str() {
-        "not_started" => QuestListStatus::NotStarted,
-        "in_progress" => QuestListStatus::InProgress,
-        "complete" => QuestListStatus::Complete,
-        _ => return Err(CompileError::code("invalid-args")),
+    let want = match arg.is {
+        ColourIs::NotStarted => QuestListStatus::NotStarted,
+        ColourIs::InProgress => QuestListStatus::InProgress,
+        ColourIs::Complete => QuestListStatus::Complete,
     };
     Ok(Arc::new(QuestColour {
         display: Arc::clone(&facts.display),
@@ -554,12 +603,9 @@ impl PredicatePlan for QuestColour {
 }
 
 fn compile_in_combat(
-    args: &serde_json::Value,
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(InCombat))
 }
 struct InCombat;
@@ -572,32 +618,40 @@ impl PredicatePlan for InCombat {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct NpcArg {
+    /// Symbolic NPC config name.
     npc: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct LocArg {
+    /// Symbolic location config name.
     loc: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct GroundArg {
+    /// Symbolic ground-item object config name.
     obj: String,
+    /// Maximum distance in tiles; omitted uses 12.
     #[serde(default)]
     radius: Option<i32>,
+    /// Require the selected ground item at this exact world tile.
+    #[serde(default)]
+    at: Option<[i32; 3]>,
 }
 
 fn compile_npc_present(
-    args: &serde_json::Value,
+    arg: NpcArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: NpcArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(NpcPresent {
         id: resolve_npc(cx, &arg.npc)?,
     }))
@@ -619,19 +673,20 @@ impl PredicatePlan for NpcPresent {
 }
 
 fn compile_npc_absent(
-    args: &serde_json::Value,
+    arg: NpcArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let present = compile_npc_present(args, cx)?;
-    Ok(Arc::new(NotPlan { inner: present }))
+    Ok(Arc::new(NotPlan {
+        inner: Arc::new(NpcPresent {
+            id: resolve_npc(cx, &arg.npc)?,
+        }),
+    }))
 }
 
 fn compile_loc_present(
-    args: &serde_json::Value,
+    arg: LocArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: LocArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let id = resolve_loc(cx, &arg.loc)?;
     Ok(Arc::new(LocPresent { id }))
 }
@@ -648,41 +703,48 @@ impl PredicatePlan for LocPresent {
 }
 
 fn compile_ground_item_near(
-    args: &serde_json::Value,
+    arg: GroundArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: GroundArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let at = arg
+        .at
+        .map(|tile| {
+            validate_tile_coordinates(tile)?;
+            Ok(WorldTile {
+                x: tile[0],
+                z: tile[1],
+                level: tile[2],
+            })
+        })
+        .transpose()?;
     Ok(Arc::new(GroundNear {
         id: resolve_obj(cx, &arg.obj)?,
         radius: arg.radius.unwrap_or(12),
+        at,
     }))
 }
 struct GroundNear {
     id: i32,
     radius: i32,
+    at: Option<WorldTile>,
 }
 impl PredicatePlan for GroundNear {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
         match cx.cx.snapshot().ground_items() {
             None => Truth::Unknown,
-            Some(items) => truth(
-                items
-                    .value
-                    .iter()
-                    .any(|item| item.def.id == self.id && item.distance <= self.radius),
-            ),
+            Some(items) => truth(items.value.iter().any(|item| {
+                item.def.id == self.id
+                    && item.distance <= self.radius
+                    && self.at.is_none_or(|tile| item.tile == tile)
+            })),
         }
     }
 }
 
 fn compile_modal_open(
-    args: &serde_json::Value,
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(ModalOpen))
 }
 struct ModalOpen;
@@ -695,20 +757,21 @@ impl PredicatePlan for ModalOpen {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct CountArg {
+    /// Symbolic object config name counted in the inventory.
     obj: String,
+    /// Required quantity; omitted uses 1. A progress quantity reads the latest journal count.
     #[serde(default)]
     qty: Option<s2::QuantityDocument>,
 }
 
 fn compile_item_count_at_least(
-    args: &serde_json::Value,
+    arg: CountArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: CountArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(CountAtLeast {
         id: resolve_obj(cx, &arg.obj)?,
         qty: s2::compile_quantity(arg.qty.unwrap_or(s2::QuantityDocument::Fixed(1)), cx)?,
@@ -739,11 +802,9 @@ impl PredicatePlan for CountAtLeast {
 }
 
 fn compile_worn(
-    args: &serde_json::Value,
+    arg: ObjArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: ObjArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(Worn {
         id: resolve_obj(cx, &arg.obj)?,
     }))
@@ -760,18 +821,18 @@ impl PredicatePlan for Worn {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct LevelArg {
+    /// Skill or floor level to test.
     level: i32,
 }
 
 fn compile_on_level(
-    args: &serde_json::Value,
+    arg: LevelArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: LevelArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(OnLevel { level: arg.level }))
 }
 struct OnLevel {
@@ -786,18 +847,18 @@ impl PredicatePlan for OnLevel {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AreaArg {
+    /// Named Path area whose boxes are tested.
     area: String,
 }
 
 fn compile_in_area(
-    args: &serde_json::Value,
+    arg: AreaArg,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: AreaArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let boxes = cx
         .areas
         .get(&arg.area)
@@ -821,19 +882,20 @@ impl PredicatePlan for InArea {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct SkillArg {
+    /// Case-insensitive skill name.
     skill: String,
+    /// Minimum base level required.
     level: i32,
 }
 
 fn compile_skill_at_least(
-    args: &serde_json::Value,
+    arg: SkillArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: SkillArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(SkillAtLeast {
         skill: Arc::from(arg.skill),
         level: arg.level,
@@ -854,18 +916,18 @@ impl PredicatePlan for SkillAtLeast {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct FractionArg {
+    /// Threshold fraction of current hitpoints divided by base hitpoints.
     below: f32,
 }
 
 fn compile_hp_fraction_below(
-    args: &serde_json::Value,
+    arg: FractionArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: FractionArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(HpBelow { below: arg.below }))
 }
 struct HpBelow {
@@ -893,11 +955,9 @@ impl PredicatePlan for HpBelow {
 }
 
 fn compile_prayer_points(
-    args: &serde_json::Value,
+    arg: LevelArg,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let arg: SkillArg =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(SkillAtLeast {
         skill: Arc::from("prayer"),
         level: arg.level,
@@ -916,6 +976,10 @@ pub(super) fn validate_tile(tile: [i32; 3], source: &str) -> Result<(), CompileE
     if source.trim().is_empty() {
         return Err(CompileError::code("tile-source-required"));
     }
+    validate_tile_coordinates(tile)
+}
+
+fn validate_tile_coordinates(tile: [i32; 3]) -> Result<(), CompileError> {
     if !(0..=16383).contains(&tile[0])
         || !(0..=16383).contains(&tile[1])
         || !(0..=3).contains(&tile[2])
@@ -964,26 +1028,53 @@ fn name_matches(cx: &CompileContext<'_>, name: &str, op: &str) -> usize {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct WalkArgs {
+    /// Destination tile as x, z, level.
     tile: [i32; 3],
+    /// Source citation for this authored destination.
     #[serde(default)]
     source: String,
+    /// Navigation radius in tiles; 0 means 1.
     #[serde(default)]
     radius: u16,
+    /// Named danger zones this movement may cross.
     #[serde(default)]
     cross: Vec<String>,
+    /// Optional protected movement mode; currently `protect`.
     #[serde(default)]
     guard: Option<String>,
+    /// Override inherited teleport permission for this movement.
+    #[serde(default)]
+    allow_teleports: Option<bool>,
+    /// Override inherited Wilderness permission for this movement.
+    #[serde(default)]
+    allow_wilderness: Option<bool>,
+    /// Override inherited danger-zone permission for this movement.
+    #[serde(default)]
+    allow_danger_zones: Option<bool>,
+}
+
+impl WalkArgs {
+    fn options(&self) -> WalkOptions {
+        WalkOptions {
+            allow_teleports: self.allow_teleports.into(),
+            allow_wilderness: self.allow_wilderness.into(),
+            allow_danger_zones: self.allow_danger_zones.into(),
+        }
+    }
 }
 
 fn compile_walk(
-    args: &serde_json::Value,
+    arg: WalkArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: WalkArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    Ok(Arc::new(parse_walk_plan(arg)?))
+}
+
+fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     let protect = match arg.guard.as_deref() {
         None | Some("") => false,
         Some("protect") => true,
@@ -993,31 +1084,31 @@ fn compile_walk(
             );
         }
     };
-    if !arg.cross.is_empty() && !protect {
-        return Err(CompileError::code("invalid-args")
-            .with_detail("walk: cross needs protected walk (combat slice)"));
-    }
     validate_tile(arg.tile, &arg.source)?;
-    Ok(Arc::new(WalkPlan {
+    let options = arg.options();
+    let cross = arg
+        .cross
+        .into_iter()
+        .map(Arc::from)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Ok(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
             z: arg.tile[1],
             level: arg.tile[2],
         },
         radius: arg.radius.max(1),
-        cross: arg
-            .cross
-            .into_iter()
-            .map(Arc::from)
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
+        options,
+        cross,
         protect,
-    }))
+    })
 }
 
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
+    options: WalkOptions,
     cross: Box<[Arc<str>]>,
     protect: bool,
 }
@@ -1025,6 +1116,7 @@ impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
         request.cross = self.cross.clone();
+        request.options = self.options;
         request.protect = self.protect;
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         Ok(Box::new(WalkRun {
@@ -1067,69 +1159,249 @@ impl StepRun for WalkRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct AnchorArg {
-    tile: [i32; 3],
+pub(crate) struct AnchorArg {
+    /// Authored destination tile as x, z, level.
+    pub(crate) tile: [i32; 3],
+    /// Source citation for the authored destination; required by compilation.
     #[serde(default)]
-    source: String,
+    pub(crate) source: String,
 }
 
-#[derive(Deserialize)]
+/// Select an answer when the current dialogue page contains a text fragment.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct TalkArgs {
-    npc: String,
-    #[serde(default)]
-    anchor: Option<AnchorArg>,
-    #[serde(default)]
-    leash: u16,
+struct LineRuleDocument {
+    /// Text fragment that identifies the current dialogue page.
+    when_line: String,
+    /// Text fragment that identifies the required answer.
+    choose: String,
+}
+
+/// Answer selection rules shared by talk and operation-started dialogues.
+#[derive(Debug, Deserialize, Default)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DialogueOptionsDocument {
+    /// Answer text fragments, checked in this order.
     #[serde(default)]
     prefer: Vec<String>,
+    /// A fixed, one-based answer index.
     #[serde(default)]
     choose: Option<i32>,
+    /// Page text rules, checked before the general answer preferences.
+    #[serde(default)]
+    line_rules: Vec<LineRuleDocument>,
+    /// Refuse missing or ambiguous answer text instead of choosing a fallback.
+    #[serde(default)]
+    strict: bool,
 }
 
-fn compile_talk(
-    args: &serde_json::Value,
+/// Unconfigured continuation policy for an operation-started dialogue.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DialogueMode {
+    /// Drain Continue pages; option menus require explicit answer rules.
+    Continue,
+    /// Do not start a dialogue driver for this operation.
+    None,
+}
+
+/// Shared continuation policy or configured answer selection for an operation.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub(crate) enum DialogueDocument {
+    /// Continue-only or no-driver policy.
+    Mode(DialogueMode),
+    /// Ordered preferences, fixed choice or current-page text rules.
+    Options(DialogueOptionsDocument),
+}
+
+fn compile_dialogue_options(
+    args: DialogueOptionsDocument,
+) -> Result<dialogue::DialogueOptions, CompileError> {
+    if args.choose.is_some_and(|choose| choose < 1)
+        || args
+            .line_rules
+            .iter()
+            .any(|rule| rule.when_line.trim().is_empty() || rule.choose.trim().is_empty())
+    {
+        return Err(CompileError::code("invalid-dialogue-options"));
+    }
+    Ok(dialogue::DialogueOptions {
+        prefer: args.prefer.into_iter().map(Arc::from).collect(),
+        choose: args.choose,
+        line_rules: args
+            .line_rules
+            .into_iter()
+            .map(|rule| dialogue::LineRule {
+                when_line: Arc::from(rule.when_line),
+                choose: Arc::from(rule.choose),
+            })
+            .collect(),
+        strict: args.strict,
+    })
+}
+
+fn compile_dialogue(
+    args: Option<DialogueDocument>,
+) -> Result<Option<dialogue::DialogueOptions>, CompileError> {
+    match args {
+        None | Some(DialogueDocument::Mode(DialogueMode::None)) => Ok(None),
+        Some(DialogueDocument::Mode(DialogueMode::Continue)) => {
+            Ok(Some(dialogue::DialogueOptions::continue_only()))
+        }
+        Some(DialogueDocument::Options(args)) => compile_dialogue_options(args).map(Some),
+    }
+}
+
+fn poll_dialogue_step(
+    handle: &ActionHandle<dialogue::Dialogue>,
+    cx: &mut StepContext<'_, '_>,
+) -> Poll<Result<StepOutcome, ActionError>> {
+    let result = cx.tick.actions.poll(handle, &mut cx.tick.cx);
+    result.map(|result| {
+        result.and_then(|outcome| match outcome {
+            DialogueOutcome::Completed => Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }),
+            DialogueOutcome::Failed => Err(ActionError::Failed(Arc::from("dialogue failed"))),
+            DialogueOutcome::CombatInterrupted => {
+                static REASON: std::sync::LazyLock<Arc<str>> =
+                    std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
+                Err(ActionError::Blocked(Arc::clone(&REASON)))
+            }
+        })
+    })
+}
+
+/// Selected NPC dialogue or continuation-only step using shared answer rules.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TalkArgs {
+    /// Selected NPC config to talk to. Omit this field for continuation-only steps.
+    #[serde(default)]
+    npc: Option<String>,
+    /// Continue an existing dialogue without a Talk-to action or approach.
+    #[serde(default)]
+    continue_only: bool,
+    /// Optional authored approach anchor and source citation.
+    #[serde(default)]
+    anchor: Option<AnchorArg>,
+    /// Maximum NPC interaction distance; 0 or omitted means 1 tile.
+    #[serde(default)]
+    leash: u16,
+    /// Text fragments to prefer, checked in the given order.
+    #[serde(default)]
+    prefer: Vec<String>,
+    /// Optional 1-based dialogue option index.
+    #[serde(default)]
+    choose: Option<i32>,
+    /// Page text rules, checked before the general answer preferences.
+    #[serde(default)]
+    line_rules: Vec<LineRuleDocument>,
+    /// Refuse missing or ambiguous answer text instead of choosing a fallback.
+    /// Adopted pages always require authored answers, even when this is false.
+    #[serde(default)]
+    strict: bool,
+    /// Exact NPC config which may take over this dialogue through reciprocal combat.
+    #[serde(default)]
+    expect_combat: Option<ExpectedCombatArgs>,
+}
+
+/// Selected NPC identity required for an observed dialogue-to-combat handoff.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct ExpectedCombatArgs {
+    /// Selected NPC config, resolved to one exact NPC type during compilation.
+    npc: String,
+}
+
+/// A dialogue deliberately ceded control to its authored combat opponent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalkReceipt {
+    HandedToCombat { npc_type: i32, npc_index: usize },
+}
+
+impl super::compile::FamilyReceipt for TalkReceipt {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+pub(crate) fn compile_talk(
+    arg: TalkArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: TalkArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let id = resolve_npc(cx, &arg.npc)?;
-    let display = cx
-        .selected
-        .npc_by_config(&arg.npc)
-        .and_then(|row| row.display.as_deref())
-        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+    if arg.continue_only == arg.npc.is_some() {
+        return Err(CompileError::code("invalid-talk-target"));
+    }
     let tile = anchor_tile(arg.anchor.as_ref())?;
-    offered(&cx.selected.npc_by_config(&arg.npc).unwrap().ops, "Talk-to")?;
+    let target = if let Some(npc) = arg.npc {
+        let id = resolve_npc(cx, &npc)?;
+        let row = cx.selected.npc_by_config(&npc).unwrap();
+        offered(&row.ops, "Talk-to")?;
+        let display = row
+            .display
+            .as_deref()
+            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
+        dialogue::DialogueTarget::Npc {
+            id,
+            name: Arc::from(display),
+        }
+    } else {
+        if tile.is_some() {
+            return Err(CompileError::code("invalid-talk-target"));
+        }
+        dialogue::DialogueTarget::Continuation
+    };
+    let options = compile_dialogue_options(DialogueOptionsDocument {
+        prefer: arg.prefer,
+        choose: arg.choose,
+        line_rules: arg.line_rules,
+        strict: arg.strict || arg.continue_only,
+    })?;
+    let expect_combat = arg
+        .expect_combat
+        .as_ref()
+        .map(|expected| resolve_npc(cx, &expected.npc))
+        .transpose()?;
     Ok(Arc::new(TalkPlan {
-        id,
-        npc: Arc::from(display),
+        target,
         tile,
         leash: arg.leash.max(1),
-        prefer: arg.prefer.into_iter().map(Arc::from).collect(),
-        choose: arg.choose,
+        options,
+        expect_combat,
     }))
 }
 
 struct TalkPlan {
-    id: i32,
-    npc: Arc<str>,
+    target: dialogue::DialogueTarget,
     tile: Option<WorldTile>,
     leash: u16,
-    prefer: Arc<[Arc<str>]>,
-    choose: Option<i32>,
+    options: dialogue::DialogueOptions,
+    expect_combat: Option<i32>,
 }
 impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
-            id: self.id,
-            npc: Arc::clone(&self.npc),
+            target: self.target.clone(),
             tile: self.tile,
             leash: self.leash,
-            prefer: Arc::clone(&self.prefer),
-            choose: self.choose,
+            options: self.options.clone(),
+            expect_combat: self.expect_combat,
             walk: None,
             dialogue: None,
             started: false,
@@ -1138,12 +1410,11 @@ impl StepPlan for TalkPlan {
 }
 
 struct TalkRun {
-    id: i32,
-    npc: Arc<str>,
+    target: dialogue::DialogueTarget,
     tile: Option<WorldTile>,
     leash: u16,
-    prefer: Arc<[Arc<str>]>,
-    choose: Option<i32>,
+    options: dialogue::DialogueOptions,
+    expect_combat: Option<i32>,
     walk: Option<ActionHandle<Walk>>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
@@ -1175,10 +1446,8 @@ impl StepRun for TalkRun {
             }
             self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
                 dialogue::DialogueArgs {
-                    id: self.id,
-                    npc: Arc::clone(&self.npc),
-                    prefer: Arc::clone(&self.prefer),
-                    choose: self.choose,
+                    target: self.target.clone(),
+                    options: self.options.clone(),
                 },
                 &mut cx.tick.cx,
             )?);
@@ -1192,6 +1461,19 @@ impl StepRun for TalkRun {
                     Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
                 }
                 Poll::Ready(Ok(DialogueOutcome::CombatInterrupted)) => {
+                    if let Some((npc_type, npc_index)) = self
+                        .expect_combat
+                        .and_then(|npc_type| expected_combat_target(&cx.tick.cx, npc_type))
+                    {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: Some(Arc::new(TalkReceipt::HandedToCombat {
+                                npc_type,
+                                npc_index,
+                            })),
+                        }));
+                    }
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&REASON))))
@@ -1217,45 +1499,102 @@ impl StepRun for TalkRun {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InteractTarget {
-    #[serde(default)]
-    ground: Option<String>,
-    #[serde(default)]
-    loc: Option<String>,
-    #[serde(default)]
-    npc: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
+fn expected_combat_target(
+    cx: &crate::native::ActionContext<'_>,
+    npc_type: i32,
+) -> Option<(i32, usize)> {
+    let snapshot = cx.snapshot();
+    let local = snapshot.local_player()?.value;
+    let combat = snapshot.in_combat()?.value;
+    let target = combat.target?;
+    if !combat.in_combat || target.kind != api::snapshot::ActorKind::Npc {
+        return None;
+    }
+    snapshot.npcs()?.value.iter().find_map(|npc| {
+        (npc.index == target.index
+            && npc.r#type == Some(npc_type as usize)
+            && npc.target
+                == Some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: local.player.index,
+                }))
+        .then_some((npc_type, npc.index))
+    })
 }
 
-#[derive(Deserialize)]
+/// Exactly one selected entity plus optional source-pinned loc coordinates.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct InteractArgs {
-    target: InteractTarget,
-    op: String,
+pub(crate) struct InteractTarget {
+    /// Ground-item config name; exactly one target selector is required.
     #[serde(default)]
-    anchor: Option<AnchorArg>,
+    pub(crate) ground: Option<String>,
+    /// Location config name; exactly one target selector is required.
     #[serde(default)]
-    radius: i32,
+    pub(crate) loc: Option<String>,
+    /// NPC config name; exactly one target selector is required.
     #[serde(default)]
-    wait_if_missing: bool,
+    pub(crate) npc: Option<String>,
+    /// Display-name location selector; exactly one target selector is required.
     #[serde(default)]
-    settle_ms: Option<u64>,
+    pub(crate) name: Option<String>,
+    /// Selected inventory item config for an operation on its observed slot.
+    #[serde(default)]
+    pub(crate) held: Option<String>,
+    /// Exact loc tile. The source field is required with this tile.
+    #[serde(default)]
+    pub(crate) tile: Option<[i32; 3]>,
+    /// Provenance for an explicit loc tile.
+    #[serde(default)]
+    pub(crate) source: Option<String>,
 }
 
-fn compile_interact(
-    args: &serde_json::Value,
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InteractArgs {
+    /// Target selector; exactly one selector field is required.
+    pub(crate) target: InteractTarget,
+    /// Interaction option offered by the selected target.
+    pub(crate) op: String,
+    /// Optional authored approach anchor and source citation.
+    #[serde(default)]
+    pub(crate) anchor: Option<AnchorArg>,
+    /// Maximum interaction distance; 0 or omitted means 1 tile.
+    #[serde(default)]
+    pub(crate) radius: i32,
+    /// Wait for a temporarily missing target instead of failing immediately.
+    #[serde(default)]
+    pub(crate) wait_if_missing: bool,
+    /// Optional settle-window override in milliseconds; must be at least 1.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    pub(crate) settle_ms: Option<u64>,
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Explicit forms require a page after each accepted round.
+    /// The none mode never touches dialogue.
+    #[serde(default)]
+    pub(crate) dialogue: Option<DialogueDocument>,
+    /// Repeat this operation until the observed inventory reaches the required count.
+    #[serde(default)]
+    pub(crate) until: Option<UseOnUntil>,
+    /// Filter loc candidates through the current known reach view.
+    #[serde(default)]
+    pub(crate) reachable_only: bool,
+}
+
+pub(crate) fn compile_interact(
+    arg: InteractArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: InteractArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if [
         arg.target.ground.is_some(),
         arg.target.loc.is_some(),
         arg.target.npc.is_some(),
         arg.target.name.is_some(),
+        arg.target.held.is_some(),
     ]
     .into_iter()
     .filter(|set| *set)
@@ -1275,11 +1614,20 @@ fn compile_interact(
         let item = cx
             .selected
             .item_by_alias(&ground)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(ground.as_str()))?;
         let name = item.name.clone().unwrap_or(ground);
         reach::ReachKind::Ground {
             id: item.id,
             obj: Arc::from(name),
+        }
+    } else if let Some(held) = arg.target.held {
+        let item = cx
+            .selected
+            .item_by_alias(&held)
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(held.as_str()))?;
+        reach::ReachKind::Held {
+            id: item.id,
+            obj: Arc::from(item.name.as_deref().unwrap_or(&held)),
         }
     } else if let Some(loc) = arg.target.loc {
         let id = Some(resolve_loc(cx, &loc)?);
@@ -1295,7 +1643,7 @@ fn compile_interact(
             .selected
             .npc_by_config(&npc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
         reach::ReachKind::Npc {
             id,
             name: Arc::from(display),
@@ -1310,6 +1658,28 @@ fn compile_interact(
     } else {
         return Err(CompileError::code("invalid-args"));
     };
+    let target_tile = if let Some(tile) = arg.target.tile {
+        if !matches!(
+            kind,
+            reach::ReachKind::Loc { .. } | reach::ReachKind::Name { .. }
+        ) {
+            return Err(CompileError::code("invalid-args"));
+        }
+        anchor_tile(Some(&AnchorArg {
+            tile,
+            source: arg.target.source.unwrap_or_default(),
+        }))?
+    } else {
+        None
+    };
+    if arg.reachable_only
+        && !matches!(
+            kind,
+            reach::ReachKind::Loc { .. } | reach::ReachKind::Name { .. }
+        )
+    {
+        return Err(CompileError::code("invalid-args"));
+    }
     Ok(Arc::new(InteractPlan {
         kind,
         op: Arc::from(arg.op),
@@ -1318,6 +1688,11 @@ fn compile_interact(
         wait_if_missing: arg.wait_if_missing,
         settle_ms: arg.settle_ms,
         ambiguous,
+        default_dialogue: arg.dialogue.is_none(),
+        dialogue_options: compile_dialogue(arg.dialogue)?,
+        until: compile_until(arg.until, cx)?,
+        target_tile,
+        reachable_only: arg.reachable_only,
     }))
 }
 
@@ -1329,9 +1704,17 @@ struct InteractPlan {
     wait_if_missing: bool,
     settle_ms: Option<u64>,
     ambiguous: bool,
+    default_dialogue: bool,
+    dialogue_options: Option<dialogue::DialogueOptions>,
+    until: Option<(i32, s2::QuantityPlan)>,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
 }
 impl StepPlan for InteractPlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
             op: Arc::clone(&self.op),
@@ -1344,6 +1727,18 @@ impl StepPlan for InteractPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             reach: None,
+            default_dialogue: self.default_dialogue,
+            dialogue_options: self.dialogue_options.clone(),
+            dialogue: None,
+            dialogue_started: None,
+            dialogue_completed: false,
+            accepted_tick: None,
+            until: begin_until(self.until.as_ref(), cx)?,
+            target_tile: self.target_tile,
+            reachable_only: self.reachable_only,
+            round_before: None,
+            round_deadline: None,
+            round_accepted: false,
             started: false,
         }))
     }
@@ -1367,17 +1762,126 @@ struct InteractRun {
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     reach: Option<ActionHandle<reach::Reach>>,
+    default_dialogue: bool,
+    dialogue_options: Option<dialogue::DialogueOptions>,
+    dialogue: Option<ActionHandle<dialogue::Dialogue>>,
+    dialogue_started: Option<Duration>,
+    dialogue_completed: bool,
+    accepted_tick: Option<u64>,
+    until: Option<(i32, i32)>,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
+    round_before: Option<i32>,
+    round_deadline: Option<Duration>,
+    round_accepted: bool,
     started: bool,
+}
+
+impl InteractRun {
+    fn clear_round(&mut self) {
+        self.reach = None;
+        self.started = false;
+        self.round_before = None;
+        self.round_deadline = None;
+        self.round_accepted = false;
+        self.dialogue_started = None;
+        self.dialogue_completed = false;
+        self.accepted_tick = None;
+    }
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        let available = reach::target_available(&cx.tick.cx, &self.kind, &self.op, self.radius)
-            && (!matches!(self.kind, reach::ReachKind::Ground { .. })
-                || cx.tick.cx.snapshot().inventory().is_some());
+        if let Some(handle) = &self.dialogue {
+            match poll_dialogue_step(handle, cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(outcome)) => {
+                    self.dialogue = None;
+                    self.dialogue_completed = true;
+                    if self.until.is_none() {
+                        return Poll::Ready(Ok(outcome));
+                    }
+                    let elapsed = cx
+                        .tick
+                        .cx
+                        .active_now()
+                        .saturating_sub(self.dialogue_started.take().unwrap());
+                    self.deadline = self
+                        .deadline
+                        .map(|deadline| deadline.saturating_add(elapsed));
+                    self.round_deadline = self
+                        .round_deadline
+                        .map(|deadline| deadline.saturating_add(elapsed));
+                }
+            }
+        }
+        if self.round_accepted && !self.dialogue_completed && self.default_dialogue {
+            if dialogue::page_open(&cx.tick.cx) {
+                self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Continuation,
+                        options: dialogue::DialogueOptions::continue_only(),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                self.dialogue_started = Some(cx.tick.cx.active_now());
+                return Poll::Pending;
+            }
+            // A fresh idle-player observation anchors absence after arrival or
+            // the primary animation, without a fixed opening delay.
+            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick) {
+                return Poll::Pending;
+            }
+        }
+        if self.round_accepted && self.until.is_none() {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
+        let available = reach::target_available(
+            &cx.tick.cx,
+            &self.kind,
+            &self.op,
+            self.radius,
+            self.target_tile,
+            self.reachable_only || self.until.is_some(),
+        ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
+            || cx.tick.cx.snapshot().inventory().is_some());
+        if self.reach.is_none() && until_reached(self.until, &cx.tick.cx) {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
         if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                 "interact settle timeout",
             ))));
+        }
+        if self.round_accepted {
+            let (id, _) = self.until.unwrap();
+            let Some(count) = inventory_count(&cx.tick.cx, id) else {
+                return Poll::Pending;
+            };
+            let grew = self.round_before.is_some_and(|before| count > before);
+            if grew {
+                self.round_deadline =
+                    Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
+            }
+            if primary_animation_active(&cx.tick.cx) {
+                return Poll::Pending;
+            }
+            if !grew
+                && self
+                    .round_deadline
+                    .is_none_or(|deadline| cx.tick.cx.active_now() < deadline)
+            {
+                return Poll::Pending;
+            }
+            self.clear_round();
         }
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
@@ -1390,7 +1894,10 @@ impl StepRun for InteractRun {
             }
         }
         if !self.started {
-            if let Some(tile) = self.tile.filter(|_| !available) {
+            if let Some(tile) = self
+                .tile
+                .filter(|_| !available || matches!(self.kind, reach::ReachKind::Held { .. }))
+            {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
@@ -1444,6 +1951,12 @@ impl StepRun for InteractRun {
             }
         }
         if !self.started {
+            if let Some((id, _)) = self.until {
+                let Some(count) = inventory_count(&cx.tick.cx, id) else {
+                    return Poll::Pending;
+                };
+                self.round_before = Some(count);
+            }
             self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
                 reach::ReachArgs {
                     kind: self.kind.clone(),
@@ -1451,6 +1964,8 @@ impl StepRun for InteractRun {
                     anchor: self.tile,
                     radius: self.radius,
                     wait_if_missing: self.wait_if_missing,
+                    target_tile: self.target_tile,
+                    reachable_only: self.reachable_only || self.until.is_some(),
                 },
                 &mut cx.tick.cx,
             )?);
@@ -1463,11 +1978,34 @@ impl StepRun for InteractRun {
                 Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
                     "interact target not reached",
                 )))),
-                Poll::Ready(Ok(true)) => Poll::Ready(Ok(StepOutcome {
-                    progress: None,
-                    evidence: cx.tick.cx.evidence(),
-                    receipt: None,
-                })),
+                Poll::Ready(Ok(true)) => {
+                    self.reach = None;
+                    self.round_accepted = true;
+                    self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+                    if self.until.is_some() {
+                        self.round_deadline =
+                            Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
+                    }
+                    if let Some(options) = &self.dialogue_options {
+                        self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                            dialogue::DialogueArgs {
+                                target: dialogue::DialogueTarget::Continuation,
+                                options: options.clone(),
+                            },
+                            &mut cx.tick.cx,
+                        )?);
+                        self.dialogue_started = Some(cx.tick.cx.active_now());
+                        Poll::Pending
+                    } else if self.until.is_some() || self.default_dialogue {
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: None,
+                        }))
+                    }
+                }
                 Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             }
         } else {
@@ -1481,10 +2019,11 @@ impl StepRun for InteractRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.walk = None;
         self.reach = None;
+        self.dialogue = None;
     }
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         let name = match &self.kind {
-            reach::ReachKind::Ground { obj, .. } => obj,
+            reach::ReachKind::Ground { obj, .. } | reach::ReachKind::Held { obj, .. } => obj,
             reach::ReachKind::Npc { name, .. } | reach::ReachKind::Name { name } => name,
             reach::ReachKind::Loc { name, .. } => name.as_ref()?,
         };
@@ -1492,53 +2031,144 @@ impl StepRun for InteractRun {
     }
 }
 
-#[derive(Deserialize)]
+/// Exactly one selected target for a held-item operation.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct UseOnTarget {
+    /// Symbolic NPC config name; exactly one target selector is required.
     #[serde(default)]
     npc: Option<String>,
+    /// Symbolic location config name; exactly one target selector is required.
     #[serde(default)]
     loc: Option<String>,
+    /// Symbolic item config name; exactly one target selector is required.
     #[serde(default)]
     item: Option<String>,
+    /// Selected ground-item config. This target is distinct from a held item.
+    #[serde(default)]
+    ground: Option<String>,
+    /// Exact ground-item tile. The source field is required with this tile.
+    #[serde(default)]
+    tile: Option<[i32; 3]>,
+    /// Provenance for an explicit ground-item tile.
+    #[serde(default)]
+    source: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// Inventory count goal used by interact and use-on repetition.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct UseOnUntil {
+pub(crate) struct UseOnUntil {
+    /// Symbolic item config name whose count ends repetition.
     obj: String,
+    /// Fixed or journal-count-backed quantity to reach.
     qty: s2::QuantityDocument,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UseOnArgs {
-    item: String,
-    target: UseOnTarget,
-    #[serde(default)]
-    anchor: Option<AnchorArg>,
-    #[serde(default)]
-    radius: i32,
-    #[serde(default)]
-    product: Option<String>,
-    #[serde(default)]
-    settle_ms: Option<u64>,
-    #[serde(default)]
-    until: Option<UseOnUntil>,
-    #[serde(default)]
-    no_product: Option<PredicateDocument>,
+fn compile_until(
+    args: Option<UseOnUntil>,
+    cx: &CompileContext<'_>,
+) -> Result<Option<(i32, s2::QuantityPlan)>, CompileError> {
+    args.map(|until| {
+        if matches!(&until.qty, s2::QuantityDocument::Fixed(qty) if *qty < 1) {
+            return Err(CompileError::code("invalid-args"));
+        }
+        Ok((
+            resolve_obj(cx, &until.obj)?,
+            s2::compile_quantity(until.qty, cx)?,
+        ))
+    })
+    .transpose()
 }
 
-fn compile_use_on(
-    args: &serde_json::Value,
+fn begin_until(
+    until: Option<&(i32, s2::QuantityPlan)>,
+    cx: &StepContext<'_, '_>,
+) -> Result<Option<(i32, i32)>, ActionError> {
+    until
+        .map(|(id, qty)| {
+            qty.evaluate_step(cx)
+                .map(|qty| (*id, qty))
+                .ok_or_else(|| ActionError::Unavailable(Arc::from("until quantity unavailable")))
+        })
+        .transpose()
+}
+
+fn inventory_count(cx: &crate::native::ActionContext<'_>, id: i32) -> Option<i32> {
+    cx.snapshot().inventory().map(|inventory| {
+        inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == id)
+            .fold(0i32, |total, row| total.saturating_add(row.count.max(0)))
+    })
+}
+
+fn until_reached(until: Option<(i32, i32)>, cx: &crate::native::ActionContext<'_>) -> bool {
+    until.is_some_and(|(id, qty)| inventory_count(cx, id).is_some_and(|count| count >= qty))
+}
+
+fn primary_animation_active(cx: &crate::native::ActionContext<'_>) -> bool {
+    cx.snapshot()
+        .local_player()
+        .is_some_and(|player| player.value.player.actor.animation >= 0)
+}
+
+fn fresh_idle_after(cx: &crate::native::ActionContext<'_>, accepted_tick: Option<u64>) -> bool {
+    accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
+        && cx.snapshot().local_player().is_some_and(|player| {
+            let actor = &player.value.player.actor;
+            !actor.moving && actor.animation < 0
+        })
+}
+
+/// Use a selected held item on one target, with optional observed settlement.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct UseOnArgs {
+    /// Symbolic item config name used on the target.
+    item: String,
+    /// NPC, location, or item target; exactly one is required.
+    target: UseOnTarget,
+    /// Optional authored approach anchor and source citation.
+    #[serde(default)]
+    anchor: Option<AnchorArg>,
+    /// Maximum interaction distance; 0 or omitted means 1 tile.
+    #[serde(default)]
+    radius: i32,
+    /// Optional symbolic product item expected from the action.
+    #[serde(default)]
+    product: Option<String>,
+    /// Optional settle-window override in milliseconds; must be at least 1.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    settle_ms: Option<u64>,
+    /// Optional repeated-use goal, measured by an item count.
+    #[serde(default)]
+    until: Option<UseOnUntil>,
+    /// Optional predicate that can end the repeated use-on attempt.
+    #[serde(default)]
+    no_product: Option<PredicateDocument>,
+    /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
+    /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Explicit forms require a page after each accepted round.
+    /// The none mode never touches dialogue.
+    #[serde(default)]
+    dialogue: Option<DialogueDocument>,
+}
+
+pub(super) fn compile_use_on(
+    arg: UseOnArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: UseOnArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if [
         arg.target.npc.is_some(),
         arg.target.loc.is_some(),
         arg.target.item.is_some(),
+        arg.target.ground.is_some(),
     ]
     .into_iter()
     .filter(|set| *set)
@@ -1548,19 +2178,30 @@ fn compile_use_on(
     {
         return Err(CompileError::code("invalid-args"));
     }
+    let target_tile = if let Some(tile) = arg.target.tile {
+        if arg.target.ground.is_none() {
+            return Err(CompileError::code("invalid-args"));
+        }
+        anchor_tile(Some(&AnchorArg {
+            tile,
+            source: arg.target.source.unwrap_or_default(),
+        }))?
+    } else {
+        None
+    };
     let item_id = resolve_obj(cx, &arg.item)?;
     let item_name = cx
         .selected
         .item_by_alias(&arg.item)
         .and_then(|row| row.name.as_deref())
-        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(arg.item.as_str()))?;
     let (kind, target_id, target_name) = if let Some(npc) = &arg.target.npc {
         let id = resolve_npc(cx, npc)?;
         let name = cx
             .selected
             .npc_by_config(npc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
         ("npc", id, Arc::<str>::from(name))
     } else if let Some(loc) = &arg.target.loc {
         let id = resolve_loc(cx, loc)?;
@@ -1568,7 +2209,7 @@ fn compile_use_on(
             .selected
             .loc_by_config(loc)
             .and_then(|row| row.display.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-loc"))?;
+            .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(loc.as_str()))?;
         ("loc", id, Arc::<str>::from(name))
     } else if let Some(item) = &arg.target.item {
         let id = resolve_obj(cx, item)?;
@@ -1576,8 +2217,16 @@ fn compile_use_on(
             .selected
             .item_by_alias(item)
             .and_then(|row| row.name.as_deref())
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(item.as_str()))?;
         ("item", id, Arc::<str>::from(name))
+    } else if let Some(ground) = &arg.target.ground {
+        let id = resolve_obj(cx, ground)?;
+        let name = cx
+            .selected
+            .item_by_alias(ground)
+            .and_then(|row| row.name.as_deref())
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(ground.as_str()))?;
+        ("obj", id, Arc::<str>::from(name))
     } else {
         return Err(CompileError::code("invalid-args"));
     };
@@ -1587,18 +2236,7 @@ fn compile_use_on(
         .as_deref()
         .map(|name| resolve_obj(cx, name))
         .transpose()?;
-    let until = arg
-        .until
-        .map(|until| {
-            if matches!(&until.qty, s2::QuantityDocument::Fixed(qty) if *qty < 1) {
-                return Err(CompileError::code("invalid-args"));
-            }
-            Ok((
-                resolve_obj(cx, &until.obj)?,
-                s2::compile_quantity(until.qty, cx)?,
-            ))
-        })
-        .transpose()?;
+    let until = compile_until(arg.until, cx)?;
     let no_product = arg
         .no_product
         .as_ref()
@@ -1616,6 +2254,9 @@ fn compile_use_on(
         tile,
         radius: arg.radius.max(1),
         settle_ms: arg.settle_ms,
+        target_tile,
+        default_dialogue: arg.dialogue.is_none(),
+        dialogue_options: compile_dialogue(arg.dialogue)?,
     }))
 }
 
@@ -1631,18 +2272,16 @@ struct UseOnPlan {
     tile: Option<WorldTile>,
     radius: i32,
     settle_ms: Option<u64>,
+    target_tile: Option<WorldTile>,
+    default_dialogue: bool,
+    dialogue_options: Option<dialogue::DialogueOptions>,
 }
 impl StepPlan for UseOnPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let until = self
-            .until
-            .as_ref()
-            .map(|(id, qty)| {
-                qty.evaluate_step(cx).map(|qty| (*id, qty)).ok_or_else(|| {
-                    ActionError::Unavailable(Arc::from("use_on quantity unavailable"))
-                })
-            })
-            .transpose()?;
+        let until = begin_until(self.until.as_ref(), cx)?;
         Ok(Box::new(UseOnRun {
             item: Arc::clone(&self.item),
             item_id: self.item_id,
@@ -1662,6 +2301,13 @@ impl StepPlan for UseOnPlan {
             round_deadline: None,
             accepted: false,
             chat_since: 0,
+            target_tile: self.target_tile,
+            default_dialogue: self.default_dialogue,
+            dialogue_options: self.dialogue_options.clone(),
+            dialogue: None,
+            dialogue_started: None,
+            dialogue_completed: false,
+            accepted_tick: None,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -1688,6 +2334,13 @@ struct UseOnRun {
     round_before: Option<i32>,
     round_deadline: Option<Duration>,
     chat_since: i32,
+    target_tile: Option<WorldTile>,
+    default_dialogue: bool,
+    dialogue_options: Option<dialogue::DialogueOptions>,
+    dialogue: Option<ActionHandle<dialogue::Dialogue>>,
+    dialogue_started: Option<Duration>,
+    dialogue_completed: bool,
+    accepted_tick: Option<u64>,
 }
 impl UseOnRun {
     fn clear_round(&mut self) {
@@ -1695,13 +2348,39 @@ impl UseOnRun {
         self.accepted = false;
         self.round_before = None;
         self.round_deadline = None;
+        self.dialogue = None;
+        self.dialogue_started = None;
+        self.dialogue_completed = false;
+        self.accepted_tick = None;
     }
 }
 
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         loop {
-            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
+            if let Some(handle) = &self.dialogue {
+                match poll_dialogue_step(handle, cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(_)) => {
+                        let elapsed = cx
+                            .tick
+                            .cx
+                            .active_now()
+                            .saturating_sub(self.dialogue_started.take().unwrap());
+                        self.deadline = self
+                            .deadline
+                            .map(|deadline| deadline.saturating_add(elapsed));
+                        self.round_deadline = self
+                            .round_deadline
+                            .map(|deadline| deadline.saturating_add(elapsed));
+                        self.dialogue = None;
+                        self.dialogue_completed = true;
+                    }
+                }
+            }
+            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d)
+                && !until_reached(self.until, &cx.tick.cx);
             if let Some(handle) = &self.walk {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                     Poll::Ready(Ok(receipt))
@@ -1724,22 +2403,12 @@ impl StepRun for UseOnRun {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
             }
             if self.interaction.is_none() {
-                if let Some((id, qty)) = self.until {
-                    if cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
-                        inventory
-                            .value
-                            .iter()
-                            .filter(|item| item.def.id == id)
-                            .map(|item| item.count)
-                            .sum::<i32>()
-                            >= qty
-                    }) {
-                        return Poll::Ready(Ok(StepOutcome {
-                            progress: None,
-                            evidence: cx.tick.cx.evidence(),
-                            receipt: None,
-                        }));
-                    }
+                if until_reached(self.until, &cx.tick.cx) {
+                    return Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }));
                 }
                 if let Some(tile) = self.tile {
                     let here = cx.tick.cx.snapshot().here();
@@ -1759,16 +2428,16 @@ impl StepRun for UseOnRun {
                     // follow the observed target without re-entering that area.
                     self.tile = None;
                 }
-                if self.until.is_some()
-                    && cx.tick.cx.snapshot().chat_modal().is_some_and(|chat| {
-                        chat.value.root >= 0 && chat.value.continue_component_id >= 0
-                    })
+                if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
                 {
-                    self.interaction = Some(
-                        cx.tick
-                            .actions
-                            .begin::<UseOnAction>(InteractReq::ContinueDialog, &mut cx.tick.cx)?,
-                    );
+                    self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                        dialogue::DialogueArgs {
+                            target: dialogue::DialogueTarget::Continuation,
+                            options: dialogue::DialogueOptions::continue_only(),
+                        },
+                        &mut cx.tick.cx,
+                    )?);
+                    self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
                 self.deadline
@@ -1778,14 +2447,7 @@ impl StepRun for UseOnRun {
                     return Poll::Pending;
                 };
                 let observed_id = self.until.map(|(id, _)| id).or(self.product);
-                self.round_before = observed_id.map(|id| {
-                    inventory
-                        .value
-                        .iter()
-                        .filter(|row| row.def.id == id)
-                        .map(|row| row.count)
-                        .sum()
-                });
+                self.round_before = observed_id.and_then(|id| inventory_count(&cx.tick.cx, id));
                 let Some(source) = inventory
                     .value
                     .iter()
@@ -1803,9 +2465,28 @@ impl StepRun for UseOnRun {
                             None,
                             None,
                             self.radius,
+                            self.target_tile,
+                            false,
                         ) else {
                             return Poll::Pending;
                         };
+                        if api::query::loc_approach::distance_from(loc, loc.tile).is_some() {
+                            self.target_tile = Some(loc.tile);
+                            if !snapshot.here().is_some_and(|here| {
+                                snapshot.walk_loc_arrived(here.value, loc.tile, 1, loc.id)
+                            }) {
+                                self.walk = Some(cx.tick.actions.begin::<Walk>(
+                                    reach::walk_request(
+                                        loc.tile,
+                                        1,
+                                        Some(loc.id),
+                                        cx.required_after,
+                                    ),
+                                    &mut cx.tick.cx,
+                                )?);
+                                return Poll::Pending;
+                            }
+                        }
                         (loc.tile, None, None)
                     }
                     "npc" => {
@@ -1834,6 +2515,17 @@ impl StepRun for UseOnRun {
                         }
                         (tile, Some(index), None)
                     }
+                    "obj" => {
+                        let Some(target) = reach::nearest_ground(
+                            &cx.tick.cx,
+                            self.target_id,
+                            self.target_tile,
+                            self.radius,
+                        ) else {
+                            return Poll::Pending;
+                        };
+                        (target.tile, None, None)
+                    }
                     _ => {
                         let Some(target) = inventory
                             .value
@@ -1855,7 +2547,12 @@ impl StepRun for UseOnRun {
                 };
                 let request = InteractReq::UseOn {
                     name: self.item.to_string(),
-                    kind: self.kind.to_string(),
+                    // Compiled Path targets call inventory rows `item`; InteractReq uses `inv`.
+                    kind: match self.kind.as_ref() {
+                        "item" => "inv",
+                        kind => kind,
+                    }
+                    .to_string(),
                     target_name: self.target_name.as_ref().map(|n| n.to_string()),
                     x: tile.x,
                     z: tile.z,
@@ -1863,7 +2560,8 @@ impl StepRun for UseOnRun {
                     index,
                     source_item_id: Some(source.def.id),
                     source_item_slot: Some(source.slot),
-                    target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
+                    target_item_id: matches!(self.kind.as_ref(), "item" | "obj" | "loc")
+                        .then_some(self.target_id),
                     target_item_slot,
                 };
                 self.interaction = Some(
@@ -1871,6 +2569,11 @@ impl StepRun for UseOnRun {
                         .actions
                         .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
                 );
+                // A pre-dispatch adoption completes only that old page, not
+                // the new action's post-accept continuation.
+                self.dialogue_completed = false;
+                self.dialogue_started = None;
+                self.accepted_tick = None;
                 return Poll::Pending;
             }
             if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
@@ -1879,22 +2582,38 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(chat_since)) => {
                         self.accepted = true;
+                        self.accepted_tick = Some(cx.tick.cx.evidence().tick);
                         self.chat_since = chat_since;
                         if self.until.is_some() && self.round_before.is_some() {
                             self.round_deadline = Some(
-                                cx.tick.cx.active_now() + Duration::from_millis(USE_ON_ROUND_MS),
+                                cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS),
                             );
                         }
                     }
                 }
             }
-            if self.until.is_some() && self.round_before.is_none() {
-                // ContinueDialog for an objbox/page is not a product round.
-                self.clear_round();
-                return Poll::Pending;
+            if self.accepted && !self.dialogue_completed {
+                let options = self.dialogue_options.clone().or_else(|| {
+                    if !self.default_dialogue {
+                        return None;
+                    }
+                    dialogue::page_open(&cx.tick.cx).then(dialogue::DialogueOptions::continue_only)
+                });
+                if let Some(options) = options {
+                    self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                        dialogue::DialogueArgs {
+                            target: dialogue::DialogueTarget::Continuation,
+                            options,
+                        },
+                        &mut cx.tick.cx,
+                    )?);
+                    self.dialogue_started = Some(cx.tick.cx.active_now());
+                    return Poll::Pending;
+                }
             }
             let pred = PredicateContext {
                 cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
                 quests: cx.quests,
                 progress: cx.progress,
                 required_after: cx.required_after,
@@ -1915,15 +2634,13 @@ impl StepRun for UseOnRun {
                 }
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
             }
-            let held = |id| {
-                cx.tick.cx.snapshot().inventory().map(|inv| {
-                    inv.value
-                        .iter()
-                        .filter(|row| row.def.id == id)
-                        .map(|row| row.count)
-                        .sum::<i32>()
-                })
-            };
+            if self.default_dialogue
+                && !self.dialogue_completed
+                && !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+            {
+                return Poll::Pending;
+            }
+            let held = |id| inventory_count(&cx.tick.cx, id);
             if let Some(before) = self.round_before {
                 let observed_id = self.until.map(|(id, _)| id).or(self.product);
                 if observed_id
@@ -1934,6 +2651,7 @@ impl StepRun for UseOnRun {
                         && self
                             .round_deadline
                             .is_some_and(|d| cx.tick.cx.active_now() >= d)
+                        && !primary_animation_active(&cx.tick.cx)
                     {
                         self.clear_round();
                         continue;
@@ -1961,6 +2679,7 @@ impl StepRun for UseOnRun {
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.walk = None;
+        self.dialogue = None;
         self.interaction = None;
     }
 }
@@ -1994,34 +2713,41 @@ impl crate::native::NativeMachine for UseOnAction {
     fn cancel(&mut self) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct AcquireArgs {
+    /// Name of a recipe in the quest header's `acquire` table.
     recipe: String,
 }
 
 fn compile_acquire(
-    args: &serde_json::Value,
-    _cx: &CompileContext<'_>,
+    arg: AcquireArgs,
+    cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: AcquireArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    let steps = cx
+        .recipes
+        .get(&arg.recipe)
+        .cloned()
+        .ok_or_else(|| CompileError::code("unresolved-recipe"))?;
     Ok(Arc::new(AcquirePlan {
         recipe: Arc::from(arg.recipe),
-        steps: Vec::new(),
+        steps,
     }))
 }
 
 /// Filled by the compiler with the recipe's compiled steps.
 pub struct AcquirePlan {
     pub recipe: Arc<str>,
-    pub steps: Vec<CompiledAcquireStep>,
+    pub steps: Arc<[CompiledAcquireStep]>,
 }
 
 #[derive(Clone)]
 pub struct CompiledAcquireStep {
+    pub id: FactKey,
     pub advances: bool,
     pub skip_if: Arc<dyn PredicatePlan>,
+    pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
 }
@@ -2030,7 +2756,7 @@ impl Default for AcquirePlan {
     fn default() -> Self {
         Self {
             recipe: Arc::from(""),
-            steps: Vec::new(),
+            steps: Arc::from([]),
         }
     }
 }
@@ -2038,8 +2764,10 @@ impl Default for AcquirePlan {
 impl StepPlan for AcquirePlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(AcquireRun {
-            steps: self.steps.clone(),
+            recipe: Arc::clone(&self.recipe),
+            steps: Arc::clone(&self.steps),
             current: None,
+            child_outcome: None,
             index: 0,
             chat_since: 0,
             settling: false,
@@ -2048,13 +2776,16 @@ impl StepPlan for AcquirePlan {
             selection_since: None,
             prayer_cleanup_owned: RaisedPrayers::empty(),
             clear_prayers: None,
+            trace_events: VecDeque::new(),
         }))
     }
 }
 
 struct AcquireRun {
-    steps: Vec<CompiledAcquireStep>,
+    recipe: Arc<str>,
+    steps: Arc<[CompiledAcquireStep]>,
     current: Option<Box<dyn StepRun>>,
+    child_outcome: Option<StepOutcome>,
     index: usize,
     chat_since: i32,
     settling: bool,
@@ -2063,8 +2794,32 @@ struct AcquireRun {
     selection_since: Option<Duration>,
     prayer_cleanup_owned: RaisedPrayers,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
+    trace_events: VecDeque<StepTraceEvent>,
 }
 impl AcquireRun {
+    fn trace_child(&mut self, outcome: AcquisitionTraceOutcome) {
+        let Some(step) = self.steps.get(self.index) else {
+            return;
+        };
+        self.trace_events.push_back(StepTraceEvent::Acquisition {
+            recipe: Arc::clone(&self.recipe),
+            child_step: Arc::clone(&step.id.0),
+            outcome,
+        });
+    }
+
+    fn trace_child_failure(&mut self, error: &ActionError) {
+        let reason = match error {
+            ActionError::Unavailable(reason)
+            | ActionError::Failed(reason)
+            | ActionError::Blocked(reason) => Arc::clone(reason),
+            ActionError::NeedsEvidence(_) => Arc::from("needs evidence"),
+            ActionError::UserInput => Arc::from(MANUAL_MOVEMENT_MESSAGE),
+            _ => Arc::from(format!("{error:?}")),
+        };
+        self.trace_child(AcquisitionTraceOutcome::Failed(reason));
+    }
+
     fn poll_prayer_cleanup(
         &mut self,
         cx: &mut StepContext<'_, '_>,
@@ -2100,90 +2855,114 @@ impl AcquireRun {
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        loop {
-            match self.poll_prayer_cleanup(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => {}
-            }
-            if self.waiting_for_read {
+        match self.poll_prayer_cleanup(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {}
+        }
+        if self.waiting_for_read {
+            return Poll::Pending;
+        }
+        if self.settling {
+            let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
+                cx: &cx.tick.cx,
+                pairs: cx.tick.pairs,
+                quests: cx.quests,
+                progress: cx.progress,
+                required_after: cx.required_after,
+                chat_since: self.chat_since,
+                outcome: self.child_outcome.as_ref(),
+                bank: cx.bank,
+            });
+            if truth != Truth::True {
+                if cx.tick.cx.active_now() >= self.settle_deadline {
+                    let error = ActionError::Failed(Arc::from("acquire settle timeout"));
+                    self.trace_child_failure(&error);
+                    return Poll::Ready(Err(error));
+                }
                 return Poll::Pending;
             }
-            if self.settling {
-                let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
+            self.trace_child(AcquisitionTraceOutcome::Settled);
+            self.settling = false;
+            self.index += 1;
+        }
+        if self.current.is_none() {
+            while self.index < self.steps.len() {
+                let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
+                    pairs: cx.tick.pairs,
                     quests: cx.quests,
                     progress: cx.progress,
                     required_after: cx.required_after,
-                    chat_since: self.chat_since,
+                    chat_since: reach::last_chat_seq(&cx.tick.cx),
                     outcome: None,
                     bank: cx.bank,
                 });
-                if truth != Truth::True {
-                    if cx.tick.cx.active_now() >= self.settle_deadline {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "acquire settle timeout",
-                        ))));
+                if skip == Truth::Unknown {
+                    let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
+                    if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
+                        let error = ActionError::Failed(Arc::from(
+                            "acquire skip predicate evidence unavailable",
+                        ));
+                        self.trace_child_failure(&error);
+                        return Poll::Ready(Err(error));
                     }
                     return Poll::Pending;
                 }
-                self.settling = false;
-                self.index += 1;
+                self.selection_since = None;
+                if skip == Truth::True {
+                    self.trace_child(AcquisitionTraceOutcome::Skipped(Arc::clone(
+                        &self.steps[self.index].skip_if_summary,
+                    )));
+                    self.index += 1;
+                    continue;
+                }
+                self.chat_since = reach::last_chat_seq(&cx.tick.cx);
+                let child_index = self.index;
+                let result = self.steps[child_index].plan.begin(cx);
+                self.trace_child(AcquisitionTraceOutcome::Begin);
+                let run = match result {
+                    Ok(run) => run,
+                    Err(error) => {
+                        self.trace_child_failure(&error);
+                        return Poll::Ready(Err(error));
+                    }
+                };
+                self.current = Some(run);
+                self.child_outcome = None;
+                break;
             }
             if self.current.is_none() {
-                while self.index < self.steps.len() {
-                    let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
-                        cx: &cx.tick.cx,
-                        quests: cx.quests,
-                        progress: cx.progress,
-                        required_after: cx.required_after,
-                        chat_since: reach::last_chat_seq(&cx.tick.cx),
-                        outcome: None,
-                        bank: cx.bank,
-                    });
-                    if skip == Truth::Unknown {
-                        let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
-                        if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16)
-                        {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "acquire skip predicate evidence unavailable",
-                            ))));
-                        }
-                        return Poll::Pending;
-                    }
-                    self.selection_since = None;
-                    if skip == Truth::True {
-                        self.index += 1;
-                        continue;
-                    }
-                    self.chat_since = reach::last_chat_seq(&cx.tick.cx);
-                    let run = self.steps[self.index].plan.begin(cx)?;
-                    self.current = Some(run);
-                    break;
-                }
-                if self.current.is_none() {
-                    return Poll::Ready(Ok(StepOutcome {
-                        progress: None,
-                        evidence: cx.tick.cx.evidence(),
-                        receipt: None,
-                    }));
-                }
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                }));
             }
-            match self.current.as_mut().unwrap().poll(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => {
-                    self.prayer_cleanup_owned
-                        .merge(self.current.as_ref().unwrap().prayer_cleanup());
-                    self.current = None;
-                    self.settling = true;
-                    self.settle_deadline =
-                        cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
-                    if self.steps[self.index].advances {
-                        self.waiting_for_read = true;
-                        return Poll::Pending;
-                    }
+        }
+        let child_poll = self.current.as_mut().unwrap().poll(cx);
+        while let Some(event) = self.current.as_mut().and_then(|run| run.take_trace_event()) {
+            self.trace_events.push_back(event);
+        }
+        match child_poll {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => {
+                self.trace_child_failure(&error);
+                Poll::Ready(Err(error))
+            }
+            Poll::Ready(Ok(outcome)) => {
+                self.prayer_cleanup_owned
+                    .merge(self.current.as_ref().unwrap().prayer_cleanup());
+                self.current = None;
+                self.child_outcome = Some(outcome);
+                self.settling = true;
+                self.settle_deadline =
+                    cx.tick.cx.active_now() + self.steps[self.index].plan.settle_timeout();
+                if self.steps[self.index].advances {
+                    self.waiting_for_read = true;
                 }
+                // Publish the child receipt before evaluating settle/next-child facts.
+                Poll::Pending
             }
         }
     }
@@ -2211,23 +2990,35 @@ impl StepRun for AcquireRun {
         self.current.as_ref()?.waiting_for()
     }
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
-        self.current.as_ref()?.in_flight_outcome()
+        self.current
+            .as_ref()
+            .and_then(|run| run.in_flight_outcome())
+            .or(self.child_outcome.as_ref())
+    }
+    fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
+        self.trace_events.pop_front()
+    }
+    fn child_recipe_id(&self) -> Option<&Arc<str>> {
+        self.steps.get(self.index)?;
+        Some(&self.recipe)
+    }
+    fn child_step_id(&self) -> Option<&FactKey> {
+        self.steps.get(self.index).map(|step| &step.id)
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct WaitArgs {
+    /// Predicate evaluated against the latest cached evidence.
     until: PredicateDocument,
+    /// Maximum ticks to wait; must be at least 1.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     max_ticks: u64,
 }
 
-fn compile_wait(
-    args: &serde_json::Value,
-    cx: &CompileContext<'_>,
-) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let arg: WaitArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+fn compile_wait(arg: WaitArgs, cx: &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError> {
     if arg.max_ticks == 0 {
         return Err(CompileError::code("invalid-args"));
     }
@@ -2263,6 +3054,7 @@ impl StepRun for WaitRun {
         }
         let pred = PredicateContext {
             cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
             quests: cx.quests,
             progress: cx.progress,
             required_after: cx.required_after,
@@ -2284,3 +3076,6 @@ impl StepRun for WaitRun {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod dialogue_main_tests;

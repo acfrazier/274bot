@@ -76,7 +76,7 @@ impl NativeMachine for Walk {
         let key = WalkKey {
             tile: request.target,
             radius: i32::from(request.radius),
-            allow_teleports: request.options.allow_teleports,
+            allow_teleports: request.options.allow_teleports.explicit(),
         };
         let loc_id = request.loc_id;
         let arrival = request.arrival;
@@ -205,7 +205,7 @@ mod tests {
         let key = WalkKey {
             tile: centre,
             radius: 40,
-            allow_teleports: false,
+            allow_teleports: Some(false),
         };
         let arrived = |arrival, loc_id, view: &api::query::ReachQueryView| {
             Frame {

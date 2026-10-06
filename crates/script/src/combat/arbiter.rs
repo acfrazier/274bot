@@ -3,6 +3,8 @@
 use super::frame::Frame;
 use super::policy;
 use super::tables::{CombatTables, PotionKind};
+pub(crate) const ARM_SIDE_TAB_FLAG: u8 = 1 << 7;
+pub(crate) const ARM_WAIT_MASK: u8 = !ARM_SIDE_TAB_FLAG;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -17,6 +19,8 @@ pub(crate) enum RowKind {
     Retaliate,
     Attack,
     Pickup,
+    Cast,
+    Arm,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PlanRow {
@@ -29,16 +33,20 @@ impl PlanRow {
         Self { kind, id, aux }
     }
     pub fn cost(self) -> u8 {
-        if matches!(self.kind, RowKind::Attack | RowKind::Pickup) {
+        if self.kind == RowKind::Arm && self.aux & ARM_SIDE_TAB_FLAG != 0 {
+            return 0;
+        }
+        if matches!(self.kind, RowKind::Attack | RowKind::Pickup | RowKind::Cast) {
             2
         } else {
             1
         }
     }
     pub fn terminal(self, tables: &CombatTables) -> bool {
-        self.kind == RowKind::Attack
-            || self.kind == RowKind::Pickup
-            || self.kind == RowKind::Drink
+        matches!(
+            self.kind,
+            RowKind::Attack | RowKind::Pickup | RowKind::Cast | RowKind::Arm
+        ) || self.kind == RowKind::Drink
             || (self.kind == RowKind::Eat
                 && tables
                     .food(self.id)

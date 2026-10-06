@@ -2936,9 +2936,11 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
 /// updates the host policy immediately. FirstUseEver docks as a 274bot
 /// panel tab; undock to float.
 fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    session.poll_quester_paths_reload();
     if !session.nav_settings_open {
         return;
     }
+    session.refresh_walk_permissions();
     let mut open = true;
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
@@ -2950,18 +2952,55 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
-            let mut nav = session.ui.nav.clone();
-            let previous_pause_script_on_manual_walk_abort = nav.pause_script_on_manual_walk_abort;
+            let previous_permissions = session.walk_permissions;
+            let previous_nav = session.ui.nav.clone();
+            let mut nav = previous_nav.clone();
+            let previous_pause_script_on_manual_walk_abort =
+                previous_nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
             ui.text_colored(ACCENT, "Routing");
-            if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[0].1, &mut nav.allow_teleports) {
                 changed = true;
             }
-            if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
+            ui.set_item_tooltip("Global routing permission for every walk.");
+            ui.same_line();
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[1].1, &mut nav.allow_wilderness) {
                 changed = true;
             }
-            if ui.checkbox("allow bank fetch", &mut nav.allow_bank_fetch) {
+            ui.set_item_tooltip(
+                "Global routing permission. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+            );
+            ui.same_line();
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if ui.checkbox(frontend_core::GLOBAL_PERMISSION_LABELS[2].1, &mut nav.allow_bank_fetch) {
                 changed = true;
+            }
+            ui.set_item_tooltip(
+                "BankBudget fetch is available to manual WalkTo only. rs2b0t-compatible scripts always allow wilderness and bank fetch.",
+            );
+            ui.same_line();
+            ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
+            if ui.checkbox(
+                frontend_core::DANGER_THIS_WALK_LABEL,
+                &mut nav.allow_danger_zones,
+            ) {
+                changed = true;
+            }
+            ui.set_item_tooltip(
+                "Allows routes past monsters that may kill your bot. Routing permission is independent of protected walking.",
+            );
+            ui.same_line();
+            ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if !nav.script_scope_notice_ack {
+                ui.separator();
+                ui.text_wrapped(
+                    frontend_core::SCRIPT_SCOPE_NOTICE,
+                );
+                if ui.button("Dismiss walk permissions notice") {
+                    nav.script_scope_notice_ack = true;
+                    changed = true;
+                }
             }
 
             if ui.checkbox(
@@ -3025,8 +3064,52 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 });
             }
 
+            ui.spacing();
+            ui.separator();
+            ui.text_colored(ACCENT, "Quest Paths");
+            ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
+            let before_paths = session.quester_paths.settings().clone();
+            let mut after_paths = before_paths.clone();
+            let mut paths_changed = false;
+            let path_reload_running = session.quester_paths.is_running();
+            let _path_controls_disabled = if path_reload_running {
+                Some(ui.begin_disabled())
+            } else {
+                None
+            };
+            let mut enabled = after_paths.enabled;
+            if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
+                after_paths.enabled = enabled;
+                paths_changed = true;
+            }
+            ui.text("Folder");
+            ui.set_next_item_width(-1.0);
+            ui.input_text("##quester-path-folder", &mut session.quester_paths_folder_edit)
+                .build();
+            if ui.is_item_deactivated_after_edit() {
+                after_paths.folder =
+                    PathBuf::from(session.quester_paths_folder_edit.clone());
+                paths_changed |= after_paths.folder != before_paths.folder;
+            }
+            drop(_path_controls_disabled);
+
+            let mut reload_requested = false;
+            if path_reload_running {
+                let _disabled = ui.begin_disabled();
+                ui.button(frontend_core::RELOAD_PATHS_LABEL);
+                ui.set_item_tooltip("Wait for the current Path reload to finish.");
+            } else {
+                reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
+            }
+
             if changed {
                 session.ui.nav = nav;
+                let after_permissions = frontend_core::WalkGlobalsView {
+                    globals: session.ui.nav.walk_globals(),
+                    script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
+                };
+                session.route_through_zones =
+                    after_permissions.danger_this_walk(session.route_through_zones);
                 if previous_pause_script_on_manual_walk_abort
                     != session.ui.nav.pause_script_on_manual_walk_abort
                 {
@@ -3034,8 +3117,17 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         session.ui.nav.pause_script_on_manual_walk_abort,
                     );
                 }
-                match crate::ui_state::save_checked(&session.ui) {
-                    Ok(()) => {
+                let save_result = crate::ui_state::save_at_checked(
+                    &session.walk_permissions_path,
+                    &session.ui,
+                );
+                let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
+                    &session.walk_permissions_path,
+                    previous_permissions,
+                    after_permissions,
+                );
+                match (save_result, routing_result) {
+                    (Ok(()), Ok(())) => {
                         if session
                             .error
                             .as_deref()
@@ -3043,10 +3135,22 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         {
                             session.error = None;
                         }
+                        session.refresh_walk_permissions();
                     }
-                    Err(error) => {
+                    (Err(error), _) | (_, Err(error)) => {
                         session.error = Some(format!("Nav config: {error}"));
                     }
+                }
+            }
+            if paths_changed {
+                let _ = session.persist_quester_paths(after_paths);
+            } else if reload_requested {
+                session.start_quester_paths_reload();
+            }
+            if let Some(notice) = session.quester_paths.notice() {
+                match notice {
+                    Ok(summary) => ui.text_wrapped(summary.as_ref()),
+                    Err(error) => ui.text_colored(ERROR, error.as_ref()),
                 }
             }
         });
@@ -3189,6 +3293,21 @@ fn unavailable_parameter_text(
     format!("{label} (options unavailable)")
 }
 
+fn parameter_array_editor_enabled(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, serde_json::Value>,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> bool {
+    def.ty == "string[]"
+        && options.can_edit_array(
+            bag.get(&def.id)
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        )
+}
+
 fn script_parameter_text_input(
     ui: &Ui,
     session: &mut Session,
@@ -3260,6 +3379,7 @@ fn script_parameter_text_input(
 
 /// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
+    session.refresh_walk_permissions();
     let Some(selection) = session.script_sel.clone() else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
@@ -3329,16 +3449,22 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     }
     let game_data = session.selected_game_data();
     let game_data_ref = game_data.as_deref();
-    let mut last_group: Option<String> = None;
+    let mut last_group: Option<&str> = None;
     for def in schema.iter() {
         if !script::setting_visible(def.show_if.as_deref(), &bag) {
             continue;
         }
-        if def.group.as_deref().map(String::from) != last_group {
-            last_group = def.group.clone();
-            if let Some(ref g) = last_group {
+        let permission_global = session.walk_permissions.permission_enabled(&def.id);
+        let group = if permission_global.is_some() {
+            Some("Walk permissions")
+        } else {
+            def.group.as_deref()
+        };
+        if group != last_group {
+            last_group = group;
+            if let Some(group) = last_group {
                 ui.separator();
-                ui.text(g);
+                ui.text(group);
             }
         }
         let label = def.label.as_deref().unwrap_or(&def.id).to_string();
@@ -3348,7 +3474,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             &session.loadouts,
             game_data_ref,
         );
-        if def.options_from.is_some() && resolved.is_empty() {
+        let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
+        if def.options_from.is_some() && resolved.is_empty() && !array_editable {
             ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
             if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
                 session.script_parameter_filter.clear();
@@ -3358,13 +3485,30 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         }
         match def.ty.as_str() {
             "boolean" => {
+                let global = permission_global;
                 let mut value = bag
                     .get(&def.id)
                     .and_then(|v| v.as_bool())
                     .unwrap_or_else(|| def.default.as_deref() == Some("true"));
-                if ui.checkbox(&label, &mut value) {
-                    persist_profile_setting(session, &selection, &def.id, serde_json::json!(value));
-                    bag.insert(def.id.clone(), serde_json::json!(value));
+                if global == Some(true) {
+                    ui.text_wrapped(format!(
+                        "{label}: On — inherited globally; this script cannot veto the permission."
+                    ));
+                } else {
+                    if global == Some(false) {
+                        ui.text_disabled(
+                            "Allow for this script even when the global setting is off.",
+                        );
+                    }
+                    if ui.checkbox(&label, &mut value) {
+                        persist_profile_setting(
+                            session,
+                            &selection,
+                            &def.id,
+                            serde_json::json!(value),
+                        );
+                        bag.insert(def.id.clone(), serde_json::json!(value));
+                    }
                 }
             }
             "number" => {
@@ -3441,9 +3585,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     session.script_parameter_filter_id = None;
                 }
             }
-            "string[]" if !resolved.is_empty() => {
+            "string[]" if array_editable => {
                 ui.text(&label);
-                let opts = &resolved.values;
                 let mut selected: Vec<String> = bag
                     .get(&def.id)
                     .and_then(|value| value.as_array())
@@ -3455,23 +3598,17 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     })
                     .unwrap_or_default();
                 let mut changed = false;
-                for opt in opts {
+                for (index, opt) in resolved.values.iter().enumerate() {
                     let mut on = selected
                         .iter()
                         .any(|value| resolved.matches_option(value, opt));
+                    // Preserved rows (an unavailable quest with its reason)
+                    // can only be cleared, never checked.
+                    let _off =
+                        (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
                     if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
-                        changed = true;
-                        if on {
-                            if !selected
-                                .iter()
-                                .any(|value| resolved.matches_option(value, opt))
-                            {
-                                selected.push(opt.clone());
-                            }
-                        } else {
-                            selected.retain(|value| !resolved.matches_option(value, opt));
-                        }
+                        changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
                 if changed {
@@ -5848,6 +5985,52 @@ mod parameter_options_tests {
             bag.get("site"),
             Some(&serde_json::json!("mining.varrock_east.se")),
             "disabled rendering does not rewrite the saved site"
+        );
+    }
+
+    #[test]
+    fn preserved_only_priority_array_is_editable_for_removal() {
+        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
+            "panel-priority-removal-{}.json",
+            std::process::id()
+        )));
+        let schema = (script::quester::card::CARD.schema)();
+        let priority = schema
+            .iter()
+            .find(|field| field.id == "order_override")
+            .expect("Quester has an order override array");
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+
+        assert!(
+            options.is_empty(),
+            "the saved priority has no selectable options"
+        );
+        assert!(parameter_array_editor_enabled(priority, &bag, &options));
+        let haunted = options
+            .values
+            .iter()
+            .position(|value| value == "hauntedmine")
+            .expect("the saved unavailable priority remains displayed");
+        let mut selected = vec!["hauntedmine".to_owned()];
+        assert!(options.toggle_array_choice(&mut selected, haunted));
+        assert!(selected.is_empty());
+        assert!(
+            !options.toggle_array_choice(&mut selected, haunted),
+            "the same preserved row cannot be selected again"
+        );
+
+        let persisted = script::coerce_setting_value(&priority.ty, &serde_json::json!(selected));
+        bag.insert(priority.id.clone(), persisted.clone());
+        assert_eq!(persisted, serde_json::json!([]));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+        assert!(
+            !parameter_array_editor_enabled(priority, &bag, &options),
+            "after removal there is no refused stored row to edit"
         );
     }
 }

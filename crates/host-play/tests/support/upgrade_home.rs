@@ -1,6 +1,6 @@
 //! An operator home upgraded from 0.1.9.x: the old `274V10` pack (and its
 //! sidecar) still sits at the default `~/.274bot/289/274bot.navpack` while the
-//! installed app ships a packaged `274V15` bundle for the same cache. Shared by
+//! installed app ships a packaged `274V16` bundle for the same cache. Shared by
 //! host-play profile tests and the panel and TUI adapters.
 
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ pub struct UpgradeHome {
     pub root: PathBuf,
     /// The stale user pack at the default home path.
     pub old_pack: PathBuf,
-    /// The install resource root holding the packaged v15 bundle.
+    /// The install resource root holding the packaged v16 bundle.
     pub resources: PathBuf,
     /// The compiled bundled identity row for that bundle.
     pub table: [BundledNavIdentity; 1],
@@ -80,7 +80,7 @@ impl UpgradeHome {
         )
         .unwrap();
 
-        // What the new install ships: the same world as a v15 bundle.
+        // What the new install ships: the same world as a v16 bundle.
         let resources = root.join("Resources");
         std::fs::create_dir_all(&resources).unwrap();
         let origin = WorldTile {

@@ -23,8 +23,9 @@ pub use context::ReadContext;
 
 /// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
 const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
-/// Maximum number of projectiles retained per snapshot, including incoming
-/// local-target projectiles and candidates whose source tile is the local tile.
+/// Maximum number of projectiles retained per snapshot. Incoming local-target
+/// threats and candidates sourced from the local tile are included; incoming
+/// threats retain priority over local-source candidates.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
@@ -400,6 +401,16 @@ impl GameSnapshot {
         self.world = world;
     }
 
+    /// Offline fixture seed for an observed collision scene.
+    pub fn seed_scene(&mut self, scene: SceneView) {
+        self.scene = scene;
+    }
+
+    /// Offline fixture observation of the decoded player's absolute world tile.
+    pub fn seed_tile(&mut self, tile: WorldTile) {
+        self.tile = Some((tile.x, tile.z, tile.level));
+    }
+
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;
@@ -412,6 +423,11 @@ impl GameSnapshot {
     pub fn seed_inventory(&mut self, rows: Vec<ItemView>, size: i32) {
         self.inventory = rows;
         self.inventory_size = size;
+    }
+
+    /// Offline fixture observation of a trade page; production uses decoded widgets.
+    pub fn seed_trade(&mut self, trade: TradeView) {
+        self.trade = trade;
     }
 
     /// Offline fixture observation of a bank modal and its two containers.

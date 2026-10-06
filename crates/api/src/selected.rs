@@ -26,6 +26,17 @@ impl<'de> Deserialize<'de> for FactKey {
     }
 }
 
+#[cfg(feature = "path-schema")]
+impl schemars::JsonSchema for FactKey {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FactKey".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "type": "string", "minLength": 1 })
+    }
+}
+
 /// Decode-local string interning for keys, source paths and gap codes.
 /// Drop after preparation: only the returned Arcs then retain their strings.
 #[derive(Default)]
@@ -266,6 +277,7 @@ pub struct ItemAmount {
     pub count: u32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SkillMinimum {
     pub skill: u8,

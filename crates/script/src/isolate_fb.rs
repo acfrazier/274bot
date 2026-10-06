@@ -4172,6 +4172,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "held has no action".to_string())?
                     .to_string(),
                 slot: None,
+                target_item_id: None,
             }),
             "inv-button" => out.push(crate::shim::InteractReq::InvButton {
                 id: row
@@ -4307,7 +4308,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 index: row.index(),
             }),
-            "continue" => out.push(crate::shim::InteractReq::ContinueDialog),
+            "continue" => out.push(crate::shim::InteractReq::ContinueDialog {
+                component_id: row.component_id(),
+            }),
             "answer" => out.push(crate::shim::InteractReq::Answer {
                 option: row
                     .stand_op()
@@ -4481,7 +4484,7 @@ fn interact_off<'b>(
         InteractReq::Player { .. } => "player",
         InteractReq::UseOn { .. } => "use-on",
         InteractReq::UseWidgetOn { .. } => "use-widget-on",
-        InteractReq::ContinueDialog => "continue",
+        InteractReq::ContinueDialog { .. } => "continue",
         InteractReq::Answer { .. } => "answer",
         InteractReq::AnswerCount { .. } => "answer-count",
         InteractReq::IfButton { .. } => "if-button",
@@ -4992,8 +4995,12 @@ fn interact_off<'b>(
                 table.add_index(*idx);
             }
         }
-        InteractReq::ContinueDialog
-        | InteractReq::CloseModal
+        InteractReq::ContinueDialog { component_id } => {
+            if let Some(component_id) = component_id {
+                table.add_component_id(*component_id);
+            }
+        }
+        InteractReq::CloseModal
         | InteractReq::NoteProgress
         | InteractReq::LoopSettled
         | InteractReq::WaitEnqueued
@@ -6070,6 +6077,32 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn continue_dialog_optional_component_round_trips() {
+        let requests = [
+            InteractReq::ContinueDialog { component_id: None },
+            InteractReq::ContinueDialog {
+                component_id: Some(0),
+            },
+            InteractReq::ContinueDialog {
+                component_id: Some(104),
+            },
+        ];
+        let bytes = encode_interact_batch(&requests);
+        assert_eq!(decode_interact_batch(&bytes).unwrap(), requests);
+        assert_eq!(
+            serde_json::from_value::<InteractReq>(serde_json::json!({ "op": "continue" })).unwrap(),
+            requests[0]
+        );
+        assert_eq!(
+            serde_json::from_value::<InteractReq>(serde_json::json!({
+                "op": "continue", "component_id": 104
+            }))
+            .unwrap(),
+            requests[2]
+        );
+    }
+
+    #[test]
     fn encode_decode_run_policy_replacements_round_trip() {
         use api::run_policy::{RunEnergyMin, RunPolicyOverride};
 
@@ -6360,6 +6393,7 @@ pub(crate) mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: None,
+            target_item_id: None,
         };
         assert_eq!(
             decode_interact_batch(&encode_interact_batch(std::slice::from_ref(&request))).unwrap(),
@@ -6375,6 +6409,7 @@ pub(crate) mod tests {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(7),
+            target_item_id: None,
         }]);
     }
 
@@ -6393,6 +6428,7 @@ pub(crate) mod tests {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
+                target_item_id: None,
             },
             InteractReq::Walk {
                 x: 1,
