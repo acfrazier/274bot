@@ -1,6 +1,8 @@
-//! Compiled card `Quester`: prepare validates settings + release index only.
-use super::compile::{path_bytes, INDEX_JSON};
-use super::queue::{Queue, QueueSettings, ReleaseIndex};
+//! Compiled card `Quester`: Start snapshots the shared Path registry.
+#[cfg(test)]
+use super::compile::INDEX_JSON;
+use super::queue::{Queue, QueueSettings};
+use super::registry::{self, BUNDLED_INDEX};
 use super::runner::QueuedQuester;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
@@ -49,8 +51,21 @@ struct QuesterSettings {
     _allow_danger_zones: bool,
 }
 
-static RELEASE_INDEX: LazyLock<ReleaseIndex> =
-    LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
+fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
+    QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+        bag.iter().map(|(key, value)| (key.as_str(), value)),
+    ))
+    .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
+}
+
+pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
+    let settings = decode_settings(bag)?;
+    Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
+        super::pair::PairQuest::from_path(&entry.id).is_some()
+            && !settings.skip.contains(&entry.id)
+            && (settings.quests.is_empty() || settings.quests.contains(&entry.id))
+    }))
+}
 
 fn settings_schema() -> &'static [SettingDef] {
     static SETTINGS: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
@@ -93,7 +108,7 @@ fn settings_schema() -> &'static [SettingDef] {
                 "string",
                 "",
                 "Gang",
-                "Explicit partner-quest gang for this account.",
+                "Irreversible gang choice for an account not yet joined; must match its owned journal.",
                 &["phoenix", "blackarm"],
             ),
             setting(
@@ -125,20 +140,29 @@ fn settings_schema() -> &'static [SettingDef] {
     &SETTINGS
 }
 
+/// Quest picker rows in release order: released Paths with their display
+/// names, plus unavailable rows labelled once with their reason, which the
+/// picker shows as non-selectable.
 fn released_setting_paths() -> &'static [(String, String)] {
     static PATHS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
-        RELEASE_INDEX
-            .paths
+        registry::PathRegistry::Bundled
+            .rows()
             .iter()
-            .filter_map(|entry| {
-                let bytes = released_path(&entry.id)?;
-                let document: super::path::PathDocument =
-                    serde_json::from_slice(bytes).expect("released Path document");
-                Some((entry.id.clone(), document.display_name))
-            })
+            .map(|row| (row.id.clone(), row.label.clone()))
             .collect()
     });
     PATHS.as_slice()
+}
+
+/// End-user reason a release-roster quest can't run on this server, if any.
+/// Pickers show such quests as non-selectable; the queue keeps them blocked.
+pub fn unavailable_quest(id: &str) -> Option<&'static str> {
+    BUNDLED_INDEX
+        .paths
+        .iter()
+        .find(|entry| entry.id == id)?
+        .unavailable
+        .as_deref()
 }
 
 fn path_setting(id: &str, default: &str, label: &str, help: &str) -> SettingDef {
@@ -189,54 +213,52 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
     definition
 }
 
-fn released(index: &ReleaseIndex, id: &str) -> bool {
-    index.schema == 1
-        && index.paths.iter().any(|path| {
-            path.id == id && path.file.strip_suffix(".json") == Some(id) && path_bytes(id).is_some()
-        })
-}
-
-/// The released document gate shared by the card and script progress API.
-pub fn released_path(id: &str) -> Option<&'static [u8]> {
-    released(&RELEASE_INDEX, id)
-        .then(|| path_bytes(id))
-        .flatten()
-}
-
 #[cfg(feature = "load")]
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
-        RELEASE_INDEX
+        BUNDLED_INDEX
             .paths
             .iter()
-            .filter_map(|entry| released_path(&entry.id))
+            .filter_map(|entry| registry::bundled_path(&entry.id))
             .map(|bytes| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
-                let progress = document.roles[0]
-                    .progress
-                    .as_ref()
-                    .expect("released Path progress");
-                let mut stages = [
-                    &progress.colour.not_started,
-                    &progress.colour.in_progress,
-                    &progress.colour.complete,
-                ]
-                .into_iter()
-                .chain(progress.rules.iter().map(|rule| &rule.stage))
-                .map(|stage| Arc::clone(&stage.0))
-                .collect::<Vec<_>>();
-                stages.sort_unstable_by_key(|stage| {
+                let mut stages = document
+                    .roles
+                    .iter()
+                    .flat_map(|role| {
+                        let progress = role.progress.as_ref().expect("released Path progress");
+                        [
+                            &progress.colour.not_started,
+                            &progress.colour.in_progress,
+                            &progress.colour.complete,
+                        ]
+                        .into_iter()
+                        .chain(progress.rules.iter().map(|rule| &rule.stage))
+                        .map(|stage| Arc::clone(&stage.0))
+                    })
+                    .collect::<Vec<_>>();
+                let ordinal = |stage: &Arc<str>| {
                     stage
                         .rsplit_once(':')
                         .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
                         .unwrap_or(u32::MAX)
+                };
+                stages.sort_unstable_by(|left, right| {
+                    ordinal(left)
+                        .cmp(&ordinal(right))
+                        .then_with(|| left.cmp(right))
                 });
                 stages.dedup();
                 crate::api_progress::QuestPathRow {
                     id: Arc::clone(&document.id.0),
                     display: document.display_name.into(),
-                    journal: !progress.rules.is_empty(),
+                    journal: document.kind == super::path::PathKind::Quest
+                        && document.roles.iter().any(|role| {
+                            role.progress
+                                .as_ref()
+                                .is_some_and(|progress| !progress.rules.is_empty())
+                        }),
                     stages: stages.into(),
                 }
             })
@@ -249,7 +271,7 @@ struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
-    queue: Queue<'static>,
+    queue: Queue,
     max_deaths: u8,
     choices: super::choices::QuestChoices,
 }
@@ -273,10 +295,7 @@ fn prepare(
             "Quester S1 supports revision 289 only".into(),
         ));
     }
-    let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
-        bag.iter().map(|(key, value)| (key.as_str(), value)),
-    ))
-    .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
+    let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
         .as_deref()
@@ -304,23 +323,35 @@ fn prepare(
         }),
         gang,
     };
-    for entry in &RELEASE_INDEX.paths {
-        if released_path(&entry.id).is_none() {
+    for entry in &BUNDLED_INDEX.paths {
+        if entry.unavailable.is_none() && registry::bundled_path(&entry.id).is_none() {
             return Err(StartError::Unavailable(Arc::from(format!(
                 "release index Path is unavailable: {} ({})",
-                entry.id, entry.file
+                entry.id,
+                entry.file.as_deref().unwrap_or_default()
             ))));
         }
     }
-    let queue = Queue::from_index(&RELEASE_INDEX, queue_settings).map_err(|error| {
+    let quests =
+        QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
+    let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
+        .map_err(|error| {
+            StartError::Unavailable(
+                format!(
+                    "{}: {}",
+                    error.code,
+                    error.detail.as_deref().unwrap_or("Path reload failed")
+                )
+                .into(),
+            )
+        })?;
+    let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
         StartError::Config(ConfigError::new(
             error.field,
             "invalid-queue",
             error.message,
         ))
     })?;
-    let quests =
-        QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
@@ -363,12 +394,13 @@ fn create(
 
 #[cfg(test)]
 mod tests {
+    use super::super::queue::ReleaseIndex;
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
 
     fn released(index_json: &str, id: &str) -> bool {
         serde_json::from_str::<ReleaseIndex>(index_json)
-            .is_ok_and(|index| super::released(&index, id))
+            .is_ok_and(|index| registry::bundled_in(&index, id))
     }
 
     #[test]
@@ -398,7 +430,10 @@ mod tests {
     fn release_index_is_authoritative_and_includes_imp_when_embedded() {
         for id in ["cook", "sheep", "runemysteries", "romeojuliet", "imp"] {
             assert!(released(INDEX_JSON, id), "{id} missing from release index");
-            assert!(released_path(id).is_some(), "{id} body is not embedded");
+            assert!(
+                registry::bundled_path(id).is_some(),
+                "{id} body is not embedded"
+            );
         }
         assert!(released(
             r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#,
@@ -577,6 +612,41 @@ mod tests {
             .unwrap();
         assert_eq!(setting.default.as_deref(), Some("chaos"));
         assert_eq!(setting.options, ["chaos", "cooking", "goldsmith"]);
+    }
+
+    #[test]
+    fn unavailable_rows_are_picker_rows_never_released_and_refuse_an_only_pick() {
+        let reason = unavailable_quest("hauntedmine").expect("Haunted Mine row");
+        assert!(!reason.is_empty());
+        assert!(registry::bundled_path("hauntedmine").is_none());
+        assert!(unavailable_quest("cook").is_none());
+        let label = format!("Haunted Mine — {reason}");
+        assert!(released_setting_paths()
+            .iter()
+            .any(|(id, name)| id == "hauntedmine" && *name == label));
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let expected = format!("Haunted Mine: {reason}");
+        FamilyPreparation::run(move |families| {
+            let pin = selected.selected_pin().unwrap();
+            let mut cx = PrepareContext {
+                selected,
+                pin,
+                banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                families,
+            };
+            let mut bag = SettingsBag::new();
+            bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+            match prepare(&mut cx, 1, Arc::new(bag)) {
+                Err(StartError::Config(error)) => {
+                    assert_eq!(error.field.as_ref(), "quests");
+                    assert_eq!(error.message.as_ref(), expected);
+                }
+                other => panic!("an unavailable-only pick must refuse Start, got {other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
     }
 }
 #[cfg(test)]

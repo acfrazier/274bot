@@ -95,10 +95,12 @@ export class Npc {
     interact(action) {
         const slot = opIndex(this.snap.actions, action);
         if (slot === -1) return false;
+        const verb = String(action);
+        if (!globalThis.__rs2b0t_selected_facts('thieving-ready', this.snap.id, verb)) return false;
         queue({
             op: 'npc',
             name: this.snap.name ?? '',
-            action: String(action),
+            action: verb,
             index: this.snap.index,
         });
         return true;

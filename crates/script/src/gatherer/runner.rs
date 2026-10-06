@@ -4,8 +4,8 @@ use super::drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
 use super::gather::{GatherEnd, GatherResult, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS};
 use super::oneop::{OneOp, OneOpArgs};
 use super::select::{
-    resource_return_target, select, AvoidedTile, FishingSurvey, PlacementClass, ReturnObservation,
-    SelectedTarget, Selection, TargetPlan, RESOURCE_APPROACH_RADIUS,
+    resource_return_target, select, AvoidedTile, FishingSurvey, ReturnObservation, SelectedTarget,
+    Selection, TargetPlan, RESOURCE_APPROACH_RADIUS,
 };
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
@@ -606,7 +606,13 @@ impl Gatherer {
             let Some(method) = self.prepared.catalog.methods().get(index) else {
                 continue;
             };
-            if skill_stat.base < method_level(method, skill_stat.index) {
+            if !supply::meets_gate(
+                stats.value,
+                api::selected::SkillMinimum {
+                    skill: skill_stat.index as u8,
+                    level: method_level(method, skill_stat.index) as u16,
+                },
+            ) {
                 self.fail("level-too-low", format!("level-too-low:{}", method.id.0));
                 return Validation::Pending;
             }
@@ -863,43 +869,7 @@ impl Gatherer {
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
-        // Observed NPC ops own their client-side approach. Only their unloaded
-        // observation stands use Area; locs keep loc-aware Reach settlement
-        // as soon as their live footprint becomes available.
-        let observation_approach = selected.class == PlacementClass::Unloaded
-            && matches!(selected.plan.entity, api::selected::EntityId::Npc(_));
-        let loc_id = match selected.plan.entity {
-            api::selected::EntityId::Loc(id) => Some(id),
-            _ => None,
-        };
-        let needs_walk = if selected.class == PlacementClass::Unloaded {
-            true
-        } else if selected.plan.npc_index >= 0 {
-            false
-        } else {
-            let snapshot = tick.cx.snapshot();
-            !snapshot.here().is_some_and(|here| match loc_id {
-                Some(id) => snapshot.walk_loc_arrived(here.value, selected.plan.tile, 1, id),
-                None => snapshot.walk_arrived(here.value, selected.plan.tile, 1),
-            })
-        };
-        if needs_walk {
-            let request = WalkRequest {
-                target: selected.plan.tile,
-                loc_id,
-                radius: RESOURCE_APPROACH_RADIUS,
-                arrival: if observation_approach {
-                    ArrivalKind::Area
-                } else {
-                    ArrivalKind::Reach
-                },
-                options: WalkOptions::default(),
-                required_after: tick.cx.evidence(),
-                evidence: None,
-                cross: Vec::new().into_boxed_slice(),
-                protect: false,
-                allow: Default::default(),
-            };
+        if let Some(request) = selected.approach(tick.cx.snapshot(), tick.cx.evidence()) {
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
                     self.active = Active::Walk(handle);
@@ -917,6 +887,7 @@ impl Gatherer {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
                 catalog: Arc::clone(&self.prepared.catalog),
+                quest_owned: false,
             },
             &mut tick.cx,
         ) {
@@ -1305,18 +1276,7 @@ impl Gatherer {
     }
 
     fn begin_stray_modal(&mut self, tick: &mut NativeTick<'_>) -> bool {
-        let snapshot = tick.cx.snapshot();
-        let args = if snapshot
-            .chat_continue()
-            .is_some_and(|button| button.value >= 0)
-        {
-            OneOpArgs::continue_dialog()
-        } else if snapshot
-            .main_modal()
-            .is_some_and(|modal| modal.value.root >= 0)
-        {
-            OneOpArgs::close_modal()
-        } else {
+        let Some(args) = OneOpArgs::stray_modal(tick.cx.snapshot()) else {
             return false;
         };
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
@@ -1879,6 +1839,81 @@ mod tests {
     use std::mem::size_of;
 
     #[test]
+    fn gatherer_resource_validation_uses_effective_level() {
+        use crate::quester::families::tests::{local_player, with_tick};
+        use api::snapshot::{GameSnapshot, WorldStateView};
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), serde_json::json!("Mining"));
+        settings.insert("miningResources".into(), serde_json::json!(["iron"]));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(settings),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+        let spot = known_rows(&prepared.catalog.methods()[prepared.methods[0]].spots)[0].origin;
+        for (base, effective, refused) in [(14, 15, false), (15, 14, true)] {
+            let mut gatherer = Gatherer::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                Arc::clone(&config),
+                Arc::clone(&prepared),
+                GatherRetained::default(),
+            );
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(spot));
+            snapshot.seed_world(WorldStateView {
+                map_base_x: spot.x - 50,
+                map_base_z: spot.z - 50,
+                level: spot.level,
+                members: true,
+                ..Default::default()
+            });
+            snapshot.seed_stats(vec![StatView {
+                index: 14,
+                name: "mining".into(),
+                base,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+            snapshot.seed_inventory(vec![], 28);
+            snapshot.seed_equipment(vec![]);
+            snapshot.seed_locs(vec![]);
+            snapshot.seed_npcs(vec![]);
+            let mut ledger = None;
+            with_tick(&snapshot, &mut ledger, 1, |tick| {
+                gatherer.validate(&mut tick.cx)
+            });
+            assert_eq!(
+                gatherer.failure.is_some(),
+                refused,
+                "base={base}, effective={effective}"
+            );
+            if refused {
+                assert_eq!(
+                    gatherer.failure.as_ref().unwrap().code.as_ref(),
+                    "level-too-low"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn packet_fence_blocks_same_tick_reentry_and_resets_on_observation() {
         let mut fence = TickPacketFence::default();
         fence.observe(7);
@@ -1892,7 +1927,11 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        assert!(size_of::<Gatherer>() <= 1024);
+        assert!(
+            size_of::<Gatherer>() <= 1024,
+            "Gatherer={} exceeds its inline budget",
+            size_of::<Gatherer>()
+        );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
             "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={}",

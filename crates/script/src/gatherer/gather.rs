@@ -1,4 +1,6 @@
+use super::oneop::{OneOp, OneOpArgs};
 use super::select::TargetPlan;
+use super::supply::method_ready;
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod, TargetClass};
@@ -29,6 +31,8 @@ pub struct GatherRunArgs {
     pub target: TargetPlan,
     pub catalog: Arc<GatherCatalog>,
     pub stall_ticks: u64,
+    /// Stage gates are enforced by an enclosing quest Path, not Gatherer.
+    pub quest_owned: bool,
 }
 
 pub struct GatherRun {
@@ -42,6 +46,7 @@ pub struct GatherRun {
     xp_gain: i32,
     quiet_ticks: u64,
     retried: bool,
+    tend: Option<OneOp>,
 }
 
 impl NativeMachine for GatherRun {
@@ -59,6 +64,14 @@ impl NativeMachine for GatherRun {
                 "gather method is not in the prepared catalog".into(),
             ));
         };
+        if args.quest_owned
+            && !method_ready(snapshot, method, true)
+                .map_err(|reason| ActionError::Unavailable(reason.into()))?
+        {
+            return Err(ActionError::Unavailable(
+                "gather prerequisites are not observed".into(),
+            ));
+        }
         if target_class(method, args.target.entity) != Some(TargetClass::Resource) {
             return Err(ActionError::Unavailable(
                 "gather target is not a resource".into(),
@@ -99,12 +112,32 @@ impl NativeMachine for GatherRun {
             xp_gain: 0,
             quiet_ticks: 0,
             retried: false,
+            tend: None,
         };
-        machine.emit_click(cx)?;
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            machine.tend = Some(OneOp::begin(args, cx)?);
+        } else {
+            machine.emit_click(cx)?;
+        }
         Ok(machine)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(tend) = &mut self.tend {
+            match tend.poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.tend = None;
+                    // Re-select and revalidate after a skill/unlock page.
+                    return Poll::Ready(Ok(GatherResult {
+                        end: GatherEnd::Refused,
+                        gained: self.gained,
+                        xp: self.xp_gain,
+                    }));
+                }
+            }
+        }
         let snapshot = cx.snapshot();
         let refused = self
             .request_id
@@ -140,6 +173,10 @@ impl NativeMachine for GatherRun {
                 gained: self.gained,
                 xp: self.xp_gain,
             }));
+        }
+        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+            self.tend = Some(OneOp::begin(args, cx)?);
+            return Poll::Pending;
         }
         if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
             return Poll::Ready(Ok(GatherResult {
@@ -425,6 +462,151 @@ mod tests {
     use super::*;
     use api::gather_methods::{GatherSkill, GatherTarget};
     use api::snapshot::{LocLayer, LocView, NpcView, WorldTile};
+
+    fn prepared_catalog() -> Arc<GatherCatalog> {
+        api::selected::FamilyPreparation::run(|worker| {
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            api::gather_methods::prepare(&selected, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap()
+    }
+
+    fn supply_snapshot(level: i32, items: &[i32]) -> api::snapshot::GameSnapshot {
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(vec![
+            StatView {
+                index: 14,
+                name: "mining".into(),
+                base: level,
+                effective: level,
+                xp: 0,
+                used: true,
+            },
+            StatView {
+                index: 10,
+                name: "fishing".into(),
+                base: level,
+                effective: level,
+                xp: 0,
+                used: true,
+            },
+        ]);
+        snapshot.seed_inventory(
+            items
+                .iter()
+                .enumerate()
+                .map(|(slot, &id)| ItemView {
+                    def: crate::quester::families::tests::def(id, "fixture"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                })
+                .collect(),
+            28,
+        );
+        snapshot
+    }
+
+    #[test]
+    fn native_resource_boundary_rejects_low_level_tool_and_bait_misses() {
+        let catalog = prepared_catalog();
+        let mut ledger = None;
+        for (method, level, items, expected) in [
+            ("mining.iron", 1, vec![1265], false),
+            ("mining.copper", 1, vec![], false),
+            ("mining.copper", 1, vec![1265], true),
+            ("fishing.saltfish.op3", 5, vec![307], false),
+            ("fishing.saltfish.op3", 5, vec![307, 313], true),
+        ] {
+            let snapshot = supply_snapshot(level, &items);
+            let ready =
+                crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    method_ready(tick.cx.snapshot(), catalog.method(method).unwrap(), false)
+                });
+            assert_eq!(ready.is_ok_and(|ready| ready), expected, "{method}");
+            assert!(
+                ledger.is_none(),
+                "prerequisite checks must never emit an action"
+            );
+        }
+    }
+
+    #[test]
+    fn resource_and_pickaxe_gates_use_the_source_effective_stat() {
+        let catalog = prepared_catalog();
+        let mut ledger = None;
+        for (method, base, effective, tool, expected) in [
+            ("mining.iron", 14, 15, 1265, true),
+            ("mining.iron", 15, 14, 1265, false),
+            ("mining.copper", 40, 41, 1275, true),
+            ("mining.copper", 41, 40, 1275, false),
+        ] {
+            let mut snapshot = supply_snapshot(base, &[tool]);
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 14,
+                name: "mining".into(),
+                base,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+            let ready =
+                crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    method_ready(tick.cx.snapshot(), catalog.method(method).unwrap(), false)
+                });
+            assert_eq!(ready.is_ok_and(|ready| ready), expected, "{method}");
+        }
+        assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn only_quest_state_gaps_can_be_owned_by_a_path() {
+        let mut method = fixture_method();
+        let gap = |code: &str| api::selected::Gap {
+            code: code.into(),
+            sources: Arc::from([]),
+        };
+        method.requirements = Knowledge::Partial {
+            known: Arc::from([]),
+            gaps: Arc::from([gap("varp-gate")]),
+        };
+        let snapshot = supply_snapshot(10, &[]);
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(method_ready(tick.cx.snapshot(), &method, false).is_err());
+            assert!(method_ready(tick.cx.snapshot(), &method, true).unwrap());
+            assert!(super::super::settings::admit_method("method", &method).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_ok());
+            method.requirements = Knowledge::Partial {
+                known: Arc::from([]),
+                gaps: Arc::from([gap("unknown-gate")]),
+            };
+            assert!(method_ready(tick.cx.snapshot(), &method, true).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_err());
+            method.requirements = Knowledge::Partial {
+                known: Arc::from([]),
+                gaps: Arc::from([gap("varp-gate")]),
+            };
+            method.tools = Knowledge::Unknown(gap("unknown-tool"));
+            assert!(method_ready(tick.cx.snapshot(), &method, true).is_err());
+            assert!(super::super::settings::admit_quest_method("method", &method).is_err());
+        });
+        assert!(ledger.is_none());
+    }
 
     fn fixture_method() -> GatherMethod {
         let target = |entity, class| GatherTarget {

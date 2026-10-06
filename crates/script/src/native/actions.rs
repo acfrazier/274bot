@@ -692,6 +692,41 @@ mod tests {
     }
 
     #[test]
+    fn shared_action_revoker_fences_already_queued_input_before_slot_cleanup() {
+        struct Pending;
+        impl NativeMachine for Pending {
+            type Args = ();
+            type Output = ();
+            fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                cx.emit(InteractReq::CloseModal)?;
+                Ok(Self)
+            }
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+            fn cancel(&mut self) {}
+        }
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<Pending>((), cx).unwrap();
+            let queued = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(queued.live());
+            let revoker = handle.revoker();
+            assert_eq!(revoker.run(), cx.run());
+            std::thread::spawn(move || revoker.revoke()).join().unwrap();
+            assert!(
+                !queued.live(),
+                "the pair cancellation fences the drain without a slot lock"
+            );
+            assert!(matches!(
+                actions.poll(&handle, cx),
+                Poll::Ready(Err(ActionError::Cancelled))
+            ));
+        });
+    }
+
+    #[test]
     fn handle_drop_contains_panicking_cancellation_payload_destructor() {
         struct Payload;
         impl Drop for Payload {

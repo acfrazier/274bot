@@ -1488,6 +1488,7 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                 stage: FactKey::new(stage),
                 required: Vec::new(),
                 terminal: *stage == "rm:6",
+                order: script::quester::path::SequenceOrder::Authored,
                 recovery_entry: None,
                 steps: Vec::new(),
             };

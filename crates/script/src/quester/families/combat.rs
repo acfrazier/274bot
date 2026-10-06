@@ -1196,6 +1196,7 @@ impl CombatRun {
         let chat_since = reach::last_chat_seq(&cx.tick.cx);
         let context = PredicateContext {
             cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
             quests: cx.quests,
             progress: cx.progress,
             required_after: cx.required_after,
