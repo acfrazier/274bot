@@ -781,19 +781,11 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("Quester stage has a stand step");
-    // Quest colour needs the relog, but a dev-engine relog can reset position.
-    // Stage the exact combat stats and destination in the completed session.
-    let relog_index = scenario
-        .steps
-        .iter()
-        .rposition(|step| matches!(step.kind, StepKind::Relog))
-        .expect("Quester stage has a final quest-colour relog step");
-    let relog = scenario.steps.remove(relog_index);
-    scenario.steps.insert(stand_index, relog);
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position). Stage the exact combat stats between them, in
+    // the completed session.
     let preparation = preparation_steps(case);
-    scenario
-        .steps
-        .splice(stand_index + 1..stand_index + 1, preparation);
+    scenario.steps.splice(stand_index..stand_index, preparation);
     if case.is_magic() {
         let stand_index = scenario
             .steps
@@ -6284,6 +6276,30 @@ fn manual_magic_has_no_incidental_splash_or_distance_gate() {
         assert_eq!(
             magic_receipt(&capture, case)["splash_and_two_distance_numeric_queue_required"],
             false
+        );
+    }
+}
+
+#[test]
+fn combat_fixture_stages_stats_between_relog_and_stand() {
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position); the combat preparation must stay between them.
+    for case in [Case::M1, Case::MageAuto] {
+        let capture = Arc::new(Mutex::new(CombatCapture::default()));
+        let scenario = scenario_for(case, IMP_START, Arc::clone(&capture));
+        let relog = scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .expect("combat fixture has a colour relog");
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .expect("combat fixture has a stand step");
+        assert!(
+            relog < stand,
+            "{case:?}: stand teleport must follow the relog"
         );
     }
 }

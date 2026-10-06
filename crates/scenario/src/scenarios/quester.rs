@@ -163,7 +163,9 @@ fn stage_s2_safe_stats(scenario: &mut Scenario, profile: Vec<Step>) {
 /// Generic builder: jump a quest to a stage key with optional items, then
 /// Start Quester. `varp`/`value` seed via `setvar` (fixture only). The pack
 /// is always cleared first, even when `items` is empty, so a reused fixture
-/// account cannot carry quest items into the run.
+/// account cannot carry quest items into the run. The stand teleport follows
+/// the relog: a fresh account relogs to 3220,3220, so a pre-relog teleport
+/// does not survive to Start.
 pub fn quester_stage(
     name: &'static str,
     quest_display: &'static str,
@@ -171,6 +173,22 @@ pub fn quester_stage(
     value: i32,
     items: &'static [(&'static str, i32)],
     stand: WorldTile,
+) -> Scenario {
+    quester_stage_with_watch(name, quest_display, varp, value, items, stand, COOK_WATCH)
+}
+
+/// [`quester_stage`] with a per-cell completion watch. Cells whose quest runs
+/// longer than the inherited 3600-tick budget (Prince Ali Rescue reached it
+/// in PATHS-OVERNIGHT) pass their own budget; every existing caller keeps
+/// the default through [`quester_stage`].
+pub fn quester_stage_with_watch(
+    name: &'static str,
+    quest_display: &'static str,
+    varp: &'static str,
+    value: i32,
+    items: &'static [(&'static str, i32)],
+    stand: WorldTile,
+    watch_ticks: u32,
 ) -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(Step {
@@ -203,6 +221,14 @@ pub fn quester_stage(
         },
     });
     steps.push(Step {
+        name: "relog so the quest tab colour matches the seeded varp",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
+        },
+    });
+    steps.push(Step {
         name: "stand at the quest start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
@@ -218,14 +244,6 @@ pub fn quester_stage(
             budget_ticks: 200,
         },
     });
-    steps.push(Step {
-        name: "relog so the quest tab colour matches the seeded varp",
-        kind: StepKind::Relog,
-        wait: Wait {
-            arm: Proof::SideTabAvailable { index: 3 },
-            budget_ticks: 600,
-        },
-    });
     steps.push(start_compiled_step());
     steps.push(Step {
         name: "watch the quest tab turn complete",
@@ -236,7 +254,7 @@ pub fn quester_stage(
             arm: Proof::QuestDone {
                 name: quest_display,
             },
-            budget_ticks: COOK_WATCH,
+            budget_ticks: watch_ticks,
         },
     });
     Scenario {
@@ -536,4 +554,84 @@ pub(crate) fn quester_cook_restart_scenario() -> Scenario {
         ],
     );
     scenario
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relog_index(scenario: &Scenario) -> usize {
+        scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .expect("quester fixture has a colour relog")
+    }
+
+    fn stand_index(scenario: &Scenario) -> usize {
+        scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .expect("quester fixture has a stand step")
+    }
+
+    fn completion_watch(scenario: &Scenario) -> u32 {
+        scenario
+            .steps
+            .iter()
+            .find(|step| step.name == "watch the quest tab turn complete")
+            .expect("quester fixture has a completion watch")
+            .wait
+            .budget_ticks
+    }
+
+    #[test]
+    fn quester_stage_stands_after_the_relog() {
+        // A fresh account relogs to 3220,3220, so the stand teleport must
+        // follow the relog (PATHS-OVERNIGHT fixture v1 parked every Start).
+        let scenario = quester_stage(
+            "quester_stage_order",
+            "Cook's Assistant",
+            "cookquest",
+            0,
+            &[],
+            COOK_KITCHEN,
+        );
+        assert!(
+            relog_index(&scenario) < stand_index(&scenario),
+            "stand teleport must follow the relog"
+        );
+    }
+
+    #[test]
+    fn quester_stage_completion_watch_defaults_to_cook_watch() {
+        let scenario = quester_stage(
+            "quester_stage_watch_default",
+            "Cook's Assistant",
+            "cookquest",
+            0,
+            &[],
+            COOK_KITCHEN,
+        );
+        assert_eq!(completion_watch(&scenario), COOK_WATCH);
+    }
+
+    #[test]
+    fn quester_stage_with_watch_sets_a_per_cell_budget() {
+        let scenario = quester_stage_with_watch(
+            "quester_stage_watch_custom",
+            "Cook's Assistant",
+            "cookquest",
+            0,
+            &[],
+            COOK_KITCHEN,
+            12_000,
+        );
+        assert_eq!(completion_watch(&scenario), 12_000);
+        assert!(
+            relog_index(&scenario) < stand_index(&scenario),
+            "custom-watch cell keeps stand after the relog"
+        );
+    }
 }

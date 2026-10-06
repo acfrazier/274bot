@@ -1547,13 +1547,8 @@ fn scenario_for(
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("stand step");
-    let relog_index = scenario
-        .steps
-        .iter()
-        .rposition(|step| matches!(step.kind, StepKind::Relog))
-        .expect("relog step");
-    let relog = scenario.steps.remove(relog_index);
-    scenario.steps.insert(stand_index, relog);
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position). Keep the prayer/hitpoint seeds between them.
     let extra = if let Some(food) = food {
         let mut steps = vec![
             cheat_step(
@@ -1587,9 +1582,7 @@ fn scenario_for(
             Proof::Stat { id: 5, min: 43 },
         )]
     };
-    scenario
-        .steps
-        .splice(stand_index + 1..stand_index + 1, extra);
+    scenario.steps.splice(stand_index..stand_index, extra);
     let start_index = scenario
         .steps
         .iter()
@@ -2854,4 +2847,34 @@ fn replay_walk_guard_w1_retained_receipts() {
     let output = root.join("W1-lifecycle-replay.json");
     std::fs::write(&output, serde_json::to_vec_pretty(&table).unwrap())
         .unwrap_or_else(|error| panic!("write replay table {}: {error}", output.display()));
+}
+
+#[test]
+fn walk_guard_fixture_seeds_between_relog_and_stand() {
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position); the prayer/hitpoint seeds must stay between
+    // them.
+    let start = WorldTile {
+        x: 2632,
+        z: 3266,
+        level: 0,
+    };
+    for food in [None, Some(true), Some(false)] {
+        let capture = Arc::new(Mutex::new(CombatCapture::default()));
+        let scenario = scenario_for(capture, start, food);
+        let relog = scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .expect("walk-guard fixture has a colour relog");
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .expect("walk-guard fixture has a stand step");
+        assert!(
+            relog < stand,
+            "stand teleport must follow the relog (food={food:?})"
+        );
+    }
 }
