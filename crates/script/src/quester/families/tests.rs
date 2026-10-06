@@ -4951,6 +4951,26 @@ fn path_walk_permissions_decode_as_tri_state_options() {
 }
 
 #[test]
+fn path_walk_radius_omitted_is_one_and_explicit_zero_is_the_exact_tile() {
+    let radius = |radius: Option<u16>| {
+        let mut args = serde_json::json!({
+            "tile": [3224, 3200, 0],
+            "source": "walk radius test",
+        });
+        if let Some(radius) = radius {
+            args["radius"] = serde_json::json!(radius);
+        }
+        super::parse_walk_plan(test_args::<WalkArgs>(args))
+            .unwrap()
+            .radius
+    };
+    assert_eq!(radius(None), 1);
+    assert_eq!(radius(Some(0)), 0);
+    assert_eq!(radius(Some(1)), 1);
+    assert_eq!(radius(Some(3)), 3);
+}
+
+#[test]
 fn path_walk_crossing_and_protection_are_independent() {
     compile_context_test(|cx| {
         for protect in [false, true] {

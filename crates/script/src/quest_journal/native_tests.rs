@@ -351,3 +351,100 @@ fn journal_quiet_lease_expiry_is_failure_not_cancellation() {
         ));
     });
 }
+
+#[test]
+fn journal_phase_window_counts_game_ticks_not_host_time() {
+    let (mut snapshot, request) = fixture();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 2);
+    // A host hitch: well over 3 s of active time, but one observed tick.
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        t.cx.active_now = Duration::from_millis(5_000);
+        assert!(
+            t.actions.poll(&handle, &mut t.cx).is_pending(),
+            "a frozen snapshot must not spend the acquire window"
+        )
+    });
+    snapshot.seed_main_modal(ROOT_289, vec![widget(TITLE_289, "@dre@The Cook's Quest")]);
+    with_tick(&snapshot, &mut ledger, 4, |t| {
+        t.cx.active_now = Duration::from_millis(5_600);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    with_tick(&snapshot, &mut ledger, 5, |t| {
+        t.cx.active_now = Duration::from_millis(6_200);
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    assert!(matches!(
+        acknowledge(&mut ledger, 5),
+        HostEffect::Interaction(InteractReq::CloseModal)
+    ));
+
+    // Five observed ticks without the page still name the modal timeout.
+    let (snapshot, request) = fixture();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
+    });
+    acknowledge(&mut ledger, 2);
+    for tick in 3..7 {
+        with_tick(&snapshot, &mut ledger, tick, |t| {
+            assert!(
+                t.actions.poll(&handle, &mut t.cx).is_pending(),
+                "tick {tick}"
+            )
+        });
+    }
+    with_tick(&snapshot, &mut ledger, 7, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "journal modal timeout"
+        ))
+    });
+}
+
+#[test]
+fn latched_chat_continue_keeps_the_journal_busy_before_its_click() {
+    let (mut snapshot, request) = fixture();
+    snapshot.seed_chat_options(vec![], 105);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |t| {
+        assert!(matches!(
+            t.actions.begin::<JournalMachine>(request, &mut t.cx),
+            Err(ActionError::Busy)
+        ))
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    let (mut snapshot, request) = fixture();
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<JournalMachine>(request, &mut t.cx)
+            .unwrap()
+    });
+    snapshot.seed_chat_options(vec![], 105);
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Err(ActionError::Busy))
+        ))
+    });
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "a latched continue must not eat the journal row click"
+    );
+}

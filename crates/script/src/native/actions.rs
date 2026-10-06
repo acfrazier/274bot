@@ -43,6 +43,11 @@ impl ActionContext<'_> {
         self.eligible && self.budget.transition()
     }
 
+    /// This tick already spent its interaction or walk event allowance.
+    pub(crate) fn interaction_event_spent(&self) -> bool {
+        self.budget.events != 0
+    }
+
     /// Queue one game interaction. Walks go through [`Self::walk`], which owns
     /// their follow and terminal receipt; route, channel, mouse, run-policy
     /// and lifecycle requests are host-owned and never native interactions.
@@ -452,6 +457,11 @@ impl<M: NativeMachine> ActionHandle<M> {
             Some(machine) => machine.prayer_cleanup(),
             None => crate::combat::RaisedPrayers::empty(),
         }
+    }
+
+    /// Read the live machine without polling it; `None` once it completed.
+    pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
+        self.machine.borrow().as_ref().map(read)
     }
 }
 

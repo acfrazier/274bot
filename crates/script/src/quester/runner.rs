@@ -43,6 +43,8 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
+const JOURNAL_RETRY_LIMIT_MODAL_TIMEOUT: &str =
+    "journal read retry limit reached (journal modal repeatedly timed out)";
 
 // Reports a newly published bank receipt. Unchanged stamps avoid receipt inspection.
 fn publish_in_flight_bank_receipt(
@@ -1515,6 +1517,15 @@ impl Quester {
                                 JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST,
                             );
                         }
+                        ActionError::Failed(reason)
+                            if reason.as_ref() == "journal modal timeout" =>
+                        {
+                            return self.retry_journal_read(
+                                tick,
+                                "journal modal repeatedly timed out",
+                                JOURNAL_RETRY_LIMIT_MODAL_TIMEOUT,
+                            );
+                        }
                         error => {
                             self.record_failure(error);
                             self.parked = true;
@@ -1972,6 +1983,31 @@ impl Quester {
             self.dirty = true;
         }
     }
+
+    /// An explicit read request, or a quest-list colour that contradicts the
+    /// held stage, rereads progress before the next selection.
+    fn request_contradicted_read(&mut self, tick: &NativeTick<'_>) {
+        let contradicted =
+            quest_colour(&self.path, &self.quests, tick.cx.snapshot()).is_some_and(|colour| {
+                match colour {
+                    QuestListStatus::Complete => {
+                        self.stage.as_ref() != Some(&self.path.colour_complete)
+                    }
+                    QuestListStatus::NotStarted => {
+                        self.stage.as_ref() != Some(&self.path.colour_not_started)
+                    }
+                    QuestListStatus::InProgress => self.stage.as_ref().is_some_and(|stage| {
+                        stage == &self.path.colour_not_started
+                            || stage == &self.path.colour_complete
+                    }),
+                    QuestListStatus::Unknown => false,
+                }
+            });
+        if self.read_requested || contradicted {
+            self.needs_read = true;
+            self.dirty = true;
+        }
+    }
 }
 
 impl Script for Quester {
@@ -2129,24 +2165,7 @@ impl Script for Quester {
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if self.step.is_none() && !self.settling && !self.needs_read {
-            let contradicted = quest_colour(&self.path, &self.quests, tick.cx.snapshot())
-                .is_some_and(|colour| match colour {
-                    QuestListStatus::Complete => {
-                        self.stage.as_ref() != Some(&self.path.colour_complete)
-                    }
-                    QuestListStatus::NotStarted => {
-                        self.stage.as_ref() != Some(&self.path.colour_not_started)
-                    }
-                    QuestListStatus::InProgress => self.stage.as_ref().is_some_and(|stage| {
-                        stage == &self.path.colour_not_started
-                            || stage == &self.path.colour_complete
-                    }),
-                    QuestListStatus::Unknown => false,
-                });
-            if self.read_requested || contradicted {
-                self.needs_read = true;
-                self.dirty = true;
-            }
+            self.request_contradicted_read(tick);
         }
         if self.needs_read {
             let retarget =
@@ -2174,6 +2193,7 @@ impl Script for Quester {
             return Ok(ScriptFlow::Continue);
         }
         if self.settling {
+            let mut select_now = false;
             let truth = {
                 let pred = PredicateContext {
                     cx: &tick.cx,
@@ -2222,6 +2242,17 @@ impl Script for Quester {
                     self.step_index = 0;
                 }
                 self.on_step_boundary(tick);
+                // Select on the snapshot that proved the settle instead of a
+                // tick later. Anything the next tick's prologue would do first
+                // (park, prayer cleanup, a reread) keeps the old order, and a
+                // tick whose single interaction event is spent waits.
+                if !self.parked && !self.prayer_cleanup_pending {
+                    self.request_contradicted_read(tick);
+                }
+                select_now = !self.parked
+                    && !self.prayer_cleanup_pending
+                    && !self.needs_read
+                    && !tick.cx.interaction_event_spent();
             } else {
                 if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
@@ -2271,8 +2302,18 @@ impl Script for Quester {
                     }
                 }
             }
-            self.publish(tick.output);
-            return Ok(ScriptFlow::Continue);
+            if !select_now {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
+            if self
+                .path
+                .sequences
+                .get(self.seq_index)
+                .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
+            {
+                return Ok(self.finish_quest(tick));
+            }
         }
         if self.step.is_none() {
             if !self.poll_provision(tick) {
@@ -3961,6 +4002,58 @@ mod tests {
         assert!(
             !script.settling,
             "a new sequence 3 message settles at tick 5003"
+        );
+    }
+
+    #[test]
+    fn settled_step_selects_and_begins_the_next_step_on_the_same_tick() {
+        use super::super::families::tests::with_tick;
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "wait".into();
+        step.args = serde_json::json!({"until":{"All":[]},"max_ticks": 10});
+        step.advances = Some(false);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut s = GameSnapshot::new();
+        s.seed_ingame(2);
+        s.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut tick = 5000;
+        while !script.settling {
+            assert!(tick < 5010, "the wait step must complete");
+            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+            tick += 1;
+        }
+        assert!(script.step.is_none());
+        with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+        assert!(!script.settling, "the always-true settle passes");
+        assert!(
+            script.step.is_some(),
+            "selection and begin run on the settle tick, not one tick later"
         );
     }
 

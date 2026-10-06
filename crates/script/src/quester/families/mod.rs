@@ -1059,9 +1059,11 @@ struct WalkArgs {
     /// Source citation for this authored destination.
     #[serde(default)]
     source: String,
-    /// Navigation radius in tiles; 0 means 1.
+    /// Navigation radius in tiles; omitted means 1. An explicit 0 requires
+    /// the exact tile: the walk settles only on it, and a blocked or
+    /// unstandable tile is refused by the route instead of approached.
     #[serde(default)]
-    radius: u16,
+    radius: Option<u16>,
     /// Named danger zones this movement may cross.
     #[serde(default)]
     cross: Vec<String>,
@@ -1120,7 +1122,7 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
             z: arg.tile[1],
             level: arg.tile[2],
         },
-        radius: arg.radius.max(1),
+        radius: arg.radius.unwrap_or(1),
         options,
         cross,
         protect,
@@ -1812,6 +1814,8 @@ struct InteractRun {
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
     scene_activity_observed: bool,
+    /// The accepted click's target was within interaction range when the
+    /// click was chosen or when its receipt was read.
     scene_in_range_at_acceptance: bool,
     until: Option<(i32, i32)>,
     /// Authored exact loc tile; `None` makes the target fungible.
@@ -2229,6 +2233,12 @@ impl StepRun for InteractRun {
             return Poll::Pending;
         }
         if let Some(handle) = &self.reach {
+            // An adjacent instant op can transform the target or teleport the
+            // player before the receipt is read, so range is also proven on
+            // the snapshot that chose the click.
+            let in_range_at_click = handle
+                .inspect(reach::Reach::in_range_at_click)
+                .unwrap_or(false);
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -2238,14 +2248,15 @@ impl StepRun for InteractRun {
                     self.reach = None;
                     self.round_accepted = true;
                     self.accepted_tick = Some(cx.tick.cx.evidence().tick);
-                    self.scene_in_range_at_acceptance = scene_target_within_interaction_range(
-                        &cx.tick.cx,
-                        &self.kind,
-                        Some(&self.op),
-                        self.radius,
-                        self.pinned_tile(),
-                        self.strict(),
-                    );
+                    self.scene_in_range_at_acceptance = in_range_at_click
+                        || scene_target_within_interaction_range(
+                            &cx.tick.cx,
+                            &self.kind,
+                            Some(&self.op),
+                            self.radius,
+                            self.pinned_tile(),
+                            self.strict(),
+                        );
                     if self.until.is_some() {
                         self.round_deadline =
                             Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));

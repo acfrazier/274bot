@@ -5142,6 +5142,49 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
 }
 
 #[test]
+fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
+    let target = WorldTile {
+        x: 3,
+        z: 3,
+        level: 0,
+    };
+    let request = |occupied: bool| {
+        let mut world = open_world(7, 7);
+        if occupied {
+            world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
+        }
+        ScriptRouteRequest {
+            loc_id: None,
+            arrival: nav::arrival::ArrivalKind::Reach,
+            generation: 0,
+            request_id: 0,
+            world: Arc::new(world),
+            from: WorldTile {
+                x: 1,
+                z: 3,
+                level: 0,
+            },
+            to: target,
+            radius: 0,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+            live_candidates: None,
+            completion: Default::default(),
+            exclusions: None,
+        }
+    };
+    let RouteOutcome::Routed(route) = request(false).calculate().0 else {
+        panic!("an open exact tile should route");
+    };
+    assert_eq!(route.dest, target, "radius 0 does not stop one tile short");
+    assert!(
+        matches!(request(true).calculate().0, RouteOutcome::NoPath),
+        "an occupied exact tile is refused, never approached"
+    );
+}
+
+#[test]
 fn radius_calculate_respects_wall_l_diagonal_geometry() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];

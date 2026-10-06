@@ -108,8 +108,8 @@
               3506,
               0
             ],
-            "source": "C maps/m53_54.jm2:4408 trapdoor at [3405,3507,0]; south approach",
-            "radius": 1
+            "source": "C maps/m53_54.jm2:4408 trapdoor at [3405,3507,0]; [3405,3506,0] (m53_54.jm2:4407 holds only the dungeonentrance_icon decoration) is its south operable stand, so the interact needs no pre-walk",
+            "radius": 0
           },
           "skip_if": {
             "Fact": {
@@ -130,7 +130,7 @@
                   3506,
                   0
                 ],
-                "radius": 1
+                "radius": 0
               }
             }
           }
@@ -2747,12 +2747,12 @@
               "version": 1,
               "args": {
                 "tile": [
-                  3407,
+                  3408,
                   3489,
                   0
                 ],
-                "source": "C maps/m53_54.jm2:4453 west side of large door",
-                "radius": 1
+                "source": "C maps/m53_54.jm2:4453 priestperiltempledoorl wall at [3408,3489,0] angle 2 (east edge): its own tile is the outside stand Knock-at operates from, so the interact needs no pre-walk",
+                "radius": 0
               },
               "skip_if": {
                 "Fact": {
@@ -2760,11 +2760,11 @@
                   "version": 1,
                   "args": {
                     "tile": [
-                      3407,
+                      3408,
                       3489,
                       0
                     ],
-                    "radius": 1
+                    "radius": 0
                   }
                 }
               },
@@ -2774,11 +2774,11 @@
                   "version": 1,
                   "args": {
                     "tile": [
-                      3407,
+                      3408,
                       3489,
                       0
                     ],
-                    "radius": 1
+                    "radius": 0
                   }
                 }
               }
