@@ -72,6 +72,27 @@ fn native_requested(
         nav::zones::ZoneExempt::NONE,
     )
 }
+/// Geometry-only fixtures opt into Proceed without inventing risk facts;
+/// router movement, transport, and item constraints remain active.
+fn synthetic_proceed_options(mut options: nav::router::FindOptions) -> nav::router::FindOptions {
+    options.zones = nav::zones::ZoneExempt::all();
+    options
+}
+
+/// `InteractReq::Walk` has no per-walk danger bit, so these synthetic
+/// fixtures use the existing explicit global opt-in instead of fake risk facts.
+fn synthetic_proceed_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
+    Arc::new(Mutex::new(HashMap::from([(
+        name.to_string(),
+        NavBot {
+            walk_globals: Some(Arc::new(Mutex::new(crate::WalkGlobals {
+                allow_danger_zones: true,
+                ..Default::default()
+            }))),
+            ..Default::default()
+        },
+    )])))
+}
 
 /// No script slot: the follow's arrival probe reads an unavailable view.
 fn no_reach() -> Arc<api::query::ReachQueryView> {
@@ -3199,6 +3220,20 @@ fn open_world(w: usize, h: usize) -> NavWorld {
     )
 }
 
+// Geometry/lifecycle fixtures opt in explicitly; missing risk facts stay Unknown.
+fn routing_test_admission() -> crate::admission::Admission {
+    crate::admission::Admission::manual(
+        FindOptions::default(),
+        Default::default(),
+        0,
+        crate::WalkGlobals {
+            allow_danger_zones: true,
+            survivable_routing: false,
+            ..crate::WalkGlobals::default()
+        },
+    )
+}
+
 #[test]
 fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
     let old = Route {
@@ -3310,7 +3345,13 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
     // Both searches have no in-world approach tile. Each call must actually
     // run a new search, while retaining the unrelated route on failure.
     for expected_generation in 1..=2 {
-        assert!(arm.route_with_radius(100, 100, 0, FindOptions::default(), 1));
+        assert!(arm.route_with_radius(
+            100,
+            100,
+            0,
+            synthetic_proceed_options(FindOptions::default()),
+            1
+        ));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             let all = navs.lock().unwrap();
@@ -4383,7 +4424,13 @@ fn same_key_pending_route_refuses_distinct_id() {
         "pend".to_string(),
         NavBot {
             route_generation: 1,
-            pending_route: Some(ScriptRouteRequest {
+            pending_route: Some(Box::new(ScriptRouteRequest {
+                admission: crate::admission::Admission::manual(
+                    FindOptions::default(),
+                    Default::default(),
+                    0,
+                    crate::WalkGlobals::default(),
+                ),
                 loc_id: None,
                 arrival: nav::arrival::ArrivalKind::Reach,
                 generation: 1,
@@ -4402,7 +4449,7 @@ fn same_key_pending_route_refuses_distinct_id() {
                 live_candidates: None,
                 completion: Default::default(),
                 exclusions: None,
-            }),
+            })),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
@@ -4846,7 +4893,13 @@ fn exact_walk_near_replaces_published_nearby_route() {
         state: None,
         bank: vec![],
     };
-    assert!(arm.route_with_radius(6, 6, 0, FindOptions::default(), 1));
+    assert!(arm.route_with_radius(
+        6,
+        6,
+        0,
+        synthetic_proceed_options(FindOptions::default()),
+        1
+    ));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
         let all = navs.lock().unwrap();
@@ -4867,7 +4920,13 @@ fn exact_walk_near_replaces_published_nearby_route() {
         .map(|route| route.dest);
     assert_ne!(nearby_dest, Some(exact));
 
-    assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
+    assert!(arm.route_with_radius(
+        exact.x,
+        exact.z,
+        exact.level,
+        synthetic_proceed_options(FindOptions::default()),
+        0
+    ));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
         let all = navs.lock().unwrap();
@@ -4919,6 +4978,12 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5004,6 +5069,12 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
 fn radius_calculate_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5052,6 +5123,12 @@ fn radius_calculate_drops_wall_separated_candidate() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5109,6 +5186,12 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
     };
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5162,6 +5245,12 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5218,6 +5307,12 @@ fn radius_calculate_drops_detour_outside_radius() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5268,6 +5363,12 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         .expect("actual 289 navpack"),
     );
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         loc_id: None,
         arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
@@ -5390,6 +5491,7 @@ fn arming_the_same_walk_slot_twice_cancels_the_first_request_once() {
             FindOptions::default(),
             &WorldState::empty(),
             &[],
+            routing_test_admission(),
             &travellers,
             Some(slot),
         )
@@ -5451,6 +5553,7 @@ fn bank_session_and_direct_route_both_emit_replaced_once() {
         FindOptions::default(),
         &state,
         &bank,
+        routing_test_admission(),
         &travellers,
         Some(slot),
     )
@@ -5465,6 +5568,7 @@ fn bank_session_and_direct_route_both_emit_replaced_once() {
         },
         &state,
         &bank,
+        routing_test_admission(),
         &travellers,
         Some(slot),
     )
@@ -5476,6 +5580,7 @@ fn bank_session_and_direct_route_both_emit_replaced_once() {
         FindOptions::default(),
         &state,
         &bank,
+        routing_test_admission(),
         &travellers,
         Some(slot),
     )
@@ -5703,11 +5808,19 @@ fn arm_walk_on_routes_and_latches_the_focused_arm() {
         FindOptions::default(),
         &WorldState::empty(),
         &[],
+        routing_test_admission(),
         &travellers,
         Some("alice"),
     )
     .expect("the open 3x3 world routes");
-    assert_eq!((route.dest.x, route.dest.z, route.dest.level), (2, 2, 0));
+    assert_eq!(
+        (
+            route.route.dest.x,
+            route.route.dest.z,
+            route.route.dest.level
+        ),
+        (2, 2, 0)
+    );
     let all = travellers.lock().unwrap();
     let arm = all
         .get("alice")
@@ -5739,6 +5852,7 @@ fn arm_walk_on_without_focus_latches_no_arm() {
         FindOptions::default(),
         &WorldState::empty(),
         &[],
+        routing_test_admission(),
         &travellers,
         None,
     )
@@ -12389,7 +12503,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
 
-    let navs_off = Arc::new(Mutex::new(HashMap::new()));
+    let navs_off = synthetic_proceed_navs("alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -12416,7 +12530,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         "walk-only find must not use the teleport edge"
     );
 
-    let navs_on = Arc::new(Mutex::new(HashMap::new()));
+    let navs_on = synthetic_proceed_navs("alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -12496,7 +12610,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
 
-    let navs_off = Arc::new(Mutex::new(HashMap::new()));
+    let navs_off = synthetic_proceed_navs("alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -12523,7 +12637,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         "default-false wilderness must not enter the zone"
     );
 
-    let navs_on = Arc::new(Mutex::new(HashMap::new()));
+    let navs_on = synthetic_proceed_navs("alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13288,10 +13402,10 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             4,
             4,
             0,
-            FindOptions {
+            synthetic_proceed_options(FindOptions {
                 allow_bank_fetch: true,
                 ..FindOptions::default()
-            },
+            }),
             1,
             true,
             71,
@@ -13352,10 +13466,10 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
             4,
             4,
             0,
-            FindOptions {
+            synthetic_proceed_options(FindOptions {
                 allow_bank_fetch: true,
                 ..FindOptions::default()
-            },
+            }),
             0,
             false,
             0,
@@ -13452,7 +13566,13 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
     world.graph.edges[0].worn_req.clear();
     world.graph.edges[0].consumed_req = vec![(2, 60)];
     let world = Arc::new(world);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(Mutex::new(HashMap::from([(
+        "compat-full-pack".to_string(),
+        NavBot {
+            compat_v1: true,
+            ..Default::default()
+        },
+    )])));
     let arm = ScriptWalkArm {
         here: Some((0, 3, 0)),
         world: Some(Arc::clone(&world)),
@@ -13716,10 +13836,10 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
             4,
             4,
             0,
-            FindOptions {
+            synthetic_proceed_options(FindOptions {
                 allow_bank_fetch: true,
                 ..FindOptions::default()
-            },
+            }),
             0,
             false,
             0,
@@ -13971,6 +14091,120 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
     assert!(
         bot.bank_fetch.is_none(),
         "Wear without the item in the pack aborts rather than skipping"
+    );
+}
+
+#[test]
+fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
+    use nav::bank_fetch::BankStep;
+    use script::native::RiskPolicy;
+    let mut client = bank_fetch_client();
+    client.local_player = Some(client::dash3d::ClientPlayer::at(0, 4));
+    client.main_modal_id = -1;
+    client.side_modal_id = -1;
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    client.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let state = WorldState::from_snapshot(&snapshot);
+    let mut world = knife_nav_world(2);
+    world.graph.edges[0].worn_req.clear();
+    let from = WorldTile {
+        x: 0,
+        z: 4,
+        level: 0,
+    };
+    let destination = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let options = FindOptions {
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    };
+    let route = nav::router::find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        destination,
+        options,
+        &state,
+    )
+    .expect("real router final route");
+    let admission = crate::admission::Admission {
+        policy: RiskPolicy::Proceed,
+        grants: options.zones,
+        allow: Default::default(),
+        input: crate::admission::capture(&snapshot, false, Default::default(), false),
+        generation: 7,
+        compat_v1: false,
+        escape: None,
+    };
+    let assessment = crate::admission::assess(&route, &world, &admission);
+    let basis = Arc::new(crate::admission::RouteBasis {
+        route: route.clone(),
+        options,
+        avoid: Arc::from([]),
+        quest_evidence: state.quest_evidence.clone(),
+    });
+    let mut bot = NavBot {
+        admission: Some(Box::new(admission)),
+        assessment: Some(Arc::clone(&assessment)),
+        route_basis: Some(Arc::clone(&basis)),
+        route_generation: 7,
+        bank_fetch: Some(PendingBankFetch {
+            steps: [BankStep::Close].into(),
+            dest: destination,
+            opts: options,
+            final_route: route,
+            avoid: Vec::new(),
+            progress: Default::default(),
+        }),
+        ..Default::default()
+    };
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 4, 0)),
+        false,
+    );
+    assert!(
+        bot.bank_fetch.is_none(),
+        "the observed closed bank hands off"
+    );
+    assert_eq!(
+        bot.route.as_ref().expect("fresh routed final leg").dest,
+        destination
+    );
+    let fresh = bot
+        .assessment
+        .as_ref()
+        .expect("final leg assessed by common seam");
+    assert!(
+        !Arc::ptr_eq(fresh, &assessment),
+        "not a stale access assessment"
+    );
+    assert!(
+        !bot.admission_pending,
+        "bank handoff already passed the common freshness gate before follow"
+    );
+    assert_eq!(
+        fresh.input,
+        crate::admission::capture(&snapshot, false, admission.input.poison, false)
+    );
+    assert!(Arc::ptr_eq(
+        bot.route_basis.as_ref().expect("frozen basis"),
+        &basis
+    ));
+    assert!(!basis.options.allow_teleports && !basis.options.allow_wilderness);
+    assert!(
+        basis.options.allow_bank_fetch,
+        "only the replan disables another fetch"
     );
 }
 
@@ -21583,8 +21817,8 @@ impl api::prot::Out for Sink {
 }
 
 /// Walk-hook rig: a started `WalkProbe` for "alice" (target `(4,0,0)`),
-/// an empty nav-bot map, the open-1×40 fixture world (x in 0..40 at
-/// z=0), and a status row.
+/// an explicit synthetic Proceed policy on its nav bot, the open-1×40 fixture
+/// world (x in 0..40 at z=0), and a status row.
 struct NavRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -21622,7 +21856,7 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs = synthetic_proceed_navs("alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(Vec::new()));
     let walk_target = Arc::new(Mutex::new((4, 0, 0)));
     script_slot_or_insert(&scripts, "alice")
@@ -21985,7 +22219,7 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
         Vec::new(),
     ));
     let world_opt = Some(Arc::clone(&world));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = synthetic_proceed_navs("native-v2");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let iso = script::LoadIsolate::spawn(
         r#"
@@ -22622,7 +22856,13 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         state: None,
         bank: Vec::new(),
     };
-    assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
+    assert!(arm.route_with_radius(
+        10,
+        16,
+        0,
+        synthetic_proceed_options(FindOptions::default()),
+        4
+    ));
     // The approach enumeration picks the lowest-x ring tile among the ties.
     let approach = WorldTile {
         x: 6,
@@ -22707,7 +22947,10 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
-                                options: script::native::WalkOptions::default(),
+                                options: script::native::WalkOptions {
+                                    allow_danger_zones: script::native::WalkBit::Allow,
+                                    ..Default::default()
+                                },
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),
@@ -22848,7 +23091,13 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         state: None,
         bank: Vec::new(),
     };
-    assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
+    assert!(arm.route_with_radius(
+        10,
+        16,
+        0,
+        synthetic_proceed_options(FindOptions::default()),
+        4
+    ));
     assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
     let armed = queued(&navs);
     let mut d = NavRec::default();
@@ -22968,7 +23217,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
             dest.x,
             dest.z,
             dest.level,
-            FindOptions::default(),
+            synthetic_proceed_options(FindOptions::default()),
             3,
             true,
             17,
@@ -23081,7 +23330,7 @@ fn arm_snapshot_route(
             to.x,
             to.z,
             to.level,
-            FindOptions::default(),
+            synthetic_proceed_options(FindOptions::default()),
             radius,
             true,
             29,
@@ -23504,7 +23753,7 @@ fn assert_snapshot_route_no_path(
         to.x,
         to.z,
         to.level,
-        FindOptions::default(),
+        synthetic_proceed_options(FindOptions::default()),
         radius,
         true,
         29,
@@ -23719,6 +23968,7 @@ fn arm_route_outcome(
         state,
         bank,
     };
+    let opts = synthetic_proceed_options(opts);
     arm.queue_route_in_snapshot_synced(
         snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
     )
@@ -24241,6 +24491,12 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     let candidates = approach_tiles(&world, origin, target, 12, false);
     assert_eq!(candidates.first(), Some(&endpoint));
     let request = ScriptRouteRequest {
+        admission: crate::admission::Admission::manual(
+            FindOptions::default(),
+            Default::default(),
+            0,
+            crate::WalkGlobals::default(),
+        ),
         generation: 1,
         request_id: 1,
         world: Arc::new(world),
@@ -24356,7 +24612,15 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         z: 20,
         level: 0,
     };
-    assert!(arm.queue_route(dest.x, dest.z, 0, FindOptions::default(), 12, true, 7));
+    assert!(arm.queue_route(
+        dest.x,
+        dest.z,
+        0,
+        synthetic_proceed_options(FindOptions::default()),
+        12,
+        true,
+        7
+    ));
     assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
     let approach = queued(&navs).unwrap();
     assert_eq!(
@@ -24845,6 +25109,10 @@ fn script_observe_walk_uses_the_latched_essence_session() {
             route: None,
             bank_fetch: None,
             allow_teleports: false,
+            walk_globals: Some(Arc::new(Mutex::new(crate::WalkGlobals {
+                allow_danger_zones: true,
+                ..Default::default()
+            }))),
             ..Default::default()
         },
     );
@@ -25891,7 +26159,13 @@ mod host_batch_tests {
             state: None,
             bank: Vec::new(),
         };
-        assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
+        assert!(arm.route_with_radius(
+            4,
+            0,
+            0,
+            synthetic_proceed_options(nav::router::FindOptions::default()),
+            0
+        ));
         assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
     }
 

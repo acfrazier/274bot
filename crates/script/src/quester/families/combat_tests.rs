@@ -1197,6 +1197,9 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
             end,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         });
 
         if user_input {
@@ -1258,6 +1261,9 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
                 end: WalkEnd::Arrived,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -1357,6 +1363,9 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
                 end: WalkEnd::RouteEnded,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -1389,6 +1398,9 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
                 end: WalkEnd::NeedsEvidence(Arc::clone(&gates)),
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             };
             if abort {
                 run.on_abort_walk(receipt)
@@ -1435,6 +1447,9 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
                 end: WalkEnd::UserInput,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -1494,6 +1509,9 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
                     end: WalkEnd::Arrived,
                     blocked: None,
                     detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 cx,
             )
@@ -1794,6 +1812,9 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
         end: WalkEnd::Failed,
         blocked: None,
         detail: Some(Arc::from("door recovery route unreachable")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());

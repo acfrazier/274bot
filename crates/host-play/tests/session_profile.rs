@@ -2047,11 +2047,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
 fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
     use host_play::walk_map::{ActionError, WalkRequest};
-    use nav::{
-        router::{find_with, FindOptions},
-        world::NavWorld,
-        world_state::WorldState,
-    };
+    use nav::{router::FindOptions, world::NavWorld, world_state::WorldState};
     struct Log(parking_lot::Mutex<Vec<String>>);
     impl api::hostlog::Sink for Log {
         fn record(&self, record: &api::hostlog::Record<'_>) {
@@ -2096,13 +2092,34 @@ fn public_profile_routes_lumbridge_to_ardougne() {
             members: selected.world_members(),
         }
         .run(|| {
-            find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
+            let admission = host_play::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                0,
+                host_play::WalkGlobals {
+                    allow_danger_zones: true,
+                    survivable_routing: false,
+                    ..Default::default()
+                },
+            );
+            host_play::arm_walk_on(
+                &world,
+                nav::tile::Tile {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                },
+                nav::tile::Tile {
+                    x: to.x,
+                    z: to.z,
+                    level: to.level,
+                },
                 FindOptions::default(),
                 &WorldState::empty().with_map_members(selected.map_members()),
+                &[],
+                admission,
+                &host_play::WalkArms::default(),
+                None,
             )
             .map_err(|_| ActionError::NoPath)
         });

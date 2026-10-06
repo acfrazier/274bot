@@ -108,6 +108,9 @@ impl Widget for StatusPane<'_> {
                     "tile: {} {} · walk: {}",
                     d.tile.0, d.tile.1, self.walk
                 )));
+                if let Some(reason) = d.manual_walk_risk.as_deref() {
+                    lines.push(Line::from(format!("Walk risk: {reason}")));
+                }
                 lines.push(Line::from(format!(
                     "queue: {queue} · modals: {} · mem: {}",
                     d.modal, self.mem
@@ -322,6 +325,39 @@ mod tests {
         assert!(text.contains("no quests selected"), "{text:?}");
         assert!(
             text.contains("Script prefs and Skip, then Stop/Start"),
+            "{text:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod walk_risk_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn manual_refusal_reason_survives_an_unarmed_route() {
+        let detail = SlotDetail {
+            state: "ingame".into(),
+            manual_walk_risk: Some(std::sync::Arc::from("Route assessment unknown: Poison")),
+            ..Default::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(90, 14)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(StatusPane::new(Some(&detail), "—", "lowmem"), frame.area())
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("Walk risk: Route assessment unknown: Poison"),
             "{text:?}"
         );
     }

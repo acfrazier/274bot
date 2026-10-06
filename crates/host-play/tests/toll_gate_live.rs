@@ -225,6 +225,16 @@ fn walk_arm_to(
     );
     let state = WorldState::from_snapshot(snapshot).with_map_members(true);
     let arms = WalkArms::default();
+    let admission = host_play::admission::Admission::manual(
+        FindOptions::default(),
+        host_play::admission::capture(snapshot, state.map_members, Default::default(), false),
+        0,
+        host_play::WalkGlobals {
+            allow_danger_zones: true,
+            survivable_routing: false,
+            ..Default::default()
+        },
+    );
     let route = arm_walk_on(
         world,
         Tile {
@@ -240,10 +250,12 @@ fn walk_arm_to(
         FindOptions::default(),
         &state,
         &[],
+        admission,
         &arms,
         Some(name),
     )
-    .unwrap_or_else(|_| panic!("{label}: NoPath {from:?}->{dest:?}"));
+    .unwrap_or_else(|_| panic!("{label}: NoPath {from:?}->{dest:?}"))
+    .route;
     assert!(
         route_uses_toll(&route),
         "{label}: route must take a toll-gate Door hop, got {route:?}"

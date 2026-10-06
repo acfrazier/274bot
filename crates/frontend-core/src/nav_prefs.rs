@@ -14,10 +14,14 @@ pub enum NavPreference {
     AllowWilderness,
     /// Global permission for manual WalkTo to use BankBudget fetch.
     AllowBankFetch,
-    /// Global permission for every walk to route through danger zones.
+    /// Global permission override for every walk to enter danger zones.
     AllowDangerZones,
+    /// Whether the host admits survivable crossings after its runtime net is available.
+    SurvivableRouting,
     /// Whether the user dismissed the one-time script-scope notice.
     ScriptScopeNoticeAck,
+    /// Whether the user dismissed the danger-routing migration notice.
+    SurvivableRoutingNoticeAck,
 }
 
 impl NavPreference {
@@ -29,7 +33,9 @@ impl NavPreference {
             Self::AllowWilderness => ("allow_wilderness", false),
             Self::AllowBankFetch => ("allow_bank_fetch", false),
             Self::AllowDangerZones => ("allow_danger_zones", false),
+            Self::SurvivableRouting => ("survivable_routing", true),
             Self::ScriptScopeNoticeAck => ("script_scope_notice_ack", false),
+            Self::SurvivableRoutingNoticeAck => ("survivable_routing_notice_ack", false),
         }
     }
 }
@@ -60,6 +66,11 @@ pub fn nav_preference_at(
         })?;
         Ok(enabled)
     } else {
+        if preference == NavPreference::SurvivableRouting {
+            return Ok(host_play::WalkGlobals::read_at(path)
+                .unwrap_or_else(|_| host_play::WalkGlobals::fail_closed())
+                .survivable_routing);
+        }
         Ok(host_play::panel_ui_value_at(path, "nav")
             .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
             .unwrap_or(default))
@@ -96,12 +107,17 @@ mod tests {
         assert!(
             nav_preference_at(&path, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
         );
+        assert!(
+            nav_preference_at(&path, NavPreference::SurvivableRouting, None).unwrap(),
+            "the new preference defaults on when absent from a valid old file"
+        );
         for preference in [
             NavPreference::AllowTeleports,
             NavPreference::AllowWilderness,
             NavPreference::AllowBankFetch,
             NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
+            NavPreference::SurvivableRoutingNoticeAck,
         ] {
             assert!(
                 !nav_preference_at(&path, preference, None).unwrap(),
@@ -110,6 +126,8 @@ mod tests {
             nav_preference_at(&path, preference, Some(true)).unwrap();
         }
 
+        nav_preference_at(&path, NavPreference::SurvivableRouting, Some(false)).unwrap();
+        nav_preference_at(&path, NavPreference::SurvivableRouting, Some(true)).unwrap();
         nav_preference_at(&path, NavPreference::ShowSpecialAreas, Some(true)).unwrap();
         nav_preference_at(
             &path,
@@ -129,12 +147,18 @@ mod tests {
         assert_eq!(saved["nav"]["allow_wilderness"], true);
         assert_eq!(saved["nav"]["allow_bank_fetch"], true);
         assert_eq!(saved["nav"]["allow_danger_zones"], true);
+        assert_eq!(saved["nav"]["survivable_routing"], true);
         assert_eq!(saved["nav"]["script_scope_notice_ack"], true);
+        assert_eq!(saved["nav"]["survivable_routing_notice_ack"], true);
 
         let missing = temp_path("legacy");
         std::fs::write(&missing, r#"{"last_focus":"bob","nav":{}}"#).unwrap();
         assert!(
             nav_preference_at(&missing, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
+        );
+        assert!(
+            nav_preference_at(&missing, NavPreference::SurvivableRouting, None).unwrap(),
+            "an old file without the key migrates to the survivable middle level"
         );
         for preference in [
             NavPreference::AllowTeleports,
@@ -142,6 +166,7 @@ mod tests {
             NavPreference::AllowBankFetch,
             NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
+            NavPreference::SurvivableRoutingNoticeAck,
         ] {
             assert!(!nav_preference_at(&missing, preference, None).unwrap());
         }
@@ -166,5 +191,13 @@ mod tests {
         .expect_err("the preference writer must report an inaccessible destination");
         assert_eq!(std::fs::read(&blocked).unwrap(), b"not a directory");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn survivable_preference_fails_closed_for_malformed_files() {
+        let path = temp_path("malformed-survivable");
+        std::fs::write(&path, b"{malformed").unwrap();
+        assert!(!nav_preference_at(&path, NavPreference::SurvivableRouting, None).unwrap());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

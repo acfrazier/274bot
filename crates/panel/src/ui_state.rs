@@ -211,7 +211,9 @@ const MERGED_NAV_KEYS: &[&str] = &[
     "allow_wilderness",
     "allow_bank_fetch",
     "allow_danger_zones",
+    "survivable_routing",
     "script_scope_notice_ack",
+    "survivable_routing_notice_ack",
 ];
 
 fn merge_saved_panel_state(
@@ -246,10 +248,11 @@ fn merge_saved_panel_state(
     let mut merged_nav = previous_nav.cloned().unwrap_or_default();
     merged_nav.extend(replacement_nav);
     for key in MERGED_NAV_KEYS {
+        let default = *key == "survivable_routing";
         let enabled = previous_nav
             .and_then(|nav| nav.get(*key))
             .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or(default);
         merged_nav.insert((*key).into(), serde_json::Value::Bool(enabled));
     }
     let mut replacement = replacement.clone();
@@ -406,6 +409,10 @@ mod tests {
         );
         assert!(back.nav.show_nav_path, "present fields keep their values");
         assert_eq!(back.nav.color_path, "#AABBCC");
+        assert!(
+            back.nav.survivable_routing,
+            "an old nav object migrates to When survivable"
+        );
     }
 
     #[test]
@@ -486,7 +493,9 @@ mod tests {
             "allow_wilderness": false,
             "allow_bank_fetch": false,
             "allow_danger_zones": false,
+            "survivable_routing": false,
             "script_scope_notice_ack": false,
+            "survivable_routing_notice_ack": true,
             "show_nav_path": true
         });
         // Reproduce the stale panel snapshot deterministically before the
@@ -510,7 +519,12 @@ mod tests {
         assert_eq!(after_panel_save["nav"]["allow_wilderness"], false);
         assert_eq!(after_panel_save["nav"]["allow_bank_fetch"], false);
         assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
+        assert_eq!(after_panel_save["nav"]["survivable_routing"], false);
         assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
+        assert_eq!(
+            after_panel_save["nav"]["survivable_routing_notice_ack"],
+            true
+        );
         assert_eq!(after_panel_save["quester_paths"]["enabled"], true);
         assert_eq!(
             after_panel_save["quester_paths"]["folder"],
@@ -521,7 +535,9 @@ mod tests {
             "allow_wilderness": true,
             "allow_bank_fetch": true,
             "allow_danger_zones": true,
+            "survivable_routing": true,
             "script_scope_notice_ack": true,
+            "survivable_routing_notice_ack": false,
             "show_nav_path": true
         });
         host_play::persist_panel_ui_value_at(&path, "nav", nav.clone()).unwrap();
@@ -530,18 +546,22 @@ mod tests {
         assert_eq!(after_second_writer["last_focus"], "panel-save");
         assert_eq!(after_second_writer["capture"], true);
         assert_eq!(after_second_writer["nav"]["show_nav_path"], true);
-        assert_eq!(after_second_writer["nav"]["allow_teleports"], false);
-        assert_eq!(after_second_writer["nav"]["allow_wilderness"], true);
-        assert_eq!(after_second_writer["nav"]["allow_bank_fetch"], true);
         assert_eq!(after_second_writer["nav"]["allow_danger_zones"], true);
+        assert_eq!(after_second_writer["nav"]["survivable_routing"], true);
         assert_eq!(after_second_writer["nav"]["script_scope_notice_ack"], true);
+        assert_eq!(
+            after_second_writer["nav"]["survivable_routing_notice_ack"],
+            false
+        );
         let mut refreshed_nav = panel_state.nav.clone();
         refreshed_nav.refresh_walk_globals_at(&path).unwrap();
         assert!(!refreshed_nav.allow_teleports);
         assert!(refreshed_nav.allow_wilderness);
         assert!(refreshed_nav.allow_bank_fetch);
         assert!(refreshed_nav.allow_danger_zones);
+        assert!(refreshed_nav.survivable_routing);
         assert!(refreshed_nav.script_scope_notice_ack);
+        assert!(!refreshed_nav.survivable_routing_notice_ack);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let panel_path = path.clone();
@@ -572,7 +592,9 @@ mod tests {
         assert_eq!(document["nav"]["allow_wilderness"], true);
         assert_eq!(document["nav"]["allow_bank_fetch"], true);
         assert_eq!(document["nav"]["allow_danger_zones"], true);
+        assert_eq!(document["nav"]["survivable_routing"], true);
         assert_eq!(document["nav"]["script_scope_notice_ack"], true);
+        assert_eq!(document["nav"]["survivable_routing_notice_ack"], false);
         assert_eq!(document["unrelated"]["keep"], 7);
     }
 

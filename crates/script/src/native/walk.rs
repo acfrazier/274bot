@@ -114,6 +114,9 @@ impl NativeMachine for Walk {
                 end: WalkEnd::Failed,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             }));
         }
         if !cx.evidence().meets(self.required_after) {
@@ -142,6 +145,12 @@ impl NativeMachine for Walk {
         if !self.wait.poll(self.request_id, &frame) {
             return Poll::Pending;
         }
+        if let Some(receipt) = receipt {
+            if !matches!(receipt.end, WalkEnd::Arrived | WalkEnd::RouteEnded) {
+                return Poll::Ready(Ok(receipt.clone()));
+            }
+        }
+
         if frame.arrived(self.key) {
             return Poll::Ready(Ok(WalkReceipt {
                 request_id: self.request_id,
@@ -149,6 +158,9 @@ impl NativeMachine for Walk {
                 end: WalkEnd::Arrived,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             }));
         }
         match receipt {
@@ -273,5 +285,56 @@ mod tests {
         assert_eq!(receipt.end, WalkEnd::UserInput);
         assert!(receipt.blocked.is_none());
         assert!(receipt.detail.is_none());
+    }
+    #[test]
+    fn aborted_receipt_cannot_become_arrived_at_the_requested_destination() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut initial = GameSnapshot::new();
+        initial.seed_ingame(2);
+        let mut at_target = GameSnapshot::new();
+        at_target.seed_ingame(2);
+        at_target.seed_local_player(local_player(target));
+        let required_after = EvidenceStamp {
+            run,
+            tick: 2,
+            sequence: 2,
+        };
+
+        let mut ledger = None;
+        let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let request_id = post_user_input_walk_receipt(&mut ledger, 2);
+        let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+        receipt.end = WalkEnd::Aborted;
+        receipt.detail = Some(std::sync::Arc::from("no way out"));
+
+        let result = with_tick(&at_target, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("the escape receipt must finish the walk: {result:?}");
+        };
+        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(receipt.end, WalkEnd::Aborted);
+        assert_eq!(receipt.failure_detail().as_deref(), Some("no way out"));
+        assert!(matches!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(detail)) if detail.as_ref() == "no way out"
+        ));
     }
 }

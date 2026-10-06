@@ -1682,6 +1682,7 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
             allow_wilderness: true,
             allow_danger_zones: true,
             allow_bank_fetch: true,
+            survivable_routing: false,
         })));
     let authority = action.authority();
     let script::native::HostEffect::BankPick(request) = action.effect else {

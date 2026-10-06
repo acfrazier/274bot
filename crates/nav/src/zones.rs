@@ -127,6 +127,22 @@ impl ZoneExempt {
         self.all
     }
 
+    /// Admission grants apply to the named zone or its canonical group only.
+    /// Unlike the routing filter this has no endpoint exemption and allocates nothing.
+    pub fn contains_zone(&self, index: u16, table: &ZoneTable) -> bool {
+        self.all
+            || self.keys().iter().any(|&key| {
+                if key & 0x8000 == 0 {
+                    key == index
+                } else {
+                    table
+                        .zones()
+                        .get(usize::from(index))
+                        .is_some_and(|zone| zone.group == (key & 0x7fff))
+                }
+            })
+    }
+
     fn keys(&self) -> &[u16] {
         &self.keys[..usize::from(self.len)]
     }

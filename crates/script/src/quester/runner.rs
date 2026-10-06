@@ -3803,6 +3803,9 @@ mod tests {
             end: WalkEnd::Arrived,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         });
         assert!(matches!(
             super::super::families::tests::with_tick_output(

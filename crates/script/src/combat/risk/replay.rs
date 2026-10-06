@@ -43,11 +43,17 @@ fn ceil(n: i32, d: i32) -> Result<i32, UnknownWhy> {
     }
     Ok(add(n, d - 1)? / d)
 }
-fn crossing_at(plan: &RoutePlan, index: u16) -> Option<&CrossingGeom> {
+/// Empty ranges keep granted unknown crossings index-aligned but out of physics.
+fn crossing_with_index_at(plan: &RoutePlan, index: u16) -> Option<(usize, &CrossingGeom)> {
     plan.crossings
         .iter()
-        .find(|c| c.first <= index && index <= c.last)
+        .enumerate()
+        .find(|(_, c)| c.intervals.0 != c.intervals.1 && c.first <= index && index <= c.last)
 }
+fn crossing_at(plan: &RoutePlan, index: u16) -> Option<&CrossingGeom> {
+    crossing_with_index_at(plan, index).map(|(_, crossing)| crossing)
+}
+
 fn rows<'a>(plan: &'a RoutePlan, c: &CrossingGeom) -> &'a [ZoneInterval] {
     &plan.intervals[usize::from(c.intervals.0)..usize::from(c.intervals.1)]
 }
@@ -210,8 +216,12 @@ pub fn eat_line(
     allow: WalkAllow,
 ) -> Result<i32, UnknownWhy> {
     let mut minimum_rate = u8::MAX;
+
     for c in &plan.crossings {
-        if c.last >= i && path.distance(i, c.first.max(i))? <= TOPUP_WINDOW {
+        if c.intervals.0 != c.intervals.1
+            && c.last >= i
+            && path.distance(i, c.first.max(i))? <= TOPUP_WINDOW
+        {
             minimum_rate =
                 minimum_rate.min(rows(plan, c).iter().map(|row| row.rate).min().unwrap_or(4));
         }
@@ -360,6 +370,31 @@ pub fn replay(
     tables: &CombatTables,
     allow: WalkAllow,
     extra: Option<(i32, u8)>,
+    observe: impl FnMut(i32, u16, i32, i32, Option<i32>),
+) -> Result<ReplayResult, UnknownWhy> {
+    replay_with_admission(
+        path,
+        plan,
+        input,
+        tables,
+        allow,
+        extra,
+        |_, _| true,
+        observe,
+    )
+}
+
+/// Reuse the physical timeline while only requiring ungranted crossings to
+/// pass. Grants bless admission, never remove their damage or food consumption.
+#[allow(clippy::too_many_arguments)]
+fn replay_with_admission(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    tables: &CombatTables,
+    allow: WalkAllow,
+    extra: Option<(i32, u8)>,
+    must_pass: impl Fn(usize, &CrossingGeom) -> bool,
     mut observe: impl FnMut(i32, u16, i32, i32, Option<i32>),
 ) -> Result<ReplayResult, UnknownWhy> {
     if let Some(why) = input_problem(input, tables) {
@@ -467,11 +502,9 @@ pub fn replay(
         let input_held = point.is_some_and(|point| point.input_held(tick));
         // Entry is checked before its first hit, including transport-entered endpoints.
         let floor = estimated_floor(path, plan, i, input, tables, allow)?;
-        if plan
-            .crossings
-            .iter()
-            .any(|c| c.first == i && point.is_some_and(|point| point.tick == tick))
-            && floor.is_none_or(|floor| hp <= floor)
+        if plan.crossings.iter().enumerate().any(|(index, c)| {
+            must_pass(index, c) && c.first == i && point.is_some_and(|point| point.tick == tick)
+        }) && floor.is_none_or(|floor| hp <= floor)
         {
             return Ok(ReplayResult {
                 passed: false,
@@ -482,7 +515,11 @@ pub fn replay(
         }
         let landed = hits(path, plan, tick, input, tables, allow)?;
         hp -= landed;
-        if hp <= 0 || (crossing_at(plan, i).is_some() && floor.is_none_or(|floor| hp <= floor)) {
+        let active_crossing = crossing_with_index_at(plan, i);
+        if active_crossing.is_some_and(|(index, c)| must_pass(index, c))
+            && (hp <= 0 || floor.is_none_or(|floor| hp <= floor))
+            || (active_crossing.is_none() && hp <= 0)
+        {
             observe(tick, i, hp, landed, None);
             return Ok(ReplayResult {
                 passed: false,
@@ -507,7 +544,8 @@ pub fn replay(
             let line = eat_line(path, plan, i, input, tables, allow)?;
             let topup = crossing_at(plan, i).is_none()
                 && plan.crossings.iter().any(|c| {
-                    c.first > i
+                    c.intervals.0 != c.intervals.1
+                        && c.first > i
                         && path
                             .distance(i, c.first)
                             .is_ok_and(|gap| gap <= TOPUP_WINDOW)
@@ -608,6 +646,98 @@ impl Write for Reason {
 }
 fn bounded_hp(hp: i32) -> Result<u8, UnknownWhy> {
     u8::try_from(hp.max(0)).map_err(|_| UnknownWhy::Overflow)
+}
+
+/// Copies the plan only when granted unknown rows must be omitted from replay.
+/// The retained assessment stays complete and the all-known path stays borrowed.
+fn omit_granted_unknowns(
+    plan: &RoutePlan,
+    zones: &ZoneTable,
+    grants: nav::zones::ZoneExempt,
+) -> Result<Option<RoutePlan>, UnknownWhy> {
+    let granted = |crossing: &CrossingGeom| {
+        rows(plan, crossing)
+            .iter()
+            .all(|row| grants.contains_zone(row.zone, zones))
+    };
+    let has_granted_unknown = plan.crossings.iter().any(|crossing| {
+        let rows = rows(plan, crossing);
+        granted(crossing) && rows.iter().any(|row| row.unknown())
+    });
+    if !has_granted_unknown {
+        return Ok(None);
+    }
+
+    let mut intervals = Vec::with_capacity(plan.intervals.len());
+    let mut crossings = Vec::with_capacity(plan.crossings.len());
+    for crossing in &plan.crossings {
+        let granted = granted(crossing);
+        let start = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
+        intervals.extend(
+            rows(plan, crossing)
+                .iter()
+                .filter(|row| !granted || !row.unknown())
+                .copied(),
+        );
+        let end = u16::try_from(intervals.len()).map_err(|_| UnknownWhy::Overflow)?;
+        let mut projected = *crossing;
+        projected.intervals = (start, end);
+        crossings.push(projected);
+    }
+
+    Ok(Some(RoutePlan {
+        intervals: intervals.into_boxed_slice(),
+        crossings: crossings.into_boxed_slice(),
+    }))
+}
+
+/// Admission checks the complete plan, not the eight display rows. A fully
+/// granted crossing is exempt from refusal; unknown physics in a mixed
+/// crossing is not. Known granted damage remains in every subsequent floor.
+pub fn admission_passes(
+    route: &Route,
+    assessment: &RouteAssessment,
+    zones: &ZoneTable,
+    tables: &CombatTables,
+    allow: WalkAllow,
+    grants: nav::zones::ZoneExempt,
+) -> Result<bool, UnknownWhy> {
+    let plan = &assessment.plan;
+    let granted = |c: &CrossingGeom| {
+        rows(plan, c)
+            .iter()
+            .all(|row| grants.contains_zone(row.zone, zones))
+    };
+    if !plan.crossings.is_empty() && plan.crossings.iter().all(granted) {
+        return Ok(true);
+    }
+    if let Some(why) = input_problem(&assessment.input, tables) {
+        return Err(why);
+    }
+    for crossing in plan.crossings.iter().filter(|crossing| !granted(crossing)) {
+        if let Some(row) = rows(plan, crossing).iter().find(|row| row.unknown()) {
+            return Err(UnknownWhy::Kind(zones.zones()[usize::from(row.zone)].kind));
+        }
+        if matches!(assessment.input.poison, PoisonState::Unknown { .. }) {
+            return Err(UnknownWhy::Poison);
+        }
+        if !crossing.has_way_out() {
+            return Ok(false);
+        }
+    }
+    let projected = omit_granted_unknowns(plan, zones, grants)?;
+    let replay_plan = projected.as_ref().unwrap_or(plan);
+    replay_with_admission(
+        RoutePath::new(route)?,
+        replay_plan,
+        &assessment.input,
+        tables,
+        allow,
+        None,
+        |index, _| !granted(&plan.crossings[index]),
+        |_, _, _, _, _| {},
+    )
+    .map(|result| result.passed)
 }
 
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
@@ -877,7 +1007,7 @@ fn assess_inner(
     if matches!(verdict, Verdict::Unknown(UnknownWhy::Poison)) {
         let _ = write!(
             reason,
-            "poison state unknown: settles after a separate safe walk click 30 ticks after login; "
+            "poison state unknown: when a crossing is refused it is not armed and cannot clear its own poison uncertainty; waiting alone does not clear it. A separate safe-only walk can provide recovery evidence once the runtime observer is available (S2c); "
         );
     }
     if let Some(c) = no_way_out {

@@ -10,7 +10,8 @@ pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav::zones::{ZoneKey, ZoneTable};
 pub use replay::{
-    assess, candidate_cost, eat_line, estimated_floor, replay, Estimate, ReplayResult,
+    admission_passes, assess, candidate_cost, eat_line, estimated_floor, replay, Estimate,
+    ReplayResult,
 };
 use std::sync::Arc;
 
