@@ -79,7 +79,7 @@ recipes and typed progress readers use that catalog as well.
 
 | Questionable concept | Path concept | Notes |
 | --- | --- | --- |
-| `QuestRoot` | `PathDocument { $schema, schema, id, display_name, kind, required, tested_stats, partner, quest, roles[] }` | Source ownership belongs in git history. A Path ships when it is indexed and embedded by id. `kind` is `quest` by default or `miniquest` for an owned-reader miniquest. `roles[]` supports partner quest declarations; solo Paths use `role: null`. |
+| `QuestRoot` | `PathDocument { $schema, schema, id, display_name, kind, required, tested_stats, partner, quest, roles[] }` | Source ownership belongs in git history. A Path ships when it is indexed and embedded by id. `kind` is `Quest` by default or `Miniquest` for an owned-reader miniquest. `roles[]` supports partner quest declarations; solo Paths use `role: null`. |
 | `QuestSequence { Sequence, Steps[] }` | `SequenceDocument { stage, required, terminal, recovery_entry, order, steps[] }` | `stage` is a symbolic key such as `"cook:1"`, not an ordered number. Use one sequence per stage; `terminal: true` with no steps marks completion. `order` is `authored` by default or `nearest` for anchor-ordered selection. |
 | Flat `QuestStep` with an `InteractionType` and optional fields | `StepDocument { id, kind, version, args, comment?, advances?, skip_if, settle }` | Each registered `kind@version` has its own typed `args` schema. Unknown fields are rejected. |
 | `InteractionType` values such as `WalkTo`, `Interact`, `UseItem`, `AcceptQuest`, `CompleteQuest` | `kind` values such as `walk`, `interact`, `use_on`, `talk` | Accepting or completing a quest is an ordinary `talk` step with `advances: true`. |
@@ -96,15 +96,15 @@ recipes and typed progress readers use that catalog as well.
 
 ### 4.2 Document anatomy (schema 3)
 
-- Top level: `$schema`, `schema: 3`, `id` (the content quest stem, e.g. `cook`), `display_name`, `kind` (`quest` by default; `miniquest` uses an owned typed `progress_reader` instead of a quest-list binding, and a miniquest role without one is rejected), `required` (header requirement ids that gate Start), `tested_stats` (`null` until a live PASS writes it), `partner` (`null` except for Shield of Arrav / Hero's Quest, which declare a two-role protocol), `quest`, and `roles`.
-- `quest`: provisioning and eligibility input: `members`, `quest_points`, `requirements[]` (quest-points, skill, quest, item, or members-world entries), `items[]` (`acquirable` with an optional `acquire` recipe, or `mustHave`; an optional `from_stage` holds an item out until that stage), `acquire` recipes, `bank` (`"nearest"` or an authored tile with a `source`, plus `required: true` only when that particular bank is necessary), `coin_float`, `loadouts` (named `worn` display-name rows plus `carry` item/qty rows), `areas` (named walk boxes with a `source`), `tools`, and `owns_inventory`. The compiler requires this header.
-- `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
+- Top level: `$schema`, `schema: 3`, `id` (the content quest stem, e.g. `cook`), `display_name`, `kind` (`Quest` by default; `Miniquest` uses an owned typed `progress_reader` instead of a quest-list binding, and a `Miniquest` role without one is rejected), `required` (header requirement ids that gate Start), `tested_stats` (`null` until a live PASS writes it), `partner` (`null` in every bundled Beta 1 Path; Path authoring reserves the ids `blackarmgang` and `hero` for a two-role Shield of Arrav / Hero's Quest protocol), `quest`, and `roles`.
+- `quest`: provisioning and eligibility input: `members`, `quest_points`, `requirements[]` (quest-points, skill, quest, item, or members-world entries), `items[]` (`acquirable` with an optional `acquire` recipe, or `must_have`; an optional `from_stage` holds an item out until that stage), `acquire` recipes, `bank` (`"nearest"` or an authored tile with a `source`, plus `required: true` only when that particular bank is necessary), `coin_float`, `loadouts` (named entries: `worn` is a slot→item-alias map, `carry` is an item-alias/qty list), `areas` (named walk boxes with a `source`), `tools`, and `owns_inventory`. The compiler requires this header.
+- `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, `order` (`authored` by default; `nearest` chooses the closest uncompleted authored anchor first and refuses a step without that approach anchor), and `steps[]`.
 - `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, and `thieve`); Default kinds compile as `false` when it is omitted.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
-Step ids must remain unique across recipes and the selected role's prelude, sequences, and `progress_reader`. Solo Paths compile the first declared role. Paired Paths compile the role chosen by effective gang after owned membership admission.
+Step ids must remain unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo Path declares exactly one role. Paired Paths compile the role chosen by effective gang after owned membership admission.
 
 When adding a handler in Rust, register it with `step!` or `fact!`. The row names one `Args` type, which supplies both compiler decoding and the generated schema; do not maintain a separate argument-field list.
 
@@ -114,7 +114,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 
 | `kind` | Class | Purpose |
 | --- | --- | --- |
-| `walk` | Default | Walk to an authored tile (`tile` plus `source`, `radius`, optional `cross` danger-zone names, `guard: "protect"`, and per-step walk-permission overrides). A `radius` of 0 behaves as 1; there is no exact-tile mode. |
+| `walk` | Default | Walk to an authored tile (`tile` plus `source`, `radius`, optional `cross` danger-zone names, `guard: "protect"`, and per-step walk-permission overrides). `radius` is at least 1. |
 | `talk` | Explicit | Selected NPC dialogue with shared answer rules (`prefer`, `choose`, `line_rules`, `strict`), optional `continue_only` draining, and an optional `expect_combat` handoff to an authored combat opponent. |
 | `interact` | Explicit | One selected scene, ground-item, named, or held-item operation with optional repetition (`until` inventory-count goal) and shared dialogue handling. |
 | `use_on` | Explicit | Held-item operation onto one NPC, loc, item, or exact ground stack, with the same `until` goal and dialogue handling as `interact`. |
@@ -124,10 +124,10 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `buy` | Default | Authored shop purchase. |
 | `make` | Explicit | Production action (for example cooking or crafting). |
 | `equip` / `unequip` | Default | Wear or remove equipment. |
-| `loadout` | Default | Apply a named `quest.loadouts` entry (`loadout`, `at: "quest_bank"` or `"nearest"`, `allow_lower_tier`, `strip`); see below. |
+| `loadout` | Default | Apply a named `quest.loadouts` entry (`loadout`, `at: "quest_bank"` or `"nearest"`, `allow_lower_tier`, `strip`, `exclusive`); see below. `exclusive` requires exactly the listed worn items and cannot be combined with `strip` or `allow_lower_tier`. |
 | `setting` | Default | Flip an observed game setting, currently `retaliate` on or off. |
 | `combat` | Explicit | Native fight with a tactic (`melee_mode`, `ranged_style`, or mage `spells`), optional `cross`/`guard` walks, looting, and dialogue answers. |
-| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff. |
+| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (Path-authoring reference; no bundled Beta 1 Path uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
 
@@ -151,15 +151,13 @@ Combinators are `All`, `Any`, and `Not`, with the envelope from §4.2. Every fac
 | `retaliate` | The observed retaliate setting. |
 | `partner_item_count_at_least` | The paired partner's observed item count. |
 
-There is no `pack_only` fact: do not author one.
-
 #### Loadouts
 
-A `quest.loadouts` entry names worn items and carried item/qty rows using selected item aliases; compilation resolves each row once into the display-name rows the bank runner consumes. A `loadout` step applies one entry at `quest_bank` or `nearest`, optionally allowing lower-tier alternatives and stripping worn items outside the entry. `loadout_ready` proves the entry is held. An active recipe's declared inputs can independently request the same items, and active-loadout carry floats join provisioning like coin floats.
+A `quest.loadouts` entry names worn items and carried item/qty rows using selected item aliases; compilation resolves each row once into the display-name rows the bank runner consumes. A `loadout` step applies one entry at `quest_bank` or `nearest`: `allow_lower_tier` permits lower-tier alternatives, `strip` removes worn items outside the entry, and `exclusive` requires exactly the listed worn items (it cannot be combined with `strip` or `allow_lower_tier`). `loadout_ready` proves the entry is held. An active recipe's declared inputs can independently request the same items, and active-loadout carry floats join provisioning like coin floats.
 
-#### Paired Paths
+#### Paired Paths (Path-authoring reference; no bundled Beta 1 Path uses `partner`)
 
-Only Shield of Arrav and Hero's Quest declare `partner`: a two-role protocol with reciprocal handoffs driven by `partner` steps on each account. Each account runs its own Quester with reciprocal `partner_account` settings and opposite gangs (see `docs/api/script.md`); validation compiles both gang roles, while a run activates only the account's effective gang after owned membership admission.
+Shield of Arrav and Hero's Quest declare `partner` in Path authoring: a two-role protocol with reciprocal handoffs driven by `partner` steps on each account. The Path id must be `blackarmgang` or `hero`. Each account runs its own Quester with reciprocal `partner_account` settings and opposite gangs (see `docs/api/script.md`); validation compiles both gang roles, while a run activates only the account's effective gang after owned membership admission.
 
 ### 4.3 How the runner executes a Path
 
@@ -202,7 +200,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
   "display_name": "Cook's Assistant",          // UI only
   "required": [],                              // ids from quest.requirements that gate Start (none)
   "tested_stats": null,                        // written only by a live PASS; never a gate
-  "partner": null,                             // Shield of Arrav / Hero's only
+  "partner": null,                             // null in every bundled Beta 1 Path
   "quest": {
     "members": false,
     "quest_points": 1,
@@ -341,6 +339,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
           "args": {
             "target": { "name": "Hopper controls" },   // display-name target: the pack names this loc ambiguously
             "op": "Operate",                            // compiles to name + op, nearest within radius; warns `ambiguous-name`
+            "anchor": { "tile": [3166, 3305, 2], "source": "authored approach tile for the hopper controls" },
             "radius": 8,
             "settle_ms": 20000
           },
@@ -377,7 +376,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
     "coin_float": 0,
     "loadouts": {},
     "areas": {},
-    "tools": ["obj:pot_empty", "obj:grain", "obj:bucket_empty", "obj:egg"],   // kept when provisioning deposits (S4)
+    "tools": ["obj:pot_empty", "obj:grain", "obj:bucket_empty", "obj:egg"],   // kept when provisioning deposits
     "owns_inventory": false
   },
   "roles": [
