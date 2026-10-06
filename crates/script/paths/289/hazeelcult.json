@@ -131,7 +131,7 @@
         "steps": [
           {
             "id": "climb-to-sewer-valves", "kind": "interact", "version": 1, "advances": false,
-            "comment": "Ordered first: a restart replays it, so the cave skip jumps the cursor past the climb (and the idempotent valves below re-run) instead of climbing back up from the cave.",
+            "comment": "Ordered first so a stage-4 restart replays the whole leg. Skipped on the surface (already up) and in the hideout (valves set, raft ridden). Selected in the cave — the Clivet handoff lands at cursor 0 underground — so the bot climbs up before the idempotent set-bit valves below re-run west to east.",
             "args": {
               "target": { "loc": "hazeelcultstairs" }, "op": "Climb-up",
               "anchor": { "tile": [2570, 9683, 0], "source": "289 maps/m40_151.jm2:7127; pack/loc.pack:hazeelcultstairs; scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:7-9" },
@@ -139,7 +139,6 @@
             },
             "skip_if": { "Any": [
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } },
-              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
             ] },
             "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } }

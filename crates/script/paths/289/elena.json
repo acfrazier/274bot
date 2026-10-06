@@ -29,7 +29,7 @@
       "acquire:bucket_water": [
         {
           "id": "take-bucket-empty", "kind": "interact", "version": 1, "advances": false,
-          "comment": "Exactly four empties feed the fill below; stray bucket_empty breaks the pour counter, so this recipe over-collects nothing on a fresh run.",
+          "comment": "Exactly four empties feed the fill below. Never take while holding water and empties together: the fill below tops up to four water from the held empties, and extra takes push the bucket total past four and break the pour counter (each pour mints one empty, scripts/quests/quest_elena/scripts/mud_patch.rs2:38-46). A fresh run holds neither, so it still takes to four.",
           "args": {
             "target": { "ground": "bucket_empty" }, "op": "Take",
             "anchor": { "tile": [2616, 3255, 0], "source": "289 maps/m40_50.jm2:7062; pack/obj.pack:bucket_empty" },
@@ -38,7 +38,11 @@
           },
           "skip_if": { "Any": [
             { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_empty", "qty": 4 } } },
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
+            { "All": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } }
+            ] }
           ] },
           "settle": { "Any": [
             { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_empty", "qty": 4 } } },
@@ -197,20 +201,20 @@
           },
           {
             "id": "fetch-mud-water", "kind": "acquire", "version": 1,
-            "comment": "Top up to 4 water, except on a mid-cycle resume: water plus empties held together means exactly (4 - empties) pours remain and the held water covers them, so pour directly and keep the counter intact.",
+            "comment": "Top up to 4 water, except on a proven mid-pour resume: 3+ held empties are pours already run (each pour mints one empty, scripts/quests/quest_elena/scripts/mud_patch.rs2:38-46), so the held water covers the (4 - empties) pours left and the counter stays intact. Two or fewer empties with fewer than 4 water is an interrupted well fill with 0 pours done: refill instead — the take above holds while water and empties sit together and the fill tops up to 4 from the held empties — or the pour under-runs into the no-consume default branch (scripts/quests/quest_elena/scripts/mud_patch.rs2:35).",
             "args": { "recipe": "acquire:bucket_water" },
             "skip_if": { "Any": [
               { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
               { "All": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } }
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_empty", "qty": 3 } } }
               ] }
             ] },
             "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
           },
           {
             "id": "pour-water-on-mud", "kind": "use_on", "version": 1, "advances": true,
-            "comment": "Each pour deletes one full bucket and adds one empty (scripts/quests/quest_elena/scripts/mud_patch.rs2:119-129); the fourth pour reaches varp 7 with its own journal line. The empties count doubles as the pour counter: a mid-cycle resume holds W water plus E empties with W+E=4, so (4-E) pours reach varp 7 exactly as the count reaches 4 and the family stops on the same round. The deposit above clears no-water strays and the fetch skip preserves mid-cycle counts, so extra pours never reach the no-consume default branch (mud_patch.rs2:35). Pour text is ~mesbox drained by the default dialogue.",
+            "comment": "Each pour deletes one full bucket and adds one empty (scripts/quests/quest_elena/scripts/mud_patch.rs2:38-46); the fourth pour reaches varp 7 with its own journal line. The empties count doubles as the pour counter: a proven resume (3+ empties) pours (4 - empties) times to varp 7 exactly as the count reaches 4, while anything else refills first (the deposit above clears no-water strays, the take holds while water and empties sit together, the fill tops up to 4), so extra pours never reach the no-consume default branch (scripts/quests/quest_elena/scripts/mud_patch.rs2:35). Pour text is ~mesbox drained by the default dialogue.",
             "args": {
               "item": "bucket_water", "target": { "loc": "plaguemudpatch1" },
               "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1; scripts/quests/quest_elena/scripts/mud_patch.rs2:13-26" },

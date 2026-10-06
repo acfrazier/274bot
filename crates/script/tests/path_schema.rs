@@ -758,23 +758,211 @@ fn ordered_hazeel_valves_run_once_each_and_reach_the_fight() {
         probe.choice("hazeelcult:4", 6, &at_valve_1),
         Choice::Step(FactKey::new("enter-hazeel-cave"))
     );
-    // In the cave the entry is skipped and the raft boards: no climb back up.
+    // In the cave the entry is skipped and the raft boards: no climb back up
+    // once the cursor is past the valves.
     let in_cave = snapshot_at(2570, 9682);
     assert_eq!(
         probe.choice("hazeelcult:4", 9, &in_cave),
         Choice::Step(FactKey::new("board-raft-to-hideout"))
     );
-    // A restart replays from step 1: the climb is skipped in the cave and the
-    // idempotent valves re-run instead of climbing back up.
+    // REVIEW-PATHS-MEMBERS-A-R3 F-A: a restart replays from cursor 0 in every
+    // location. On the surface the climb is skipped and the idempotent valves
+    // re-run; at the surface cave entrance that means valve 1, not re-entry.
+    assert_eq!(
+        probe.choice("hazeelcult:4", 0, &snapshot_at(2585, 3234)),
+        Choice::Step(FactKey::new("turn-sewervalve-1"))
+    );
+    // The Clivet handoff lands in the cave at cursor 0: climb up first, then
+    // the valves re-run west to east before the cave is re-entered. There is
+    // no cave-to-surface route, so skipping the climb here strands the bot.
     assert_eq!(
         probe.choice("hazeelcult:4", 0, &in_cave),
-        Choice::Step(FactKey::new("turn-sewervalve-1"))
+        Choice::Step(FactKey::new("climb-to-sewer-valves"))
     );
     // A hideout resume skips everything but the fight.
     let in_hideout = snapshot_at(2609, 9669);
     assert_eq!(
         probe.choice("hazeelcult:4", 0, &in_hideout),
         Choice::Step(FactKey::new("fight-alomone"))
+    );
+}
+
+/// Snapshot at `(x, z)` holding one inventory slot per named item unit:
+/// each `(alias, units)` pair seeds `units` slots of count 1 (buckets are
+/// unstacked), resolved through the selected data so `has_item` and
+/// `item_count_at_least` answer exactly as live.
+fn snapshot_with_items(
+    x: i32,
+    z: i32,
+    selected: &SelectedGameData,
+    items: &[(&str, i32)],
+) -> api::snapshot::GameSnapshot {
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+    let mut snapshot = snapshot_at(x, z);
+    let mut slot = 0;
+    let mut rows = Vec::new();
+    for &(alias, units) in items {
+        let item = selected
+            .item_by_alias(alias)
+            .unwrap_or_else(|| panic!("unknown item alias {alias}"));
+        for _ in 0..units {
+            rows.push(ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: item.id,
+                    name: Some(alias.into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            });
+            slot += 1;
+        }
+    }
+    snapshot.seed_inventory(rows, 28);
+    snapshot
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R3 F-C: the R3 cave-entry steps for stages 2 and 3
+/// are authored (no cursor) and rely on skip/settle correctness. On the
+/// surface the entry runs; underground it is skipped and the Clivet talk runs.
+#[test]
+fn hazeel_cave_entry_runs_on_surface_and_skips_underground() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-hazeel-cave-entry");
+    let (selected, quests) = selected_and_quests();
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("hazeelcult.json")))
+            .expect("hazeelcult decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("hazeelcult compiles");
+    let bank = known_empty_bank();
+    let on_surface = snapshot_at(2565, 3271);
+    let in_cave = snapshot_at(2570, 9682);
+
+    let progress = [progress_for_stage(
+        &compiled,
+        &selected,
+        "hazeelcult:2",
+        &[],
+    )];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    assert_eq!(
+        probe.choice("hazeelcult:2", 0, &on_surface),
+        Choice::Step(FactKey::new("enter-cave-to-meet-clivet"))
+    );
+    assert_eq!(
+        probe.choice("hazeelcult:2", 0, &in_cave),
+        Choice::Step(FactKey::new("meet-clivet"))
+    );
+
+    let progress = [progress_for_stage(
+        &compiled,
+        &selected,
+        "hazeelcult:3",
+        &[],
+    )];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    assert_eq!(
+        probe.choice("hazeelcult:3", 0, &on_surface),
+        Choice::Step(FactKey::new("enter-cave-to-refuse-clivet"))
+    );
+    assert_eq!(
+        probe.choice("hazeelcult:3", 0, &in_cave),
+        Choice::Step(FactKey::new("refuse-clivet"))
+    );
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R3 F-B/F-C: the mud-pour refill must survive an
+/// interrupted well fill. Each pour deletes one water and mints one empty
+/// (`mud_patch.rs2:38-46`); past varp 7 pours hit the no-consume default
+/// (`mud_patch.rs2:35`), so the refill must never under-pour into it. Only
+/// 3+ held empties prove pours already ran; 2 water + 2 empties with 0 pours
+/// done refills (the take holds, the fill tops up to 4) instead of pouring.
+#[test]
+fn elena_mud_refill_fetches_on_interrupted_fill_and_pours_on_resume() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-elena-mud-refill");
+    let (selected, quests) = selected_and_quests();
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(&compiled, &selected, "elena:03-06", &[])];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    // The rope is held throughout so the buy step skips and the bucket
+    // family is what selects. Garden tile: east surface, no area gates here.
+    let garden = |items: &[(&str, i32)]| snapshot_with_items(2566, 3331, &selected, items);
+    // Stray empties with no water deposit first.
+    assert_eq!(
+        probe.choice(
+            "elena:03-06",
+            0,
+            &garden(&[("rope", 1), ("bucket_empty", 3)])
+        ),
+        Choice::Step(FactKey::new("deposit-stray-empty-buckets"))
+    );
+    // F-B: 2 water + 2 empties with 0 pours done is an interrupted well
+    // fill, not a mid-pour resume: refill instead of pouring twice.
+    assert_eq!(
+        probe.choice(
+            "elena:03-06",
+            0,
+            &garden(&[("rope", 1), ("bucket_water", 2), ("bucket_empty", 2)])
+        ),
+        Choice::Step(FactKey::new("fetch-mud-water"))
+    );
+    // A fresh run with nothing held fetches too.
+    assert_eq!(
+        probe.choice("elena:03-06", 0, &garden(&[("rope", 1)])),
+        Choice::Step(FactKey::new("fetch-mud-water"))
+    );
+    // A proven resume after 3 pours (1 water + 3 empties) pours directly.
+    assert_eq!(
+        probe.choice(
+            "elena:03-06",
+            0,
+            &garden(&[("rope", 1), ("bucket_water", 1), ("bucket_empty", 3)])
+        ),
+        Choice::Step(FactKey::new("pour-water-on-mud"))
+    );
+    // A full set of 4 water pours directly.
+    assert_eq!(
+        probe.choice(
+            "elena:03-06",
+            0,
+            &garden(&[("rope", 1), ("bucket_water", 4)])
+        ),
+        Choice::Step(FactKey::new("pour-water-on-mud"))
     );
 }
 
