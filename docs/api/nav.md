@@ -92,14 +92,31 @@ Ranged hunters with content `check_vis=lineofsight` retain their
 range-derived bounds, but the bake carves permanent occlusion only for `nomove`
 NPCs and NPCs with `wanderrange=0`. The engine checks LOS from the NPC's
 current tile; the bake uses the spawn tile for these static or zero-wander
-configurations. Positive-wander hunters retain their conservative rectangles.
-An already-engaged hunter can pursue the player, so this is not immunity from
-one that has moved into visible range. Areas containing openable doors also
-retain conservative rectangles. Curated group rectangles select and name spawn
-members; they are not additional exclusion surfaces. In particular, the Death
-Plateau scouting ridge is occluded from the throwers where it clips their
-eight-tile hunt boxes, and needs no `cross` grant. Rebake packs to obtain these
-carves; runtime routing does not require the raw flags sidecar.
+configurations. An already-engaged hunter can pursue the player, so this is
+not immunity from one that has moved into visible range. Areas containing
+openable doors also retain conservative rectangles. Curated group rectangles
+select and name spawn members; they are not additional exclusion surfaces. In
+particular, the Death Plateau scouting ridge is occluded from the throwers
+where it clips their eight-tile hunt boxes, and needs no `cross` grant.
+
+Every other moving hunter keeps its range-derived rectangle as bounds, and the
+bake carves every cell where it could never acquire a player. The NPC's south-west tile floods
+from its spawn by the engine's own steps: `StepValidator.canTravel` masks, with
+diagonal steps only for size-1 NPCs, as `PathingEntity.takeStep` does. The
+flood is bounded by the larger of `wanderrange` and the farthest a valid chase
+can carry it (`maxrange` plus the tether reach plus the NPC's size). A
+non-wandering NPC stays wherever a chase ended, so it uses the same bound. A
+cell stays a member when some flooded NPC tile is within `huntrange` of it and,
+for `lineofsight` hunt modes, the player-to-NPC ray is clear. A door in that
+envelope that a player can open or close keeps the whole rectangle. This counts
+closed doors and door configs' open states placed open in the map. Membership
+never grows, so White Wolf Mountain's back ridge leaves the wolf rows whose
+terrain cannot reach it. The mountain's pack wolves and sentries (`vislevel=25`,
+hunt mode `cowardly` with `check_nottoostrong=outside_wilderness`) still walk the
+ridge. Only a known combat level above 50 deactivates them, and only then is
+the land route around the back available; unknown or lower combat is refused
+there. Rebake packs to obtain these carves; runtime routing does not require
+the raw flags sidecar.
 
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as

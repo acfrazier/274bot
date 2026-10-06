@@ -916,6 +916,9 @@ pub(crate) struct HunterBakeInputs {
     pub definitions: Vec<HunterDefinition>,
     pub spawns: Vec<HunterSpawn>,
     pub openable_doors: Vec<OpenableDoor>,
+    /// Placements of the open state of a door config: a player can close
+    /// them, so their current walls are not permanent either.
+    pub opened_doors: Vec<OpenableDoor>,
     pub total_npc_spawns: usize,
 }
 
@@ -923,6 +926,7 @@ pub(crate) fn collect_hunter_inputs(
     content_root: &Path,
     npc_types: &[NpcType],
     door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
 ) -> Result<HunterBakeInputs, String> {
     let mut tree = load_script_tree(content_root)?;
     load_unpacked_zone_configs(content_root, &mut tree)?;
@@ -1030,8 +1034,9 @@ pub(crate) fn collect_hunter_inputs(
         hunter_ids.insert(npc_id);
     }
 
+    let scanned_locs: HashSet<i32> = door_ids.union(opened_door_ids).copied().collect();
     let (.., total_npc_spawns, npc_hits, loc_hits) =
-        scan_maps(content_root, &hunter_ids, door_ids)?;
+        scan_maps(content_root, &hunter_ids, &scanned_locs)?;
     let spawns = npc_hits
         .into_iter()
         .flat_map(|(npc_id, hits)| {
@@ -1044,23 +1049,30 @@ pub(crate) fn collect_hunter_inputs(
         })
         .collect();
     let mut openable_doors = Vec::new();
-    for hits in loc_hits.into_values() {
+    let mut opened_doors = Vec::new();
+    for (loc_id, hits) in loc_hits {
         for hit in hits {
             let level = crate::collision::game_plane(i32::from(hit.plane), hit.link_below)
-                .ok_or_else(|| "openable door placement has an invalid game plane".to_string())?;
-            openable_doors.push(OpenableDoor {
+                .ok_or_else(|| "door placement has an invalid game plane".to_string())?;
+            let door = OpenableDoor {
                 x: hit.x,
                 z: hit.z,
                 level,
                 shape: hit.shape,
                 rotation: hit.rotation,
-            });
+            };
+            if door_ids.contains(&loc_id) {
+                openable_doors.push(door);
+            } else {
+                opened_doors.push(door);
+            }
         }
     }
     Ok(HunterBakeInputs {
         definitions,
         spawns,
         openable_doors,
+        opened_doors,
         total_npc_spawns,
     })
 }
