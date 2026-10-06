@@ -69,7 +69,22 @@
       },
       {
         "stage": "hazeelcult:2", "required": [], "terminal": false, "recovery_entry": null,
-        "steps": [{
+        "steps": [
+        {
+          "id": "enter-cave-to-meet-clivet", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Clivet is underground at (2566,9683); the talk below has no route from Ceril's surface house. Skipped once underground.",
+          "args": {
+            "target": { "loc": "hazeelcultcave" }, "op": "Enter",
+            "anchor": { "tile": [2585, 3233, 0], "source": "289 maps/m40_50.jm2:5088; pack/loc.pack:hazeelcultcave" },
+            "radius": 5
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
+            { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+          ] },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } }
+        },
+        {
           "id": "meet-clivet", "kind": "talk", "version": 1, "advances": true,
           "comment": "One conversation answers three menus: the opening multi, then refuse, then decline to join. The good-side answers must all be preferred: talk falls back to the LAST option, which joins the cult (scripts/quests/quest_hazeelcult/scripts/clivet.rs2:89-132). The refuse path jumps straight to varp 4 (clivet_decision), whose good-side journal text resolves hazeelcult:4, so settle accepts 3 or 4.",
           "args": {
@@ -83,7 +98,22 @@
       },
       {
         "stage": "hazeelcult:3", "required": [], "terminal": false, "recovery_entry": null,
-        "steps": [{
+        "steps": [
+        {
+          "id": "enter-cave-to-refuse-clivet", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Same underground entry as stage 2: Clivet is at (2566,9683) with no surface route.",
+          "args": {
+            "target": { "loc": "hazeelcultcave" }, "op": "Enter",
+            "anchor": { "tile": [2585, 3233, 0], "source": "289 maps/m40_50.jm2:5088; pack/loc.pack:hazeelcultcave" },
+            "radius": 5
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
+            { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
+          ] },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } }
+        },
+        {
           "id": "refuse-clivet", "kind": "talk", "version": 1, "advances": true,
           "comment": "Resume path for varp 3 (spoken_clivet): the same three-menu conversation as meet-clivet. All good-side answers preferred for the same fallback reason.",
           "args": {
@@ -97,10 +127,11 @@
         }]
       },
       {
-        "stage": "hazeelcult:4", "required": [], "terminal": false, "recovery_entry": null,
+        "stage": "hazeelcult:4", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
         "steps": [
           {
             "id": "climb-to-sewer-valves", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Ordered first: a restart replays it, so the cave skip jumps the cursor past the climb (and the idempotent valves below re-run) instead of climbing back up from the cave.",
             "args": {
               "target": { "loc": "hazeelcultstairs" }, "op": "Climb-up",
               "anchor": { "tile": [2570, 9683, 0], "source": "289 maps/m40_151.jm2:7127; pack/loc.pack:hazeelcultstairs; scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2:7-9" },
@@ -108,6 +139,7 @@
             },
             "skip_if": { "Any": [
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_cave" } } },
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_hideout" } } }
             ] },
             "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "hazeel_surface" } } }

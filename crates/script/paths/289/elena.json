@@ -186,14 +186,31 @@
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } }
           },
           {
+            "id": "deposit-stray-empty-buckets", "kind": "bank", "version": 1,
+            "comment": "Stray bucket_empty pollutes the pour counter below, which counts real pours as fresh empties. No water plus empties means strays: deposit the whole stack. Held water means a mid-cycle resume, so the counter empties are preserved; costs one bank trip only when strays exist.",
+            "args": { "op": "deposit", "at": "nearest", "items": [{ "obj": "bucket_empty" }] },
+            "skip_if": { "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+            ] },
+            "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } } }
+          },
+          {
             "id": "fetch-mud-water", "kind": "acquire", "version": 1,
+            "comment": "Top up to 4 water, except on a mid-cycle resume: water plus empties held together means exactly (4 - empties) pours remain and the held water covers them, so pour directly and keep the counter intact.",
             "args": { "recipe": "acquire:bucket_water" },
-            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } },
+              { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } }
+              ] }
+            ] },
             "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bucket_water", "qty": 4 } } }
           },
           {
             "id": "pour-water-on-mud", "kind": "use_on", "version": 1, "advances": true,
-            "comment": "Each pour deletes one full bucket and adds one empty (scripts/quests/quest_elena/scripts/mud_patch.rs2:119-129); the fourth pour reaches varp 7 with its own journal line. The empties count doubles as the pour counter, so a resume mid-way converges; precondition is no stray bucket_empty outside this cycle. Pour text is ~mesbox drained by the default dialogue.",
+            "comment": "Each pour deletes one full bucket and adds one empty (scripts/quests/quest_elena/scripts/mud_patch.rs2:119-129); the fourth pour reaches varp 7 with its own journal line. The empties count doubles as the pour counter: a mid-cycle resume holds W water plus E empties with W+E=4, so (4-E) pours reach varp 7 exactly as the count reaches 4 and the family stops on the same round. The deposit above clears no-water strays and the fetch skip preserves mid-cycle counts, so extra pours never reach the no-consume default branch (mud_patch.rs2:35). Pour text is ~mesbox drained by the default dialogue.",
             "args": {
               "item": "bucket_water", "target": { "loc": "plaguemudpatch1" },
               "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1; scripts/quests/quest_elena/scripts/mud_patch.rs2:13-26" },
@@ -569,10 +586,10 @@
         }]
       },
       {
-        "stage": "elena:24-25", "required": [], "terminal": false, "recovery_entry": null,
+        "stage": "elena:24-25", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
         "steps": [{
           "id": "get-clerk-introduction-to-bravek", "kind": "talk", "version": 1, "advances": true,
-          "comment": "Merged 24/25: the journal prints identical text for varp spoke_to_plague_house (24) and spoke_to_clerk (25) (scripts/quests/quest_elena/scripts/elena_journal.rs2:80-82), and the clerk only advances the varp when Bravek is within 7 tiles (scripts/areas/area_ardougne_west/scripts/clerk.rs2:53-55). Either varp resolves here; the Bravek talk below carries the sequence to 26.",
+          "comment": "Merged 24/25: the journal prints identical text for varp spoke_to_plague_house (24) and spoke_to_clerk (25) (scripts/quests/quest_elena/scripts/elena_journal.rs2:80-82), and the clerk only advances the varp when Bravek is within 7 tiles (scripts/areas/area_ardougne_west/scripts/clerk.rs2:53-55). Either varp resolves here; the Bravek talk below carries the sequence to 26. Ordered: no skip can observe clerk-vs-Bravek progress, so the cursor runs clerk, door, Bravek once each; a restart safely replays the clerk talk.",
           "args": {
             "npc": "clerk",
             "anchor": { "tile": [2528, 3317, 0], "source": "289 maps/m39_51.jm2:8738; pack/npc.pack:clerk; scripts/areas/area_ardougne_west/scripts/clerk.rs2:1-5,27-54" },
@@ -769,7 +786,8 @@
             },
             "skip_if": { "Any": [
               { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
-              { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } }
+              { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } } }
             ] },
             "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } }
           },
