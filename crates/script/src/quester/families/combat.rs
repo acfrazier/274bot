@@ -1,7 +1,7 @@
 //! Shared `script::combat` adapter for typed Quester Path combat steps.
 use super::super::compile::{
     CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
-    StepOutcome, StepPlan, StepRun,
+    StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::super::path::PredicateDocument;
 use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
@@ -671,6 +671,7 @@ impl StepPlan for CombatPlan {
             finish_target_index: None,
             finish_ticks_elapsed: 0,
             finish_last_tick: None,
+            trace_event: None,
         };
         run.begin_combat(cx)?;
         Ok(Box::new(run))
@@ -736,6 +737,7 @@ struct CombatRun {
     finish_target_index: Option<usize>,
     finish_ticks_elapsed: u64,
     finish_last_tick: Option<u64>,
+    trace_event: Option<StepTraceEvent>,
 }
 
 /// Whether walk outcome `seq` was cancelled by user input. The cancel reason
@@ -973,6 +975,10 @@ impl CombatRun {
         self.raised_prayers = RaisedPrayers::empty();
         self.last_report = Some(report);
         self.refresh_outcome();
+        self.trace_event = Some(StepTraceEvent::CombatSubOperationEnd {
+            target: self.request.target.clone(),
+            end: report.end,
+        });
         match report.end {
             // Loot begins only after the combat machine reports `Killed`
             // (design-combat.md §2.3, §5; combat-s3a-ReviewCombatFable.md F5).
@@ -1369,6 +1375,9 @@ impl StepRun for CombatRun {
         CombatRun::prayer_cleanup(self)
     }
 
+    fn take_trace_event(&mut self) -> Option<StepTraceEvent> {
+        self.trace_event.take()
+    }
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
         self.last_outcome.as_ref()
     }

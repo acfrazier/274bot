@@ -339,6 +339,9 @@ pub trait Script: Send {
         crate::combat::RaisedPrayers::empty()
     }
     fn on_stop(&mut self, _reason: StopReason) {}
+    fn on_stop_with_output(&mut self, reason: StopReason, _output: &mut dyn NativeOutput) {
+        self.on_stop(reason);
+    }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         RandomClaim::Host
     }
