@@ -7,6 +7,7 @@ use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn paths_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289")
@@ -145,7 +146,7 @@ fn bundled_paths_decode_and_compile() {
 
     let (selected, quests) = selected_and_quests();
     let _gathering = script::quester::compile::prepare_for_test({
-        let selected = std::sync::Arc::clone(&selected);
+        let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
     })
     .expect("289 gather catalog");
