@@ -88,12 +88,14 @@ spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
 
-Ranged hunters with a fixed acquisition centre (no movement, no wandering,
-or zero wander range) and content `check_vis=lineofsight` retain their
-range-derived bounds, but bake permanent occlusion into the existing zone
-carves using the shared collision ray. Moving acquisition centres, visibility
-checks that cannot prove LOS, and areas containing openable doors retain
-conservative rectangles. Curated group rectangles select and name spawn
+Ranged hunters with content `check_vis=lineofsight` retain their
+range-derived bounds, but the bake carves permanent occlusion only for `nomove`
+NPCs and NPCs with `wanderrange=0`. The engine checks LOS from the NPC's
+current tile; the bake uses the spawn tile for these static or zero-wander
+configurations. Positive-wander hunters retain their conservative rectangles.
+An already-engaged hunter can pursue the player, so this is not immunity from
+one that has moved into visible range. Areas containing openable doors also
+retain conservative rectangles. Curated group rectangles select and name spawn
 members; they are not additional exclusion surfaces. In particular, the Death
 Plateau scouting ridge is occluded from the throwers where it clips their
 eight-tile hunt boxes, and needs no `cross` grant. Rebake packs to obtain these
