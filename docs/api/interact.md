@@ -16,11 +16,13 @@ recording stub. The kernel never injects a raw opcode that skips ISAAC.
 | `press(driver, iface_id)` | menu slot 0 = `IF_BUTTON` + `doAction(0)` |
 | `set_run(driver, on)` | `press` 153 (on) / 152 (off) |
 | `walk(driver, x, z)` | `tryMove` from the local route, type 0 |
+| `walk_nearest(driver, x, z)` | `tryMove` with a nearest-reachable fallback when the tile itself is solid |
 | `op_loc(driver, x, z, loc_id)` | `OP_LOC1` via `set_menu`/`do_action` |
 | `interact(driver, slot)` | `doAction(slot)` on a prepared slot |
 | `close_modal(driver)` | `CLOSE_MODAL` via `Out` |
 | `answer_count(driver, n)` | `RESUME_P_COUNTDIALOG` via `Out` |
 | `login(driver, u, p, reconnect)` | `Client::login` handshake |
+| `logout(driver, ifaces)` | `IF_BUTTON` on the `CC_LOGOUT` iface (client code 205) via `doAction`; missing iface is `false`, no panic |
 | `cheat(driver, cmd)` | `CLIENT_CHEAT` via `Out` (body as given — `tele`/`setvar` have no `~`; debugprocs are `~name`) |
 | `mainland_hop(driver)` | two `cheat`s: `tele` courtyard + `setvar tutorial 1000` |
 | `seed_at(driver, level, x, z)` | `setvar tutorial 1000` then `tele level,mx,mz,lx,lz` |
@@ -32,10 +34,12 @@ scenery/ground-decor typecode at a scene tile.
 ## `Interactions` (the orchestration layer)
 
 `Interactions<'a>` holds `&'a GameSnapshot` + `&'a mut dyn Driver` and
-returns `SendResult` (a `WireCommand`, or a `SendReason` refusal). Its 13
-methods: `interact(target, action)`, `use_item_on(item, target)`,
-`use_widget_on(widget, target)`, `press(widget)`, `continue_dialog`,
-`close_modal`, `answer_count(value)`, `walk(tile)`, `click_side_tab(tab)`,
+returns `SendResult` (a `WireCommand`, or a `SendReason` refusal). Its 19
+methods: `apply_amount_key`, `interact(target, action)`, `wear(id)`,
+`unequip(id)`, `use_item_on(item, target)`, `use_widget_on(widget, target)`,
+`press(widget)`, `if_button(widget)`, `continue_dialog(component_id)`,
+`open_nearest_booth()`, `close_modal()`, `answer_count(value)`,
+`walk(tile)`, `walk_nearest(tile)`, `click_side_tab(tab)`,
 `login(user, pass)`, `clear_local_modal(component_id)`, `set_run(on)`,
 `set_retaliate(on)`. Each does: precondition (attached/ingame/scene/
 count-dialog) → target identity (`still_present`) → label/opcode resolve
@@ -44,10 +48,10 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 
 - `OpTarget` is an enum of view refs: `Npc`/`Player`/`Loc`/`GroundItem`/
   `Item`.
-- `WireCommand` has 11 kinds: `Op`, `UseItem`, `UseWidget`, `Button`,
-  `Continue`, `Close`, `Count`, `Walk`, `SideTab`, `Login`,
-  `ClearLocalModal`.
-- `SendReason` has 20 refusal reasons (`NotAttached` … `DriverRejected`).
+- `WireCommand` has 13 kinds: `Op`, `UseItem`, `UseWidget`, `Button`,
+  `Continue`, `Close`, `Count`, `Walk`, `WalkNearest`, `DoorStep`,
+  `SideTab`, `Login`, `ClearLocalModal`.
+- `SendReason` has 21 refusal reasons (`NotAttached` … `DriverRejected`).
 - `ActionResolution::operation_of`/`offers_operation` scan the target's
   actions for a label (trimmed, case-insensitive) or a 1..5 operation
   number. `TargetIdentity::still_present` checks per-kind identity (npc by
@@ -60,6 +64,7 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 
 `api::prot::LEGAL_SEND` is the complete outbound table (opcode id + fixed
 length, `-1` variable). Typed builders (`api::prot::Send`) construct the
-kernel's sends. Key opcodes: `IF_BUTTON` 9, `CLOSE_MODAL` 51,
-`RESUME_P_COUNTDIALOG` 102, `OPNPC1..5`/`OPLOC1..5`/`OPOBJ1..5`/
+kernel's sends. Key opcodes on 274: `IF_BUTTON` 9, `CLOSE_MODAL` 51,
+`RESUME_P_COUNTDIALOG` 102; 289 remaps them (86 / 93 / 180 — see
+`client_prot_289.rs`). `OPNPC1..5`/`OPLOC1..5`/`OPOBJ1..5`/
 `OPPLAYER1..5`/`INV_BUTTON1..5` per the table in `api::prot`.

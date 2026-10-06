@@ -124,6 +124,14 @@ that does not repeat the value.
   vault whose passphrase is fixed for a local engine (it protects nothing) and
   minted per run for the public world.
 
+## Which vault file
+
+The vault path comes from the bound server profile in `~/.274bot/servers.json`,
+not from a flag. The built-ins use `vault` (`local-274`), `vault-289`
+(`local-289`) and `vault-prod` (`rs2b2t`), all under `~/.274bot/`. A new
+custom profile gets its own `vault-<name>` file so profiles never share
+storage implicitly.
+
 ## Secrets in memory
 
 `Profile.password` is a `vault::Secret` (also the panel's passphrase and

@@ -129,27 +129,30 @@ thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
-The Game Image is an ImGui **wgpu texture**. The 274 scene behind it is
+The Game Image is an ImGui **wgpu texture**. The game scene behind it is
 the client submodule's **wgpu GPU 3D** renderer by default (CpuPix3D
 when `BOT_CPU=1`). That is not the client's `Present` applet
 (`client-play --window` on bothost). Unfocused / renderer-off slots skip
-`game_draw`. Watch-only is a **1 fps rail**; capture is 50 fps.
+`game_draw`. Slots that draw without a 50 fps knob run the **1 fps**
+watch cadence; capture never raises fps.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
-scene); that is the 274 painter, not the ImGui chrome.
+scene); that is the client painter, not the ImGui chrome.
 
 ## Renderer vs capture
 
 274bot defaults to **lowmem** (`Profile.settings.lowmem = true`). The
 checkboxes on a focused profile:
 
-- **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
-  it after off paints **this tick** (no cold wait). Capture raises the
-  focused slot to 50 fps; sidecar 50 fps raises unfocused wall members;
-  full rate (this run) raises every drawing slot (below). Unfocused slots
-  do not raster. The Game Image is an RGBA8 texture that is **never below
-  765×503** (native, non-grid). Grid tiles `fit_applet` into their cell.
+- **game renderer** — default **on**. Checking it after off paints
+  **this tick** (no cold wait). Frame cadence is three separate knobs:
+  **focused 50 fps** raises the Game pane slot, **sidecar 50 fps** raises
+  unfocused wall members, and the ephemeral **full rate (this run)**
+  overlay raises every drawing slot (below); any other drawing slot runs
+  the 1 fps watch cadence. Capture (below) never raises fps. The Game
+  Image is an RGBA8 texture that is **never below 765×503** (native,
+  non-grid). Grid tiles `fit_applet` into their cell.
   Rendering never pauses the bot. Renderer-off /
   `set_draw(false)` detaches the head — GPU textures, chrome, and the
   decoded 3D scene are freed — while `mainloop` and collision keep
@@ -300,7 +303,7 @@ count and unique ESTABLISHED TCP to the engine port. Does **not** fail
 on RSS size. FAIL if `rss=0`, if OnDemand workers ≠ 1, or if TCP exceeds
 n+1 (game + one update socket). This ladder is **Null / draw-off**
 clients. It does **not** measure Started JS isolates (64 MB heap **cap**,
-grows from small; wall isolate RSS is unmeasured alpha — see
+grows from small; wall isolate RSS is unmeasured — see
 [`script.md`](script.md)).
 
 ```bash
@@ -370,7 +373,9 @@ not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
 **Script** Browse / Load / Reload / Start / Pause / Stop are wired
-([script.md](script.md)). Load is enabled except while a script is active.
+([script.md](script.md)). Browse lists the compiled native cards
+(Gatherer, Quester, Sherlock) first, then loaded JS/catalog cards.
+Load is enabled except while a script is active.
 **Reload** hashes the selected File/catalog card; unchanged origins report
 “Nothing changed; nothing to reload” and skip transpile; confirm restarts
 matching running bots and **Stops** matching paused bots. Browse’s
@@ -416,9 +421,12 @@ Parameters **Edit** is live for a loaded card with a settings schema
 settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
 merged rows, or `(no parameters)` when the schema is empty. Successful
-Start persists the per-profile script assignment. **Nav config**
-is live (debug paints / labels / FindOptions toggles) as its own
-non-blocking window. **General config** (under WalkTo, above profile) is
+Start persists the per-profile script assignment. **Nav config** is live
+as its own non-blocking window (Routing, Display, Path paint and Debug
+groups): the durable walk permissions (teleports, wilderness, bank fetch,
+danger zones — all default off), **Pause script on manual movement**
+(default on), and debug paints / labels. **General config** (under
+WalkTo, above profile) is
 **slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
 the lowmem/highmem button for a sticky picker like Teles), and **global**
 (sidecar 50 / only-render-selected). **Loadouts** is a live window (CRUD

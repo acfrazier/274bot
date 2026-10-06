@@ -12,9 +12,9 @@ q.where_(|n| n.actor.health > 0).within_distance(8); // chain filters
 q.first() / q.last() / q.results() / q.exists() / q.empty() / q.count()
 ```
 
-`Query<'a, T> { values: &'a [T], predicates: Vec<Box<dyn Fn(&T)->bool + 'a>> }`.
-`where_` pushes an `AND` predicate and returns `&mut Self`; `results()`
-returns `Vec<&T>`.
+`Query<'a, T>` holds a borrowed or owned candidate set plus `AND`
+predicates (`Vec<Box<dyn Fn(&T)->bool + 'a>>`): `where_` pushes one and
+returns `&mut Self`; `results()` returns `Vec<&T>`.
 
 ## Typed filters (extension traits over `Query<T>`)
 

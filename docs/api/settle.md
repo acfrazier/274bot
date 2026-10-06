@@ -17,8 +17,9 @@ enum Outcome<'a> {
 `Settle::poll(&mut self, now) -> Option<Outcome>` runs one watch step:
 check each arm's evidence against (now, before) → `Some(Matched)`; else if
 disconnected/not-ingame or the tick/ms budget is exhausted → `Some(Expired)`;
-else `None` (still watching). `SettleOptions { arms: &[(name, Evidence)],
-budget_ticks, budget_ms }`.
+else `None` (still watching). `SettleOptions { arms, budget_ticks,
+budget_ms: Option<u64> }` — a `None` backstop derives from the tick budget
+(`budget_ticks × 600 ms × 4`).
 
 ## Evidence
 

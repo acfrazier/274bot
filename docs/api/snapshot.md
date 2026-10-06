@@ -7,7 +7,8 @@ the last rebuild — nothing deep-copies the world per read.
 ## Families and gens
 
 `Family` mirrors the `ClientGens` counters on the client. The first 11 map
-1:1; the rest are additive and gate on the same underlying gens.
+1:1; the rest are additive and gate on the same underlying gens. All 29
+families are rebuilt by `rebuild`/`rebuild_family`.
 
 | Family | Bumped by (ServerProt) |
 | --- | --- |
@@ -24,10 +25,10 @@ the last rebuild — nothing deep-copies the world per read.
 | `World` | `SET_MULTIWAY` |
 
 `REBUILD_NORMAL` and `LOGOUT` bump every family. The additive iface-derived
-families (`Loc`, `GroundItem`, `Equipment`, `Bank`, `Widgets`, `SideTabs`,
-`Trade`, `ChatOptions`, `MakeProducts`, `QuestStatuses`, `Controls`,
-`Modals`, `Menu`) rebuild on `Iface`/`Inv`/`Scene` gen movement via private
-per-family gates. All 25 families are rebuilt by `rebuild`/`rebuild_family`.
+families (`Loc`, `GroundItem`, `Equipment`, `Bank`, `BankSide`, `Shop`,
+`Widgets`, `SideTabs`, `Trade`, `ChatOptions`, `MakeProducts`, `MainMake`,
+`QuestStatuses`, `Controls`, `Modals`, `Menu`) rebuild on `Iface`/`Inv`/`Scene`
+gen movement via private per-family gates.
 
 ## GameSnapshot
 
@@ -71,9 +72,9 @@ unchanged, while a present empty vector clears it.
 `ItemView` (`container`/`action_family`/`slot`/`count`/`def`),
 `WidgetView`, `SideTabView`, `StatView`, `VarpView`, `ChatLineView`,
 `SceneView` (collision flags), `WorldStateView`, `CameraView`,
-`MapFlagView`, `TradeView`, `ModalView`, `QuestStatusView`,
-`MakeProductView`, `ToggleControlsView`, plus `WorldTile`/`LocalTile` and
-`ItemDefView`/`LocDefView` (from `api::obj_names`).
+`MapFlagView`, `TradeView`, `ShopView` (open + stock), `ModalView`,
+`QuestStatusView`, `MakeProductView`, `ToggleControlsView`, plus
+`WorldTile`/`LocalTile` and `ItemDefView`/`LocDefView` (from `api::obj_names`).
 
 `PlayerView.headicons` carries the client's appearance bitmask unchanged for
 local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,
