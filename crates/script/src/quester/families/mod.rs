@@ -1575,7 +1575,12 @@ pub(crate) struct InteractArgs {
     /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Scene targets outside interaction range also need post-acceptance
     /// movement or primary animation; targets within range do not.
-    /// With omitted dialogue, a reached `until` count completes after its accepted action's page drains.
+    /// With omitted dialogue, reaching `until` completes immediately, even with an open page.
+    /// It does not adopt a new page or continue draining one already open; the next owner
+    /// handles it.
+    /// `settle_ms` bounds the step while a page is open and is not extended by dialogue
+    /// draining.
+    /// A count first observed after the deadline times out.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -1800,6 +1805,21 @@ impl InteractRun {
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let deadline = self.deadline;
+        let now = cx.tick.cx.active_now();
+        let reached = self.reach.is_none() && until_reached(self.until, &cx.tick.cx);
+        if deadline.is_some_and(|deadline| now >= deadline) && !(deadline == Some(now) && reached) {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "interact settle timeout",
+            ))));
+        }
+        if self.default_dialogue && reached {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
         if let Some(handle) = &self.dialogue {
             match poll_dialogue_step(handle, cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1815,9 +1835,6 @@ impl StepRun for InteractRun {
                         .cx
                         .active_now()
                         .saturating_sub(self.dialogue_started.take().unwrap());
-                    self.deadline = self
-                        .deadline
-                        .map(|deadline| deadline.saturating_add(elapsed));
                     self.round_deadline = self
                         .round_deadline
                         .map(|deadline| deadline.saturating_add(elapsed));
@@ -2019,6 +2036,13 @@ impl StepRun for InteractRun {
                     if self.until.is_some() {
                         self.round_deadline =
                             Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
+                    }
+                    if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: None,
+                        }));
                     }
                     if let Some(options) = &self.dialogue_options {
                         self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2297,7 +2321,12 @@ pub(super) struct UseOnArgs {
     /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Scene targets outside interaction range also need post-acceptance
     /// movement or primary animation; targets within range do not.
-    /// With omitted dialogue, a reached `until` count completes after its accepted action's page drains.
+    /// With omitted dialogue, reaching `until` completes immediately, even with an open page.
+    /// It does not adopt a new page or continue draining one already open; the next owner
+    /// handles it.
+    /// `settle_ms` bounds the step while a page is open and is not extended by dialogue
+    /// draining.
+    /// A count first observed after the deadline times out.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -2508,6 +2537,23 @@ impl UseOnRun {
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         loop {
+            if self.dialogue.is_some() {
+                let deadline = self.deadline;
+                let now = cx.tick.cx.active_now();
+                let reached = until_reached(self.until, &cx.tick.cx);
+                let reached_at_deadline = deadline == Some(now) && reached;
+                if deadline.is_some_and(|deadline| now >= deadline) && !reached_at_deadline {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
+                }
+                if self.default_dialogue && reached && (self.interaction.is_none() || self.accepted)
+                {
+                    return Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }));
+                }
+            }
             if let Some(handle) = &self.dialogue {
                 match poll_dialogue_step(handle, cx) {
                     Poll::Pending => return Poll::Pending,
@@ -2518,9 +2564,6 @@ impl StepRun for UseOnRun {
                             .cx
                             .active_now()
                             .saturating_sub(self.dialogue_started.take().unwrap());
-                        self.deadline = self
-                            .deadline
-                            .map(|deadline| deadline.saturating_add(elapsed));
                         self.round_deadline = self
                             .round_deadline
                             .map(|deadline| deadline.saturating_add(elapsed));
@@ -2555,6 +2598,13 @@ impl StepRun for UseOnRun {
             if timed_out && !reached_at_deadline {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
             }
+            if self.default_dialogue && self.accepted && until_reached(self.until, &cx.tick.cx) {
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                }));
+            }
             if self.interaction.is_none() {
                 if until_reached(self.until, &cx.tick.cx) {
                     return Poll::Ready(Ok(StepOutcome {
@@ -2581,6 +2631,8 @@ impl StepRun for UseOnRun {
                     // follow the observed target without re-entering that area.
                     self.tile = None;
                 }
+                self.deadline
+                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
                 if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
                 {
                     self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2593,8 +2645,6 @@ impl StepRun for UseOnRun {
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
-                self.deadline
-                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
                 let snapshot = cx.tick.cx.snapshot();
                 let Some(inventory) = snapshot.inventory() else {
                     return Poll::Pending;
@@ -2750,6 +2800,13 @@ impl StepRun for UseOnRun {
                             self.round_deadline = Some(
                                 cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS),
                             );
+                        }
+                        if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
+                            return Poll::Ready(Ok(StepOutcome {
+                                progress: None,
+                                evidence: cx.tick.cx.evidence(),
+                                receipt: None,
+                            }));
                         }
                     }
                 }
