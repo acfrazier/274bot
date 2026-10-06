@@ -494,7 +494,9 @@ fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
     let mut checked = Vec::new();
     let mut vacuous = Vec::new();
     for name in crate::names() {
-        let scenario = crate::get(name).unwrap();
+        let Some(scenario) = crate::get(name) else {
+            continue;
+        };
         if scenario.settings.wait_script_stop.is_none() {
             continue;
         }

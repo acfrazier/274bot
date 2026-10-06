@@ -6,14 +6,18 @@
 use crate::{start_compiled_step, Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
 use api::game_data::{QuestIdentityRow, SelectedGameData};
 use api::selected::SkillMinimum;
+use api::selected::{ClientRevision, FamilyPreparation};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::skill::Skill;
 use script::quester::path::{
     LoadoutCarryDocument, PathDocument, QuestLoadoutDocument, QuestRequirementKindDocument,
 };
+use script::quester::registry::{self, FolderSource};
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Qualification floor, not an eligibility gate or a claim of live PASS.
@@ -301,6 +305,95 @@ struct FixtureSeed<'a> {
     proof: Proof,
 }
 
+/// Optional JSON input shared by the headless and headed Path harnesses.
+#[derive(Debug, Deserialize)]
+pub struct QuesterPathSeeds {
+    pub stage: String,
+    pub stand: [i32; 3],
+    #[serde(default)]
+    pub loadout: Option<QuesterPathLoadout>,
+    #[serde(default)]
+    pub extra_items: Vec<(String, i32)>,
+    #[serde(default)]
+    pub seed_vars: Vec<(String, i32)>,
+    #[serde(default)]
+    pub before_relog: Vec<String>,
+    #[serde(default)]
+    pub expect: Vec<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum QuesterPathLoadout {
+    #[serde(rename = "path")]
+    Path(String),
+    #[serde(rename = "standard")]
+    Standard(String),
+}
+
+impl QuesterPathSeeds {
+    pub fn fixture_loadout(&self) -> Result<Option<FixtureLoadout<'_>>, String> {
+        self.loadout
+            .as_ref()
+            .map(|loadout| match loadout {
+                QuesterPathLoadout::Path(key) => Ok(FixtureLoadout::Path(key)),
+                QuesterPathLoadout::Standard(style) => match style.as_str() {
+                    "melee" => Ok(FixtureLoadout::Standard(StandardKit::Melee)),
+                    "magic" => Ok(FixtureLoadout::Standard(StandardKit::Magic)),
+                    "ranged" => Ok(FixtureLoadout::Standard(StandardKit::Ranged)),
+                    other => Err(format!("unknown standard kit {other:?}")),
+                },
+            })
+            .transpose()
+    }
+
+    pub fn extra_item_refs(&self) -> Vec<(&str, i32)> {
+        self.extra_items
+            .iter()
+            .map(|(item, quantity)| (item.as_str(), *quantity))
+            .collect()
+    }
+
+    pub fn seed_var_refs(&self) -> Vec<(&str, i32)> {
+        self.seed_vars
+            .iter()
+            .map(|(varp, value)| (varp.as_str(), *value))
+            .collect()
+    }
+
+    pub fn before_relog_steps(&self) -> Vec<Step> {
+        self.before_relog
+            .iter()
+            .cloned()
+            .map(|command| {
+                command_step(
+                    "seed account state before the final relog",
+                    command,
+                    Proof::SideTabAvailable { index: 3 },
+                )
+            })
+            .collect()
+    }
+}
+
+pub fn parse_quester_path_seeds(text: &str, source: &str) -> Result<QuesterPathSeeds, String> {
+    serde_json::from_str(text).map_err(|error| format!("parse {source}: {error}"))
+}
+
+/// Inputs shared by the headless Path cell and the headed catalog scenario.
+pub struct QuesterPathFixture<'a> {
+    pub name: &'static str,
+    pub quest_display: &'static str,
+    pub path: &'a PathDocument,
+    pub selected: &'a SelectedGameData,
+    pub stage: Option<&'a str>,
+    pub loadout: Option<FixtureLoadout<'a>>,
+    pub extra_items: &'a [(&'a str, i32)],
+    pub seed_vars: &'a [(&'a str, i32)],
+    pub stand: WorldTile,
+    pub before_relog: Vec<Step>,
+}
 /// Scenario ownership is independent of the cloneable Start observation.
 pub struct QuesterFixture {
     pub scenario: Scenario,
@@ -485,6 +578,91 @@ pub fn quester_stage_with_seeds(
     build_quest_fixture(request, role, stage_varp, seed_vars)
 }
 
+/// Build the same single-account Base40 fixture for headed and headless
+/// Path runs. `stage: None` starts from a clean quest account; an explicit
+/// stage uses the shared stage-seeding builder.
+pub fn build_quester_path_fixture(
+    request: QuesterPathFixture<'_>,
+) -> Result<QuesterFixture, String> {
+    let row = fixture_row(request.path.id.0.as_ref())?;
+    if row.profile != TestProfile::Base40 {
+        return Err(format!(
+            "{} does not have a Base40 qualification profile",
+            request.path.id.0
+        ));
+    }
+    if row.display != request.quest_display {
+        return Err(format!(
+            "{} fixture display {:?} differs from requested {:?}",
+            request.path.id.0, row.display, request.quest_display
+        ));
+    }
+    if request.path.kind != script::quester::path::PathKind::Quest
+        || request.path.partner.is_some()
+        || request.path.roles.len() != 1
+    {
+        return Err("Path fixture needs one single-account quest role".into());
+    }
+    let identity = request
+        .selected
+        .quest_identity()
+        .and_then(|table| {
+            table
+                .rows
+                .iter()
+                .find(|row| row.id == request.path.id.0.as_ref())
+        })
+        .ok_or_else(|| format!("no quest identity row for {}", request.path.id.0))?;
+    let mut fixture = if let Some(stage) = request.stage {
+        quester_stage_with_seeds(
+            QuesterStage {
+                name: request.name,
+                quest_display: request.quest_display,
+                path: request.path,
+                identity,
+                selected: request.selected,
+                stage,
+                loadout: request.loadout,
+                extra_items: request.extra_items,
+                stand: request.stand,
+            },
+            request.seed_vars,
+        )?
+    } else {
+        validate_path_identity(
+            request.path,
+            identity,
+            request.selected,
+            request.quest_display,
+        )?;
+        build_fixture(FixtureSeed {
+            name: request.name,
+            path: request.path,
+            selected: request.selected,
+            loadout: request.loadout,
+            extra_items: request.extra_items,
+            stand: request.stand,
+            seed_vars: request.seed_vars,
+            proof: Proof::QuestDone {
+                name: request.quest_display,
+            },
+        })?
+    };
+    if !request.before_relog.is_empty() {
+        let relog = fixture
+            .scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .ok_or("Path fixture has no final relog")?;
+        fixture
+            .scenario
+            .steps
+            .splice(relog..relog, request.before_relog);
+    }
+    Ok(fixture)
+}
+
 /// Prepare one explicitly selected paired role; the shared pair runner starts both.
 /// `stage_varp` names the pinned role's real content variable, not a synthetic identity.
 pub fn quester_role_stage(
@@ -520,15 +698,13 @@ pub fn quester_role_stage(
     Ok(fixture)
 }
 
-fn validate_identity(request: &QuesterStage<'_>) -> Result<(), String> {
-    let QuesterStage {
-        path,
-        identity,
-        quest_display,
-        selected,
-        ..
-    } = request;
-    if path.id.0.as_ref() != identity.id || *quest_display != identity.display {
+fn validate_path_identity(
+    path: &PathDocument,
+    identity: &QuestIdentityRow,
+    selected: &SelectedGameData,
+    quest_display: &str,
+) -> Result<(), String> {
+    if path.id.0.as_ref() != identity.id || quest_display != identity.display {
         return Err("fixture Path/selected quest identity mismatch".into());
     }
     let selected_identity = selected
@@ -542,6 +718,15 @@ fn validate_identity(request: &QuesterStage<'_>) -> Result<(), String> {
         return Err("fixture quest identity differs from selected content".into());
     }
     Ok(())
+}
+
+fn validate_identity(request: &QuesterStage<'_>) -> Result<(), String> {
+    validate_path_identity(
+        request.path,
+        request.identity,
+        request.selected,
+        request.quest_display,
+    )
 }
 
 fn validate_stage(
@@ -901,6 +1086,270 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
         },
         seed_commands,
     })
+}
+
+/// Load the currently published Path bytes. `reload_quester_path_source`
+/// decides whether that snapshot is bundled or supplied by a folder.
+pub fn load_quester_path_document(quest: &str) -> Result<(PathDocument, &'static str), String> {
+    let paths = registry::snapshot();
+    let source = paths.path_source(quest).label();
+    let bytes = paths
+        .bytes(quest)
+        .ok_or_else(|| format!("{quest} is not available from the {source} Path registry"))?;
+    let path: PathDocument =
+        serde_json::from_slice(bytes.as_ref()).map_err(|error| format!("{quest}: {error}"))?;
+    if path.id.0.as_ref() != quest {
+        return Err(format!(
+            "Path registry returned id {:?} for requested {quest}",
+            path.id.0
+        ));
+    }
+    Ok((path, source))
+}
+
+/// Publish one source in the existing Path registry and ensure it serves the
+/// requested id. An explicitly supplied folder must contain that Path rather
+/// than silently falling back to the embedded index.
+pub fn reload_quester_path_source(
+    quest: &str,
+    folder: Option<&Path>,
+) -> Result<&'static str, String> {
+    let source = if let Some(folder) = folder {
+        if !folder.is_absolute() || !folder.is_dir() {
+            return Err(format!(
+                "QUESTER_PATH_DIR must be an absolute directory: {}",
+                folder.display()
+            ));
+        }
+        FolderSource {
+            enabled: true,
+            folder: folder.to_owned(),
+        }
+    } else {
+        FolderSource::default()
+    };
+    let previous = registry::source();
+    registry::set_source(source.clone());
+    let loaded = (|| {
+        let selected =
+            FamilyPreparation::run(|_| api::game_data::for_revision(ClientRevision::R289))
+                .map_err(|error| format!("selected data worker: {error:?}"))?
+                .join()
+                .map_err(|error| format!("selected data worker: {error:?}"))?
+                .map_err(|error| format!("selected R289 data: {error}"))?;
+        let data = std::sync::Arc::clone(&selected);
+        let loaded = FamilyPreparation::run(move |worker| registry::reload(&data, worker))
+            .map_err(|error| format!("Path registry worker: {error:?}"))?
+            .join()
+            .map_err(|error| format!("Path registry worker: {error:?}"))?
+            .map_err(|error| format!("Path registry reload: {error:?}"))?;
+        let path_source = loaded.path_source(quest);
+        if loaded.bytes(quest).is_none() {
+            return Err(format!(
+                "{quest} is not served by the {} Path registry",
+                if source.enabled { "folder" } else { "embedded" }
+            ));
+        }
+        if source.enabled
+            && !matches!(
+                path_source,
+                script::quester::registry::PathSource::Folder
+                    | script::quester::registry::PathSource::Draft
+            )
+        {
+            return Err(format!(
+                "{quest} is not present in QUESTER_PATH_DIR {}",
+                source.folder.display()
+            ));
+        }
+        Ok(path_source.label())
+    })();
+    if loaded.is_err() {
+        registry::set_source(previous);
+    }
+    loaded
+}
+
+/// The initial sequence is the sequence corresponding to the Path's
+/// `not_started` colour. Teleporting to its first authored approach anchor
+/// gives the headed Path run the same deterministic starting point as its
+/// fixture builder.
+pub fn quester_path_start_anchor(path: &PathDocument) -> Result<WorldTile, String> {
+    let role = path
+        .roles
+        .first()
+        .filter(|_| path.roles.len() == 1)
+        .ok_or("Path start needs exactly one role")?;
+    let progress = role
+        .progress
+        .as_ref()
+        .ok_or("Path start role has no progress colours")?;
+    let not_started = progress.colour.not_started.0.as_ref();
+    let sequence = role
+        .sequences
+        .iter()
+        .find(|sequence| sequence.stage.0.as_ref() == not_started)
+        .ok_or_else(|| format!("Path has no not-started sequence {not_started}"))?;
+    for step in &sequence.steps {
+        if let Some(tile) = find_anchor_tile(&step.args)? {
+            return Ok(tile);
+        }
+    }
+    Err(format!(
+        "Path not-started sequence {not_started} has no authored anchor.tile"
+    ))
+}
+
+fn find_anchor_tile(value: &Value) -> Result<Option<WorldTile>, String> {
+    if let Some(tile) = value.get("anchor").and_then(|anchor| anchor.get("tile")) {
+        let coordinates = tile
+            .as_array()
+            .filter(|coordinates| coordinates.len() == 3)
+            .ok_or("Path anchor.tile must contain [x,z,level]")?;
+        let coordinate = |index: usize| {
+            coordinates[index]
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or("Path anchor.tile coordinates must be integers")
+        };
+        let tile = WorldTile {
+            x: coordinate(0)?,
+            z: coordinate(1)?,
+            level: coordinate(2)?,
+        };
+        if !(0..=16383).contains(&tile.x)
+            || !(0..=16383).contains(&tile.z)
+            || !(0..=3).contains(&tile.level)
+        {
+            return Err("Path anchor.tile is outside world coordinates".into());
+        }
+        return Ok(Some(tile));
+    }
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                if let Some(tile) = find_anchor_tile(value)? {
+                    return Ok(Some(tile));
+                }
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values() {
+                if let Some(tile) = find_anchor_tile(value)? {
+                    return Ok(Some(tile));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(None)
+}
+
+/// Runtime-selected `quester_path` scenario used by `panel-play --live`.
+pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
+    let quest = require_quester_path(std::env::var("QUESTER_PATH").ok())?;
+    let deadline = quester_path_deadline()?;
+    let folder = std::env::var_os("QUESTER_PATH_DIR").map(PathBuf::from);
+    reload_quester_path_source(&quest, folder.as_deref())?;
+    let (path, _) = load_quester_path_document(&quest)?;
+    let row = fixture_row(&quest)?;
+    let start = quester_path_start_anchor(&path)?;
+    let selected = api::game_data::for_revision(ClientRevision::R289)?;
+
+    let seeds = std::env::var_os("QUESTER_SEEDS")
+        .map(|path| {
+            let path = PathBuf::from(path);
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read {}: {error}", path.display()))?;
+            parse_quester_path_seeds(&text, "QUESTER_SEEDS")
+        })
+        .transpose()?;
+    if let Some(mode) = seeds.as_ref().and_then(|seeds| seeds.mode.as_deref()) {
+        if !matches!(mode, "stage" | "clean") {
+            return Err(format!("unknown smoke mode {mode:?}"));
+        }
+    }
+    let stand = if let Some(seeds) = &seeds {
+        let stand = WorldTile {
+            x: seeds.stand[0],
+            z: seeds.stand[1],
+            level: seeds.stand[2],
+        };
+        if stand != start {
+            return Err(format!(
+                "QUESTER_SEEDS stand ({},{},{}) must match Path start anchor ({},{},{})",
+                stand.x, stand.z, stand.level, start.x, start.z, start.level
+            ));
+        }
+        stand
+    } else {
+        start
+    };
+    let loadout = match &seeds {
+        Some(seeds) => seeds.fixture_loadout()?,
+        None => None,
+    };
+    let extra_items = seeds
+        .as_ref()
+        .map(QuesterPathSeeds::extra_item_refs)
+        .unwrap_or_default();
+    let seed_vars = seeds
+        .as_ref()
+        .map(QuesterPathSeeds::seed_var_refs)
+        .unwrap_or_default();
+    let before_relog = seeds
+        .as_ref()
+        .map(QuesterPathSeeds::before_relog_steps)
+        .unwrap_or_default();
+    let mut fixture = build_quester_path_fixture(QuesterPathFixture {
+        name: "quester_path",
+        quest_display: row.display,
+        path: &path,
+        selected: &selected,
+        stage: seeds.as_ref().map(|seeds| seeds.stage.as_str()),
+        loadout,
+        extra_items: &extra_items,
+        seed_vars: &seed_vars,
+        stand,
+        before_relog,
+    })?;
+    fixture.scenario.settings.script_settings_overrides = Some(fixture.start_settings);
+    fixture.scenario.settings.deadline = deadline;
+    fixture.scenario.settings.terminal_shot = Some("quester_path");
+    Ok(fixture.scenario)
+}
+
+fn require_quester_path(value: Option<String>) -> Result<String, String> {
+    let quest = value
+        .ok_or_else(|| "QUESTER_PATH is required; set it to a Path id such as `cook`".to_owned())?;
+    if quest.trim().is_empty() {
+        return Err("QUESTER_PATH must be a non-empty Path id".into());
+    }
+    Ok(quest)
+}
+
+fn quester_path_deadline() -> Result<Duration, String> {
+    let raw = std::env::var_os("QUESTER_PATH_DEADLINE_S")
+        .map(|raw| {
+            raw.into_string()
+                .map_err(|_| "QUESTER_PATH_DEADLINE_S must be UTF-8 seconds".to_owned())
+        })
+        .transpose()?;
+    quester_path_deadline_from(raw.as_deref())
+}
+
+fn quester_path_deadline_from(raw: Option<&str>) -> Result<Duration, String> {
+    const DEFAULT_SECONDS: u64 = 45 * 60;
+    let Some(raw) = raw else {
+        return Ok(Duration::from_secs(DEFAULT_SECONDS));
+    };
+    let seconds = raw
+        .parse::<u64>()
+        .map_err(|error| format!("invalid QUESTER_PATH_DEADLINE_S {raw:?}: {error}"))?;
+    if seconds == 0 {
+        return Err("QUESTER_PATH_DEADLINE_S must be greater than zero".into());
+    }
+    Ok(Duration::from_secs(seconds))
 }
 
 #[cfg(test)]
@@ -1358,5 +1807,89 @@ mod tests {
         .err()
         .unwrap()
         .contains("contradictory explicit seeds"));
+    }
+
+    #[test]
+    fn headed_path_fixture_uses_start_anchor_and_dynamic_quest_settings() {
+        let path = raw_cook();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let start = quester_path_start_anchor(&path).unwrap();
+        assert_eq!(
+            start,
+            WorldTile {
+                x: 3209,
+                z: 3215,
+                level: 0,
+            }
+        );
+        let fixture = build_quester_path_fixture(QuesterPathFixture {
+            name: "quester_path",
+            quest_display: "Cook's Assistant",
+            path: &path,
+            selected: &selected,
+            stage: None,
+            loadout: None,
+            extra_items: &[],
+            seed_vars: &[],
+            stand: start,
+            before_relog: vec![command_step(
+                "pre-relog fixture seed",
+                "givebank egg 1".into(),
+                Proof::SideTabAvailable { index: 3 },
+            )],
+        })
+        .unwrap();
+        assert_eq!(
+            fixture.start_settings,
+            Map::from_iter([("quests".into(), json!(["cook"]))])
+        );
+        assert_eq!(fixture.scenario.settings.start_script, Some("Quester"));
+        assert_eq!(
+            fixture.scenario.settings.terminal_shot,
+            Some("quester_path")
+        );
+        assert!(!fixture
+            .seed_commands
+            .iter()
+            .any(|command| command == "setvar cookquest 0"));
+        let setup = fixture
+            .scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "pre-relog fixture seed")
+            .unwrap();
+        let relog = fixture
+            .scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .unwrap();
+        assert!(setup < relog);
+        assert_eq!(
+            fixture.scenario.steps[relog + 1].wait.arm,
+            Proof::Arrived {
+                x: start.x,
+                z: start.z,
+                level: start.level,
+            }
+        );
+    }
+
+    #[test]
+    fn headed_path_requires_an_id_and_has_a_bounded_deadline() {
+        assert!(require_quester_path(None)
+            .unwrap_err()
+            .contains("QUESTER_PATH is required"));
+        assert!(require_quester_path(Some("  ".into())).is_err());
+        assert_eq!(
+            quester_path_deadline_from(None).unwrap(),
+            Duration::from_secs(45 * 60)
+        );
+        assert_eq!(
+            quester_path_deadline_from(Some("600")).unwrap(),
+            Duration::from_secs(600)
+        );
+        assert!(quester_path_deadline_from(Some("0")).is_err());
+        assert!(quester_path_deadline_from(Some("soon")).is_err());
     }
 }

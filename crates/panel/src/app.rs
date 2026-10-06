@@ -973,7 +973,7 @@ pub fn parse_live_args(
     }
     if let Some(name) = live.as_deref() {
         let script_ok = name.strip_prefix("script_").is_some_and(|n| {
-            n == host_play::external_loader::LIVE_SCENARIO || scenario::get(n).is_some()
+            n == host_play::external_loader::LIVE_SCENARIO || scenario::is_registered(n)
         });
         if name != "null_raster"
             && name != "stress50"

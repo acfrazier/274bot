@@ -174,7 +174,7 @@ impl LiveBoot {
                 {
                     crate::session::external_loader_fixture()
                 } else {
-                    scenario::get(scenario_name)
+                    scenario::try_get(scenario_name)?
                         .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
                 };
                 let scenario_deadline = scenario.settings.deadline;
