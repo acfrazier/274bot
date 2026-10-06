@@ -1361,19 +1361,91 @@ mod tests {
         }
     }
 
-    fn packed_world() -> &'static nav::world::NavWorld {
-        static PACK: std::sync::OnceLock<nav::world::NavWorld> = std::sync::OnceLock::new();
-        PACK.get_or_init(|| {
-            let path = std::env::var_os("WORLD_NAV_PACK")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::path::PathBuf::from(
-                        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-6/nav/289/274bot.navpack",
-                    )
-                });
-            nav::world::NavWorld::load_pack(&path)
-                .unwrap_or_else(|error| panic!("load nav pack {}: {error}", path.display()))
+    fn radius_one_tiles(centre: WorldTile) -> impl Iterator<Item = WorldTile> {
+        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+        (-radius..=radius).flat_map(move |dx| {
+            (-radius..=radius).map(move |dz| WorldTile {
+                x: centre.x + dx,
+                z: centre.z + dz,
+                level: centre.level,
+            })
         })
+    }
+
+    fn fishing_cover(method: &GatherMethod, area: WorkArea) -> Vec<WorldTile> {
+        complete_spots(method)
+            .into_iter()
+            .flatten()
+            .filter(|spot| fishing_spot_eligible(spot, area))
+            .flat_map(|spot| {
+                let bounds = movement_bounds(spot).expect("eligible spots have movement");
+                [
+                    spot.origin,
+                    WorldTile {
+                        x: bounds.min_x,
+                        z: bounds.min_z,
+                        level: bounds.level,
+                    },
+                    WorldTile {
+                        x: bounds.max_x,
+                        z: bounds.max_z,
+                        level: bounds.level,
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    /// Standable grid over the covered tiles. `blocked` cells are `SQ_BLOCKED`
+    /// (Catherby water); every other cell is standable, including Draynor shore.
+    fn synthetic_collision(
+        cover: impl IntoIterator<Item = WorldTile>,
+        blocked: impl IntoIterator<Item = WorldTile>,
+    ) -> nav::collision::WorldCollision {
+        let blocked: Vec<WorldTile> = blocked.into_iter().collect();
+        let pad = OBSERVATION_RADIUS + i32::from(RESOURCE_APPROACH_RADIUS);
+        let mut min_x = i32::MAX;
+        let mut min_z = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_z = i32::MIN;
+        for tile in cover.into_iter().chain(blocked.iter().copied()) {
+            min_x = min_x.min(tile.x - pad);
+            min_z = min_z.min(tile.z - pad);
+            max_x = max_x.max(tile.x + pad);
+            max_z = max_z.max(tile.z + pad);
+        }
+        assert!(
+            min_x <= max_x && min_z <= max_z,
+            "synthetic collision needs at least one covered tile"
+        );
+        let width = usize::try_from(max_x - min_x + 1).expect("collision width");
+        let height = usize::try_from(max_z - min_z + 1).expect("collision height");
+        let mut flags = vec![0u32; 4 * width * height];
+        let block = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+        for tile in &blocked {
+            let Ok(lx) = usize::try_from(tile.x - min_x) else {
+                continue;
+            };
+            let Ok(lz) = usize::try_from(tile.z - min_z) else {
+                continue;
+            };
+            if tile.level == 0 && lx < width && lz < height {
+                flags[lz * width + lx] = block;
+            }
+        }
+        let (walk, packed) = nav::collision::pack_walk(&flags);
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: min_x,
+                z: min_z,
+                level: 0,
+            },
+            width,
+            height,
+            walk,
+            blocked: packed,
+            flags: None,
+        }
     }
 
     fn area_arrival_ok(collision: &nav::collision::WorldCollision, stand: WorldTile) -> bool {
@@ -1989,6 +2061,26 @@ mod tests {
             radius: 40,
             ..GathererSettings::default()
         };
+        let water = WorldTile {
+            x: 2850,
+            z: 3423,
+            level: 0,
+        };
+        let collision = synthetic_collision(
+            fishing_cover(
+                method,
+                WorkArea {
+                    mode: AreaMode::Custom,
+                    anchor: WorldTile {
+                        x: 2848,
+                        z: 3426,
+                        level: 0,
+                    },
+                    radius: settings.radius,
+                },
+            ),
+            radius_one_tiles(water),
+        );
         for mode in [AreaMode::Auto, AreaMode::Start, AreaMode::Custom] {
             let area = WorkArea {
                 mode,
@@ -2013,7 +2105,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(&packed_world().collision),
+                    collision: Some(&collision),
                 },
             )
             .expect("the selected content supplies a resource observation stand");
@@ -2052,7 +2144,6 @@ mod tests {
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
-        let collision = &packed_world().collision;
         let water = WorldTile {
             x: 2850,
             z: 3423,
@@ -2073,6 +2164,7 @@ mod tests {
             anchor,
             radius: 40,
         };
+        let collision = synthetic_collision(fishing_cover(method, area), radius_one_tiles(water));
         let settings = GathererSettings {
             skill: "Fishing".into(),
             fishing_method: method.id.0.to_string(),
@@ -2090,7 +2182,7 @@ mod tests {
             "pinned 289 Catherby harpoon still origin-clamps the eastern placement to {water:?}"
         );
         assert!(
-            !area_arrival_ok(collision, water),
+            !area_arrival_ok(&collision, water),
             "{water:?} has no legal radius-one Area goal"
         );
         let target = resource_return_target(
@@ -2103,7 +2195,7 @@ mod tests {
                 now: 1,
                 skill_stat: 10,
                 avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(collision),
+                collision: Some(&collision),
             },
         )
         .expect("Catherby harpoon supplies a resource return stand");
@@ -2112,7 +2204,7 @@ mod tests {
             "Edgeville ranking used to pick the all-water eastern stand"
         );
         assert!(
-            area_arrival_ok(collision, target.tile),
+            area_arrival_ok(&collision, target.tile),
             "return stand {:?} must have a legal radius-one Area goal",
             target.tile
         );
@@ -2207,6 +2299,16 @@ mod tests {
                 anchor,
                 radius,
             };
+            let collision = synthetic_collision(
+                fishing_cover(method, area).into_iter().chain([
+                    bank_interior,
+                    north_door,
+                    anchor,
+                    spots[0],
+                    spots[1],
+                ]),
+                std::iter::empty::<WorldTile>(),
+            );
             let target = resource_return_target(
                 &catalog,
                 &[index],
@@ -2217,7 +2319,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(&packed_world().collision),
+                    collision: Some(&collision),
                 },
             )
             .expect("Draynor saltfish supplies a resource return stand");
@@ -2290,6 +2392,13 @@ mod tests {
             radius: area.radius,
             ..GathererSettings::default()
         };
+        let collision = synthetic_collision(
+            catalog
+                .spots(method, &area.region())
+                .expect("willow placements")
+                .map(|spot| spot.origin),
+            std::iter::empty::<WorldTile>(),
+        );
         let target = resource_return_target(
             &catalog,
             &[index],
@@ -2300,7 +2409,7 @@ mod tests {
                 now: 1,
                 skill_stat: 30,
                 avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(&packed_world().collision),
+                collision: Some(&collision),
             },
         )
         .expect("willow origin is the loc return stand");
