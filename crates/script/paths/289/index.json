@@ -8,6 +8,11 @@
     { "id": "imp", "file": "imp.json" },
     { "id": "vampire", "file": "vampire.json" },
     { "id": "demon", "file": "demon.json" },
-    { "id": "squire", "file": "squire.json" }
+    { "id": "squire", "file": "squire.json" },
+    {
+      "id": "hauntedmine",
+      "name": "Haunted Mine",
+      "unavailable": "Can't be played on this server: its game content has no Haunted Mine quest."
+    }
   ]
 }

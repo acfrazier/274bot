@@ -144,9 +144,11 @@ impl PredicatePlan for Flag {
 }
 
 fn validate_progress_quest(cx: &CompileContext<'_>, quest: &str) -> Result<(), CompileError> {
-    cx.quests
-        .quest(quest)
-        .map_err(|_| CompileError::code("unresolved-quest"))?;
+    if cx.kind != super::super::path::PathKind::Miniquest {
+        cx.quests
+            .quest(quest)
+            .map_err(|_| CompileError::code("unresolved-quest"))?;
+    }
     if cx.path.0.as_ref() != quest {
         return Err(CompileError::code("foreign-progress-quest"));
     }

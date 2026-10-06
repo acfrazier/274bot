@@ -2569,6 +2569,102 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
 }
 
 #[test]
+fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
+    let iso = IsolatedEnv::enter("tui-quester-paths-save-failure");
+    let blocker = iso.dir.join("not-a-directory");
+    std::fs::write(&blocker, b"file").unwrap();
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(blocker.join("panel-ui.json"));
+    let before = app.quester_paths.clone();
+    app.quester_paths.enabled = true;
+    app.quester_paths.folder = iso.dir.join("paths");
+    app.quester_paths_dirty = true;
+
+    session.project_quester_paths(&mut app);
+
+    assert_eq!(app.quester_paths, before);
+    assert!(!app.quester_paths_controller.is_running());
+    assert!(app.quester_paths_controller.notice_is_error());
+    assert!(app
+        .quester_paths_controller
+        .notice_text()
+        .unwrap()
+        .starts_with("Quest Paths settings were not saved:"));
+}
+
+#[test]
+fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
+    let iso = IsolatedEnv::enter("tui-quester-paths-startup");
+    let folder = iso.dir.join("paths");
+    std::fs::create_dir_all(&folder).unwrap();
+    for (id, name) in [("cook", "Folder Cook"), ("fresh-draft", "Fresh Draft")] {
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../script/paths/289/cook.json"
+        )))
+        .unwrap();
+        document["id"] = id.into();
+        document["display_name"] = name.into();
+        std::fs::write(
+            folder.join(format!("{id}.json")),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+    }
+    let prefs = iso.dir.join("panel-ui.json");
+    std::fs::write(
+        &prefs,
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": true,
+                "folder": folder.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(prefs.clone());
+    assert!(app.quester_paths.enabled);
+    let selected = api::selected::FamilyPreparation::run(|_| {
+        api::game_data::for_revision(client::io::ClientRevision::R289)
+            .expect("selected 289 game data")
+    })
+    .expect("spawn selected data worker")
+    .join()
+    .expect("selected data worker");
+
+    session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.quester_paths_controller.is_running() {
+        assert!(
+            Instant::now() < deadline,
+            "startup Path reload did not finish"
+        );
+        session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+        std::thread::yield_now();
+    }
+
+    let registry = script::quester::registry::snapshot();
+    assert!(registry.rows().iter().any(|row| {
+        row.id == "cook" && row.source == script::quester::registry::PathSource::Folder
+    }));
+    assert!(registry.rows().iter().any(|row| {
+        row.id == "fresh-draft" && row.source == script::quester::registry::PathSource::Draft
+    }));
+    let report = app
+        .quester_paths_controller
+        .notice_text()
+        .expect("startup validation report");
+    assert!(report.contains("2 folder documents"), "{report}");
+    assert!(report.contains("0 validation errors"), "{report}");
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[test]
 fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     let iso = IsolatedEnv::enter("tui-reap-finished");
     let mut play = empty_play();

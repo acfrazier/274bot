@@ -944,6 +944,9 @@ pub struct Session {
     pub(crate) walk_permissions_path: PathBuf,
     /// Last observed metadata for the shared policy projection.
     walk_permissions_stamp: Option<WalkPermissionsFileStamp>,
+    /// Shared Quester Paths settings and reload lifecycle.
+    pub(crate) quester_paths: frontend_core::QuesterPathsController,
+    pub(crate) quester_paths_folder_edit: String,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1340,6 +1343,13 @@ impl Session {
         let walk_permissions_path = crate::ui_state::path();
         let walk_permissions_stamp = walk_permissions_file_stamp_at(&walk_permissions_path);
         let walk_permissions = frontend_core::WalkGlobalsView::read_at(&walk_permissions_path);
+        let mut quester_paths = frontend_core::QuesterPathsController::default();
+        quester_paths.restore_at(&walk_permissions_path);
+        let quester_paths_folder_edit = quester_paths
+            .settings()
+            .folder
+            .to_string_lossy()
+            .into_owned();
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
@@ -1403,6 +1413,8 @@ impl Session {
             walk_permissions,
             walk_permissions_path,
             walk_permissions_stamp,
+            quester_paths,
+            quester_paths_folder_edit,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -4896,6 +4908,42 @@ impl Session {
     pub fn selected_game_data(&self) -> Option<std::sync::Arc<api::game_data::SelectedGameData>> {
         let profile = self.server_profile.as_ref()?;
         profile.game_data()
+    }
+
+    pub(crate) fn persist_quester_paths(
+        &mut self,
+        after: frontend_core::QuesterPathsView,
+    ) -> Result<(), String> {
+        let selected = self.selected_game_data();
+        let result =
+            self.quester_paths
+                .apply_changed_at(&self.walk_permissions_path, after, selected, true);
+        if result.is_ok() {
+            self.quester_paths_folder_edit = self
+                .quester_paths
+                .settings()
+                .folder
+                .to_string_lossy()
+                .into_owned();
+        }
+        result
+    }
+
+    pub(crate) fn start_quester_paths_reload(&mut self) {
+        let selected = self.selected_game_data();
+        self.quester_paths.request_reload(selected);
+    }
+
+    pub(crate) fn poll_quester_paths_reload(&mut self) {
+        let selected = self.selected_game_data();
+        self.advance_quester_paths_reload(selected);
+    }
+
+    pub(crate) fn advance_quester_paths_reload(
+        &mut self,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) {
+        self.quester_paths.advance(selected);
     }
 
     /// Observed equipment names/ids for the focused ingame character.

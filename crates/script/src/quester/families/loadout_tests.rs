@@ -276,6 +276,7 @@ fn evaluate_ready(plan: &Arc<dyn PredicatePlan>, snapshot: &GameSnapshot) -> Tru
         let bank = crate::quester::bank_memo::BankMemo::default();
         plan.evaluate(&PredicateContext {
             cx: &tick.cx,
+            pairs: tick.pairs,
             quests: &quests,
             progress: &[],
             required_after,

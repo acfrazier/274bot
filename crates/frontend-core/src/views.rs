@@ -1067,13 +1067,18 @@ pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&st
         })
 }
 
-/// The short text rows (quest display, queue letters) both front ends show
-/// under the status line, as `(label, value)`.
+/// The short text rows both front ends show under the status line, as
+/// `(label, value)`. Folder Path comments are shown only with a source marker.
 pub fn script_status_rows(
     status: &script::native::ScriptStatus,
 ) -> impl Iterator<Item = (&str, &str)> {
     status.fields.iter().filter_map(|field| match &field.value {
-        script::native::StatusValue::Text(value) if matches!(field.key, "display" | "queue") => {
+        script::native::StatusValue::Text(value)
+            if matches!(field.key, "display" | "queue" | "path_source")
+                || (field.key == "step_comment"
+                    && !value.is_empty()
+                    && status.fields.iter().any(|field| field.key == "path_source")) =>
+        {
             Some((field.label, value.as_ref()))
         }
         _ => None,

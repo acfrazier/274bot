@@ -12,23 +12,6 @@ fn held(id: i32, name: &str, slot: i32, count: i32, op: Option<&str>) -> ItemVie
     }
 }
 
-fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
-    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
-    ledger.as_mut().unwrap().complete_interaction(
-        &authority,
-        crate::native::InteractionReceipt {
-            request_id: authority.request_id().get(),
-            evidence: EvidenceStamp {
-                run: authority.run(),
-                tick,
-                sequence: tick,
-            },
-            accepted,
-            chat_since: 0,
-        },
-    );
-}
-
 fn continuation(options: dialogue::DialogueOptions) -> dialogue::DialogueArgs {
     dialogue::DialogueArgs {
         target: dialogue::DialogueTarget::Continuation,
@@ -349,6 +332,7 @@ fn loc_interaction_drains_shared_strict_dialogue_before_success() {
                 .poll(cx)))
             .is_pending()
         );
+        accept_last(&mut ledger, 3, true);
         snapshot.seed_chat_modal(100, vec!["Shall I operate this?".into()]);
         snapshot.seed_chat_options(
             vec![api::snapshot::ChatOptionView {
@@ -451,6 +435,7 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         );
     }
     let first_request = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
+    accept_last(&mut ledger, 4, true);
     snapshot.seed_inventory(vec![held(1, "Ore", 0, 1, None)], 28);
     let mut player = local_player(tile(5, 5));
     player.player.actor.animation = 625;
@@ -481,6 +466,7 @@ fn interact_until_waits_for_work_then_rearms_and_completes_at_actual_count() {
         "progress followed by idle must rearm promptly"
     );
     snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
+    accept_last(&mut ledger, 6, true);
     assert!(
         with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
             with_step(tick, |cx| run.poll(cx))
@@ -668,6 +654,7 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
                 with_step(tick, |cx| {
                     predicate.evaluate(&PredicateContext {
                         cx: &cx.tick.cx,
+                        pairs: cx.tick.pairs,
                         quests: cx.quests,
                         progress: cx.progress,
                         required_after: cx.required_after,
@@ -735,6 +722,7 @@ fn operation_fixture(
 ) -> (GameSnapshot, Arc<dyn StepPlan>, i32) {
     let goal = resolve_obj(compile, "seasoned_sardine").unwrap();
     let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
     snapshot.seed_inventory(
         vec![
             held(
@@ -1393,6 +1381,263 @@ fn operation_omission_no_page_settles_on_fresh_evidence_not_a_timer() {
             assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
         }
     });
+}
+
+#[test]
+fn operation_omission_waits_for_arrival_and_drains_distant_loc_page() {
+    compile_context_test(|compile| {
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "priestperiltempledoorl"},
+                "op": "Knock-at",
+                "radius": 8
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        let mut target = loc(
+            resolve_loc(compile, "priestperiltempledoorl").unwrap(),
+            "Door",
+            "Knock-at",
+        );
+        target.distance = 8;
+        let destination = target.tile;
+        let start = tile(destination.x - 8, destination.z);
+        snapshot.seed_locs(vec![target]);
+        snapshot.seed_local_player(local_player(start));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::Loc { .. }));
+        accept_last(&mut ledger, 3, true);
+        for tick in 3..=6 {
+            let mut player = local_player(tile(start.x + (tick as i32 - 2) * 2, start.z));
+            player.player.actor.moving = true;
+            snapshot.seed_local_player(player);
+            assert!(
+                with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending(),
+                "a Loc eight tiles away must not settle before arrival"
+            );
+            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        }
+        snapshot.seed_local_player(local_player(destination));
+        snapshot.seed_chat_modal(100, vec!["The arrival script opened this page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        for tick in 7..=8 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+        accept_last(&mut ledger, 9, true);
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        let mut result = Poll::Pending;
+        for tick in 9..=20 {
+            result = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            });
+            if result.is_ready() {
+                break;
+            }
+        }
+        assert!(matches!(result, Poll::Ready(Ok(_))));
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+    });
+}
+
+#[test]
+fn operation_omission_waits_for_fresh_idle_player_before_no_page() {
+    compile_context_test(|compile| {
+        for kind in ["interact", "use_on"] {
+            for until in [false, true] {
+                let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, until);
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                accept_last(&mut ledger, 3, true);
+                assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                if until {
+                    set_operation_count(&mut snapshot, goal, 2);
+                }
+                for (tick, moving, animation) in [(4, true, -1), (5, false, 123)] {
+                    let active_now = Duration::from_millis(1_800 + tick - 3);
+                    let mut player = local_player(tile(5, 5));
+                    player.player.actor.moving = moving;
+                    player.player.actor.animation = animation;
+                    snapshot.seed_local_player(player);
+                    assert!(
+                        with_tick(&snapshot, &mut ledger, tick, |tick| {
+                            tick.cx.active_now = active_now;
+                            with_step(tick, |cx| run.poll(cx))
+                        })
+                        .is_pending(),
+                        "{kind}, until={until}: movement or primary animation cannot prove completion"
+                    );
+                }
+                snapshot.seed_local_player(local_player(tile(5, 5)));
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 6, |tick| {
+                            tick.cx.active_now = Duration::from_millis(1_803);
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Ok(_))
+                    ),
+                    "{kind}, until={until}: fresh idle evidence needs no fixed delay"
+                );
+                assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            }
+        }
+    });
+}
+
+#[test]
+fn operation_omission_leaves_unsupported_main_modal_untouched() {
+    compile_context_test(|compile| {
+        let ui = compile.selected.dialogue_ui().unwrap();
+        let unsupported = [ui.scroll_root, ui.book_root].into_iter().max().unwrap() + 100;
+        for kind in ["interact", "use_on"] {
+            for until in [false, true] {
+                let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, until);
+                let mut ledger = None;
+                let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                    with_step(tick, |cx| plan.begin(cx).unwrap())
+                });
+                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                accept_last(&mut ledger, 3, true);
+                assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending());
+                snapshot.seed_main_modal(unsupported, vec![]);
+                if until {
+                    set_operation_count(&mut snapshot, goal, 2);
+                }
+                assert!(
+                    matches!(
+                        with_tick(&snapshot, &mut ledger, 4, |tick| {
+                            with_step(tick, |cx| run.poll(cx))
+                        }),
+                        Poll::Ready(Ok(_))
+                    ),
+                    "{kind}, until={until}: an unrelated main interface is not a dialogue page"
+                );
+                assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+            }
+        }
+    });
+}
+
+#[test]
+fn reach_scene_operations_require_accepted_receipt() {
+    for kind in [
+        reach::ReachKind::Loc {
+            id: Some(1000),
+            name: None,
+        },
+        reach::ReachKind::Name {
+            name: Arc::from("Door"),
+        },
+        reach::ReachKind::Npc {
+            id: 1000,
+            name: Arc::from("Guard"),
+        },
+    ] {
+        for accepted in [false, true] {
+            let mut snapshot = ready();
+            snapshot.seed_locs(vec![loc(1000, "Door", "Open")]);
+            snapshot.seed_npcs(vec![api::snapshot::NpcView {
+                index: 42,
+                r#type: Some(1000),
+                name: Some("Guard".into()),
+                actions: vec![Some("Open".into())],
+                tile: tile(3167, 3308),
+                distance: 3,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+                level: 3,
+                size: 1,
+                network: tile(3167, 3308),
+                x: 0,
+                z: 0,
+                yaw: 0,
+            }]);
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.actions
+                    .begin::<reach::Reach>(
+                        reach::ReachArgs {
+                            kind: kind.clone(),
+                            op: Arc::from("Open"),
+                            anchor: None,
+                            radius: 8,
+                            wait_if_missing: false,
+                            target_tile: None,
+                            reachable_only: false,
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap()
+            });
+            for tick in 2..=4 {
+                assert!(
+                    with_tick(&snapshot, &mut ledger, tick, |tick| {
+                        tick.actions.poll(&handle, &mut tick.cx)
+                    })
+                    .is_pending(),
+                    "scene operations need their own receipt, not an eligible poll"
+                );
+            }
+            accept_last(&mut ledger, 5, accepted);
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 5, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                }),
+                Poll::Ready(Ok(result)) if result == accepted
+            ));
+        }
+    }
 }
 
 #[test]
