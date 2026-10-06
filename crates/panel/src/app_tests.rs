@@ -1640,6 +1640,14 @@ fn parse_live_args_accepts_nav_full() {
 }
 
 #[test]
+fn parse_live_args_accepts_runtime_catalog_scenarios_without_building_them() {
+    assert_eq!(
+        parse_live_args(["--live", "script_quester_path"], None),
+        Ok(RunMode::Live("script_quester_path".into()))
+    );
+}
+
+#[test]
 fn parse_live_args_flag_wins_over_env() {
     assert_eq!(
         parse_live_args(["--live", "null_raster"], Some("other")),

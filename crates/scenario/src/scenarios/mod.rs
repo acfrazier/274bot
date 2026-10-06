@@ -97,12 +97,12 @@ pub(crate) use production::{
     tanner_bot_scenario, thiever_diagonal_door_trap_scenario, thiever_scenario,
     vial_filler_east_scenario, vial_filler_scenario, wildy_agility_scenario,
 };
-pub use quester::quester_stage;
 pub(crate) use quester::{
     quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,
-    quester_cook_scenario, quester_queue_scenario, quester_romeo_and_juliet_scenario,
-    quester_rune_mysteries_scenario, quester_sheep_scenario,
+    quester_cook_scenario, quester_path_scenario, quester_queue_scenario,
+    quester_romeo_and_juliet_scenario, quester_rune_mysteries_scenario, quester_sheep_scenario,
 };
+pub use quester::{quester_stage, quester_stage_with_watch};
 pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,
     ranging_guild_round_scenario,

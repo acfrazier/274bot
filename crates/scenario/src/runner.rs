@@ -538,6 +538,35 @@ impl ScenarioRunner {
         self.terminal_shot
     }
 
+    /// The scenario under test (for the headed recording sidecar).
+    pub fn scenario_name(&self) -> &'static str {
+        self.scenario.name
+    }
+
+    /// Recording sidecar position: `(step_index, total_steps, step_name)`.
+    /// Pre-start reads `seeding`, the proof tail reads `proving`, and a
+    /// finished run reads `done`, so every video timestamp lines up with
+    /// the step trace even outside the run steps.
+    pub fn record_step(&self) -> (usize, usize, &'static str) {
+        let total = self.scenario.steps.len();
+        match self.phase {
+            Phase::Seeding => (0, total, "seeding"),
+            Phase::Running => self.scenario.steps.get(self.step).map_or_else(
+                || (self.step.min(total), total, "running"),
+                |step| (self.step, total, step.name),
+            ),
+            Phase::Proving => (total, total, "proving"),
+            Phase::Done => (total, total, "done"),
+        }
+    }
+
+    /// Runner dirty-snapshot increments across the whole run (the evidence
+    /// `ticks` field); the recording sidecar lines each video timestamp
+    /// up with this count.
+    pub fn total_ticks(&self) -> u32 {
+        self.total_ticks
+    }
+
     /// Existing isolate self-stop reason the headed/TUI live path waits for
     /// after game-state proofs, when the scenario asked for a clean stop.
     pub fn wait_script_stop(&self) -> Option<&'static str> {
