@@ -470,14 +470,8 @@ fn interact_until_rearms_after_adjacent_instant_progress() {
     player.player.actor.animation = 625;
     snapshot.seed_local_player(player);
     accept_last(&mut ledger, 6, true);
-    assert!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending()
-    );
     assert!(matches!(
-        with_tick_reach(&snapshot, &reach_view, &mut ledger, 7, |tick| {
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 6, |tick| {
             with_step(tick, |cx| run.poll(cx))
         }),
         Poll::Ready(Ok(_))
@@ -722,6 +716,16 @@ fn operation_fixture(
     dialogue: Option<serde_json::Value>,
     until: bool,
 ) -> (GameSnapshot, Arc<dyn StepPlan>, i32) {
+    operation_fixture_with_settle(compile, kind, dialogue, until, 60_000)
+}
+
+fn operation_fixture_with_settle(
+    compile: &CompileContext<'_>,
+    kind: &str,
+    dialogue: Option<serde_json::Value>,
+    until: bool,
+    settle_ms: u64,
+) -> (GameSnapshot, Arc<dyn StepPlan>, i32) {
     let goal = resolve_obj(compile, "seasoned_sardine").unwrap();
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
@@ -756,7 +760,7 @@ fn operation_fixture(
         "use_on" => serde_json::json!({"item":"doogleleaves","target":{"item":"raw_sardine"}}),
         _ => unreachable!(),
     };
-    args["settle_ms"] = serde_json::json!(60_000);
+    args["settle_ms"] = serde_json::json!(settle_ms);
     if let Some(dialogue) = dialogue {
         args["dialogue"] = dialogue;
     }
@@ -1131,7 +1135,7 @@ fn operation_until_goal_observed_on_the_deadline_poll_wins_over_timeout() {
 }
 
 #[test]
-fn use_on_until_drains_post_use_page_after_pre_dispatch_drain() {
+fn use_on_until_leaves_post_use_page_for_the_next_owner() {
     compile_context_test(|compile| {
         for initial_page in [false, true] {
             let (mut snapshot, plan, goal) = operation_fixture(compile, "use_on", None, true);
@@ -1172,33 +1176,18 @@ fn use_on_until_drains_post_use_page_after_pre_dispatch_drain() {
             snapshot.seed_chat_options(vec![], 105);
             set_operation_count(&mut snapshot, goal, 2);
             assert!(
-                with_tick(&snapshot, &mut ledger, tick + 1, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                })
-                .is_pending(),
-                "initial_page={initial_page}: post-use page must prevent settlement"
+                matches!(
+                    with_tick(&snapshot, &mut ledger, tick + 1, |tick| {
+                        with_step(tick, |cx| run.poll(cx))
+                    }),
+                    Poll::Ready(Ok(_))
+                ),
+                "initial_page={initial_page}: a reached until completes without draining the post-use page"
             );
-            assert!(with_tick(&snapshot, &mut ledger, tick + 2, |tick| {
-                with_step(tick, |cx| run.poll(cx))
-            })
-            .is_pending());
-            assert!(matches!(
-                emitted(&ledger),
-                InteractReq::ContinueDialog { .. }
-            ));
-            accept_last(&mut ledger, tick + 3, true);
-            snapshot.seed_chat_modal(-1, vec![]);
-            snapshot.seed_chat_options(vec![], -1);
-            let mut result = Poll::Pending;
-            for tick in tick + 3..=tick + 16 {
-                result = with_tick(&snapshot, &mut ledger, tick, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                });
-                if result.is_ready() {
-                    break;
-                }
-            }
-            assert!(matches!(result, Poll::Ready(Ok(_))));
+            assert!(
+                matches!(emitted(&ledger), InteractReq::UseOn { .. }),
+                "only a pre-dispatch page may be continued"
+            );
         }
     });
 }
@@ -1232,7 +1221,7 @@ fn seed_operation_menu(snapshot: &mut GameSnapshot) {
 }
 
 #[test]
-fn operation_omission_drains_a_continue_page_after_acceptance_without_settling_open() {
+fn operation_omission_leaves_pages_after_reached_until_but_drains_without_until() {
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             for until in [false, true] {
@@ -1258,6 +1247,24 @@ fn operation_omission_drains_a_continue_page_after_acceptance_without_settling_o
                     snapshot.seed_chat_options(vec![], 105);
                     if until {
                         set_operation_count(&mut snapshot, goal, 2);
+                        assert!(
+                            matches!(
+                                with_tick(&snapshot, &mut ledger, 4, |tick| {
+                                    with_step(tick, |cx| run.poll(cx))
+                                }),
+                                Poll::Ready(Ok(_))
+                            ),
+                            "{kind}: reached until leaves the open page for the next owner"
+                        );
+                        assert!(ledger.as_ref().unwrap().outbox.iter().all(|request| {
+                            !matches!(
+                                request.effect,
+                                HostEffect::Interaction(
+                                    InteractReq::ContinueDialog { .. } | InteractReq::Answer { .. }
+                                )
+                            )
+                        }));
+                        continue;
                     }
                     for tick in 4..=5 {
                         assert!(
@@ -1316,6 +1323,26 @@ fn operation_omission_refuses_a_menu_after_acceptance_without_answering() {
                 seed_operation_menu(&mut snapshot);
                 if until {
                     set_operation_count(&mut snapshot, goal, 2);
+                }
+                if until {
+                    assert!(
+                        matches!(
+                            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                                with_step(tick, |cx| run.poll(cx))
+                            }),
+                            Poll::Ready(Ok(_))
+                        ),
+                        "{kind}: reached until leaves a menu for the next owner"
+                    );
+                    assert!(ledger.as_ref().unwrap().outbox.iter().all(|request| {
+                        !matches!(
+                            request.effect,
+                            HostEffect::Interaction(
+                                InteractReq::ContinueDialog { .. } | InteractReq::Answer { .. }
+                            )
+                        )
+                    }));
+                    continue;
                 }
                 assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
                     with_step(tick, |cx| run.poll(cx))
@@ -1895,8 +1922,8 @@ fn loc_interact_plan(settle_ms: u64, until: Option<(i32, s2::QuantityPlan)>) -> 
 #[test]
 fn interact_reached_until_completes_before_optional_scene_gate() {
     compile_context_test(|compile| {
-        // Probe A: a held action reaches its goal after acceptance while the
-        // player remains in motion. The no-page idle gate must not hide success.
+        // Once the count is reached, omitted dialogue completes immediately even
+        // when the player is still moving.
         let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1912,22 +1939,17 @@ fn interact_reached_until_completes_before_optional_scene_gate() {
         let mut moving = local_player(tile(5, 5));
         moving.player.actor.moving = true;
         snapshot.seed_local_player(moving);
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            tick.cx.active_now = Duration::from_millis(1_600);
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
-                tick.cx.active_now = Duration::from_millis(2_200);
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.cx.active_now = Duration::from_millis(1_600);
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
         ));
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
 
-        // Probe B: a scene action reaches its goal on the acceptance poll while
-        // the player is idle and no movement or animation is visible.
+        // A scene action that reaches its goal on acceptance also completes on
+        // that poll without waiting for movement, animation, or an idle tick.
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(vec![held(1, "Ore", 0, 0, None)], 28);
@@ -1950,16 +1972,9 @@ fn interact_reached_until_completes_before_optional_scene_gate() {
         );
         accept_last(&mut ledger, 3, true);
         snapshot.seed_inventory(vec![held(1, "Ore", 0, 2, None)], 28);
-        assert!(
+        assert!(matches!(
             with_tick_reach(&snapshot, &reach_view, &mut ledger, 3, |tick| {
                 tick.cx.active_now = Duration::from_millis(1_600);
-                with_step(tick, |cx| run.poll(cx))
-            })
-            .is_pending()
-        );
-        assert!(matches!(
-            with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
-                tick.cx.active_now = Duration::from_millis(2_200);
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
@@ -2144,4 +2159,285 @@ fn distant_instant_interact_still_requires_activity_then_fresh_idle() {
         Poll::Ready(Ok(_))
     ));
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+}
+
+#[test]
+fn interact_until_leaves_a_preexisting_page_for_the_next_owner() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
+        snapshot.seed_chat_modal(-1, vec!["An existing page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::Held { .. }));
+        accept_last(&mut ledger, 3, true);
+        set_operation_count(&mut snapshot, goal, 2);
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(matches!(emitted(&ledger), InteractReq::Held { .. }));
+    });
+}
+
+#[test]
+fn interact_until_leaves_a_later_page_during_the_dialogue_gap() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        snapshot.seed_chat_modal(-1, vec!["First page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+        accept_last(&mut ledger, 6, true);
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        for tick in 7..=12 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+
+        snapshot.seed_chat_modal(-1, vec!["Later page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        set_operation_count(&mut snapshot, goal, 2);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 13, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|request| matches!(
+                    &request.effect,
+                    HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+                ))
+                .count(),
+            1,
+            "the page that opens after the goal belongs to the next owner"
+        );
+    });
+}
+
+#[test]
+fn interact_settle_deadline_wins_when_a_page_opens_late() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, goal) =
+            operation_fixture_with_settle(compile, "interact", None, true, 3_000);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        set_operation_count(&mut snapshot, goal, 2);
+        snapshot.seed_chat_modal(-1, vec!["Late page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 8, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "interact settle timeout"
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(matches!(emitted(&ledger), InteractReq::Held { .. }));
+    });
+}
+
+#[test]
+fn interact_settle_deadline_bounds_an_active_dialogue_drain() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) =
+            operation_fixture_with_settle(compile, "interact", None, true, 3_000);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        snapshot.seed_chat_modal(-1, vec!["Page to drain.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 7, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "interact settle timeout"
+        ));
+    });
+}
+
+#[test]
+fn interact_until_completes_while_dialogue_driver_is_active() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, goal) =
+            operation_fixture_with_settle(compile, "interact", None, true, 60_000);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        accept_last(&mut ledger, 3, true);
+        snapshot.seed_chat_modal(-1, vec!["Page to continue.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+
+        accept_last(&mut ledger, 7, true);
+        set_operation_count(&mut snapshot, goal, 2);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 7, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|request| matches!(
+                    &request.effect,
+                    HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+                ))
+                .count(),
+            1,
+            "reaching until must not continue a later page"
+        );
+    });
+}
+
+#[test]
+fn use_on_settle_deadline_bounds_an_active_dialogue_drain() {
+    compile_context_test(|compile| {
+        let (mut snapshot, plan, _) =
+            operation_fixture_with_settle(compile, "use_on", None, true, 3_000);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+        accept_last(&mut ledger, 3, true);
+        snapshot.seed_chat_modal(-1, vec!["Use-on page.".into()]);
+        snapshot.seed_chat_options(vec![], 105);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
+        ));
+
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 7, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "use_on timeout"
+        ));
+    });
 }

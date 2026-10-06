@@ -422,17 +422,19 @@ activity, while a distant target still requires activity. Loc/Npc/name
 interactions require their own accepted dispatch receipt. This observation
 boundary covers pages that open on arrival or during the primary animation,
 without a fixed no-page delay.
-A reached `until` count completes after any page opened by its accepted action
-is drained, before the no-page gate. For other omission-mode success
-conditions, once the boundary is reached with no page, normal completion can
-proceed. `settle_ms` remains active through the no-page gate; a count first
-observed after its deadline does not complete the step. A page that opens later
-is outside this optional window.
+With omitted dialogue, reaching the `until` count completes immediately, even
+if a page is open or an optional dialogue driver is active. The step does not
+adopt a newly observed page or continue draining an existing one; any remaining
+page is left to the next owner, whether it pre-existed, was opened by the
+accepted action, or appeared while a dialogue driver was waiting. Other
+omission-mode success conditions still use the no-page boundary above.
+`settle_ms` bounds the step even while a page is open and is not extended for
+dialogue draining. A count observed on the exact deadline tick can complete;
+one first observed later times out.
 Use explicit `"continue"` when content requires a page, or the object form when
 it requires menu answers. Explicit `"none"` never touches dialogue and leaves
 those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
-Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
 identities. Book forwarding resolves the script's forward handler separately
 from its last-page visibility marker; generic component names in revision 274
@@ -460,8 +462,10 @@ Loc/name interaction targets may add `tile: [x,z,level]` and `source` inside
 `reachable_only: true` requires a known reachable candidate. `interact.until`
 uses the same `{obj,qty}` inventory-count goal as `use_on.until`; while the
 count is short, it waits for active work and re-arms after progress and idle.
-A reached count completes after any page opened by that accepted action is
-drained. `settle_ms` remains active and bounds the accepted step.
+With omitted dialogue, reaching the count completes immediately even if a page
+is open or an optional dialogue driver is active. The step leaves any remaining
+page to the next owner and does not continue draining it. `settle_ms` bounds the
+step while a page is open and is not extended for dialogue draining.
 
 If the clicked loc disappears or transforms, reach completes only after acceptance
 of that exact dispatched interaction. It does not select a replacement. Authored
@@ -471,8 +475,12 @@ settlement predicates still prove the quest effect.
 "source": "content provenance"}`. The optional tile selects an exact ground
 stack; source and target item ids remain explicit. Inventory-item targets
 dispatch through the host's canonical held-item operation, not an item alias.
-Optional dialogue drains before product/count completion and does not consume
-the operation's product-wait deadline.
+With omitted dialogue and `until`, reaching the count completes immediately
+even if a page is open or an optional dialogue driver is active. The step leaves
+any remaining page to the next owner and does not continue draining it.
+`settle_ms` bounds the step while a page is open and is not extended to drain it.
+For omitted dialogue without a reached `until` count, optional dialogue drains
+before product completion.
 
 For a footprint loc, `use_on` walks to the selected loc's full rotated footprint
 and waits for a legal approach side under live collision and force-approach
