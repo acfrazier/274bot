@@ -880,17 +880,11 @@ fn scenario_for(
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("Quester stage has a stand step");
-    // Quest colour needs the relog, but a dev-engine relog can reset position.
-    // Stage the exact combat stats and destination in the completed session.
-    let relog_index = scenario
-        .steps
-        .iter()
-        .rposition(|step| matches!(step.kind, StepKind::Relog))
-        .expect("Quester stage has a final quest-colour relog step");
-    let relog = scenario.steps.remove(relog_index);
-    scenario.steps.insert(stand_index, relog);
-    // Set the quest stage and disable auto-retaliation before arriving within
-    // the natural Warlord's range; its real dialogue starts the encounter.
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position). Stage the exact combat stats between them, in
+    // the completed session. Set the quest stage and disable
+    // auto-retaliation before arriving within the natural Warlord's range;
+    // its real dialogue starts the encounter.
     let pre_stand_steps = if case.is_ranged() {
         vec![
             cheat_step(
@@ -911,9 +905,11 @@ fn scenario_for(
     let pre_stand_count = pre_stand_steps.len();
     scenario
         .steps
-        .splice(stand_index + 1..stand_index + 1, pre_stand_steps);
+        .splice(stand_index..stand_index, pre_stand_steps);
+    // A ranged placement prepares after the stand (the Warlord dialogue
+    // needs it); every other case prepares between the relog and the stand.
     let preparation_index =
-        stand_index + (if placement.is_some() { 2 } else { 1 }) + pre_stand_count;
+        stand_index + pre_stand_count + usize::from(placement.is_some());
     let preparation = preparation_steps(case, stand, placement, Arc::clone(&capture));
     scenario
         .steps
@@ -10983,5 +10979,95 @@ fn manual_magic_has_no_incidental_splash_or_distance_gate() {
             magic_receipt(&capture, case)["splash_and_two_distance_numeric_queue_required"],
             false
         );
+    }
+}
+
+#[test]
+fn combat_fixture_stages_stats_between_relog_and_stand() {
+    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // relog resets position); the combat preparation must stay between them.
+    // The removed workarounds preserved colour-relog, seeds, stand (then the
+    // magic spawn teleport), so pin that exact between-order: every seed step
+    // sits strictly after the colour relog and strictly before the stand.
+    const COLOUR_RELOG: &str = "relog so the quest tab colour matches the seeded varp";
+    const STAND: &str = "stand at the quest start";
+    const SPAWN: &str = "spawn local Khazard Warlord and teleport five tiles east";
+    for case in [Case::M1, Case::MageAuto] {
+        let capture = Arc::new(Mutex::new(CombatCapture::default()));
+        let scenario = scenario_for(case, IMP_START, None, Arc::clone(&capture));
+        let relog = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == COLOUR_RELOG)
+            .expect("combat fixture has a colour relog");
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == STAND)
+            .expect("combat fixture has a stand step");
+        assert!(
+            relog < stand,
+            "{case:?}: stand teleport must follow the colour relog"
+        );
+        // The colour relog is the last relog: a seed between the tutorial
+        // relog and the colour relog would not survive to Start.
+        assert_eq!(
+            scenario
+                .steps
+                .iter()
+                .rposition(|step| matches!(step.kind, StepKind::Relog)),
+            Some(relog),
+            "{case:?}: the colour relog must be the last relog"
+        );
+        let between = |name: &'static str| {
+            let hits: Vec<usize> = scenario
+                .steps
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| step.name == name)
+                .map(|(index, _)| index)
+                .collect();
+            assert!(
+                !hits.is_empty(),
+                "{case:?}: combat fixture is missing {name:?}"
+            );
+            for hit in hits {
+                assert!(
+                    relog < hit && hit < stand,
+                    "{case:?}: {name:?} at {hit} must sit between the colour relog ({relog}) and the stand ({stand})"
+                );
+            }
+        };
+        between("seed combat stat before Start");
+        between("wear and observe melee weapon before Start");
+        let spawns: Vec<usize> = scenario
+            .steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| step.name == SPAWN)
+            .map(|(index, _)| index)
+            .collect();
+        if case.is_magic() {
+            between("seed exact mage equipment and runes before Start");
+            assert_eq!(
+                spawns.as_slice(),
+                &[stand + 1],
+                "{case:?}: magic spawn teleport must follow the stand immediately"
+            );
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .expect("combat fixture has StartScript");
+            assert!(
+                stand + 1 < start,
+                "{case:?}: magic spawn teleport must precede StartScript"
+            );
+        } else {
+            assert!(
+                spawns.is_empty(),
+                "{case:?}: melee fixtures must not spawn the warlord"
+            );
+        }
     }
 }
