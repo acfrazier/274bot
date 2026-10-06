@@ -752,6 +752,7 @@ impl Quester {
             &mut cx,
             &self.path.provisioning,
             self.active_loadout.as_deref(),
+            self.stage.as_ref(),
         );
         while let Some(event) = self.provisioner.take_trace_event() {
             self.trace_step_event(tick.output, event);

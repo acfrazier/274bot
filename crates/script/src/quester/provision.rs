@@ -9,6 +9,7 @@ use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
+use api::selected::FactKey;
 use api::snapshot::{ItemView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
@@ -106,6 +107,7 @@ impl Provisioner {
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         if self.acquire_finished {
             self.acquire_run = None;
@@ -130,7 +132,7 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
-        self.poll_prepare(cx, plan, active_loadout)
+        self.poll_prepare(cx, plan, active_loadout, current_stage)
     }
 
     pub fn cancel(&mut self) {
@@ -217,6 +219,7 @@ impl Provisioner {
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let snapshot = cx.tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
@@ -230,8 +233,14 @@ impl Provisioner {
         let inventory = inventory.value;
         let capacity = i32::from(capacity.value);
         let mut needs = Needs::new();
+        let current = stage_index(plan, current_stage);
 
         for item in plan.items.iter() {
+            if !item_due(item, current) {
+                // The quest has not reached this item's stage yet: no need,
+                // and no Unknown-bank scan, until it is due.
+                continue;
+            }
             if item.kind == CompiledItemKind::Acquirable && item.acquire.is_none() {
                 // Authored steps may gather or transform these goals in stages.
                 // Consider their bank hints only after the immediate needs.
@@ -366,6 +375,7 @@ impl Provisioner {
             .items
             .iter()
             .filter(|item| item.kind == CompiledItemKind::Acquirable && item.acquire.is_none())
+            .filter(|item| item_due(item, current))
         {
             let target = i32::try_from(item.qty).map_err(|_| {
                 ActionError::Unavailable(Arc::from("compiled item quantity overflow"))
@@ -1055,6 +1065,19 @@ fn count_item(inventory: &[ItemView], id: i32) -> i32 {
         .sum()
 }
 
+/// Index of the quest's current stage in compiled sequence order.
+/// Unknown (or unlisted) stages resolve to `None`, which keeps gated
+/// items out: an early acquisition must never start on a guess.
+fn stage_index(plan: &CompiledProvisioning, current_stage: Option<&FactKey>) -> Option<usize> {
+    let stage = current_stage?;
+    plan.stages.iter().position(|key| key == stage)
+}
+
+fn item_due(item: &super::compile::CompiledQuestItem, current: Option<usize>) -> bool {
+    item.from_stage_index
+        .is_none_or(|gate| current.is_some_and(|stage| stage >= gate))
+}
+
 fn occupied_slots(inventory: &[ItemView]) -> i32 {
     i32::try_from(inventory.iter().filter(|row| row.count > 0).count()).unwrap_or(i32::MAX)
 }
@@ -1409,6 +1432,8 @@ mod tests {
             kind,
             acquire: acquire.map(Arc::from),
             stackable: false,
+            from_stage: None,
+            from_stage_index: None,
         }
     }
 
@@ -1424,6 +1449,7 @@ mod tests {
             bank,
             bank_required: false,
             items: Arc::from(items),
+            stages: Arc::from(Vec::new()),
             tools: Arc::from(Vec::new()),
             keep_ids: Arc::from(Vec::new()),
             coin_float: 0,
@@ -1458,7 +1484,35 @@ mod tests {
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            provisioner.poll(&mut cx, plan, active_loadout)
+            provisioner.poll(&mut cx, plan, active_loadout, None)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
+    fn poll_once_at(
+        provisioner: &mut Provisioner,
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        tick: u64,
+        plan: &CompiledProvisioning,
+        active_loadout: Option<&str>,
+        stage: Option<&FactKey>,
+        memo: &BankMemo,
+        banks: &Arc<api::named_banks::NamedBankFacts>,
+        quests: &QuestCatalog,
+    ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        with_tick(snapshot, ledger, tick, |native| {
+            let required_after = native.cx.evidence();
+            let mut cx = StepContext {
+                tick: native,
+                quests,
+                progress: &[],
+                required_after,
+                bank: memo,
+                banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
+            };
+            provisioner.poll(&mut cx, plan, active_loadout, stage)
         })
     }
 
@@ -2303,5 +2357,98 @@ mod tests {
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
         assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn staged_item_waits_for_its_stage_and_skips_the_unknown_bank_scan() {
+        let mut item = compiled_item(
+            42,
+            "Quest token",
+            1,
+            CompiledItemKind::Acquirable,
+            Some("acquire:token"),
+        );
+        item.from_stage = Some(FactKey::new("quest:1"));
+        item.from_stage_index = Some(1);
+        let mut plan = provisioning(vec![item], vec![42], None);
+        plan.stages = Arc::from(vec![FactKey::new("quest:0"), FactKey::new("quest:1")]);
+        plan.recipes.insert(
+            Arc::from("acquire:token"),
+            CompiledAcquireRecipe {
+                steps: Arc::from(Vec::new()),
+                peak_items: Arc::from([]),
+                consumed_ids: Arc::from([]),
+            },
+        );
+        let snapshot = ready_snapshot(Vec::new());
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let early = FactKey::new("quest:0");
+        let gated = FactKey::new("quest:1");
+
+        // Unknown and earlier stages: the item is not due, so the
+        // Unknown bank is never scanned for it.
+        for stage in [None, Some(&early)] {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let memo = BankMemo::default();
+            assert!(
+                matches!(
+                    poll_once_at(
+                        &mut provisioner,
+                        &snapshot,
+                        &mut ledger,
+                        1,
+                        &plan,
+                        None,
+                        stage,
+                        &memo,
+                        &banks,
+                        &quests,
+                    ),
+                    Poll::Ready(Ok(ProvisionEvent::Ready))
+                ),
+                "gated item must produce no need before its stage"
+            );
+            assert!(ledger.is_none());
+        }
+
+        // At the gated stage the missing item scans the Unknown bank.
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memo = BankMemo::default();
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            Some(&gated),
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+
+        // With the bank observed empty the gated item runs its recipe.
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memo = known_empty(42);
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            Some(&gated),
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
     }
 }

@@ -1564,7 +1564,8 @@ pub(crate) struct InteractTarget {
     /// Selected inventory item config for an operation on its observed slot.
     #[serde(default)]
     pub(crate) held: Option<String>,
-    /// Exact loc tile. The source field is required with this tile.
+    /// Exact loc tile: this specific loc. Without it, any matching loc in the
+    /// anchor's area may be chosen. The source field is required with this tile.
     #[serde(default)]
     pub(crate) tile: Option<[i32; 3]>,
     /// Provenance for an explicit loc tile.
@@ -1580,7 +1581,10 @@ pub(crate) struct InteractArgs {
     pub(crate) target: InteractTarget,
     /// Interaction option offered by the selected target.
     pub(crate) op: String,
-    /// Optional approach anchor; locs are selected nearest this authored tile.
+    /// Optional approach anchor. A target without an exact tile is chosen inside
+    /// the anchor's area (anchor ± max(radius, 10)): a reachable match nearest by
+    /// walking distance, anchor distance breaking ties. When none is reachable
+    /// from the player, the step walks to the area first.
     #[serde(default)]
     pub(crate) anchor: Option<AnchorArg>,
     /// Maximum interaction distance; 0 or omitted means 1 tile.
@@ -1611,7 +1615,7 @@ pub(crate) struct InteractArgs {
     /// Repeat this operation until the observed inventory reaches the required count.
     #[serde(default)]
     pub(crate) until: Option<UseOnUntil>,
-    /// Filter loc candidates through the current known reach view.
+    /// Only choose a loc candidate the live reach view proves reachable.
     #[serde(default)]
     pub(crate) reachable_only: bool,
 }
@@ -1771,6 +1775,8 @@ impl StepPlan for InteractPlan {
             until: begin_until(self.until.as_ref(), cx)?,
             target_tile: self.target_tile,
             reachable_only: self.reachable_only,
+            round_pick: None,
+            retargets_left: reach::RETARGET_LIMIT,
             round_before: None,
             round_deadline: None,
             round_accepted: false,
@@ -1808,8 +1814,12 @@ struct InteractRun {
     scene_activity_observed: bool,
     scene_in_range_at_acceptance: bool,
     until: Option<(i32, i32)>,
+    /// Authored exact loc tile; `None` makes the target fungible.
     target_tile: Option<WorldTile>,
     reachable_only: bool,
+    /// The fungible loc chosen for this round's stand approach.
+    round_pick: Option<WorldTile>,
+    retargets_left: u8,
     round_before: Option<i32>,
     round_deadline: Option<Duration>,
     round_accepted: bool,
@@ -1821,6 +1831,8 @@ impl InteractRun {
         self.dialogue_page = None;
         self.reach = None;
         self.started = false;
+        self.round_pick = None;
+        self.retargets_left = reach::RETARGET_LIMIT;
         self.round_before = None;
         self.round_deadline = None;
         self.round_accepted = false;
@@ -1829,6 +1841,100 @@ impl InteractRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+    }
+
+    /// Only a reachable match may be clicked: authored reachability, or
+    /// unanchored inventory repetition.
+    fn strict(&self) -> bool {
+        self.reachable_only || (self.tile.is_none() && self.until.is_some())
+    }
+
+    /// The loc this round is pinned to: the authored tile, else the chosen one.
+    fn pinned_tile(&self) -> Option<WorldTile> {
+        self.target_tile.or(self.round_pick)
+    }
+
+    fn loc_selector(&self) -> Option<(Option<i32>, Option<&str>, i32)> {
+        match &self.kind {
+            reach::ReachKind::Loc { id, name } => Some((*id, name.as_deref(), reach::PROBE_RADIUS)),
+            reach::ReachKind::Name { name } => Some((None, Some(name.as_ref()), self.radius)),
+            _ => None,
+        }
+    }
+
+    /// While an approach walk runs for a fungible target, switch to a
+    /// reachable match that the chooser now ranks first, when it lies within
+    /// [`reach::RETARGET_STEPS`] and beats the current pick. Bounded per round.
+    fn retarget_while_walking(&mut self, cx: &crate::native::ActionContext<'_>) -> bool {
+        if self.target_tile.is_some() || self.retargets_left == 0 {
+            return false;
+        }
+        let none = reach::Avoid::default();
+        let found = if let Some((id, name, radius)) = self.loc_selector() {
+            reach::choose_loc(
+                cx,
+                id,
+                name,
+                Some(&self.op),
+                reach::Area::new(self.tile, radius),
+                None,
+                &none,
+            )
+            .reachable()
+            .filter(|loc| Some(loc.tile) != self.round_pick)
+            .and_then(|loc| {
+                let steps = reach::loc_route_steps(cx, loc)?;
+                let current = self.round_pick.and_then(|pick| {
+                    reach::choose_loc(
+                        cx,
+                        id,
+                        name,
+                        Some(&self.op),
+                        reach::Area::new(self.tile, radius),
+                        Some(pick),
+                        &none,
+                    )
+                    .reachable()
+                    .and_then(|loc| reach::loc_route_steps(cx, loc))
+                });
+                current
+                    .is_none_or(|current| steps < current)
+                    .then_some((steps, Some(loc.tile)))
+            })
+        } else {
+            match &self.kind {
+                reach::ReachKind::Npc { id, .. } => reach::choose_npc(
+                    cx,
+                    *id,
+                    Some(&self.op),
+                    reach::Area::new(self.tile, self.radius),
+                    &none,
+                )
+                .reachable()
+                .and_then(|npc| reach::npc_route_steps(cx, npc))
+                .map(|steps| (steps, None)),
+                reach::ReachKind::Ground { id, .. } => reach::choose_ground(
+                    cx,
+                    *id,
+                    None,
+                    reach::ground_area(self.tile, self.radius),
+                    &none,
+                )
+                .reachable()
+                .and_then(|item| reach::ground_route_steps(cx, item))
+                .map(|steps| (steps, None)),
+                _ => None,
+            }
+        };
+        let Some((steps, pick)) = found else {
+            return false;
+        };
+        if steps > reach::RETARGET_STEPS {
+            return false;
+        }
+        self.round_pick = pick;
+        self.retargets_left -= 1;
+        true
     }
 
     fn note_dialogue_progress(&mut self, cx: &crate::native::ActionContext<'_>) {
@@ -1966,7 +2072,6 @@ impl StepRun for InteractRun {
             self.radius,
             self.tile,
             self.target_tile,
-            self.reachable_only || (self.tile.is_none() && self.until.is_some()),
         ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
             || cx.tick.cx.snapshot().inventory().is_some());
         if self.round_accepted {
@@ -1993,7 +2098,13 @@ impl StepRun for InteractRun {
         }
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    if !self.retarget_while_walking(&cx.tick.cx) {
+                        return Poll::Pending;
+                    }
+                    // Dropping the handle revokes the approach walk.
+                    self.walk = None;
+                }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     walk_step_evidence(receipt)?;
@@ -2002,40 +2113,34 @@ impl StepRun for InteractRun {
             }
         }
         if !self.started {
-            if let Some(anchor) = self.tile {
-                let selector = match &self.kind {
-                    reach::ReachKind::Loc { id, name } => {
-                        Some((*id, name.as_deref(), reach::PROBE_RADIUS))
-                    }
-                    reach::ReachKind::Name { name } => {
-                        Some((None, Some(name.as_ref()), self.radius))
-                    }
-                    _ => None,
+            if let (Some(anchor), Some((id, name, radius))) = (self.tile, self.loc_selector()) {
+                let none = reach::Avoid::default();
+                let area = reach::Area::new(Some(anchor), radius);
+                let choose = |pinned| {
+                    reach::choose_loc(&cx.tick.cx, id, name, Some(&self.op), area, pinned, &none)
                 };
-                if let Some((id, name, radius)) = selector {
-                    if let Some(loc) = reach::nearest_loc(
-                        &cx.tick.cx,
-                        id,
-                        name,
-                        Some(&self.op),
-                        Some(anchor),
-                        radius,
-                        self.target_tile,
-                        self.reachable_only,
-                    ) {
-                        self.target_tile = Some(loc.tile);
-                        if !reach::loc_arrived(&cx.tick.cx, loc) {
-                            self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(
-                                    loc.tile,
-                                    1,
-                                    reach::loc_walk_id(loc),
-                                    cx.required_after,
-                                ),
-                                &mut cx.tick.cx,
-                            )?);
-                            return Poll::Pending;
-                        }
+                let mut pick = choose(self.pinned_tile());
+                if matches!(pick, reach::Pick::None) && self.target_tile.is_none() {
+                    // The round's fungible pick is gone: choose again.
+                    pick = choose(None);
+                }
+                let chosen = pick.select(self.reachable_only).map(|loc| {
+                    (
+                        loc.tile,
+                        reach::loc_walk_id(loc),
+                        reach::loc_arrived(&cx.tick.cx, loc),
+                    )
+                });
+                if let Some((tile, walk_id, arrived)) = chosen {
+                    if self.target_tile.is_none() {
+                        self.round_pick = Some(tile);
+                    }
+                    if !arrived {
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(tile, 1, walk_id, cx.required_after),
+                            &mut cx.tick.cx,
+                        )?);
+                        return Poll::Pending;
                     }
                 }
             }
@@ -2115,9 +2220,8 @@ impl StepRun for InteractRun {
                     anchor: self.tile,
                     radius: self.radius,
                     wait_if_missing: self.wait_if_missing,
-                    target_tile: self.target_tile,
-                    reachable_only: self.reachable_only
-                        || (self.tile.is_none() && self.until.is_some()),
+                    target_tile: self.pinned_tile(),
+                    reachable_only: self.strict(),
                 },
                 &mut cx.tick.cx,
             )?);
@@ -2139,8 +2243,8 @@ impl StepRun for InteractRun {
                         &self.kind,
                         Some(&self.op),
                         self.radius,
-                        self.target_tile,
-                        self.reachable_only || (self.tile.is_none() && self.until.is_some()),
+                        self.pinned_tile(),
+                        self.strict(),
                     );
                     if self.until.is_some() {
                         self.round_deadline =
@@ -2312,32 +2416,35 @@ fn loc_within_interaction_range(
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 ) -> bool {
-    reach::nearest_loc(cx, id, name, op, None, radius, target_tile, reachable_only)
-        .is_some_and(|loc| loc.distance <= 1)
+    reach::choose_loc(
+        cx,
+        id,
+        name,
+        op,
+        reach::Area::new(None, radius),
+        target_tile,
+        &reach::Avoid::default(),
+    )
+    .select(reachable_only)
+    .is_some_and(|loc| loc.distance <= 1)
 }
 
+/// The chosen NPC is operable now: beside its footprint, across no wall.
 fn npc_within_interaction_range(
     cx: &crate::native::ActionContext<'_>,
     id: i32,
     op: Option<&str>,
     radius: i32,
 ) -> bool {
-    cx.snapshot().npcs().is_some_and(|npcs| {
-        npcs.value
-            .iter()
-            .filter(|npc| {
-                npc.r#type == Some(id as usize)
-                    && npc.distance <= radius
-                    && op.is_none_or(|op| {
-                        npc.actions
-                            .iter()
-                            .flatten()
-                            .any(|action| action.eq_ignore_ascii_case(op))
-                    })
-            })
-            .min_by_key(|npc| npc.distance)
-            .is_some_and(|npc| npc.distance <= 1)
-    })
+    reach::choose_npc(
+        cx,
+        id,
+        op,
+        reach::Area::new(None, radius),
+        &reach::Avoid::default(),
+    )
+    .any()
+    .is_some_and(|npc| reach::npc_adjacent(cx, npc))
 }
 
 fn scene_target_within_interaction_range(
@@ -2407,7 +2514,11 @@ pub(super) struct UseOnArgs {
     item: String,
     /// NPC, location, or item target; exactly one is required.
     target: UseOnTarget,
-    /// Optional approach anchor; locs are selected nearest this authored tile.
+    /// Optional approach anchor. NPC and ground targets are chosen inside the
+    /// anchor's area (anchor ± max(radius, 10)): a reachable match nearest by
+    /// walking distance, anchor distance breaking ties. An NPC must be beside its
+    /// footprint across no wall before the use is sent; a chased NPC is re-read
+    /// every tick, and "I can't reach that!" re-picks at once.
     #[serde(default)]
     anchor: Option<AnchorArg>,
     /// Maximum interaction distance; 0 or omitted means 1 tile.
@@ -2593,6 +2704,12 @@ impl StepPlan for UseOnPlan {
             accepted_tick: None,
             scene_activity_observed: false,
             scene_in_range_at_acceptance: false,
+            avoid: reach::Avoid::default(),
+            chase: None,
+            chase_rewalks: CHASE_REWALKS,
+            anchor_walk: false,
+            retargets_left: reach::RETARGET_LIMIT,
+            dispatched: None,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -2630,7 +2747,22 @@ struct UseOnRun {
     accepted_tick: Option<u64>,
     scene_activity_observed: bool,
     scene_in_range_at_acceptance: bool,
+    /// Targets that answered "I can't reach that!", briefly skipped.
+    avoid: reach::Avoid,
+    /// The chased NPC index, the walk goal, and whether the NPC was
+    /// reachable when the chase began.
+    chase: Option<(usize, WorldTile, bool)>,
+    chase_rewalks: u8,
+    /// The current walk is the fallback walk to the authored anchor.
+    anchor_walk: bool,
+    retargets_left: u8,
+    /// The fungible target of the last dispatch, for "I can't reach that!".
+    dispatched: Option<reach::AvoidKey>,
 }
+
+/// Re-walks allowed when a chased NPC moves off the walk goal.
+const CHASE_REWALKS: u8 = 6;
+
 impl UseOnRun {
     fn clear_round(&mut self) {
         self.interaction = None;
@@ -2643,6 +2775,66 @@ impl UseOnRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+        self.dispatched = None;
+    }
+
+    fn area(&self) -> reach::Area {
+        reach::Area::new(self.tile, self.radius)
+    }
+
+    /// Re-read a chased NPC each tick. Gone, out of the area, already
+    /// adjacent, newly unreachable, or moved off the walk goal ends the walk
+    /// so the chooser picks again before any use is sent. A chase that began
+    /// unreachable is a nav approach and is not cut short for staying so.
+    fn chase_needs_repick(&mut self, cx: &crate::native::ActionContext<'_>) -> bool {
+        let Some((index, goal, reachable_at_start)) = self.chase else {
+            return false;
+        };
+        let Some(npcs) = cx.snapshot().npcs() else {
+            return false;
+        };
+        let Some(npc) = npcs
+            .value
+            .iter()
+            .find(|npc| npc.index == index && npc.r#type == Some(self.target_id as usize))
+        else {
+            return true;
+        };
+        if !self.area().contains(npc.tile, npc.distance)
+            || reach::npc_adjacent(cx, npc)
+            || (reachable_at_start
+                && reach::reach_known(cx)
+                && reach::npc_route_steps(cx, npc).is_none())
+        {
+            return true;
+        }
+        if !reach::within(npc.tile, goal, 1) && self.chase_rewalks > 0 {
+            self.chase_rewalks -= 1;
+            return true;
+        }
+        false
+    }
+
+    /// A reachable fungible match met during the anchor walk replaces it.
+    fn retarget_anchor_walk(&mut self, cx: &crate::native::ActionContext<'_>) -> bool {
+        if !self.anchor_walk || self.retargets_left == 0 || self.target_tile.is_some() {
+            return false;
+        }
+        let avoid = self.avoid.at(cx.evidence().tick);
+        let steps = match self.kind.as_ref() {
+            "npc" => reach::choose_npc(cx, self.target_id, None, self.area(), &avoid)
+                .reachable()
+                .and_then(|npc| reach::npc_route_steps(cx, npc)),
+            "obj" => reach::choose_ground(cx, self.target_id, None, self.area(), &avoid)
+                .reachable()
+                .and_then(|item| reach::ground_route_steps(cx, item)),
+            _ => None,
+        };
+        if steps.is_some_and(|steps| steps <= reach::RETARGET_STEPS) {
+            self.retargets_left -= 1;
+            return true;
+        }
+        false
     }
 }
 
@@ -2689,6 +2881,14 @@ impl StepRun for UseOnRun {
             let timed_out = deadline.is_some_and(|deadline| now >= deadline);
             let reached_at_deadline =
                 deadline == Some(now) && until_reached(self.until, &cx.tick.cx);
+            if self.walk.is_some()
+                && (self.chase_needs_repick(&cx.tick.cx) || self.retarget_anchor_walk(&cx.tick.cx))
+            {
+                // Dropping the handle revokes the stale walk; pick again below.
+                self.walk = None;
+                self.chase = None;
+                self.anchor_walk = false;
+            }
             if let Some(handle) = &self.walk {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                     Poll::Ready(Ok(receipt))
@@ -2704,6 +2904,8 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Ok(receipt)) => {
                         walk_step_evidence(receipt)?;
                         self.walk = None;
+                        self.chase = None;
+                        self.anchor_walk = false;
                     }
                 }
             }
@@ -2727,19 +2929,44 @@ impl StepRun for UseOnRun {
                 }
                 if let Some(tile) = self.tile {
                     let here = cx.tick.cx.snapshot().here();
+                    let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
+                    // Walk to the anchor area only when nothing in it can be
+                    // reached from here; a visible anchored loc is approached
+                    // through its own stand instead.
+                    let target_here = match self.kind.as_ref() {
+                        "loc" => reach::choose_loc(
+                            &cx.tick.cx,
+                            Some(self.target_id),
+                            None,
+                            None,
+                            self.area(),
+                            self.target_tile,
+                            &avoid,
+                        )
+                        .any()
+                        .is_some(),
+                        "npc" => reach::choose_npc(
+                            &cx.tick.cx,
+                            self.target_id,
+                            None,
+                            self.area(),
+                            &avoid,
+                        )
+                        .usable()
+                        .is_some(),
+                        "obj" => reach::choose_ground(
+                            &cx.tick.cx,
+                            self.target_id,
+                            self.target_tile,
+                            self.area(),
+                            &avoid,
+                        )
+                        .usable()
+                        .is_some(),
+                        _ => false,
+                    };
                     if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius))
-                        && !(self.kind.as_ref() == "loc"
-                            && reach::nearest_loc(
-                                &cx.tick.cx,
-                                Some(self.target_id),
-                                None,
-                                None,
-                                Some(tile),
-                                self.radius,
-                                self.target_tile,
-                                false,
-                            )
-                            .is_some())
+                        && !target_here
                     {
                         self.walk = Some(cx.tick.actions.begin::<Walk>(
                             reach::walk_request(
@@ -2750,11 +2977,12 @@ impl StepRun for UseOnRun {
                             ),
                             &mut cx.tick.cx,
                         )?);
+                        self.anchor_walk = true;
                         return Poll::Pending;
                     }
-                    // Loc selection keeps the authored origin even when its
-                    // interactable stand lies outside the anchor radius.
-                    if self.kind.as_ref() != "loc" {
+                    // Scene targets keep the anchor as the chooser's area; an
+                    // inventory target only needed the walk.
+                    if self.kind.as_ref() == "item" {
                         self.tile = None;
                     }
                 }
@@ -2787,18 +3015,20 @@ impl StepRun for UseOnRun {
                         "use_on source missing",
                     ))));
                 };
+                let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
+                let mut dispatched = None;
                 let (tile, index, target_item_slot) = match self.kind.as_ref() {
                     "loc" => {
-                        let Some(loc) = reach::nearest_loc(
+                        let Some(loc) = reach::choose_loc(
                             &cx.tick.cx,
                             Some(self.target_id),
                             None,
                             None,
-                            self.tile,
-                            self.radius,
+                            self.area(),
                             self.target_tile,
-                            false,
-                        ) else {
+                            &avoid,
+                        )
+                        .any() else {
                             return Poll::Pending;
                         };
                         if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
@@ -2826,41 +3056,60 @@ impl StepRun for UseOnRun {
                         (loc.tile, None, None)
                     }
                     "npc" => {
-                        let Some(npcs) = snapshot.npcs() else {
-                            return Poll::Pending;
+                        let (npc_tile, npc_index, reachable, adjacent) = match reach::choose_npc(
+                            &cx.tick.cx,
+                            self.target_id,
+                            None,
+                            self.area(),
+                            &avoid,
+                        ) {
+                            reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => (
+                                npc.tile,
+                                npc.index,
+                                true,
+                                reach::npc_adjacent(&cx.tick.cx, npc),
+                            ),
+                            reach::Pick::Unreachable(npc) => (npc.tile, npc.index, false, false),
+                            reach::Pick::None => return Poll::Pending,
                         };
-                        let Some(npc) = npcs
-                            .value
-                            .iter()
-                            .filter(|row| {
-                                row.r#type == Some(self.target_id as usize)
-                                    && row.distance <= self.radius
-                            })
-                            .min_by_key(|row| row.distance)
-                        else {
-                            return Poll::Pending;
-                        };
-                        let tile = npc.tile;
-                        let index = npc.index as i32;
-                        if npc.distance > 1 {
+                        if !adjacent {
+                            // Chase the live NPC; the walk is re-checked every
+                            // tick and ends as soon as the NPC is beside us.
                             self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(tile, 1, None, cx.required_after),
+                                reach::walk_request(npc_tile, 1, None, cx.required_after),
+                                &mut cx.tick.cx,
+                            )?);
+                            self.chase = Some((npc_index, npc_tile, reachable));
+                            return Poll::Pending;
+                        }
+                        dispatched = Some(reach::AvoidKey::Npc(npc_index));
+                        (npc_tile, Some(npc_index as i32), None)
+                    }
+                    "obj" => {
+                        let (target, reachable) = match reach::choose_ground(
+                            &cx.tick.cx,
+                            self.target_id,
+                            self.target_tile,
+                            self.area(),
+                            &avoid,
+                        ) {
+                            reach::Pick::Reachable(item) | reach::Pick::Unverified(item) => {
+                                (item.tile, true)
+                            }
+                            reach::Pick::Unreachable(item) => (item.tile, false),
+                            reach::Pick::None => return Poll::Pending,
+                        };
+                        if !reachable {
+                            self.walk = Some(cx.tick.actions.begin::<Walk>(
+                                reach::walk_request(target, 1, None, cx.required_after),
                                 &mut cx.tick.cx,
                             )?);
                             return Poll::Pending;
                         }
-                        (tile, Some(index), None)
-                    }
-                    "obj" => {
-                        let Some(target) = reach::nearest_ground(
-                            &cx.tick.cx,
-                            self.target_id,
-                            self.target_tile,
-                            self.radius,
-                        ) else {
-                            return Poll::Pending;
-                        };
-                        (target.tile, None, None)
+                        if self.target_tile.is_none() {
+                            dispatched = Some(reach::AvoidKey::Tile(target));
+                        }
+                        (target, None, None)
                     }
                     _ => {
                         let Some(target) = inventory
@@ -2912,6 +3161,7 @@ impl StepRun for UseOnRun {
                 self.accepted_tick = None;
                 self.scene_activity_observed = false;
                 self.scene_in_range_at_acceptance = false;
+                self.dispatched = dispatched;
                 return Poll::Pending;
             }
             if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
@@ -2943,6 +3193,18 @@ impl StepRun for UseOnRun {
                         }
                     }
                 }
+            }
+            if self.accepted
+                && reach::saw_game_message(&cx.tick.cx, self.chat_since, reach::CANT_REACH)
+            {
+                // "I can't reach that!" fails this attempt now instead of
+                // waiting out the settle window: avoid a fungible target
+                // briefly and choose again.
+                if let Some(key) = self.dispatched {
+                    self.avoid.add(key, cx.tick.cx.evidence().tick);
+                }
+                self.clear_round();
+                continue;
             }
             if self.accepted && !self.dialogue_completed {
                 let options = self.dialogue_options.clone().or_else(|| {

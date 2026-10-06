@@ -675,6 +675,7 @@ mod tests {
                 bank: None,
                 bank_required: false,
                 items: Arc::from(Vec::new()),
+                stages: Arc::from(Vec::new()),
                 tools: Arc::from(Vec::new()),
                 keep_ids: Arc::from(Vec::new()),
                 coin_float: 0,
