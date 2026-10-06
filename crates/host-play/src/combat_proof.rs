@@ -10,6 +10,12 @@ use serde_json::{json, Value};
 static CAPTURES: LazyLock<Mutex<HashMap<String, Arc<Mutex<CombatCapture>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+static THREAT_TABLES: LazyLock<Option<Arc<script::combat::CombatTables>>> = LazyLock::new(|| {
+    api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .ok()
+        .and_then(|data| script::combat::CombatTables::build(data).ok())
+});
+
 fn captures() -> &'static Mutex<HashMap<String, Arc<Mutex<CombatCapture>>>> {
     &CAPTURES
 }
@@ -105,15 +111,19 @@ pub(crate) fn record_start_baseline(account: &str, snapshot: &GameSnapshot) {
     }
 }
 
-pub(crate) fn record_status(account: &str, status: &ScriptStatus) {
+pub(crate) fn record_status(account: &str, status: &ScriptStatus, host_tick: Option<u64>) {
     let Some(capture) = capture_for(account) else {
         return;
     };
-    let value = status_value(status);
+    let mut value = status_value(status);
     let signature = serde_json::to_string(&value).unwrap_or_default();
     let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
     if capture.last_status.as_deref() != Some(&signature) {
         capture.last_status = Some(signature);
+        value["observed_tick"] = host_tick
+            .map(Value::from)
+            .or_else(|| capture.frames.last().map(|frame| frame["tick"].clone()))
+            .unwrap_or(Value::Null);
         capture.statuses.push(value);
     }
 }
@@ -579,19 +589,39 @@ fn status_field_value(value: &StatusValue) -> Value {
     }
 }
 
+fn npc_network_distance(snapshot: &GameSnapshot, npc: &api::snapshot::NpcView) -> Option<i32> {
+    snapshot.tile().map(|(x, z, level)| {
+        if level != npc.network.level {
+            return i32::MAX;
+        }
+        let size = npc.size.max(1);
+        let closest_x = x.clamp(npc.network.x, npc.network.x + size - 1);
+        let closest_z = z.clamp(npc.network.z, npc.network.z + size - 1);
+        (x - closest_x).abs().max((z - closest_z).abs())
+    })
+}
+
 pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) -> Value {
     let local_slot = snapshot.self_slot();
     let nearby_npcs = snapshot
         .npcs()
         .iter()
         .filter(|npc| {
-            npc.distance <= 12
+            npc_network_distance(snapshot, npc).is_some_and(|distance| distance <= 12)
                 || npc.in_combat
                 || npc.target.is_some_and(|target| {
                     target.kind == ActorKind::Player && target.index == local_slot as usize
                 })
         })
         .map(|npc| {
+            let threat = THREAT_TABLES.as_ref().map(|tables| {
+                script::combat::threats::npc_local_attack_evidence(
+                    npc,
+                    local_slot as usize,
+                    snapshot.hitmarks(),
+                    tables,
+                )
+            });
             json!({
                 "index": npc.index,
                 "type": npc.r#type,
@@ -601,15 +631,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
                 "size": npc.size,
                 // Match the launch oracle's packet-time nearest-footprint distance.
                 // Retain the rendered tile above only as visual evidence.
-                "distance": snapshot.tile().map(|(x, z, level)| {
-                    if level != npc.network.level {
-                        return i32::MAX;
-                    }
-                    let size = npc.size.max(1);
-                    let closest_x = x.clamp(npc.network.x, npc.network.x + size - 1);
-                    let closest_z = z.clamp(npc.network.z, npc.network.z + size - 1);
-                    (x - closest_x).abs().max((z - closest_z).abs())
-                }),
+                "distance": npc_network_distance(snapshot, npc),
                 "health": npc.health,
                 "total_health": npc.total_health,
                 "face_entity": npc.face_entity,
@@ -617,6 +639,10 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
                     json!({"kind": format!("{:?}", target.kind), "index": target.index})
                 }),
                 "in_combat": npc.in_combat,
+                "targets_local": threat.as_ref().map(|facts| facts.targets_local),
+                "attack_animation": threat.as_ref().map(|facts| facts.attack_animation),
+                "attack_spot": threat.as_ref().map(|facts| facts.attack_spot),
+                "local_hitmark_recent": threat.as_ref().map(|facts| facts.local_hitmark_recent),
                 "animation": npc.animation,
                 "spot_animation": npc.spot_animation,
                 "spot_animation_stamp": npc.spot_animation_stamp,
@@ -742,14 +768,14 @@ mod tests {
     use api::snapshot::{NpcView, WorldTile};
 
     #[test]
-    fn combat_receipt_distance_uses_network_tile_not_rendered_pose() {
+    fn combat_receipt_retains_network_nearby_npc_outside_rendered_cutoff() {
         let here = WorldTile {
             x: 100,
             z: 100,
             level: 0,
         };
-        let rendered = WorldTile { x: 105, ..here };
-        let network = WorldTile { x: 101, ..here };
+        let rendered = WorldTile { x: 113, ..here };
+        let network = WorldTile { x: 109, ..here };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_tile(here);
         snapshot.seed_npcs(vec![NpcView {
@@ -758,7 +784,7 @@ mod tests {
             name: Some("Khazard Warlord".into()),
             actions: vec![Some("Attack".into())],
             tile: rendered,
-            distance: 5,
+            distance: 13,
             animation: -1,
             animation_frame: -1,
             pose_animation: -1,
@@ -773,7 +799,7 @@ mod tests {
             target: None,
             moving: false,
             running: false,
-            in_combat: true,
+            in_combat: false,
             level: 112,
             size: 1,
             network,
@@ -782,7 +808,7 @@ mod tests {
             yaw: 0,
         }]);
         let facts = snapshot_facts(&snapshot, None);
-        assert_eq!(facts["nearby_npcs"][0]["distance"], 1);
+        assert_eq!(facts["nearby_npcs"][0]["distance"], 9);
         assert_eq!(facts["nearby_npcs"][0]["network"], json!(network));
         assert_eq!(facts["nearby_npcs"][0]["tile"], json!(rendered));
         assert_eq!(facts["nearby_npcs"][0]["size"], 1);
