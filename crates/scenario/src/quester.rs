@@ -34,93 +34,168 @@ impl TestProfile {
 
 /// Add one row per authored quest, in release order. Move to Base60 only
 /// when the operator names it or a recorded live run establishes the need.
+/// `display` is the selected quest-tab display; fixture builds check it
+/// against selected content, so drift fails closed instead of seeding the
+/// wrong quest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuestFixtureProfile {
     pub quest: &'static str,
+    pub display: &'static str,
     pub profile: TestProfile,
 }
 
 pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
     QuestFixtureProfile {
         quest: "cook",
+        display: "Cook's Assistant",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "sheep",
+        display: "Sheep Shearer",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "runemysteries",
+        display: "Rune Mysteries Quest",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "romeojuliet",
+        display: "Romeo & Juliet",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "imp",
+        display: "Imp Catcher",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "prince",
+        display: "Prince Ali Rescue",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "hunt",
+        display: "Pirate's Treasure",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "priest",
+        display: "The Restless Ghost",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "vampire",
+        display: "Vampire Slayer",
+        profile: TestProfile::Base40,
+    },
+    // PATHS-OVERNIGHT folder Paths. Base40 until the operator names Base60
+    // or a recorded live run establishes the need.
+    QuestFixtureProfile {
+        quest: "cog",
+        display: "Clock Tower",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "death",
+        display: "Death Plateau",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "demon",
+        display: "Demon Slayer",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "desertrescue",
+        display: "The Tourist Trap",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "doric",
+        display: "Doric's Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "gobdip",
+        display: "Goblin Diplomacy",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "hetty",
+        display: "Witch's Potion",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "priestperil",
+        display: "Priest in Peril",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "squire",
+        display: "The Knight's Sword",
         profile: TestProfile::Base40,
     },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
     QuestFixtureProfile {
         quest: "dragon",
+        display: "Dragon Slayer",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "ikov",
+        display: "Temple of Ikov",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "upass",
+        display: "Underground Pass",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "legends",
+        display: "Legends Quest",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "elemental_workshop",
+        display: "Elemental Workshop",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "horror",
+        display: "Horror from the Deep",
         profile: TestProfile::Base60,
     },
     QuestFixtureProfile {
         quest: "blackarmgang",
+        display: "Shield of Arrav",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "hero",
+        display: "Hero's Quest",
         profile: TestProfile::Base40,
     },
     QuestFixtureProfile {
         quest: "barcrawl",
+        display: "Alfred Grimhand's Barcrawl",
         profile: TestProfile::Base40,
     },
 ];
 
 pub fn fixture_profile(quest: &str) -> Result<TestProfile, String> {
+    fixture_row(quest).map(|row| row.profile)
+}
+
+/// The full harness row for a quest: static id, display and profile, so
+/// env-driven cells need no allocation to satisfy fixture lifetimes.
+pub fn fixture_row(quest: &str) -> Result<QuestFixtureProfile, String> {
     FIXTURE_PROFILES
         .iter()
         .find(|row| row.quest == quest)
-        .map(|row| row.profile)
+        .copied()
         .ok_or_else(|| format!("no qualification profile for quest {quest}"))
 }
 
@@ -185,8 +260,10 @@ pub enum FixtureLoadout<'a> {
 }
 
 /// Inputs for one sequence fixture. `identity` and `selected` must come from
-/// the same selected revision. Stage values come only from the Path's varp
-/// hints; zero is never substituted for an absent/synthetic hint.
+/// the same selected revision. Stage values come from the Path's varp hints;
+/// zero is never substituted for an absent/synthetic hint — a hint-less stage
+/// (released Cook/Sheep/Rune/Romeo/Imp) needs an explicit operator seed via
+/// [`quester_stage_with_seeds`].
 pub struct QuesterStage<'a> {
     pub name: &'static str,
     /// Quest-tab display from selected content, not a journal title.
@@ -385,6 +462,19 @@ fn command_step(name: &'static str, command: String, proof: Proof) -> Step {
 /// observe completion. Always relog after the seed, including permanent
 /// non-transmitted varps, so quest-tab colours cannot be stale.
 pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String> {
+    quester_stage_with_seeds(request, &[])
+}
+
+/// [`quester_stage`] with explicit caller seeds for stages the Path does not
+/// hint. The released Cook/Sheep/Rune/Romeo/Imp Paths carry no progress varp
+/// hints; for those stages the caller must name the stage varp and value in
+/// `seed_vars` (an operator seed recorded in `seed_commands`, never a
+/// substituted zero). Stages with hints use the hint for the stage value and
+/// `seed_vars` only for auxiliary seeds, as before.
+pub fn quester_stage_with_seeds(
+    request: QuesterStage<'_>,
+    seed_vars: &[(&str, i32)],
+) -> Result<QuesterFixture, String> {
     let role = request
         .path
         .roles
@@ -392,7 +482,7 @@ pub fn quester_stage(request: QuesterStage<'_>) -> Result<QuesterFixture, String
         .filter(|_| request.path.roles.len() == 1)
         .ok_or("single-account fixture needs exactly one Path role")?;
     let stage_varp = request.identity.varp.as_str();
-    build_quest_fixture(request, role, stage_varp, &[])
+    build_quest_fixture(request, role, stage_varp, seed_vars)
 }
 
 /// Prepare one explicitly selected paired role; the shared pair runner starts both.
@@ -468,6 +558,29 @@ fn validate_stage(
     Ok(())
 }
 
+/// Operator seed for a stage the Path does not hint. This is not a
+/// substituted zero: the caller names the stage varp and value explicitly,
+/// and the seed is recorded in `seed_commands` with every other cheat.
+fn explicit_stage_seed(
+    extra_vars: &[(&str, i32)],
+    stage_varp: &str,
+    stage: &str,
+) -> Result<i32, String> {
+    let mut explicit = extra_vars.iter().filter(|(varp, _)| *varp == stage_varp);
+    let value = explicit
+        .next()
+        .ok_or_else(|| {
+            format!("fixture stage {stage} has no varp hint; pass an explicit {stage_varp} seed")
+        })?
+        .1;
+    if explicit.next().is_some() {
+        return Err(format!(
+            "fixture stage {stage} has contradictory explicit seeds"
+        ));
+    }
+    Ok(value)
+}
+
 fn build_quest_fixture(
     request: QuesterStage<'_>,
     role: &script::quester::path::PathRoleDocument,
@@ -485,18 +598,38 @@ fn build_quest_fixture(
         .iter()
         .filter(|rule| rule.stage.0.as_ref() == request.stage)
         .filter_map(|rule| rule.varp);
-    let value = values
-        .next()
-        .ok_or_else(|| format!("fixture stage {} has no varp hint", request.stage))?;
-    if values.any(|other| other != value) {
-        return Err(format!(
-            "fixture stage {} has contradictory varp hints",
-            request.stage
-        ));
-    }
+    let (value, used_explicit) = match values.next() {
+        Some(value) => {
+            if values.any(|other| other != value) {
+                return Err(format!(
+                    "fixture stage {} has contradictory varp hints",
+                    request.stage
+                ));
+            }
+            (value, false)
+        }
+        // No authored hint (released Cook/Sheep/Rune/Romeo/Imp): accept one
+        // explicit operator seed naming the stage varp, recorded below like
+        // every other cheat. Anything else still fails closed.
+        None => (
+            explicit_stage_seed(extra_vars, stage_varp, request.stage)?,
+            true,
+        ),
+    };
     let mut seed_vars = Vec::with_capacity(extra_vars.len() + 1);
     seed_vars.push((stage_varp, value));
-    seed_vars.extend_from_slice(extra_vars);
+    if used_explicit {
+        // The explicit stage seed is already pushed; re-adding it would trip
+        // the unique-alias check in `build_fixture`.
+        seed_vars.extend(
+            extra_vars
+                .iter()
+                .filter(|(varp, _)| *varp != stage_varp)
+                .copied(),
+        );
+    } else {
+        seed_vars.extend_from_slice(extra_vars);
+    }
     build_fixture(FixtureSeed {
         name: request.name,
         path: request.path,
@@ -1123,5 +1256,107 @@ mod tests {
                 .all(|step| { step.name == "observe native quest completion" }),
             "no content variable seed may run after Start"
         );
+    }
+
+    fn raw_cook() -> PathDocument {
+        serde_json::from_str(include_str!("../../script/paths/289/cook.json")).unwrap()
+    }
+
+    fn hint_less_cook(
+        path: &PathDocument,
+        selected: &SelectedGameData,
+        identity: &QuestIdentityRow,
+        seed_vars: &[(&str, i32)],
+    ) -> Result<QuesterFixture, String> {
+        quester_stage_with_seeds(
+            QuesterStage {
+                name: "quester_explicit_seed",
+                quest_display: "Cook's Assistant",
+                path,
+                identity,
+                selected,
+                stage: "cook:0",
+                loadout: None,
+                extra_items: &[],
+                stand: WorldTile {
+                    x: 3209,
+                    z: 3215,
+                    level: 0,
+                },
+            },
+            seed_vars,
+        )
+    }
+
+    #[test]
+    fn hint_less_stage_builds_with_one_explicit_operator_seed() {
+        // The released Cook Path carries no progress varp hints.
+        let path = raw_cook();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "cook")
+            .unwrap();
+        let fixture = hint_less_cook(&path, &selected, identity, &[("cookquest", 0)]).unwrap();
+        assert!(fixture
+            .seed_commands
+            .iter()
+            .any(|command| command == "setvar cookquest 0"));
+        let relog = fixture
+            .scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .unwrap();
+        assert_eq!(
+            fixture.scenario.steps[relog + 1].wait.arm,
+            Proof::Arrived {
+                x: 3209,
+                z: 3215,
+                level: 0
+            }
+        );
+    }
+
+    #[test]
+    fn hint_less_stage_without_an_explicit_seed_still_fails() {
+        let path = raw_cook();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "cook")
+            .unwrap();
+        assert!(hint_less_cook(&path, &selected, identity, &[])
+            .err()
+            .unwrap()
+            .contains("no varp hint"));
+    }
+
+    #[test]
+    fn contradictory_explicit_stage_seeds_fail() {
+        let path = raw_cook();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "cook")
+            .unwrap();
+        assert!(hint_less_cook(
+            &path,
+            &selected,
+            identity,
+            &[("cookquest", 0), ("cookquest", 1)]
+        )
+        .err()
+        .unwrap()
+        .contains("contradictory explicit seeds"));
     }
 }
