@@ -15,6 +15,7 @@ use crate::chrome::{
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
+use crate::headed_record::{HeadedRecord, RecordFrame, StepInfo};
 use crate::overlay::{draw_queue_card_for, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
@@ -190,6 +191,11 @@ struct PanelState {
     /// `--live script_*` run starts or lazily on the first write (the
     /// interactive F12 capture has no run start to hook).
     shot_dir: Option<PathBuf>,
+    /// Opt-in headed recording (`HEADED_RECORD=1`): periodic whole-window
+    /// frames into `<shot_dir>/record.mp4` plus a step/tick sidecar.
+    /// Finalized on PASS/FAIL (see `ui_frame`) and on window close via
+    /// `Drop`, so the mp4 is always playable.
+    record: HeadedRecord,
     /// One application-owned WalkTo map renderer (not per bot).
     walk_map: WalkMapRenderer,
 }
@@ -582,6 +588,7 @@ impl PanelState {
             last_fit_need: None,
             shot_state,
             shot_dir: None,
+            record: HeadedRecord::from_env(),
             walk_map: WalkMapRenderer::new(),
         }
     }
@@ -5697,6 +5704,76 @@ fn pump_shots(state: &mut PanelState) -> usize {
     written
 }
 
+/// Headed recording (`HEADED_RECORD=1`): arm once the live run's shot dir
+/// exists, stage one whole-window readback when the pacer fires, and move
+/// completed frames into the background encoder. When the switch is off
+/// this is a single disabled branch; harness runs only (interactive F12
+/// shots never arm a recording).
+fn pump_record(state: &mut PanelState) {
+    if state.record.needs_arm() && state.live.is_some() {
+        if let Some(dir) = state.shot_dir.clone() {
+            let scenario = state
+                .session
+                .scenario
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|runner| runner.scenario_name().to_string());
+            if let Some(scenario) = scenario {
+                state.record.arm(&dir, &scenario);
+            }
+        }
+    }
+    if !state.record.is_active() {
+        return;
+    }
+    if state.record.is_due(Instant::now()) {
+        state.shot_state.lock().unwrap().arm_record();
+    }
+    let frames: Vec<RecordFrame> = state
+        .shot_state
+        .lock()
+        .unwrap()
+        .take_record()
+        .into_iter()
+        .map(|capture| RecordFrame {
+            width: capture.width,
+            height: capture.height,
+            rgba: capture.rgba,
+        })
+        .collect();
+    if frames.is_empty() {
+        return;
+    }
+    let step = record_step_info(&state.session);
+    state.record.pump_frames(frames, &step);
+}
+
+/// The runner position for the next recording sidecar line. Read only for
+/// frames actually staged, so the lock never costs a non-recording frame.
+fn record_step_info(session: &Session) -> StepInfo {
+    session
+        .scenario
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|runner| {
+            let (step, total, name) = runner.record_step();
+            StepInfo {
+                step,
+                total,
+                name: name.to_string(),
+                tick: runner.total_ticks(),
+            }
+        })
+        .unwrap_or(StepInfo {
+            step: 0,
+            total: 0,
+            name: "no-runner".to_string(),
+            tick: 0,
+        })
+}
+
 /// Focus the next pending pair actor only after the previous capture has
 /// left the GPU readback/write path. Restore the prior focus when no
 /// actor-tagged job remains.
@@ -5790,6 +5867,7 @@ fn ui_frame(
 ) -> bool {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
+    pump_record(state);
     state.session.pump_status();
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
@@ -5832,6 +5910,10 @@ fn ui_frame(
             wrote_shots,
         );
         if let Some(code) = live_exit_code(live, failure.as_deref()) {
+            // PASS and FAIL both finalize the recording now, so the mp4
+            // trailer lands before the window exits (window close is
+            // covered by the recorder's `Drop`).
+            state.record.finish();
             if code == 1 {
                 if let Some(msg) = failure.as_deref().or_else(|| live.failure()) {
                     eprintln!("FAIL: {msg}");

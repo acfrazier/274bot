@@ -678,6 +678,16 @@ fn new_reads_deadline_and_terminal_shot_from_settings() {
 }
 
 #[test]
+fn record_position_names_the_run_before_the_first_tick() {
+    let scenario = crate::get("nav_full").unwrap();
+    let total = scenario.steps.len();
+    let runner = ScenarioRunner::new(scenario);
+    assert_eq!(runner.scenario_name(), "nav_full");
+    assert_eq!(runner.record_step(), (0, total, "seeding"));
+    assert_eq!(runner.total_ticks(), 0);
+}
+
+#[test]
 fn hold_skips_follow_and_keeps_the_armed_route() {
     use nav::router::Route;
 

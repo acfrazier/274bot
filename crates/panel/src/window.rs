@@ -19,6 +19,7 @@ use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::headed_record::RECORD_LABEL;
 use dear_imgui_rs as imgui;
 use dear_imgui_rs::{BackendFlags, ConfigFlags, DockFlags, Id, TextureId, WindowFlags};
 use dear_imgui_wgpu as imgui_wgpu;
@@ -145,6 +146,13 @@ pub struct ShotState {
     written: Vec<String>,
     /// Terminal failures retained for the harness and diagnostics.
     failed: Vec<(String, String)>,
+    /// Headed recording (`HEADED_RECORD=1`): set by the UI body when the
+    /// frame pacer fires. The next render pass stages one extra readback
+    /// from the same just-rendered texture; the capture lands in
+    /// `record_done`, never in the PNG ledger.
+    record_armed: bool,
+    /// Completed recording frames, consumed by the recorder pump.
+    pub record_done: Vec<ShotCapture>,
 }
 
 impl ShotState {
@@ -214,6 +222,24 @@ impl ShotState {
 
     pub fn capture_in_flight(&self) -> bool {
         !self.wanted.is_empty() || !self.done.is_empty()
+    }
+
+    /// Arm one recording readback for the next render pass. Idempotent:
+    /// the flag is consumed once, so a pacer tick during an occluded
+    /// frame simply captures the next visible one.
+    pub fn arm_record(&mut self) {
+        self.record_armed = true;
+    }
+
+    /// Take completed recording frames for the recorder pump.
+    pub fn take_record(&mut self) -> Vec<ShotCapture> {
+        std::mem::take(&mut self.record_done)
+    }
+
+    /// True when the next render pass must stage a readback: a promoted
+    /// shot, a recording frame, or both.
+    pub fn capture_pending(&self) -> bool {
+        !self.wanted.is_empty() || self.record_armed
     }
 
     /// Replace the sidecar on a still-queued actor job so the readback
@@ -1064,11 +1090,20 @@ fn record_readback_outcomes(
     captures: Vec<ShotCapture>,
 ) {
     for label in attempted {
+        if label == RECORD_LABEL {
+            // Recording frames have no PNG ledger entry: a lost frame is
+            // simply absent from the video, and the pacer stages the next.
+            continue;
+        }
         if !captures.iter().any(|capture| &capture.label == label) {
             shots.mark_failed(label, "readback did not complete");
         }
     }
-    shots.done.extend(captures);
+    let (record, shots_done): (Vec<ShotCapture>, Vec<ShotCapture>) = captures
+        .into_iter()
+        .partition(|capture| capture.label == RECORD_LABEL);
+    shots.done.extend(shots_done);
+    shots.record_done.extend(record);
 }
 
 /// One frame's acquired surface state, normalized from
@@ -1131,8 +1166,9 @@ fn submit_acquired_frame(
 
     // The promoted-wanted check runs before any GPU work: an occluded frame
     // with nothing promoted allocates no target and stages no readback
-    // (unpromoted jobs stay queued for the next visible frame).
-    if present_dest.is_none() && shots.lock().unwrap().wanted.is_empty() {
+    // (unpromoted jobs stay queued for the next visible frame; an armed
+    // recording frame likewise waits for the next visible frame).
+    if present_dest.is_none() && !shots.lock().unwrap().capture_pending() {
         return Ok(FrameSubmission::Skipped);
     }
 
@@ -1212,11 +1248,16 @@ fn submit_ui_frame(
     // Whole-window shots: drain the UI body's promoted requests, copy the
     // just-rendered frame into staging buffers (recorded in this encoder),
     // and map the bytes back after submit. No file I/O — the loop side
-    // stays pure; `done` holds bytes for the panel.
+    // stays pure; `done` holds bytes for the panel. An armed recording
+    // frame stages one extra readback from that same texture (routed to
+    // `record_done`, never the PNG ledger).
     let mut readbacks: Vec<ShotReadback> = Vec::new();
     {
         let mut guard = shots.lock().unwrap();
-        let wanted = mem::take(&mut guard.wanted);
+        let mut wanted = mem::take(&mut guard.wanted);
+        if mem::replace(&mut guard.record_armed, false) {
+            wanted.push((RECORD_LABEL.to_string(), String::new()));
+        }
         if !wanted.is_empty() {
             if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
                 eprintln!("[panel] capture readback requested: {}", wanted.len());

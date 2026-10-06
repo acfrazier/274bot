@@ -9,6 +9,7 @@ mod fleet_columns;
 pub mod focus;
 pub mod game_view;
 pub mod grid;
+pub mod headed_record;
 mod input_capture;
 pub mod loadouts;
 pub mod log_pane;
