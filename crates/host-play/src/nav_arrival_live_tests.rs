@@ -604,8 +604,9 @@ pub(super) fn write_capture(
                     false,
                     json!({
                         "frame_source": "host::FrameBuf actual rendered FrameOutput",
+                        "png_file": png_path.file_name().and_then(|name| name.to_str()),
                         "png_written": false,
-                        "capture_error": outcome.error.unwrap_or_else(|| "unknown".into()),
+                        "png_error": outcome.error.unwrap_or_else(|| "unknown".into()),
                     }),
                 ),
                 None => (
@@ -636,11 +637,17 @@ pub(super) fn write_capture(
         ),
     };
     report["capture"] = capture;
+    // The PNG is fsynced by the background worker before `wait` returns;
+    // fsync the matching JSON the same way so the pair is durable before
+    // the caller asserts.
     std::fs::write(
         &json_path,
         serde_json::to_vec_pretty(&report).expect("serialize NAV-ARRIVAL live evidence"),
     )
     .unwrap_or_else(|error| panic!("write evidence {}: {error}", json_path.display()));
+    std::fs::File::open(&json_path)
+        .and_then(|file| file.sync_all())
+        .unwrap_or_else(|error| panic!("fsync evidence {}: {error}", json_path.display()));
     println!("nav-arrival-evidence-json={}", json_path.display());
     if png_written {
         println!("nav-arrival-evidence-png={}", png_path.display());
