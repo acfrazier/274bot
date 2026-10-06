@@ -536,6 +536,7 @@ fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
         Choice::Step(FactKey::new("flour"))
     );
     assert_eq!(probe.choice("cook:1", 4, &empty), Choice::Exhausted);
+}
 /// REVIEW-PATHS-MEMBERS-A items H6/H7: the `elena:25` rule only matched varp
 /// 26+ journal text while rule `elena:26` precedes it, so the clerk step could
 /// never settle and the Bravek steps never ran. The merge into `elena:24-25`
@@ -633,27 +634,17 @@ fn elena_stage_24_25_merge_and_area_boxes_resolve() {
         json!([[2528, 9696, 2570, 9740, 0]])
     );
 
-    // The merged sequence carries the clerk introduction and both Bravek steps.
+    // The merged sequence runs ordered now: the clerk, door and Bravek steps
+    // leave no observable done evidence (varp 24 vs 25 share journal text),
+    // so the cursor runs each once instead of re-selecting the clerk.
+    // Behaviour is pinned by ordered_plague_city_clerk_door_bravek_runs_once_each.
     let merged = elena_value["roles"][0]["sequences"]
         .as_array()
         .expect("sequences")
         .iter()
         .find(|sequence| sequence["stage"] == json!("elena:24-25"))
         .expect("merged sequence");
-    let step_ids: Vec<&str> = merged["steps"]
-        .as_array()
-        .expect("steps")
-        .iter()
-        .map(|step| step["id"].as_str().expect("step id"))
-        .collect();
-    assert_eq!(
-        step_ids,
-        [
-            "get-clerk-introduction-to-bravek",
-            "open-bravek-office-door",
-            "ask-bravek-for-cure-recipe"
-        ]
-    );
+    assert_eq!(merged["order"], json!("ordered"));
 
     // Hazeel cave box the entry-raft recovery settles in.
     let hazeel_value = read_path(&root.join("hazeelcult.json"));
@@ -670,4 +661,239 @@ fn elena_stage_24_25_merge_and_area_boxes_resolve() {
         hazeel_value["quest"]["areas"]["hazeel_cave"]["boxes"],
         json!([[2560, 9672, 2576, 9690, 0]])
     );
+}
+
+/// Empty-inventory snapshot with the local player at `(x, z)`: `in_area` and
+/// `near` facts resolve off the player tile, and an empty scene keeps every
+/// `loc_present` false.
+fn snapshot_at(x: i32, z: i32) -> api::snapshot::GameSnapshot {
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile: api::WorldTile { x, z, level: 0 },
+                distance: 0,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 0,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+    });
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    snapshot
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R2 F1: the five sewer valves leave no observable
+/// state, so authored order re-selected valve 1 forever and the cave entry
+/// bounced back up the stairs. The `hazeelcult:4` sequence runs ordered now;
+/// each cursor resumes at its own step.
+#[test]
+fn ordered_hazeel_valves_run_once_each_and_reach_the_fight() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-hazeel-valves");
+    let (selected, quests) = selected_and_quests();
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("hazeelcult.json")))
+            .expect("hazeelcult decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("hazeelcult compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(
+        &compiled,
+        &selected,
+        "hazeelcult:4",
+        &[],
+    )];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+
+    // At the first valve with a fresh cursor the climb is skipped (surface)
+    // and valve 1 starts.
+    let at_valve_1 = snapshot_at(2562, 3247);
+    assert_eq!(
+        probe.choice("hazeelcult:4", 0, &at_valve_1),
+        Choice::Step(FactKey::new("turn-sewervalve-1"))
+    );
+    // The cursor never re-selects valve 1: it resumes at its own valve.
+    assert_eq!(
+        probe.choice("hazeelcult:4", 2, &at_valve_1),
+        Choice::Step(FactKey::new("turn-sewervalve-2"))
+    );
+    assert_eq!(
+        probe.choice("hazeelcult:4", 5, &at_valve_1),
+        Choice::Step(FactKey::new("turn-sewervalve-5"))
+    );
+    // Past the valves the bank steps skip (known-empty bank, nothing held)
+    // and the cave entry starts.
+    assert_eq!(
+        probe.choice("hazeelcult:4", 6, &at_valve_1),
+        Choice::Step(FactKey::new("enter-hazeel-cave"))
+    );
+    // In the cave the entry is skipped and the raft boards: no climb back up.
+    let in_cave = snapshot_at(2570, 9682);
+    assert_eq!(
+        probe.choice("hazeelcult:4", 9, &in_cave),
+        Choice::Step(FactKey::new("board-raft-to-hideout"))
+    );
+    // A restart replays from step 1: the climb is skipped in the cave and the
+    // idempotent valves re-run instead of climbing back up.
+    assert_eq!(
+        probe.choice("hazeelcult:4", 0, &in_cave),
+        Choice::Step(FactKey::new("turn-sewervalve-1"))
+    );
+    // A hideout resume skips everything but the fight.
+    let in_hideout = snapshot_at(2609, 9669);
+    assert_eq!(
+        probe.choice("hazeelcult:4", 0, &in_hideout),
+        Choice::Step(FactKey::new("fight-alomone"))
+    );
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R2 F2: the clerk step settled on a stage that was
+/// already true with an unobservable varp difference, so authored order
+/// re-selected the clerk inside Bravek's office forever. The `elena:24-25`
+/// sequence runs ordered now; each cursor resumes at its own step.
+#[test]
+fn ordered_plague_city_clerk_door_bravek_runs_once_each() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-elena-2425");
+    let (selected, quests) = selected_and_quests();
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(&compiled, &selected, "elena:24-25", &[])];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+
+    // At the clerk the introduction starts, then the cursor moves to the door:
+    // never the clerk again.
+    let at_clerk = snapshot_at(2528, 3317);
+    assert_eq!(
+        probe.choice("elena:24-25", 0, &at_clerk),
+        Choice::Step(FactKey::new("get-clerk-introduction-to-bravek"))
+    );
+    assert_eq!(
+        probe.choice("elena:24-25", 1, &at_clerk),
+        Choice::Step(FactKey::new("open-bravek-office-door"))
+    );
+    // Inside the office the door is skipped and Bravek is asked directly.
+    let in_office = snapshot_at(2536, 3314);
+    assert_eq!(
+        probe.choice("elena:24-25", 1, &in_office),
+        Choice::Step(FactKey::new("ask-bravek-for-cure-recipe"))
+    );
+    assert_eq!(
+        probe.choice("elena:24-25", 2, &in_office),
+        Choice::Step(FactKey::new("ask-bravek-for-cure-recipe"))
+    );
+    // A restart safely replays the harmless clerk talk from step 1.
+    assert_eq!(
+        probe.choice("elena:24-25", 0, &in_office),
+        Choice::Step(FactKey::new("get-clerk-introduction-to-bravek"))
+    );
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R2 F3: the cellar-gate return skipped only on the
+/// east surface or a gate loc in scene, so upstairs, west surface and sewer
+/// all re-selected it and walked back to an unroutable gate. The basement
+/// skip lets every other area advance down the return leg, while the basement
+/// itself still opens the gate.
+#[test]
+fn plague_city_cellar_return_skips_the_gate_outside_the_basement() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-cellar-return");
+    let (selected, quests) = selected_and_quests();
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(&compiled, &selected, "elena:28", &[])];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+
+    // Upstairs the gate is skipped and the house is left.
+    assert_eq!(
+        probe.choice("elena:28", 0, &snapshot_at(2536, 3271)),
+        Choice::Step(FactKey::new("leave-plague-house-return"))
+    );
+    // West surface walks to the manhole.
+    assert_eq!(
+        probe.choice("elena:28", 0, &snapshot_at(2529, 3290)),
+        Choice::Step(FactKey::new("walk-to-manhole-return"))
+    );
+    // Sewer climbs the mud pile out east.
+    assert_eq!(
+        probe.choice("elena:28", 0, &snapshot_at(2540, 9710)),
+        Choice::Step(FactKey::new("climb-mud-pile-return"))
+    );
+    // East reports to Edmond.
+    assert_eq!(
+        probe.choice("elena:28", 0, &snapshot_at(2566, 3331)),
+        Choice::Step(FactKey::new("report-rescue-to-edmond"))
+    );
+    // In the basement with no gate in scene the gate still opens.
+    assert_eq!(
+        probe.choice("elena:28", 0, &snapshot_at(2539, 9672)),
+        Choice::Step(FactKey::new("open-cellar-gate-return"))
+    );
+}
+
+/// REVIEW-PATHS-MEMBERS-A-R2 test coverage: every rule of the three
+/// Members-A Paths, fed exactly its own needles, must resolve to its own
+/// stage, or first-win resolution has a shadowed rule.
+#[test]
+fn members_a_paths_have_no_shadowed_journal_rules() {
+    let _home = script::IsolatedEnv::enter("path-schema-members-a-shadows");
+    let (selected, quests) = selected_and_quests();
+    for file in ["drunkmonk.json", "hazeelcult.json", "elena.json"] {
+        let document: PathDocument = serde_json::from_value(read_path(&paths_dir().join(file)))
+            .unwrap_or_else(|error| panic!("decode {file}: {error}"));
+        let compiled = compile_uncached_for_test(&document, &selected, &quests)
+            .unwrap_or_else(|error| panic!("{file}: {}", error.code));
+        script::quester::probe::assert_no_shadowed_rules(&compiled);
+    }
 }
