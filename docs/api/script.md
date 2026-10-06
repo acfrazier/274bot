@@ -638,17 +638,25 @@ Protect; otherwise they set the walk request's explicit `food_guard` flag and
 the host runs a food-only guard without refusing the walk. Only combat abort
 walks set `food_guard`. Ordinary script and Quester walks, which default to
 `allow.food = true`, start no host guard unless they request `protect`.
-If no engaged actor was recorded, retreat geometry uses the heaviest observed
-live attacker. Retreat direction compares packet-time network tiles (the
+If no engaged actor was recorded, or the engaged actor is no longer observed,
+retreat geometry uses the heaviest observed live attacker (the same shared
+threat predicate). Retreat direction compares packet-time network tiles (the
 player's and the attacker's), not interpolated rendered poses.
 An abort walk that fails or arrives while an attacker remains transfers into
 a guarded hold. The hold continues eating and permitted protection even at high
 HP, and ends only after three consecutive ticks without threat evidence.
-There is no tick-based hold timeout. If no food remains and protection is
-unavailable or disallowed, the hold instead makes one unguarded escape walk away
-from the attacker before parking, when a destination can be formed. It does not
-retry that escape indefinitely. Cancellation releases protection owned by the
-hold.
+There is no tick-based hold timeout. If no food remains, protection is
+unavailable or disallowed, and an attacker is still live, the hold instead
+makes one unguarded escape walk away from that attacker before parking, when a
+destination can be formed. Without a live attacker it parks after the
+threat-free horizon instead. It does not retry that escape indefinitely.
+Cancellation releases protection owned by the hold.
+
+**Known limit (retreat destination).** The retreat tile is a fixed distance
+away from the attacker. It does not avoid other aggressive NPCs, so an abort
+walk can end beside a new attacker (the guarded hold then handles it).
+Choosing destinations away from aggressive NPCs belongs to survivable
+navigation (S2c).
 
 **Known limit (WindDown gap).** Every `Aborted` combat end first enters
 WindDown, which turns all raised prayers off and reports only once they are

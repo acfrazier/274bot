@@ -913,10 +913,8 @@ impl NativeMachine for AbortHold {
         }
 
         let snapshot = cx.snapshot();
-        self.observe_threat_free(
-            cx.evidence().tick,
-            has_live_attacker(&snapshot, &self.tables),
-        );
+        let live_attacker = has_live_attacker(&snapshot, &self.tables);
+        self.observe_threat_free(cx.evidence().tick, live_attacker);
         if let Some(guard) = self.guard.as_mut() {
             if let Some(op) = guard.tick(&snapshot) {
                 if matches!(&op, GuardOp::Unprotectable { .. }) {
@@ -940,7 +938,10 @@ impl NativeMachine for AbortHold {
             self.begin_end(AbortHoldOutcome::ThreatFree);
             return Poll::Pending;
         }
-        if self.protect_unavailable
+        // The single exhausted escape runs from a live attacker. Without one
+        // the threat-free horizon above ends the hold instead.
+        if live_attacker == Some(true)
+            && self.protect_unavailable
             && self
                 .guard
                 .as_ref()
@@ -1245,38 +1246,38 @@ impl CombatRun {
         report: CombatReport,
         snapshot: &api::snapshot::SnapshotView<'_>,
     ) -> Option<AbortThreat> {
-        if let Some(engaged) = report.engaged {
-            return match engaged.kind {
-                api::snapshot::ActorKind::Npc => {
-                    let index = usize::from(engaged.index);
-                    let npc_type = report.engaged_npc_type;
-                    let kind = usize::try_from(npc_type).ok()?;
-                    snapshot
-                        .npcs()?
-                        .value
-                        .iter()
-                        .find(|npc| npc.index == index && npc.r#type == Some(kind))
-                        .map(|npc| AbortThreat {
-                            actor: engaged,
-                            npc_type,
-                            tile: npc.network,
-                            weight: 0,
-                        })
-                }
-                api::snapshot::ActorKind::Player => snapshot
-                    .players()?
+        let engaged = report.engaged.and_then(|engaged| match engaged.kind {
+            api::snapshot::ActorKind::Npc => {
+                let index = usize::from(engaged.index);
+                let npc_type = report.engaged_npc_type;
+                let kind = usize::try_from(npc_type).ok()?;
+                snapshot
+                    .npcs()?
                     .value
                     .iter()
-                    .find(|player| player.index == usize::from(engaged.index))
-                    .map(|player| AbortThreat {
+                    .find(|npc| npc.index == index && npc.r#type == Some(kind))
+                    .map(|npc| AbortThreat {
                         actor: engaged,
-                        npc_type: -1,
-                        tile: player.network,
+                        npc_type,
+                        tile: npc.network,
                         weight: 0,
-                    }),
-            };
-        }
-        self.heaviest_live_attacker(snapshot)
+                    })
+            }
+            api::snapshot::ActorKind::Player => snapshot
+                .players()?
+                .value
+                .iter()
+                .find(|player| player.index == usize::from(engaged.index))
+                .map(|player| AbortThreat {
+                    actor: engaged,
+                    npc_type: -1,
+                    tile: player.network,
+                    weight: 0,
+                }),
+        });
+        // An engaged actor that is no longer observed cannot steer the
+        // retreat; run from whichever live attacker remains instead.
+        engaged.or_else(|| self.heaviest_live_attacker(snapshot))
     }
 
     fn heaviest_live_attacker(
