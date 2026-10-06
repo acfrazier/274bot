@@ -2749,9 +2749,8 @@ struct UseOnRun {
     scene_in_range_at_acceptance: bool,
     /// Targets that answered "I can't reach that!", briefly skipped.
     avoid: reach::Avoid,
-    /// The chased NPC index, the walk goal, and whether the NPC was
-    /// reachable when the chase began.
-    chase: Option<(usize, WorldTile, bool)>,
+    /// The chased NPC index and the walk goal.
+    chase: Option<(usize, WorldTile)>,
     chase_rewalks: u8,
     /// The current walk is the fallback walk to the authored anchor.
     anchor_walk: bool,
@@ -2760,7 +2759,7 @@ struct UseOnRun {
     dispatched: Option<reach::AvoidKey>,
 }
 
-/// Re-walks allowed when a chased NPC moves off the walk goal.
+/// Re-picks and re-walks allowed before a chase walk must run to completion.
 const CHASE_REWALKS: u8 = 6;
 
 impl UseOnRun {
@@ -2783,11 +2782,12 @@ impl UseOnRun {
     }
 
     /// Re-read a chased NPC each tick. Gone, out of the area, already
-    /// adjacent, newly unreachable, or moved off the walk goal ends the walk
-    /// so the chooser picks again before any use is sent. A chase that began
-    /// unreachable is a nav approach and is not cut short for staying so.
+    /// adjacent, unreachable (newly or still), or moved off the walk goal
+    /// ends the walk so the chooser picks again before any use is sent.
+    /// Every re-pick spends the same bound; once exhausted the walk runs to
+    /// completion instead of restarting every tick.
     fn chase_needs_repick(&mut self, cx: &crate::native::ActionContext<'_>) -> bool {
-        let Some((index, goal, reachable_at_start)) = self.chase else {
+        let Some((index, goal)) = self.chase else {
             return false;
         };
         let Some(npcs) = cx.snapshot().npcs() else {
@@ -2798,17 +2798,20 @@ impl UseOnRun {
             .iter()
             .find(|npc| npc.index == index && npc.r#type == Some(self.target_id as usize))
         else {
+            if self.chase_rewalks == 0 {
+                return false;
+            }
+            self.chase_rewalks -= 1;
             return true;
         };
-        if !self.area().contains(npc.tile, npc.distance)
+        let needs = !self.area().contains(npc.tile, npc.distance)
             || reach::npc_adjacent(cx, npc)
-            || (reachable_at_start
-                && reach::reach_known(cx)
-                && reach::npc_route_steps(cx, npc).is_none())
-        {
-            return true;
-        }
-        if !reach::within(npc.tile, goal, 1) && self.chase_rewalks > 0 {
+            || (reach::reach_known(cx) && reach::npc_route_steps(cx, npc).is_none())
+            || !reach::within(npc.tile, goal, 1);
+        if needs {
+            if self.chase_rewalks == 0 {
+                return false;
+            }
             self.chase_rewalks -= 1;
             return true;
         }
@@ -3056,20 +3059,17 @@ impl StepRun for UseOnRun {
                         (loc.tile, None, None)
                     }
                     "npc" => {
-                        let (npc_tile, npc_index, reachable, adjacent) = match reach::choose_npc(
+                        let (npc_tile, npc_index, adjacent) = match reach::choose_npc(
                             &cx.tick.cx,
                             self.target_id,
                             None,
                             self.area(),
                             &avoid,
                         ) {
-                            reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => (
-                                npc.tile,
-                                npc.index,
-                                true,
-                                reach::npc_adjacent(&cx.tick.cx, npc),
-                            ),
-                            reach::Pick::Unreachable(npc) => (npc.tile, npc.index, false, false),
+                            reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => {
+                                (npc.tile, npc.index, reach::npc_adjacent(&cx.tick.cx, npc))
+                            }
+                            reach::Pick::Unreachable(npc) => (npc.tile, npc.index, false),
                             reach::Pick::None => return Poll::Pending,
                         };
                         if !adjacent {
@@ -3079,7 +3079,7 @@ impl StepRun for UseOnRun {
                                 reach::walk_request(npc_tile, 1, None, cx.required_after),
                                 &mut cx.tick.cx,
                             )?);
-                            self.chase = Some((npc_index, npc_tile, reachable));
+                            self.chase = Some((npc_index, npc_tile));
                             return Poll::Pending;
                         }
                         dispatched = Some(reach::AvoidKey::Npc(npc_index));

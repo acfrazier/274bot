@@ -827,12 +827,11 @@ fn choose<'a, T>(
     }
 }
 
-pub fn choose_npc<'a>(
+pub fn choose_npc_matching<'a>(
     cx: &'a ActionContext<'_>,
-    id: i32,
-    op: Option<&str>,
     area: Area,
     avoid: &Avoid,
+    matches: impl Fn(&api::snapshot::NpcView) -> bool,
 ) -> Pick<&'a api::snapshot::NpcView> {
     let Some(npcs) = cx.snapshot().npcs() else {
         return Pick::None;
@@ -840,18 +839,29 @@ pub fn choose_npc<'a>(
     choose(
         cx,
         area,
-        npcs.value.iter().filter(|npc| {
-            npc.r#type == Some(id as usize)
-                && !avoid.contains(AvoidKey::Npc(npc.index))
-                && op.is_none_or(|op| {
-                    npc.actions
-                        .iter()
-                        .flatten()
-                        .any(|action| action.eq_ignore_ascii_case(op))
-                })
-        }),
+        npcs.value
+            .iter()
+            .filter(|npc| matches(npc) && !avoid.contains(AvoidKey::Npc(npc.index))),
         npc_footprint,
     )
+}
+
+pub fn choose_npc<'a>(
+    cx: &'a ActionContext<'_>,
+    id: i32,
+    op: Option<&str>,
+    area: Area,
+    avoid: &Avoid,
+) -> Pick<&'a api::snapshot::NpcView> {
+    choose_npc_matching(cx, area, avoid, |npc| {
+        npc.r#type == Some(id as usize)
+            && op.is_none_or(|op| {
+                npc.actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.eq_ignore_ascii_case(op))
+            })
+    })
 }
 
 pub fn choose_ground<'a>(

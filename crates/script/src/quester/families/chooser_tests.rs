@@ -401,3 +401,71 @@ fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
         describe(&ledger)
     );
 }
+
+#[test]
+fn alternating_reachability_stops_after_the_bound_not_the_settle() {
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let (mut snapshot, plan) = milk_fixture(cx, player);
+        let view = flood_view(
+            tile(3238, 3268),
+            24,
+            &fence_west_of(3251, 3268..3292),
+            player,
+        );
+        let west = tile(3246, 3280);
+        let east = tile(3252, 3280);
+        snapshot.seed_npcs(vec![
+            cow(cow_id, 1, west, player),
+            cow(cow_id, 2, east, player),
+        ]);
+        let mut ledger = None;
+        let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(last_effect(&ledger), HostEffect::Walk(_)),
+            "a cow four tiles away is chased, got {:?}",
+            describe(&ledger)
+        );
+        // Two cows alternate which side of the fence they stand on. Every
+        // swap would restart the walk; the bound must stop that long before
+        // the 20 s settle.
+        for tick in 3..=14 {
+            if tick % 2 == 0 {
+                snapshot.seed_npcs(vec![
+                    cow(cow_id, 1, west, player),
+                    cow(cow_id, 2, east, player),
+                ]);
+            } else {
+                snapshot.seed_npcs(vec![
+                    cow(cow_id, 1, east, player),
+                    cow(cow_id, 2, west, player),
+                ]);
+            }
+            assert!(
+                with_tick_reach(&snapshot, &view, &mut ledger, tick, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending()
+            );
+        }
+        let walks = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count();
+        assert!(
+            walks <= 7,
+            "alternating reachability must stop after the 6 re-picks, not run to the settle, got {walks} walks: {:?}",
+            describe(&ledger)
+        );
+    });
+}
