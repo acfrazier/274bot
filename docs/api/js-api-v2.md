@@ -1,7 +1,8 @@
 # JS API v2 (native host)
 
 JS API **v2** is the native host authoring contract. It is independent of
-application release 0.1.8 and of client 274/289. **v1** remains the rs2b0t
+application release numbering and of client revision (289 is the production
+revision; 274 is best-effort). **v1** remains the rs2b0t
 compatibility load path.
 
 Declare both:
@@ -225,8 +226,8 @@ keep their existing JSON helper paths where applicable; `foodCount` and
 | `escapeRunesFor({ id })` | `{ runes, level, label }` | `unknown-id`, `missing-selected-data` |
 
 `escapeRunesFor` resolves `id` with exact `magic_spell_teleport_{id}` rows (no
-cast `available()` filter). Public v1 `escapeRunesFor` export remains W5 hunt
-integration; the Rust fact module is shared when that lands.
+cast `available()` filter). The public v1 `escapeRunesFor` export is W5 hunt
+integration through the same shared Rust fact module.
 
 Example: `crates/script/examples/supply_helpers_v2.ts`.
 
@@ -366,13 +367,19 @@ journal read only when the colour is in-progress and the released Path
 has journal rules. Like the rest of `NativeApi`, these are host verbs;
 frozen rs2b0t signatures are irrelevant to them.
 
-The shared Quester release index contains Cook's Assistant (`cook`), Sheep
-Shearer (`sheep`), Rune Mysteries (`runemysteries`), and Romeo & Juliet
-(`romeojuliet`). Each row's `stages` comes from that Path's colour mapping and
-journal rules. Cook has `journal: false` and stages `cook:0`, `cook:1`, `cook:2`;
-the other three have `journal: true`. Romeo & Juliet includes the six journal
-stages `romeojuliet:10` through `romeojuliet:60`, plus its not-started and
-complete stages (`romeojuliet:0` and `romeojuliet:100`).
+The shared Quester release index holds the seventeen released revision-289
+Paths, in release order: Cook's Assistant (`cook`), Sheep Shearer (`sheep`),
+Rune Mysteries (`runemysteries`), Romeo & Juliet (`romeojuliet`), Imp Catcher
+(`imp`), Vampire Slayer (`vampire`), Doric's Quest (`doric`), Goblin Diplomacy
+(`gobdip`), Witch's Potion (`hetty`), Prince Ali Rescue (`prince`), Pirate's
+Treasure (`hunt`), Demon Slayer (`demon`), The Knight's Sword (`squire`), Death
+Plateau (`death`), The Tourist Trap (`desertrescue`), Priest in Peril
+(`priestperil`), and Clock Tower (`cog`). Each row's `stages` comes from that
+Path's colour mapping and journal rules. Cook and Imp Catcher are colour-only
+(`journal: false`); the rest have journal rules (`journal: true`). For example,
+Romeo & Juliet includes the six journal stages `romeojuliet:10` through
+`romeojuliet:60`, plus its not-started and complete stages (`romeojuliet:0` and
+`romeojuliet:100`).
 Stages are returned in ascending numeric stage order.
 
 | Method | OK | Errors |
@@ -455,6 +462,43 @@ To check the sample against the generated declarations:
 ```sh
 cargo test -p script --test host_js tsc_gather_quest_sample_type_checks -- --ignored
 ```
+
+## Hunt sessions
+
+The Hunt family drives one combat site from a Load script: the caller supplies
+plain site data (`HuntSite`: a `key`, an area as `boxes` unless the
+`hooks.inArea` getter answers, plus optional target, safespots, anchors,
+gates, and supply facts), and Rust owns the walks, ops, waits, and retries.
+`*Begin(site)` keeps the site with a token; `*Validate` is one synchronous
+read (Rust calls the hook getters and `inArea`); `*Run` awaits one Rust run.
+Hooks are all optional: `log` / `vlog` / `setStatus` notifications, awaited
+`eatOnce` / `armSpecial` / `sustain` / `leave`, counters, and getters for
+target, HP, food, style, safespot, weapon, and supplies. Getters and
+notifications run synchronously (a returned promise is `not impl`); a hook
+that throws rejects the run promise with that value.
+
+| Method | Settles with |
+| --- | --- |
+| `fightBegin` / `fightValidate` / `fightRun` | `HuntOutcome<null>`; `fightReset` and `fightInterruptWatch` manage the live fight, `fightBlocksLoot` gates looting |
+| `holdBegin` / `holdValidate` / `holdRun` | `HuntOutcome<null>` |
+| `retreatBegin` / `retreatValidate` / `retreatRun` | `HuntOutcome<null>` |
+| `walkspotBegin` / `walkspotValidate` / `walkspotRun` | `HuntOutcome<null>` |
+| `enterBegin` / `enterValidate` / `enterRun` | `HuntOutcome<boolean>`: inside the lair |
+| `leaveRun(site, hooks?)` | `HuntOutcome<boolean>`: out of the lair |
+| `keyRun(site, hooks?)` | `HuntOutcome<boolean>`: the jail key is held (the Jailer leg alone — corridor walk, kill, take the key; the bank stop and cell legs compose from `bankRun` and `cellRun`) |
+| `cellRun(site, hooks?)` | `HuntOutcome<boolean>`: the site's key is held outside the cell |
+| `bankRun(site, opts?, hooks?)` | `HuntOutcome<boolean>`: restocked (`HuntBankOptions` is the frozen bank-trip loadout merged over the site) |
+
+A run the Rust stepper itself gives up on settles `done` with `false`
+(boolean runs) or `null` (fight/hold/retreat/walkspot), the same as a run
+that never got there: treat anything but `done` with `true` as failure, and
+for the `null` runs prove the result from the scene (the player's tile).
+`aborted` reasons are the host's.
+
+Examples: `crates/script/examples/fight_field_v2.ts`,
+`hold_spot_v2.ts`, `retreat_spot_v2.ts`, `walk_spot_v2.ts`,
+`enter_lair_v2.ts`, `leave_lair_v2.ts`, `cell_v2.ts`, `acquire_key_v2.ts`,
+and `bank_v2.ts`.
 
 ## Quest query helpers
 
