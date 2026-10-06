@@ -1,0 +1,235 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "drunkmonk",
+  "display_name": "Monk's Friend",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "childs_blanket", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "jug_empty", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "jug_water", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "logs", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "drunkmonk_cave": {
+        "boxes": [[2558, 9600, 2576, 9624, 0]],
+        "source": "289 maps/m40_150.jm2:6756,9463; pack/loc.pack:ladder_from_cellar; pack/obj.pack:childs_blanket"
+      }
+    },
+    "tools": ["obj:childs_blanket", "obj:jug_empty", "obj:jug_water", "obj:logs"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:drunkmonk",
+    "progress": {
+      "colour": { "not_started": "drunkmonk:0", "in_progress": "drunkmonk:10", "complete": "drunkmonk:80" },
+      "rules": [
+        { "stage": "drunkmonk:80", "all": ["quest complete!"] },
+        { "stage": "drunkmonk:70", "all": ["he is on the way"] },
+        { "stage": "drunkmonk:50", "all": ["he needs some wood for his cart"] },
+        { "stage": "drunkmonk:40", "all": ["i need to take him a jug of water"] },
+        { "stage": "drunkmonk:30", "all": ["i agreed to find brother cedric"] },
+        { "stage": "drunkmonk:20", "all": ["i found the secret cave and gave back the blanket"] },
+        { "stage": "drunkmonk:10", "all": ["secret cave", "ring of stones"] },
+        { "stage": "drunkmonk:0", "all": ["i can start this quest by speaking to brother omad"] }
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "drunkmonk:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start-with-omad", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "brother_omad",
+            "anchor": { "tile": [2604, 3209, 0], "source": "289 maps/m40_50.jm2:7052; pack/npc.pack:brother_omad" },
+            "leash": 5,
+            "prefer": ["Why can't you sleep, what's wrong?", "Can I help at all?"]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:10"] } } }
+        }]
+      },
+      {
+        "stage": "drunkmonk:10", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "walk-to-ring-stones", "kind": "walk", "version": 1,
+            "args": { "tile": [2561, 3222, 0], "source": "289 maps/m40_50.jm2: location of timer-added wildymirrorladdertop1; content scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:1-10", "radius": 2 },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2561, 3222, 0], "radius": 2 } } }
+          },
+          {
+            "id": "climb-down-blanket-ladder", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "wildymirrorladdertop1" }, "op": "Climb-down",
+              "anchor": { "tile": [2561, 3222, 0], "source": "289 content scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:1-10; maps/m40_50.jm2 ladder placement" },
+              "radius": 2, "wait_if_missing": true
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "drunkmonk_cave" } } }
+            ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "drunkmonk_cave" } } }
+          },
+          {
+            "id": "take-childs-blanket", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "childs_blanket" }, "op": "Take",
+              "anchor": { "tile": [2570, 9604, 0], "source": "289 maps/m40_150.jm2:9463; pack/obj.pack:childs_blanket" },
+              "radius": 4, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } }
+          },
+          {
+            "id": "climb-out-of-blanket-cave", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "ladder_from_cellar" }, "op": "Climb-up",
+              "anchor": { "tile": [2561, 9622, 0], "source": "289 maps/m40_150.jm2:6756; pack/loc.pack:ladder_from_cellar; scripts/ladders+stairs/scripts/ladders.rs2:87-94" },
+              "radius": 3
+            },
+            "skip_if": { "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "drunkmonk_cave" } } } }
+            ] },
+            "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "drunkmonk_cave" } } } }
+          },
+          {
+            "id": "return-blanket-to-omad", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "brother_omad",
+              "anchor": { "tile": [2604, 3209, 0], "source": "289 maps/m40_50.jm2:7052; content scripts/areas/area_ardougne_east/scripts/brother_omad.rs2:40-51" },
+              "leash": 5, "prefer": []
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } } },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:20"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "drunkmonk:20", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "ask-omad-about-cedric", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "brother_omad",
+            "anchor": { "tile": [2604, 3209, 0], "source": "289 maps/m40_50.jm2:7052; content scripts/areas/area_ardougne_east/scripts/brother_omad.rs2:56-85" },
+            "leash": 5, "prefer": ["Who's Brother Cedric?", "Where should I look?"]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:30"] } } }
+        }]
+      },
+      {
+        "stage": "drunkmonk:30", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "find-cedric", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "brother_cedric",
+            "anchor": { "tile": [2614, 3259, 0], "source": "289 maps/m40_50.jm2:7055; content scripts/areas/area_ardougne_east/scripts/brother_cedric.rs2:21-28" },
+            "leash": 6, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:40"] } } }
+        }]
+      },
+      {
+        "stage": "drunkmonk:40", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "buy-empty-jug", "kind": "buy", "version": 1,
+            "args": {
+              "shop": { "npc": "khazard_shopkeeper", "anchor": { "tile": [2641, 3171, 0], "source": "289 maps/m41_49.jm2:6554; pack/npc.pack:khazard_shopkeeper; scripts/areas/port_khazard/configs/port_khazard.inv:10-20" } },
+              "obj": "jug_empty", "qty": 1, "est_gp": 5
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_water" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_empty" } } }
+          },
+          {
+            "id": "fill-jug-at-sink", "kind": "use_on", "version": 1, "advances": false,
+            "args": {
+              "item": "jug_empty", "target": { "loc": "sink" },
+              "anchor": { "tile": [2610, 3195, 0], "source": "289 maps/m40_50.jm2 sink placement; scripts/general_use/configs/water_sources.loc:1-16" },
+              "radius": 8, "product": "jug_water"
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_water" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_water" } } }
+          },
+          {
+            "id": "give-cedric-water", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "brother_cedric",
+              "anchor": { "tile": [2614, 3259, 0], "source": "289 maps/m40_50.jm2:7055; content scripts/areas/area_ardougne_east/scripts/brother_cedric.rs2:29-41" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jug_water" } } } },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:50"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "drunkmonk:50", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "agree-to-help-cedric", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "brother_cedric",
+              "anchor": { "tile": [2614, 3259, 0], "source": "289 maps/m40_50.jm2:7055; content scripts/areas/area_ardougne_east/scripts/brother_cedric.rs2:46-58" },
+              "leash": 6, "prefer": ["Yes, I'd be happy to!"]
+            },
+            "skip_if": { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["excellent, i just need some wood", "did you manage to get some wood?"], "clear": [] } } },
+            "settle": { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["excellent, i just need some wood", "did you manage to get some wood?"], "clear": [] } } }
+          },
+          {
+            "id": "GAP-drunkmonk-woodcutting", "kind": "wait", "version": 1,
+            "comment": "GAP: replace this stage-50 wait with a woodcutting gather for one normal-tree log: skill woodcutting, resource normal, until obj logs qty 1, anchored at [2613,3252,0] (289 maps/m40_50.jm2:5891; pack/loc.pack:1277 = tree; scripts/skill_woodcutting/configs/trees.dbrow:1-41). The hand-in requires one log (brother_cedric.rs2:60-69). This worktree's Quester gather handler only accepts mining/fishing; wait for one genuine log, then restart at stage 50.",
+            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "logs" } } },
+            "settle": { "Any": [] }
+          },
+          {
+            "id": "hand-logs-to-cedric", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "brother_cedric",
+              "anchor": { "tile": [2614, 3259, 0], "source": "289 maps/m40_50.jm2:7055; content scripts/areas/area_ardougne_east/scripts/brother_cedric.rs2:60-69" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "logs" } } } },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:70"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "drunkmonk:70", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "party-with-omad", "kind": "talk", "version": 1, "advances": true,
+          "comment": "The party takes about 23 game ticks before the completion queue sets stage 80; let the dialogue and party continue.",
+          "args": {
+            "npc": "brother_omad",
+            "anchor": { "tile": [2604, 3209, 0], "source": "289 maps/m40_50.jm2:7052; content scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:14-43,84-89" },
+            "leash": 5, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:80"] } } }
+        }]
+      },
+      { "stage": "drunkmonk:80", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

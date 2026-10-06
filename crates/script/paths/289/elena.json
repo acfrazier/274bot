@@ -1,0 +1,548 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "elena",
+  "display_name": "Plague City",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "gasmask", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "spade", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "bucket_water", "qty": 4, "kind": "acquirable", "acquire": null },
+      { "obj": "rope", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "elena_picture", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "turnip_book", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "chocolate_dust", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "bucket_milk", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "snape_grass", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "hangover_cure", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "scruffy_note", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "warrant", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "elenakey", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "elena_east_surface": {
+        "boxes": [[2560, 3328, 2624, 3392, 0]],
+        "source": "289 maps/m40_52.jm2:7325,7329,7348-7349; pack/npc.pack:edmond,alrena; pack/obj.pack:elena_picture,spade"
+      },
+      "elena_west_surface": {
+        "boxes": [[2496, 3264, 2560, 3328, 0]],
+        "source": "289 maps/m39_51.jm2:5983,8738-8759; pack/loc.pack:loc_2535"
+      },
+      "elena_house_interior": {
+        "boxes": [[2534, 3264, 2544, 3270, 0]],
+        "source": "289 maps/m39_51.jm2:6100; pack/loc.pack:plaguehousestairsdown"
+      },
+      "elena_house_basement": {
+        "boxes": [[2528, 9664, 2552, 9680, 0]],
+        "source": "289 maps/m39_151.jm2:5125,5204,6388; pack/loc.pack:plaguehousestairsup,elenagateshut; pack/npc.pack:elenap"
+      }
+    },
+    "tools": ["obj:gasmask", "obj:rope", "obj:spade"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:elena",
+    "progress": {
+      "colour": { "not_started": "elena:0", "in_progress": "elena:1", "complete": "elena:29" },
+      "rules": [
+        { "stage": "elena:29", "all": ["quest complete!"] },
+        { "stage": "elena:28", "all": ["i've freed elena from the plague house"] },
+        { "stage": "elena:27", "all": ["i've given bravek the hangover cure", "warrant"] },
+        { "stage": "elena:26", "all": ["i need to bring bravek the hangover cure"] },
+        { "stage": "elena:25", "all": ["bravek might give me clearance"] },
+        { "stage": "elena:24", "all": ["i need clearance from either the head mourner or bravek"] },
+        { "stage": "elena:23", "all": ["i've spoken to milli about elena", "plague houses"] },
+        { "stage": "elena:22", "all": ["the rehnisons' daughter milli", "may have seen elena"] },
+        { "stage": "elena:20-21", "all": ["i've spoken to jethick", "rehnison family"] },
+        { "stage": "elena:10", "all": ["i've managed to clear the way into west ardougne"] },
+        { "stage": "elena:9", "all": ["i've tied a rope to the sewer grill"] },
+        { "stage": "elena:8", "all": ["i've dug a tunnel into the sewers"] },
+        { "stage": "elena:7", "all": ["i've softened the ground in edmond's garden enough to dig"] },
+        { "stage": "elena:03-06", "all": ["i need to use water to soften the ground in edmond's garden"] },
+        { "stage": "elena:2", "all": ["i need to talk to edmond about getting into west ardougne"] },
+        { "stage": "elena:1", "all": ["i need to get some dwellberries for alrena"] },
+        { "stage": "elena:0", "all": ["i can start this quest by speaking to edmond"] }
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "elena:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start-with-edmond", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "edmond",
+            "anchor": { "tile": [2568, 3334, 0], "source": "289 maps/m40_52.jm2:7325; pack/npc.pack:edmond; scripts/quests/quest_elena/scripts/edmond.rs2:3-8,61-80" },
+            "leash": 8,
+            "prefer": ["What's happened to her?", "Can I help find her?"]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:1"] } } }
+        }]
+      },
+      {
+        "stage": "elena:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "take-dwellberries", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "dwellberries" }, "op": "Take",
+              "anchor": { "tile": [2645, 3498, 0], "source": "289 maps/m41_54.jm2:6099; pack/obj.pack:dwellberries" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dwellberries" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dwellberries" } } }
+          },
+          {
+            "id": "receive-gasmask-from-alrena", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "alrena",
+              "anchor": { "tile": [2573, 3333, 0], "source": "289 maps/m40_52.jm2:7329; pack/npc.pack:alrena; scripts/quests/quest_elena/scripts/alrena.rs2:8-28" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:2"] } } },
+            "settle": { "All": [
+              { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:2"] } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "gasmask" } } }
+            ] }
+          }
+        ]
+      },
+      {
+        "stage": "elena:2", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "talk-edmond-about-tunnel", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "edmond",
+              "anchor": { "tile": [2568, 3334, 0], "source": "289 maps/m40_52.jm2:7325; scripts/quests/quest_elena/scripts/edmond.rs2:19-23" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:03-06"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "elena:03-06", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "buy-rope-from-aemad", "kind": "buy", "version": 1,
+            "comment": "Buy the rope before entering the sewer; Aemad's Adventurers' Shop stocks rope.",
+            "args": {
+              "shop": { "npc": "aemad", "anchor": { "tile": [2613, 3294, 0], "source": "289 maps/m40_51.jm2:10809; pack/npc.pack:590=aemad; scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-658; ardougne_east.inv:55-73" } },
+              "obj": "rope", "qty": 1
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } }
+          },
+          {
+            "id": "GAP-elena-mud-pour-count", "kind": "wait", "version": 1,
+            "comment": "GAP: journal text does not distinguish varp stages 3–6 and Quester has no safe mud-pour counter. Carry four buckets of water and manually use them one at a time on Edmond's mud patch; the quest consumes each bucket and returns an empty bucket. Restart the Path after the journal says the soil is soft enough to dig.",
+            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "skip_if": { "Any": [] },
+            "settle": { "Any": [] }
+          }
+        ]
+      },
+      {
+        "stage": "elena:7", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "take-elena-picture", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "elena_picture" }, "op": "Take",
+              "anchor": { "tile": [2576, 3334, 0], "source": "289 maps/m40_52.jm2:7349; pack/obj.pack:elena_picture" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } }
+          },
+          {
+            "id": "take-garden-spade", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "spade" }, "op": "Take",
+              "anchor": { "tile": [2574, 3331, 0], "source": "289 maps/m40_52.jm2:7348; pack/obj.pack:spade" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } }
+          },
+          {
+            "id": "dig-softened-mud", "kind": "use_on", "version": 1, "advances": true,
+            "args": {
+              "item": "spade", "target": { "loc": "plaguemudpatch1" },
+              "anchor": { "tile": [2566, 3331, 0], "source": "289 maps/m40_52.jm2:4755; pack/loc.pack:plaguemudpatch1; scripts/quests/quest_elena/scripts/mud_patch.rs2:13-26" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:8"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "elena:8", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "GAP-elena-picture-not-held", "kind": "wait", "version": 1,
+            "comment": "GAP: the Elena picture is on the East Ardougne ground spawn at 2576,3334,0 (m40_52.jm2:7349), but this stage begins after the tunnel has moved the player into the sewer. The Path has no verified recovery route back to that spawn; obtain and carry the picture before Jethick or resume with it in inventory.",
+            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elena_picture" } } },
+            "settle": { "Any": [] }
+          },
+          {
+            "id": "tie-rope-to-sewer-grill", "kind": "use_on", "version": 1, "advances": true,
+            "args": {
+              "item": "rope", "target": { "loc": "plaguesewerpipe" },
+              "anchor": { "tile": [2530, 9701, 0], "source": "289 maps/m39_151.jm2:4992; pack/loc.pack:plaguesewerpipe; scripts/quests/quest_elena/scripts/sewerpipe.rs2:19-29" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "All": [
+              { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:9"] } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rope" } } } }
+            ] }
+          }
+        ]
+      },
+      {
+        "stage": "elena:9", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "pull-grill-with-edmond", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "edmond",
+            "anchor": { "tile": [2535, 9719, 0], "source": "289 maps/m39_151.jm2:6387; pack/npc.pack:edmond; scripts/quests/quest_elena/scripts/edmond.rs2:27-32" },
+            "leash": 8, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:10"] } } }
+        }]
+      },
+      {
+        "stage": "elena:10", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "wear-gasmask", "kind": "equip", "version": 1,
+            "args": { "obj": "gasmask" },
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "gasmask" } } }
+          },
+          {
+            "id": "squeeze-through-sewer-pipe", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguesewerpipe" }, "op": "Search",
+              "anchor": { "tile": [2530, 9701, 0], "source": "289 maps/m39_151.jm2:4992; pack/loc.pack:plaguesewerpipe; scripts/quests/quest_elena/scripts/sewerpipe.rs2:1-17,32-48" },
+              "radius": 5
+            },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_west_surface" } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_west_surface" } } }
+          },
+          {
+            "id": "show-picture-to-jethick", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "jethick",
+              "anchor": { "tile": [2540, 3305, 0], "source": "289 maps/m39_51.jm2:8756; pack/npc.pack:jethick; scripts/quests/quest_elena/scripts/jethick.rs2:6-29" },
+              "leash": 8, "prefer": ["I'm looking for a woman from East Ardougne."]
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "All": [
+              { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:20-21"] } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "turnip_book" } } }
+            ] }
+          }
+        ]
+      },
+      {
+        "stage": "elena:20-21", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "return-book-to-rehnisons", "kind": "interact", "version": 1, "advances": true,
+            "args": {
+              "target": { "loc": "rehnisondoorshut" }, "op": "Open",
+              "anchor": { "tile": [2531, 3328, 0], "source": "289 maps/m39_52.jm2:5287; pack/loc.pack:rehnisondoorshut; scripts/quests/quest_elena/scripts/doors.rs2:95-117" },
+              "radius": 7
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "turnip_book" } } } },
+            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you hand the book to ted as you enter"] } } }
+          },
+          {
+            "id": "ask-rehnisons-about-elena", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "ted_rehnison",
+              "anchor": { "tile": [2531, 3331, 0], "source": "289 maps/m39_52.jm2:6541; pack/npc.pack:ted_rehnison; scripts/quests/quest_elena/scripts/rehnisons.rs2:14-25" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:22"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "elena:22", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "climb-to-milli", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "rehnisonstairs" }, "op": "Walk-up",
+              "anchor": { "tile": [2527, 3332, 0], "source": "289 maps/m39_52.jm2:5170; pack/loc.pack:rehnisonstairs; scripts/quests/quest_elena/scripts/rehnisons.rs2:1-3" },
+              "radius": 4
+            },
+            "skip_if": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } },
+            "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+          },
+          {
+            "id": "ask-milli-what-happened", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "milli",
+              "anchor": { "tile": [2531, 3330, 1], "source": "289 maps/m39_52.jm2:6553; pack/npc.pack:milli; scripts/quests/quest_elena/scripts/rehnisons.rs2:32-44" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:23"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "elena:23", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "ask-mourner-about-clearance", "kind": "interact", "version": 1, "advances": true,
+          "args": {
+            "target": { "loc": "loc_2535" }, "op": "Open",
+            "anchor": { "tile": [2533, 3272, 0], "source": "289 maps/m39_51.jm2:5983; pack/loc.pack:loc_2535; scripts/quests/quest_elena/scripts/doors.rs2:14-22,81-90" },
+            "radius": 5,
+            "dialogue": { "prefer": ["I fear not a mere plague.", "How do I get clearance?"] }
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:24"] } } }
+        }]
+      },
+      {
+        "stage": "elena:24", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "get-clerk-introduction-to-bravek", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "clerk",
+            "anchor": { "tile": [2528, 3317, 0], "source": "289 maps/m39_51.jm2:8738; pack/npc.pack:clerk; scripts/areas/area_ardougne_west/scripts/clerk.rs2:1-5,27-54" },
+            "leash": 7,
+            "prefer": ["I need permission to enter a plague house.", "This is urgent though!"]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:25"] } } }
+        }]
+      },
+      {
+        "stage": "elena:25", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "open-bravek-office-door", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Bravek's office door opens briefly; pass through it on the following talk step.",
+            "args": {
+              "target": { "loc": "bravekdoorshut" }, "op": "Open",
+              "anchor": { "tile": [2530, 3314, 0], "source": "289 maps/m39_51.jm2:5874; pack/loc.pack:bravekdoorshut; scripts/areas/area_ardougne_west/configs/doors.loc:43-53; scripts/areas/area_ardougne_west/scripts/doors.rs2:18-21,76-77" },
+              "radius": 5
+            },
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2536, 3314, 0], "radius": 2 } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2530, 3314, 0], "radius": 5 } } }
+          },
+          {
+            "id": "ask-bravek-for-cure-recipe", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "bravek",
+              "anchor": { "tile": [2536, 3314, 0], "source": "289 maps/m39_51.jm2:8749; pack/npc.pack:bravek; scripts/quests/quest_elena/scripts/bravek.rs2:1-5,14-21,48-53" },
+              "leash": 8,
+              "prefer": ["This is really important though!", "Do you know what is in the cure?"]
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "All": [
+              { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:26"] } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "scruffy_note" } } }
+            ] }
+        }]
+      },
+      {
+        "stage": "elena:26", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "buy-chocolate-dust-from-heckel", "kind": "buy", "version": 1,
+            "args": {
+              "shop": { "npc": "gnome_heckelfunch", "anchor": { "tile": [2493, 3488, 1], "source": "289 maps/m38_54.jm2:8892; pack/npc.pack:gnome_heckelfunch; scripts/areas/area_gnome/configs/gnome.npc:714-735; gnome.inv:82-105 stocks chocolate_dust" } },
+              "obj": "chocolate_dust", "qty": 1
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolate_dust" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolaty_milk" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolate_dust" } } }
+          },
+          {
+            "id": "buy-bucket-of-milk-from-heckel", "kind": "buy", "version": 1,
+            "args": {
+              "shop": { "npc": "gnome_heckelfunch", "anchor": { "tile": [2493, 3488, 1], "source": "289 maps/m38_54.jm2:8892; pack/npc.pack:gnome_heckelfunch; scripts/areas/area_gnome/configs/gnome.npc:714-735; gnome.inv:82-105 stocks bucket_milk" } },
+              "obj": "bucket_milk", "qty": 1
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolaty_milk" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+          },
+          {
+            "id": "take-snape-grass", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "ground": "snape_grass" }, "op": "Take",
+              "anchor": { "tile": [2648, 3469, 0], "source": "289 maps/m41_54.jm2:6086; pack/obj.pack:snape_grass" },
+              "radius": 3, "wait_if_missing": true
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snape_grass" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+            ] },
+            "settle": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snape_grass" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+            ] }
+          },
+          {
+            "id": "mix-chocolate-milk", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "chocolate_dust", "target": { "item": "bucket_milk" }, "product": "chocolaty_milk" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolaty_milk" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chocolaty_milk" } } }
+          },
+          {
+            "id": "finish-hangover-cure", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "snape_grass", "target": { "item": "chocolaty_milk" }, "product": "hangover_cure" },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hangover_cure" } } }
+          },
+          {
+            "id": "give-cure-to-bravek", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "bravek",
+              "anchor": { "tile": [2536, 3314, 0], "source": "289 maps/m39_51.jm2:8749; pack/npc.pack:bravek; scripts/quests/quest_elena/scripts/bravek.rs2:55-95" },
+              "leash": 8, "prefer": ["They won't listen to me!"]
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "All": [
+              { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:27"] } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "warrant" } } }
+            ] }
+          }
+        ]
+      },
+      {
+        "stage": "elena:27", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "open-black-cross-door", "kind": "interact", "version": 1, "advances": false,
+            "comment": "The temporary entry requires the warrant in inventory and a mourner within 14 tiles.",
+            "args": {
+              "target": { "loc": "loc_2535" }, "op": "Open",
+              "anchor": { "tile": [2533, 3272, 0], "source": "289 maps/m39_51.jm2:5983; pack/loc.pack:loc_2535; scripts/quests/quest_elena/scripts/doors.rs2:23-56" },
+              "radius": 5, "dialogue": "continue"
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_interior" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } }
+            ] },
+            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["sneak into the building"] } } }
+          },
+          {
+            "id": "return-upstairs-for-cellar-key", "kind": "interact", "version": 1, "advances": false,
+            "comment": "If resuming in the cellar without its key, return to the surface barrel before descending again.",
+            "args": {
+              "target": { "loc": "plaguehousestairsup" }, "op": "Walk-Up",
+              "anchor": { "tile": [2536, 9671, 0], "source": "289 maps/m39_151.jm2:5125; pack/loc.pack:plaguehousestairsup; scripts/quests/quest_elena/scripts/plaguehouse.rs2:17-19" },
+              "radius": 5
+            },
+            "skip_if": { "Any": [
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elenakey" } } }
+            ] },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2536, 3271, 0], "radius": 2 } } }
+          },
+          {
+            "id": "search-for-cellar-key", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguekeybarrel" }, "op": "Search",
+              "anchor": { "tile": [2534, 3268, 0], "source": "289 maps/m39_51.jm2:6028; pack/loc.pack:plaguekeybarrel; scripts/quests/quest_elena/scripts/plaguehouse.rs2:1-11" },
+              "radius": 5
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elenakey" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "elenakey" } } }
+          },
+          {
+            "id": "walk-to-plague-cellar", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "plaguehousestairsdown" }, "op": "Walk-Down",
+              "anchor": { "tile": [2536, 3268, 0], "source": "289 maps/m39_51.jm2:6100; pack/loc.pack:plaguehousestairsdown; scripts/quests/quest_elena/scripts/plaguehouse.rs2:13-16" },
+              "radius": 6
+            },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_house_basement" } } }
+          },
+          {
+            "id": "unlock-elena-cellar-gate", "kind": "interact", "version": 1, "advances": false,
+            "args": {
+              "target": { "loc": "elenagateshut" }, "op": "Open",
+              "anchor": { "tile": [2539, 9672, 0], "source": "289 maps/m39_151.jm2:5204; pack/loc.pack:elenagateshut; scripts/quests/quest_elena/scripts/plaguehouse.rs2:26-47" },
+              "radius": 5
+            },
+            "skip_if": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "elenagateopen" } } }
+          },
+          {
+            "id": "free-elena", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "elenap",
+              "anchor": { "tile": [2541, 9672, 0], "source": "289 maps/m39_151.jm2:6388; pack/npc.pack:elenap; scripts/quests/quest_elena/scripts/elena.rs2:1-10" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:28"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "elena:28", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "GAP-elena-west-to-east-return", "kind": "wait", "version": 1,
+            "comment": "GAP: the Path has not established a safe West Ardougne → East Ardougne return route after the rescue. Move to East Ardougne manually with the gasmask worn, then restart; this step skips once the player is in the East Ardougne region.",
+            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "elena_east_surface" } } },
+            "settle": { "Any": [] }
+          },
+          {
+            "id": "report-rescue-to-edmond", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "edmond",
+              "anchor": { "tile": [2568, 3334, 0], "source": "289 maps/m40_52.jm2:7325; pack/npc.pack:edmond; scripts/quests/quest_elena/scripts/edmond.rs2:38-41" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:29"] } } }
+          }
+        ]
+      },
+      { "stage": "elena:29", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}
