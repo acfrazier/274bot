@@ -158,6 +158,7 @@ fn input(hp: u8) -> RiskInput {
 fn make_admission(policy: RiskPolicy, input: RiskInput) -> Admission {
     Admission {
         policy,
+        enforce: true,
         grants: ZoneExempt::NONE,
         allow: WalkAllow::default(),
         input,
@@ -759,9 +760,9 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
 #[cfg(feature = "test-support")]
 #[test]
 fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_clear() {
-    let world = known_corridor(&[5]);
+    let world = known_corridor(&[20]);
     let from = tile(0, 1);
-    let to = tile(10, 1);
+    let to = tile(20, 1);
     let state = WorldState::default();
     let options = FindOptions::default();
     let mut uncertain = input(99);
@@ -777,8 +778,8 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
             || real_witness(&world, from, to, options, &state, &[]),
         )
     });
-    assert_eq!(kernels, 5);
-    assert_eq!(crossing.tried, 1);
+    assert_eq!(kernels, 1, "endpoint completion needs no named retry");
+    assert_eq!(crossing.tried, 0);
     assert_eq!(
         crossing.refusal,
         Some(WalkRefusal::Unknown(UnknownWhy::Poison))
@@ -805,7 +806,7 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
             || panic!("Proceed uses its single all-zone search"),
         )
     });
-    assert_eq!(override_kernels, 2);
+    assert_eq!(override_kernels, 1);
     assert!(overridden.refusal.is_none());
     let override_assessment = overridden.assessment.as_ref().unwrap();
     assert_eq!(
@@ -854,7 +855,7 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
             || panic!("Proceed uses its single all-zone search"),
         )
     });
-    assert_eq!(poisoned_kernels, 2);
+    assert_eq!(poisoned_kernels, 1);
     let estimate = already_poisoned.assessment.as_ref().unwrap();
     assert_eq!(estimate.input.poison, poisoned.poison);
     assert!(estimate.reason.contains("poisoned (6 per 30 ticks)"));
@@ -1085,9 +1086,9 @@ fn u11_fresh_ignores_only_clock_age() {
 
 #[test]
 fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
-    let world = empty_corridor();
+    let world = known_corridor(&[20]);
     let from = tile(0, 1);
-    let to = tile(8, 1);
+    let to = tile(20, 1);
     let route = nav::router::find_with_avoid(
         &world.collision,
         &world.graph,
@@ -1103,7 +1104,7 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
     let worker_assessment = assess(&route, &world, &admission);
     assert_eq!(worker_assessment.verdict, Verdict::Survivable);
     let mut bot = crate::script_runtime::NavBot {
-        route: Some(route),
+        route: Some(Arc::new(route)),
         admission: Some(Box::new(admission)),
         assessment: Some(Arc::clone(&worker_assessment)),
         admission_pending: true,
@@ -1135,9 +1136,9 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
 
 #[test]
 fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() {
-    let world = empty_corridor();
+    let world = known_corridor(&[20]);
     let from = tile(0, 1);
-    let to = tile(8, 1);
+    let to = tile(20, 1);
     let route = nav::router::find_with_avoid(
         &world.collision,
         &world.graph,
@@ -1152,7 +1153,7 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
     admission.input.pos = from;
     let worker_assessment = assess(&route, &world, &admission);
     let mut arm = crate::WalkArm {
-        route: Some(route),
+        route: Some(Arc::new(route)),
         route_generation: 17,
         admission: Some(Box::new(admission)),
         assessment: Some(worker_assessment),
@@ -1206,7 +1207,7 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
     admission.escape = Some(escape(EscapeState::Unresolved));
     let worker_assessment = assess(&route, &world, &admission);
     let mut bot = crate::script_runtime::NavBot {
-        route: Some(route),
+        route: Some(Arc::new(route)),
         admission: Some(Box::new(admission)),
         assessment: Some(Arc::clone(&worker_assessment)),
         admission_pending: true,
@@ -1320,8 +1321,9 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         dest: tile(1, 1),
         ticks: 0.5,
     };
+    let original_route = Arc::new(original_route);
     let original = Arc::new(RouteBasis {
-        route: original_route.clone(),
+        route: Arc::clone(&original_route),
         options: frozen_options,
         avoid: Arc::clone(&avoid),
         quest_evidence: Some(evidence),
@@ -1340,8 +1342,10 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         dest: tile(2, 1),
         ticks: 1.0,
     };
+    assert!(Arc::ptr_eq(arm.route.as_ref().unwrap(), &retained.route));
+    let refreshed_route = Arc::new(refreshed_route);
     let refreshed = Arc::new(RouteBasis {
-        route: refreshed_route.clone(),
+        route: Arc::clone(&refreshed_route),
         options: retained.options,
         avoid: Arc::clone(&retained.avoid),
         quest_evidence: retained.quest_evidence.clone(),
@@ -1534,7 +1538,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     let mut samples = Vec::with_capacity(SAMPLES);
     for iteration in 0..(WARMUPS + SAMPLES) {
         let mut bot = crate::script_runtime::NavBot {
-            route: Some(publish_route.clone()),
+            route: Some(Arc::new(publish_route.clone())),
             admission: Some(Box::new(publish_admission)),
             assessment: Some(Arc::clone(&worker_assessment)),
             admission_pending: true,
@@ -1548,16 +1552,60 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
         });
         let elapsed = started.elapsed().as_nanos();
         assert_eq!(kernels, 0, "publication reassessment does not route");
-        assert!(bot.route.is_none());
+        assert!(bot.route.is_some(), "missing facts cannot refuse fleeing");
+        assert!(bot.risk_refusal.is_none());
         assert_eq!(
-            bot.risk_refusal.as_deref().map(|entry| entry.1),
-            Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+            bot.assessment.as_ref().unwrap().verdict,
+            Verdict::Unknown(UnknownWhy::MissingFacts)
         );
         if iteration >= WARMUPS {
             samples.push(elapsed);
         }
     }
     summarize("publication_reassessment", samples, 0);
+
+    // Exercise the long, many-leg S2a assessment seam without copying tiles.
+    let combat = selected_combat();
+    let long_world = fixture_world(
+        combat.clone(),
+        open_corridor(2048, 3, 1),
+        [100, 400, 700, 1000, 1300, 1600, 1900]
+            .into_iter()
+            .map(|x| zone(x, 0, None))
+            .collect(),
+        vec![ice_kind(&combat)],
+        Vec::new(),
+        TransportGraph::default(),
+    );
+    let long_route = Route {
+        legs: (0..64)
+            .map(|leg| Leg::Walk {
+                tiles: (leg * 32..(leg + 1) * 32).map(|x| tile(x, 1)).collect(),
+            })
+            .collect(),
+        dest: tile(2047, 1),
+        ticks: 1023.5,
+    };
+    let long_admission = make_admission(RiskPolicy::Avoid, input(99));
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for iteration in 0..(WARMUPS + SAMPLES) {
+        let started = Instant::now();
+        let ((assessment, permitted), kernels) = count_kernels(|| {
+            let assessment = assess(&long_route, &long_world, &long_admission);
+            let permitted = permits(&long_route, &long_world, &long_admission, &assessment);
+            (assessment, permitted)
+        });
+        let elapsed = started.elapsed().as_nanos();
+        assert_eq!(kernels, 0);
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.plan.intervals.len(), 7);
+        assert_eq!(assessment.plan.crossings.len(), 7);
+        assert!(!permitted);
+        if iteration >= WARMUPS {
+            samples.push(elapsed);
+        }
+    }
+    summarize("long_2048_tiles_64_legs_7_crossings", samples, 0);
 }
 
 fn transport_edge(kind: TransportKind, from: WorldTile, to: WorldTile) -> TransportEdge {
@@ -1610,5 +1658,151 @@ struct UnknownEvidence;
 impl EvidenceProvider for UnknownEvidence {
     fn test_gate(&self, _gate: &QuestGate, _required_after: EvidenceStamp) -> Truth {
         Truth::Unknown
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn unknown_poison_witness_is_not_researched() {
+    let world = known_corridor(&[12]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let options = FindOptions::default();
+    let state = WorldState::default();
+    let request = make_admission(
+        RiskPolicy::Inherit,
+        RiskInput {
+            poison: PoisonState::default(),
+            ..input(99)
+        },
+    );
+    let (result, kernels) = count_kernels(|| {
+        route(
+            &world,
+            &request,
+            options,
+            |opts| real_search(&world, from, to, opts, &state, &[]),
+            || real_witness(&world, from, to, options, &state, &[]),
+        )
+    });
+    assert_eq!(
+        kernels, 3,
+        "strict plus diagnosis only; no doomed named retry"
+    );
+    assert_eq!(result.tried, 0);
+    assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
+    assert!(matches!(
+        result.refusal,
+        Some(WalkRefusal::NoRouteWithinBounds { tried: 0, .. })
+    ));
+}
+
+#[test]
+fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
+    let world = empty_corridor();
+    let route = Arc::new(
+        nav::router::find_with_avoid(
+            &world.collision,
+            &world.graph,
+            tile(0, 1),
+            tile(8, 1),
+            FindOptions::default(),
+            &WorldState::default(),
+            &[],
+        )
+        .unwrap(),
+    );
+    let snapshot = api::snapshot::GameSnapshot::new();
+    for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
+        let admission = make_admission(policy, input(80));
+        let assessment = assess(&route, &world, &admission);
+        let mut bot = crate::script_runtime::NavBot {
+            route: Some(Arc::clone(&route)),
+            admission: Some(Box::new(admission)),
+            assessment: Some(Arc::clone(&assessment)),
+            admission_pending: true,
+            ..Default::default()
+        };
+        publish(&mut bot, &world, &snapshot, false, None);
+        assert!(Arc::ptr_eq(bot.route.as_ref().unwrap(), &route));
+        assert!(bot.risk_refusal.is_none());
+        assert_eq!(
+            bot.assessment.as_ref().unwrap().verdict,
+            Verdict::Unknown(UnknownWhy::MissingFacts)
+        );
+        let mut arm = crate::WalkArm {
+            route: Some(Arc::clone(&route)),
+            admission: Some(Box::new(admission)),
+            assessment: Some(assessment),
+            admission_pending: true,
+            ..Default::default()
+        };
+        assert!(!crate::observe_walk_arm_admission(
+            &snapshot, &mut arm, &world, false, None
+        ));
+        assert!(Arc::ptr_eq(arm.route.as_ref().unwrap(), &route));
+        assert!(arm.refusal.is_none());
+        assert_eq!(
+            arm.assessment.as_ref().unwrap().verdict,
+            Verdict::Unknown(UnknownWhy::MissingFacts)
+        );
+    }
+}
+
+#[test]
+fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
+    const { assert!(!crate::NET_AVAILABLE) };
+    let world = known_corridor(&[12]);
+    let state = WorldState::default();
+    for level in [
+        crate::DangerLevel::Never,
+        crate::DangerLevel::WhenSurvivable,
+        crate::DangerLevel::Always,
+    ] {
+        let mut globals = crate::WalkGlobals::default();
+        globals.set_danger_level(level);
+        let options = globals.manual_options(false);
+        for (from, to) in [
+            (tile(0, 1), tile(5, 1)),
+            (tile(0, 1), tile(12, 1)),
+            (tile(12, 1), tile(0, 1)),
+            (tile(0, 1), tile(23, 1)),
+        ] {
+            let expected = real_search(&world, from, to, options, &state, &[]);
+            let request = Admission {
+                policy: globals.risk_policy(Default::default(), Default::default()),
+                enforce: globals.enforces_risk(Default::default(), Default::default()),
+                ..Admission::manual(
+                    options,
+                    RiskInput {
+                        pos: from,
+                        poison: PoisonState::default(),
+                        unattributed: true,
+                        ..input(1)
+                    },
+                    1,
+                    globals,
+                )
+            };
+            let actual = route(
+                &world,
+                &request,
+                options,
+                |opts| real_search(&world, from, to, opts, &state, &[]),
+                || real_witness(&world, from, to, options, &state, &[]),
+            );
+            assert_eq!(actual.tried, 0);
+            match (&expected, &actual.outcome) {
+                (
+                    crate::RouteOutcome::Routed(expected),
+                    crate::RouteOutcome::Routed(actual_route),
+                ) => {
+                    assert_eq!(expected, actual_route, "{level:?}: {from:?}->{to:?}");
+                    assert!(actual.refusal.is_none());
+                }
+                (crate::RouteOutcome::NoPath, crate::RouteOutcome::NoPath) => {}
+                _ => panic!("held admission changed router outcome: {level:?}: {from:?}->{to:?}"),
+            }
+        }
     }
 }

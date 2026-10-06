@@ -1383,7 +1383,7 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
         Some(RouteSource::Manual) => {
             let route = manual.as_ref().and_then(|arm| {
                 arm.route
-                    .as_ref()
+                    .as_deref()
                     .map(|route| (RouteSource::Manual, arm.route_generation, route))
             });
             update_route_cache(route, here);

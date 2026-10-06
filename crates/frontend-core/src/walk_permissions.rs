@@ -15,10 +15,36 @@ use nav::router::FindOptions;
 pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
 /// The explanatory copy for the `When survivable` danger-routing level.
-pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host crosses monsters it expects your bot to survive walking through — eating, and praying when points allow — turns back when hits run ahead of the estimate, and refuses the rest with the reason. Scripts and the map control can still override.";
+pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host applies the active survivability policy to danger routes. Scripts and the map control can still override.";
 
-/// One-time notice for the danger-routing level migration.
-pub const SURVIVABLE_ROUTING_NOTICE: &str = "Danger routing now has three levels and defaults to 'When survivable'. Walks into a monster's reach are refused with a reason unless the host expects you to survive, and turn back when hits run ahead of the estimate; rs2b0t-compatible scripts keep rs2b0t's own behaviour. Rebake the navigation pack (274V17).";
+/// Explanatory copy while the middle level is held behind the unavailable
+/// runtime net.
+pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never; this setting does not change route admission. Global, one-walk, and script overrides still apply.";
+
+/// Return only copy that matches the currently active runtime gate.
+pub const fn survivable_routing_tooltip() -> &'static str {
+    if host_play::NET_AVAILABLE {
+        SURVIVABLE_ROUTING_TOOLTIP
+    } else {
+        SURVIVABLE_ROUTING_HELD_TOOLTIP
+    }
+}
+
+/// The short migration notice once survivable routing is active.
+pub const SURVIVABLE_ROUTING_NOTICE: &str =
+    "Danger routing now has three levels and defaults to 'When survivable'.";
+
+/// Migration notice while the middle level is held behind the runtime net.
+pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing now has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet; its effective level is Never and it does not change route admission. Global, one-walk, and script overrides still apply. rs2b0t-compatible scripts keep rs2b0t's own behaviour.";
+
+/// Return a migration notice that reflects whether the held level is usable.
+pub const fn survivable_routing_notice() -> &'static str {
+    if host_play::NET_AVAILABLE {
+        SURVIVABLE_ROUTING_NOTICE
+    } else {
+        SURVIVABLE_ROUTING_HELD_NOTICE
+    }
+}
 
 /// Warning shown for the global Always override and in place of the one-shot control.
 pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.";
@@ -29,6 +55,24 @@ pub const DANGER_THIS_WALK_LABEL: &str = "Route through danger zones";
 pub const GLOBAL_PERMISSION_SCOPE: &str = "Global — applies to every walk.";
 /// Bank-budget fetching is available to manual WalkTo only.
 pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
+
+/// Label for the stored middle level while the runtime net is unavailable.
+pub const WHEN_SURVIVABLE_HELD_LABEL: &str = "When survivable (not available yet: acts as Never)";
+
+/// Display the saved danger level, identifying the gated middle level without
+/// changing the canonical preference value or its cycling order.
+pub const fn danger_routing_label(level: DangerLevel) -> &'static str {
+    match level {
+        DangerLevel::WhenSurvivable if !host_play::NET_AVAILABLE => WHEN_SURVIVABLE_HELD_LABEL,
+        level => level.label(),
+    }
+}
+
+/// The panel and TUI follow gates share this decision: either the ordinary
+/// hold or host movement ownership freezes the armed manual walk.
+pub const fn manual_walk_may_follow(hold: bool, host_move_owned: bool) -> bool {
+    !hold && !host_move_owned
+}
 
 /// Shared labels for the durable walk settings: preference id, label.
 pub const GLOBAL_PERMISSION_LABELS: [(&str, &str); 4] = [
@@ -362,5 +406,46 @@ mod tests {
         WalkGlobalsView::persist_changed_at(store.path(), after, after).unwrap();
         let after_noop = WalkGlobalsView::read_at(store.path());
         assert!(!after_noop.globals.allow_teleports);
+        assert_eq!(after_noop.danger_level(), DangerLevel::WhenSurvivable);
+        assert_eq!(
+            after_noop.globals.effective_danger_level(),
+            DangerLevel::Never
+        );
+    }
+
+    #[test]
+    fn held_survivable_copy_names_the_effective_level_without_unshipped_claims() {
+        let globals = WalkGlobals::default();
+        assert_eq!(globals.danger_level(), DangerLevel::WhenSurvivable);
+        assert_eq!(globals.effective_danger_level(), DangerLevel::Never);
+        assert_eq!(
+            super::danger_routing_label(globals.danger_level()),
+            super::WHEN_SURVIVABLE_HELD_LABEL
+        );
+        assert!(super::survivable_routing_tooltip().contains("Effective level: Never"));
+        assert!(super::survivable_routing_notice().contains("effective level is Never"));
+        for copy in [
+            super::survivable_routing_tooltip(),
+            super::survivable_routing_notice(),
+        ] {
+            assert!(!copy.contains("eating"));
+            assert!(!copy.contains("praying"));
+            assert!(!copy.contains("turn back"));
+            assert!(!copy.contains("rebake"));
+            assert!(!copy.contains("274V17"));
+        }
+    }
+
+    #[test]
+    fn manual_walk_follow_waits_for_both_production_gates() {
+        for hold in [false, true] {
+            for host_move_owned in [false, true] {
+                assert_eq!(
+                    super::manual_walk_may_follow(hold, host_move_owned),
+                    !(hold || host_move_owned),
+                    "hold={hold}, host_move_owned={host_move_owned}"
+                );
+            }
+        }
     }
 }

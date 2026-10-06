@@ -1746,6 +1746,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     );
     rig.observe(2);
     assert_eq!(rig.shared.lock().results.len(), 1);
+    rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
     rig.observe(3);
     assert!(wait_until(5_000, || {
@@ -1783,6 +1784,8 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
         (true, WalkBit::Allow, true),
         (true, WalkBit::Forbid, false),
     ] {
+        // With no inherited grant the original router cannot cross this
+        // barrier. Holding assessment authority off does not widen routing.
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         let globals = Arc::new(Mutex::new(WalkGlobals {
             allow_danger_zones: global,
@@ -1882,6 +1885,7 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
 fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
     {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
         rig.shared.lock().protect = true;
         seed_prayer(&mut rig.snapshot, 43);
         rig.observe(1);
@@ -1900,6 +1904,7 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
         vec![Arc::from("test-barrier@2,0,0"); 9],
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
         rig.shared.lock().cross_first = names;
         rig.observe(1);
         rig.observe(2);
@@ -3375,12 +3380,15 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     assert!(!world.collision.standable(centre));
     assert!(world.collision.standable(shore));
     let mut request = ScriptRouteRequest {
-        admission: crate::admission::Admission::manual(
-            FindOptions::default(),
-            Default::default(),
-            0,
-            crate::WalkGlobals::default(),
-        ),
+        admission: crate::admission::Admission {
+            enforce: true,
+            ..crate::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                0,
+                crate::WalkGlobals::default(),
+            )
+        },
         generation: 1,
         request_id: 1,
         world,
@@ -3732,7 +3740,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2992, 4024, 512, 256)
+        (2920, 4024, 512, 256)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 256);
@@ -3813,8 +3821,10 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn first_native_crossing_refuses_poison_unknown_without_arming_or_waiting_it_clear() {
+    fn first_native_crossing_with_explicit_forbid_refuses_poison_unknown_without_arming_or_waiting_it_clear(
+    ) {
         let mut rig = rig(Some(Arc::new(ice_world())), false);
+        rig.shared.lock().options.allow_danger_zones = WalkBit::Forbid;
         observed_loadout(&mut rig.snapshot);
         rig.shared.lock().target = Some(tile(120));
         rig.observe(1);
@@ -4152,6 +4162,7 @@ mod s2b_admission_contract {
         let (mut rig, shared) = advising_rig(1, false);
         let manual = Arc::new(Mutex::new(WalkArm {
             admission: Some(Box::new(crate::admission::Admission {
+                enforce: true,
                 escape: Some(unresolved_escape()),
                 ..crate::admission::Admission::manual(
                     Default::default(),
@@ -4180,18 +4191,73 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn every_owned_script_phase_freezes_manual_follow_but_advice_is_not_nav_ownership() {
-        for state in [
-            script::RunState::Starting,
-            script::RunState::Running,
-            script::RunState::Paused,
-            script::RunState::Stopping,
-        ] {
-            assert!(crate::script_runtime::script_movement_owned(Some(state)));
-            assert!(!WalkArm::may_follow(
-                crate::script_runtime::script_movement_owned(Some(state))
+    fn frame_projection_freezes_an_armed_walk_through_script_start_pause_and_stop() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
+        let manual = WalkArm {
+            route: Some(Arc::new(nav::router::Route {
+                legs: vec![nav::router::Leg::Walk {
+                    tiles: vec![tile(0), tile(1)],
+                }],
+                dest: tile(1),
+                ticks: 1.0,
+            })),
+            ..Default::default()
+        };
+        let assert_frozen = |expected| {
+            let state = crate::script_runtime::script_frame_state(&scripts, "alice");
+            assert_eq!(state, Some(expected));
+            assert!(crate::play_slots::project_slot_frame_host_move_owned(
+                state, false
             ));
-        }
+            assert!(
+                manual.route.is_some(),
+                "the already-armed manual route stays latched while frozen"
+            );
+        };
+
+        slot.lock()
+            .unwrap()
+            .start_load_with_loadouts(
+                "export function tick(api) {}".into(),
+                script::LoadShape::NativeTick,
+                Vec::new(),
+                &[],
+            )
+            .unwrap();
+        assert_frozen(script::RunState::Starting);
+        assert!(wait_until(5_000, || {
+            let mut slot = slot.lock().unwrap();
+            slot.observe_lifecycle();
+            slot.state() == script::RunState::Running
+        }));
+        assert_frozen(script::RunState::Running);
+
+        slot.lock().unwrap().pause();
+        assert_frozen(script::RunState::Paused);
+        slot.lock().unwrap().stop();
+        assert_frozen(script::RunState::Stopping);
+        assert!(wait_until(5_000, || {
+            let mut slot = slot.lock().unwrap();
+            slot.observe_lifecycle();
+            slot.state() == script::RunState::Idle
+        }));
+        let state = crate::script_runtime::script_frame_state(&scripts, "alice");
+        assert_eq!(state, Some(script::RunState::Idle));
+        assert!(
+            !crate::play_slots::project_slot_frame_host_move_owned(state, false),
+            "Stop->Idle releases frontend follow"
+        );
+        assert!(
+            manual.route.is_some(),
+            "the manual walk remains armed to resume"
+        );
+        assert!(crate::play_slots::project_slot_frame_host_move_owned(
+            None, true
+        ));
+        assert!(!crate::play_slots::project_slot_frame_host_move_owned(
+            None, false
+        ));
         for state in [
             None,
             Some(script::RunState::Idle),

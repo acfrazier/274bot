@@ -1080,8 +1080,12 @@ walks. Danger has three levels: **Never**, **When survivable** (the stored
 default), and **Always**. The middle level stores `allow_danger_zones=false`
 and `survivable_routing=true`; Always stores the danger grant, and Never
 clears both. **S2b keeps `host_play::NET_AVAILABLE=false`**: every middle-level
-source resolves to Never and logs “survivable routing requires the runtime
-net (S2c)”. Only the integrated runtime-net acceptance can enable it.
+source resolves to Never, displayed as “When survivable (not available yet:
+acts as Never)”. Default/inherited walks preserve the pre-S2b router result,
+including origin-inside escapes and endpoint completion, with assessments
+informational only. A held-state informational note is logged once per session.
+Explicit script/per-walk overrides retain their S2b admission semantics.
+Only the integrated acceptance gate can enable the middle level.
 The map danger control remains an explicit grant for this walk, independent
 of the middle-level gate. Native scripts cannot use BankBudget, even when
 global bank fetch is enabled. Native bank selection ranks walking routes
@@ -1125,13 +1129,17 @@ compute authority does not replace or revoke the foreground walk or interaction.
 Taking it, replacing it or revoking the script run invalidates the old request.
 It is not exposed as a new JS API in S2b.
 
-S2b has no trustworthy live poison observer. A fresh crossing is therefore
-`Unknown(Poison)` unless the caller explicitly overrides admission; the
-override receives that honest assessment, not a claim of survivability.
-A refused route cannot take its own first hop to clear uncertainty, and
-waiting alone does not clear it. A separate safe-only walk remains allowed;
-its recovery evidence becomes usable only with S2c's observer. An assessment
-does not fetch supplies or execute an escape.
+S2b has no trustworthy live poison observer. A fresh entering crossing's
+assessment can therefore be `Unknown(Poison)`, not a claim of survivability.
+While activation is held, this does not change default/inherited admission.
+An explicit Forbid still applies S2b assessment refusal, while an explicit Allow
+may proceed with its honest Unknown assessment. A refused route cannot take its
+own first hop to clear uncertainty, and waiting alone does not clear it.
+Zero entering crossings are always admitted, even under unknown/player attackers,
+unattributed hits, missing facts or input overflow. Leaving an envelope containing
+the origin is not entry; re-entry after exiting is. The same rule holds at
+publication. Recovery evidence becomes usable only with S2c's observer.
+An assessment does not fetch supplies or execute an escape.
 
 The guard holds protection without attacking or flicking. It uses Combat's eat
 line, choosing the largest ordinary food that fits the HP deficit (or the

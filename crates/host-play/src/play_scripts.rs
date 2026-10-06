@@ -41,7 +41,7 @@ impl ScriptNavPaint {
     /// Armed route and current hop aim for `name`, if any.
     pub fn of(&self, name: &str) -> (Option<Route>, Option<WorldTile>) {
         match self.navs.lock().unwrap().get(name) {
-            Some(b) => (b.route.clone(), b.traveller.current_aim()),
+            Some(b) => (b.route.as_deref().cloned(), b.traveller.current_aim()),
             None => (None, None),
         }
     }

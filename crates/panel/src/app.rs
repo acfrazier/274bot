@@ -2993,7 +2993,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let danger_label = format!(
                 "{}: {}",
                 frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
-                danger_level.label()
+                frontend_core::walk_permissions::danger_routing_label(danger_level)
             );
             if ui.button(&danger_label) {
                 nav.set_danger_level(danger_level.next());
@@ -3004,7 +3004,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     "Danger-zone routes are refused unless this walk or its script overrides."
                 }
                 frontend_core::DangerLevel::WhenSurvivable => {
-                    frontend_core::SURVIVABLE_ROUTING_TOOLTIP
+                    frontend_core::walk_permissions::survivable_routing_tooltip()
                 }
                 frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
             });
@@ -3026,7 +3026,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             if !nav.survivable_routing_notice_ack {
                 ui.separator();
-                ui.text_wrapped(frontend_core::SURVIVABLE_ROUTING_NOTICE);
+                ui.text_wrapped(frontend_core::walk_permissions::survivable_routing_notice());
                 if ui.button("Dismiss danger-routing notice") {
                     nav.survivable_routing_notice_ack = true;
                     changed = true;

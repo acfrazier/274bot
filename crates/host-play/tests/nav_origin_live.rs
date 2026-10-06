@@ -147,11 +147,7 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
             command.options(),
             host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
             0,
-            host_play::WalkGlobals {
-                allow_danger_zones: true,
-                survivable_routing: false,
-                ..Default::default()
-            },
+            host_play::WalkGlobals::default(),
         );
         let route = command
             .walk_on(&world, &context, &name, &state, &[], admission, &arms)

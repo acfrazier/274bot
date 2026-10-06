@@ -96,6 +96,7 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
 fn corridor_plan(tables: &CombatTables, prefix: u16) -> RoutePlan {
     let ident = known_kind(tables).npc_id;
     RoutePlan {
+        complete: true,
         intervals: vec![ZoneInterval::new(
             0,
             ident,
@@ -267,6 +268,7 @@ fn synthetic_assessment(
     RouteAssessment {
         verdict,
         plan: RoutePlan {
+            complete: true,
             intervals: intervals.into_boxed_slice(),
             crossings: plan_crossings.into_boxed_slice(),
         },
@@ -824,7 +826,9 @@ fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
             };
         }
         let assessment = assess(
-            &route(80, 120),
+            // Start outside the synthetic 64-tile tether so this remains
+            // an entering-overflow probe, not an origin-escape admission.
+            &route(if estimated > 255 { 10 } else { 80 }, 120),
             &context(&zones, &risks, &tables, &wilderness),
             value,
         );
@@ -1199,7 +1203,20 @@ fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
     assert_eq!(hits, [(0, 6), (4, 12), (8, 6), (12, 6)]);
     value.hp = 20;
     value.hp_max = 40;
-    assert_eq!(assess(&short, &cx, value).verdict, Verdict::Unsurvivable);
+    let assessment = assess(&short, &cx, value);
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert!(
+        admission_passes(
+            &short,
+            &assessment,
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            ZoneExempt::NONE
+        )
+        .unwrap(),
+        "the physical damage estimate is honest, but a no-crossing flight is never refused",
+    );
 }
 
 fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
@@ -1395,7 +1412,12 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
         &value,
     )
     .unwrap();
-    assert_eq!(plan.crossings[0].retreat, CrossingGeom::NONE);
+    assert!(plan.complete);
+    assert!(
+        plan.crossings.is_empty(),
+        "origin-to-exit is escape exposure"
+    );
+    assert!(plan.intervals.iter().any(|row| row.escaping()));
     let z = one_zone(&tables, 100, 1);
     let r = RiskTables::build(&z, &tables);
     let ladder = Route {
@@ -2028,6 +2050,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let path = RoutePath::new(&walk).unwrap();
     let ident = known_kind(&tables).npc_id;
     let weak = RoutePlan {
+        complete: true,
         intervals: vec![ZoneInterval::new(
             0,
             ident,
@@ -2098,6 +2121,7 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
         .passed
     );
     let multi = RoutePlan {
+        complete: true,
         intervals: (0..4)
             .map(|i| {
                 ZoneInterval::new(
@@ -2493,7 +2517,12 @@ fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
     let walk = Route {
         legs: vec![
             Leg::Walk {
-                tiles: vec![tile(100)],
+                tiles: vec![tile(80)],
+            },
+            // Enter by transport, so neither a same-leg retreat nor the
+            // following teleport can supply an on-foot exit.
+            Leg::Transport {
+                edge: Box::new(edge(tile(80), tile(100), 5)),
             },
             Leg::Transport {
                 edge: Box::new(teleport),
@@ -2509,6 +2538,11 @@ fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
         &walk,
         &context(&zones, &risk, &tables, &w),
         input(90, 90, 0, &tables),
+    );
+    assert_eq!(
+        result.plan.crossings.len(),
+        1,
+        "this probe enters before teleporting"
     );
     assert_eq!(result.verdict, Verdict::Unsurvivable);
     assert!(result.reason.contains("NoWayOut"));

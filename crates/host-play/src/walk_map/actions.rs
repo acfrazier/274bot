@@ -1247,10 +1247,16 @@ impl Play {
                 std::sync::Arc::new(std::sync::Mutex::new(crate::WalkArm::default()))
             })
             .clone();
+        let globals = self.walk_globals();
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(name.clone()).or_default();
             bot.manual_arm = Some(std::sync::Arc::downgrade(&manual));
+            crate::walk_permissions::log_runtime_net_gate(
+                &name,
+                globals,
+                &mut bot.runtime_gate_logged,
+            );
             if let Some(escape) = bot.slot_escape() {
                 return Err(ActionError::RiskRefused {
                     refusal: script::native::WalkRefusal::EscapeInProgress,
@@ -1258,8 +1264,6 @@ impl Play {
                 });
             }
         }
-        let globals = self.walk_globals();
-        crate::walk_permissions::log_runtime_net_gate(&name, globals);
         let admission = Admission::manual(command.options, input, 0, globals);
         command.walk_on(world, current, &name, state, bank, admission, arms)
     }

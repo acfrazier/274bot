@@ -215,11 +215,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             command.options(),
             host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
             0,
-            host_play::WalkGlobals {
-                allow_danger_zones: true,
-                survivable_routing: false,
-                ..Default::default()
-            },
+            host_play::WalkGlobals::default(),
         );
         let result = command.walk_on(&world, &context, account, &state, &[], admission, &arms);
         if initial_coins == 30 {
@@ -466,12 +462,8 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let admission = host_play::admission::Admission::manual(
         command.options(),
         host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
-        0,
-        host_play::WalkGlobals {
-            allow_danger_zones: true,
-            survivable_routing: false,
-            ..Default::default()
-        },
+        1,
+        host_play::WalkGlobals::default(),
     );
     let route = command
         .walk_on(&world, &context, &account, &state, &[], admission, &arms)

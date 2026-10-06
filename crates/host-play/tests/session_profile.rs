@@ -2096,11 +2096,7 @@ fn public_profile_routes_lumbridge_to_ardougne() {
                 FindOptions::default(),
                 Default::default(),
                 0,
-                host_play::WalkGlobals {
-                    allow_danger_zones: true,
-                    survivable_routing: false,
-                    ..Default::default()
-                },
+                host_play::WalkGlobals::default(),
             );
             host_play::arm_walk_on(
                 &world,
