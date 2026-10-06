@@ -720,6 +720,7 @@ fn snapshot_at(x: i32, z: i32) -> api::snapshot::GameSnapshot {
     snapshot.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
+            network: api::WorldTile { x, z, level: 0 },
             actor: api::snapshot::ActorView {
                 name: None,
                 actions: vec![],
@@ -1125,6 +1126,12 @@ fn plague_city_cellar_return_skips_the_gate_outside_the_basement() {
 fn members_a_paths_have_no_shadowed_journal_rules() {
     let _home = script::IsolatedEnv::enter("path-schema-members-a-shadows");
     let (selected, quests) = selected_and_quests();
+    // Monk's Friend gathers a log, so its compile needs the gather catalog.
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
     for file in ["drunkmonk.json", "hazeelcult.json", "elena.json"] {
         let document: PathDocument = serde_json::from_value(read_path(&paths_dir().join(file)))
             .unwrap_or_else(|error| panic!("decode {file}: {error}"));
@@ -1132,4 +1139,62 @@ fn members_a_paths_have_no_shadowed_journal_rules() {
             .unwrap_or_else(|error| panic!("{file}: {}", error.code));
         script::quester::probe::assert_no_shadowed_rules(&compiled);
     }
+}
+
+/// Integration 7 swapped Monk's Friend's `GAP-drunkmonk-woodcutting` wait for
+/// a woodcutting gather. Stage 50's agree talk settles on entry (the journal
+/// already reads stage 50), so the stage is ordered: the talk runs once, the
+/// cursor then reaches the chop, and a held log goes straight to the hand-in.
+#[test]
+fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-wood");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("drunkmonk.json")))
+            .expect("drunkmonk decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("drunkmonk compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(&compiled, &selected, "drunkmonk:50", &[])];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    let near_cedric = |items: &[(&str, i32)]| snapshot_with_items(2614, 3257, &selected, items);
+
+    // No log: agree first, then the cursor moves on to the chop.
+    assert_eq!(
+        probe.choice("drunkmonk:50", 0, &near_cedric(&[])),
+        Choice::Step(FactKey::new("agree-to-help-cedric"))
+    );
+    assert_eq!(
+        probe.choice("drunkmonk:50", 1, &near_cedric(&[])),
+        Choice::Step(FactKey::new("chop-normal-tree-log"))
+    );
+    // A held log skips the talk and the chop from any cursor.
+    for cursor in 0..=2 {
+        assert_eq!(
+            probe.choice("drunkmonk:50", cursor, &near_cedric(&[("logs", 1)])),
+            Choice::Step(FactKey::new("hand-logs-to-cedric")),
+            "cursor {cursor}"
+        );
+    }
+    assert!(
+        !compiled
+            .sequences
+            .iter()
+            .flat_map(|sequence| sequence.steps.iter())
+            .any(|step| step.id.0.starts_with("GAP-")),
+        "no GAP wait remains in Monk's Friend"
+    );
 }

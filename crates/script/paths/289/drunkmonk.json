@@ -184,7 +184,7 @@
         ]
       },
       {
-        "stage": "drunkmonk:50", "required": [], "terminal": false, "recovery_entry": null,
+        "stage": "drunkmonk:50", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
         "steps": [
           {
             "id": "agree-to-help-cedric", "kind": "talk", "version": 1, "advances": true,
@@ -198,11 +198,15 @@
             "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "drunkmonk", "any": ["drunkmonk:50"] } } }
           },
           {
-            "id": "GAP-drunkmonk-woodcutting", "kind": "wait", "version": 1,
-            "comment": "GAP-drunkmonk-woodcutting stays until quester-gather-wc merges (tip 1a30f7fa7): this branch's gather handler only accepts mining/fishing. Exact replacement step for stage 50: {\"id\":\"chop-normal-tree-log\",\"kind\":\"gather\",\"version\":1,\"advances\":false,\"args\":{\"skill\":\"woodcutting\",\"resource\":\"normal\",\"until\":{\"obj\":\"logs\",\"qty\":1},\"anchor\":{\"tile\":[2613,3252,0],\"source\":\"289 maps/m40_50.jm2:5891; scripts/skill_woodcutting/configs/trees.dbrow normal_tree_table\"}},\"skip_if\":{\"Fact\":{\"kind\":\"has_item\",\"version\":1,\"args\":{\"obj\":\"logs\"}}},\"settle\":{\"Fact\":{\"kind\":\"has_item\",\"version\":1,\"args\":{\"obj\":\"logs\"}}}}. Tree loc 1276 (loc.pack:1277) at (2613,3252,0); Cedric takes one logs (brother_cedric.rs2:62-67). The gather family only fetches an axe from the bank, so a fresh account needs a buy iron_axe from Aemad first (stock 3, ardougne_east.inv:55-73, anchor (2613,3294)).",
-            "args": { "until": { "Any": [] }, "max_ticks": 1 },
+            "id": "chop-normal-tree-log", "kind": "gather", "version": 1, "advances": false,
+            "comment": "Integration swap for the former GAP-drunkmonk-woodcutting wait (quester-gather-wc is merged). Tree loc 1276 (loc.pack:1277) at (2613,3252,0) (m40_50.jm2:5891, `0 53 52: 1276 10 1`); Cedric takes one logs (brother_cedric.rs2:62-67). The stage is ordered because the agree talk's settle (`stage_in drunkmonk:50`) is already true on entry, so authored order would re-select the talk forever while no logs are held; a restart replays the harmless talk. The Path owns its inventory, so the Provisioner does not fetch a banked axe: this step needs a carried or equipped axe (Aemad's adventurershop sells iron_axe, ardougne_east.inv stock3).",
+            "args": {
+              "skill": "woodcutting", "resource": "normal",
+              "until": { "obj": "logs", "qty": 1 },
+              "anchor": { "tile": [2613, 3252, 0], "source": "289 maps/m40_50.jm2:5891; scripts/skill_woodcutting/configs/trees.dbrow normal_tree_table" }
+            },
             "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "logs" } } },
-            "settle": { "Any": [] }
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "logs" } } }
           },
           {
             "id": "hand-logs-to-cedric", "kind": "talk", "version": 1, "advances": true,
