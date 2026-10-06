@@ -1713,6 +1713,8 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "hunt" => Some(include_str!("../../paths/289/hunt.json").as_bytes()),
         "demon" => Some(DEMON_JSON.as_bytes()),
         "squire" => Some(SQUIRE_JSON.as_bytes()),
+        "priestperil" => Some(include_bytes!("../../paths/289/priestperil.json")),
+        "cog" => Some(include_bytes!("../../paths/289/cog.json")),
         _ => None,
     }
 }
