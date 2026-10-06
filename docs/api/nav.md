@@ -14,7 +14,8 @@ stages pack + flags + reach + sidecar manifest + stamp under the install resourc
 bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
 the identity that the compile-time table `host_play::bundled_nav_identities()`
 serves. Normal WalkTo in that build needs no manual step. The default revision
-is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead.
+is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead. Revision
+289 is the production revision; 274 is best-effort, neither tested nor claimed.
 
 `nav-pack` remains for deliberate developer/custom-input bakes. It calls the
 same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
@@ -23,14 +24,18 @@ and writes the current whole-world pack (`encode` in
 
 ```bash
 cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
-# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR …
+# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
 ```
 
 When `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` is set, legacy positional mode
 defaults to `<engine>/../content/maps`, matching doors configs, and
 `<engine>/data/pack/config`. Pass all three paths when using another tree.
-Output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is
-derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
+In legacy positional mode output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`,
+with the flags sidecar at `$NAV_FLAGS` or the pack path with its extension swapped
+to `.navflags` (default `~/.274bot/274bot.navflags`); the `.navreach`/`.navcanlight`/`.navpois`/`.json`
+sidecars are written next to `--out`. Explicit mode ignores `$NAV_PACK` and requires
+`--out NAV_PACK` (plus `--revision`, `--content`, `--cache`, `--cache-manifest`).
+`gates.loc` is derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -304,6 +309,16 @@ jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
 
+### Members gating at runtime
+
+Bake-time `members_req` is only half the gate. Every search runs under a
+`WorldState` whose `map_members` comes from the bound server profile: an
+explicit `--world-members` override wins; otherwise a local profile reads
+its engine's `world.json` for the selected revision, and an all-rs2b2t
+roster declares members. Anything unresolved routes as F2P, and a walk
+that would need a members-only crossing is refused with “This route
+requires a members' world”.
+
 The NPC Boat edge models `set_sail`; each eligible gangplank Cross remains a
 separate player-relative Ladder edge. Its displacement includes the one-tile
 `p_teleport` step and the two-tile `p_telejump` from the updated coordinate.
@@ -445,7 +460,7 @@ selected quest family feeds the bake.
 
 `find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra
 with safe defaults (no wilderness, no any-tile teleports).
-`find_with(..., FindOptions { allow_teleports, allow_wilderness })` opts
+`find_with(..., FindOptions { allow_teleports, allow_wilderness, allow_bank_fetch, essence, zones })` opts
 those in. Tile steps use the client's directional `PL_WALK_*` masks,
 **not** the blanket `walkable()`. Transport take-off is any standable
 tile within **`INTERACT_RADIUS` 1** of the edge `at` (adjacent only — a
@@ -508,9 +523,8 @@ still satisfies the same hard gates with zone restrictions lifted. It names
 only the active zones blocking transitions on that best all-zone-exempt route,
 using the original transition rules: one-way escape from active origin zones
 (re-entry is reported) and entry into the selected goal's active zones without
-allowing transit out of them. This reverses NAV-N1's ROUTER-30 decision for
-single-target diagnosis only: a sufficient witness on the best route is more
-useful than listing every blocked alternative. Multi-goal
+allowing transit out of them. A sufficient witness on the best route is reported
+rather than every blocked alternative. Multi-goal
 `find_first_blocking_zones` retains reachable-frontier attribution per
 goal-zone partition. Neither diagnosis claims a minimal cut; incomplete or
 budget-limited searches return no diagnosis.
@@ -536,10 +550,10 @@ Retreat stays in the same walk leg, and teleports are never credited as
 on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
 `NoWayOut` in its reason.
 
-S2a always sums live and estimated attackers, even when their identities may
+Live and estimated attackers are always summed, even when their identities may
 overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
 distance-limited or count-limited scene cannot certify coverage or erase a
-retained live row. Single-way flags remain false until S3 establishes eligibility.
+retained live row. Single-way flags stay false (no eligibility source yet).
 
 Food is simulated from actual counts, using the shared guard picker, a
 three-tick bite clock, delayed heals and exact threshold gating. Transport
@@ -566,8 +580,7 @@ and antipoison information remain, but walking adds no new poison risk.
 
 `RiskTables` is immutable and reused across assessments. Ordinary slot
 creation does not construct it, and no per-bot state is added by this
-compute-only API. Host admission and shared-world lazy initialization belong
-to the later integration.
+compute-only API. Host admission and shared-world initialization are not wired yet.
 
 The estimate builds a compact `KindRisk` for each packed zone kind from the
 selected `NpcNameRow` and `CombatTables`; it does not change routing or pack
@@ -746,7 +759,12 @@ call it once per delivered server tick; it returns `None` while in
 progress and `Some(TravelOutcome)` at a terminal state
 (`Arrived`/`Stalled`/`Refused`/`Blocked`/`EvidenceUnproven`/`GaveUp`). One driver send per
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
-on_leg, on_event }`.
+teleports, edges, quest_evidence, on_leg, on_event }`.
+
+Arrival radius is the Chebyshev distance treated as arrived at a hop
+target. `close_enough` defaults to 2. Legs with an exact planned
+`takeoff` settle at radius 0 on the planned landing; teleport hops accept
+radius 2 and glider landings radius 1 whatever the runner passes.
 
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.
@@ -757,7 +775,7 @@ on_leg, on_event }`.
 - **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
   the player stands within one tile of the route's last tile on its level,
   and the client refused the click onto it on five distinct ticks (frozen
-  `'blocked'`, `WalkExecutor.ts:1039-1094`). The player is as close as the
+  `'blocked'`). The player is as close as the
   live scene allows. Script walks publish it as a settled route end flagged
   blocked (`walk_outcome_blocked`), and `walkResilient` returns true on it;
   other callers end the follow as for any stall.
@@ -765,7 +783,7 @@ on_leg, on_event }`.
   (unreachable, off scene, scene unavailable) is retried two ticks later,
   three times per follow, before the follow ends `Refused` — a region
   rebuild briefly empties the client's local route (frozen
-  `CANDIDATE_SETTLE_TRIES`, `WalkExecutor.ts:1178-1184`).
+  `CANDIDATE_SETTLE_TRIES`).
 - **NPC-backed Boat/Npc/Glider recovery:** choose an operable stand by live
   scene-route cost, re-picking reachable same-type NPCs and retargeting a
   wandering NPC before the old approach settles. The shared stand predicate
@@ -813,7 +831,7 @@ never latches a bank session, and never changes ordinary walk policies.
 
 - **v1** `Navigator.findPath(from, to, opts)`: wilderness on, bank-fetch
   off, teleports only from explicit catalog/policy bits. Default waiter
-  timeout is 20000 ms (Brimhaven passes 8000). Returned hops include
+  timeout is 20000 ms. Returned hops include
   `locName`; `expanded` is omitted.
 - **v2** `api.inspectBegin({ from, to, allow_* , avoid })` returns an
   isolate token. Query `inspectSettled` / `inspectValue`, or observe
@@ -857,7 +875,8 @@ WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
 fail-closed: when only held, consumed, or worn item requirements are missing,
 the host plans a fetch-and-wear session from the packed bank stand table
 (`NavWorld::banks()`), walks to a standable access tile of the nearest
-stand (never the booth loc or a teller spawn behind the counter), opens
+stand — same level first, then Chebyshev distance — (never the booth loc
+or a teller spawn behind the counter), opens
 it, withdraws only shortages, closes the bank, then wears any missing worn
 item (the client cannot wear while the bank is open), and re-runs the strict
 search. It never deposits backpack items: tools, quest items, food, and existing
@@ -898,9 +917,9 @@ confirming a fetch walk if the needed item is only in the bank.
 
 The panel's main-chrome **WalkTo** button fills the Game pane
 (`crates/panel/src/picker.rs` + `walk_map.rs`). One application-owned
-renderer draws at most 24 terrain tiles (258×258, A's `select_lod`) plus
+renderer draws at most 24 terrain tiles (258×258, `select_lod`) plus
 one viewport overlay for optional map-owned grid/collision/NSEW/reach/flood
-layers — not a per-tile ImGui quad mesh. Until D binds an image cache the
+layers — not a per-tile ImGui quad mesh. Until the map cache is bound the
 map shows a grid and `map imagery unavailable — cache not bound` with no
 POIs. Route and destination are vector markers. Reach uses bound
 `.navreach` or `reach unavailable`. Wheel zooms toward the cursor; click
@@ -1013,7 +1032,7 @@ corpus: `cargo run --release -p panel --bin panel-play -- --live script_nav_rout
 
 ## Credit
 
-Router/Traveller shape borrows from m8aq's api nav/travel and the
-RuneLite `shortest-path` plugin (collision + transport graph + Dijkstra).
+Router/Traveller shape follows the collision + transport graph + Dijkstra shape of the
+RuneLite `shortest-path` plugin.
 The Rust is our own; no rsmod wasm is vendored. Collision/transport truth
 is the Server content, scoped to the 2004 surface.

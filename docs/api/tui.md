@@ -70,10 +70,10 @@ label in its border. Everything is plain text as well as colour.
 | Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
-| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
+| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
-| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` and **lowmem / highmem** (persisted on the profile); session nav opt-ins; **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
+| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, teleports / wilderness / bank fetch / danger zones, **Pause script on manual movement**, Quester paths folder + reload, and **lowmem / highmem** (persisted on the profile); **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
 ## Keys
 
@@ -97,7 +97,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 | --- | --- |
 | Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
-| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` layers, `z` route through danger zones for this Map open, `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
+| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while the global danger-zones permission is on), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
 | Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`) |
 | Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
 | Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
@@ -127,7 +127,7 @@ zone names for each affected bot. On legacy grid packs `z` cannot enable
 checks and the report says `zones: unavailable (legacy grid pack)`. Bots that
 are logged out, have no position yet or run a script are skipped with that
 reason. The `z` choice starts with zones avoided and resets whenever Map
-closes or opens; it is not persisted.
+closes or opens; it is not persisted. While the global danger-zones permission is on, the per-walk checkbox is superseded.
 
 **Mouse** (optional; every workflow works from the keyboard): left click
 focuses the pane, selects a fleet row (its checkbox column ticks the row
@@ -141,7 +141,7 @@ current layout. An open overlay or Script popup swallows clicks outside
 itself and takes the wheel: Browse and Load close on an outside click, the
 catalog prompt stays (dismissing it means Not now).
 
-### Changed keys (0.1.9)
+### Changed keys (earlier layouts)
 
 The old strip layout had global letters that also fired from popups.
 They now live in their pane: `i` / `u` / `x` / `o` / `l` on the Overview,
@@ -156,8 +156,7 @@ group checklist is the fleet's row selection.
 
 ## Limits
 
-Profiles, queue, catalog warm-up / reload, evidence and bulk actions over
-the row selection are later screens; today the row selection feeds the map
-group walk. Catalog compatibility remains partial. In-tree farming script
-*ports* are not the product surface — catalog/file bots run through the
-shim; guardian solvers are host-side.
+There is no Debug tab here: server cheat commands live in the panel's
+Debug tab on local-engine profiles only. Catalog compatibility remains
+partial. Catalog/file bots run through the compatibility shim, not as
+ports; guardian solvers are host-side.

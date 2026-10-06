@@ -7,7 +7,8 @@ the last rebuild — nothing deep-copies the world per read.
 ## Families and gens
 
 `Family` mirrors the `ClientGens` counters on the client. The first 11 map
-1:1; the rest are additive and gate on the same underlying gens.
+1:1; the rest are additive and gate on the same underlying gens. All 28
+families are rebuilt by `rebuild`/`rebuild_family`.
 
 | Family | Bumped by (ServerProt) |
 | --- | --- |
@@ -24,10 +25,10 @@ the last rebuild — nothing deep-copies the world per read.
 | `World` | `SET_MULTIWAY` |
 
 `REBUILD_NORMAL` and `LOGOUT` bump every family. The additive iface-derived
-families (`Loc`, `GroundItem`, `Equipment`, `Bank`, `Widgets`, `SideTabs`,
-`Trade`, `ChatOptions`, `MakeProducts`, `QuestStatuses`, `Controls`,
-`Modals`, `Menu`) rebuild on `Iface`/`Inv`/`Scene` gen movement via private
-per-family gates. All 25 families are rebuilt by `rebuild`/`rebuild_family`.
+families (`Loc`, `GroundItem`, `Inventory`, `Equipment`, `Bank`, `BankSide`, `Shop`,
+`Widgets`, `SideTabs`, `Trade`, `ChatOptions`, `MakeProducts`, `MainMake`,
+`QuestStatuses`, `Controls`, `Modals`, `Menu`) rebuild on `Iface`/`Inv`/`Scene`
+gen movement via private per-family gates.
 
 ## GameSnapshot
 
@@ -71,9 +72,9 @@ unchanged, while a present empty vector clears it.
 `ItemView` (`container`/`action_family`/`slot`/`count`/`def`),
 `WidgetView`, `SideTabView`, `StatView`, `VarpView`, `ChatLineView`,
 `SceneView` (collision flags), `WorldStateView`, `CameraView`,
-`MapFlagView`, `TradeView`, `ModalView`, `QuestStatusView`,
-`MakeProductView`, `ToggleControlsView`, plus `WorldTile`/`LocalTile` and
-`ItemDefView`/`LocDefView` (from `api::obj_names`).
+`MapFlagView`, `TradeView`, `ShopView` (open, stock, player, player_available), `ModalView`,
+`QuestStatusView`, `MakeProductView`, `ToggleControlsView`, plus
+`WorldTile`/`LocalTile` and `ItemDefView`/`LocDefView` (from `api::obj_names`).
 
 `PlayerView.headicons` carries the client's appearance bitmask unchanged for
 local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,
@@ -102,13 +103,15 @@ observations as `Unknown`, rather than interpreting login defaults as facts.
 
 `ReadContext<'a>` wraps `&'a GameSnapshot` and exposes the query-facing
 surface: `tick`, `attached`, `ingame`, `scene_state`, `local_player`,
-`self_slot`, `stats`, `npcs`, `players`, `locs`, `ground_items`,
+`local_overhead_text`, `taking_damage`, `self_slot`, `stats`, `npcs`, `players`, `locs`, `ground_items`,
 `inventory`, `equipment`, `inventory_capacity`, `bank`, `bank_side_items`,
-`bank_component_id`, `chat`, `chat_options`, `chat_continue_component_id`,
-`make_products`, `quest_statuses`, `widgets`, `side_tabs`, `component`,
-`varps`, `world`, `scene`, `camera`, the three trade containers, `modals`,
+`bank_component_id`, `bank_session_generation`, `bank_snapshot_generation`,
+`puzzle_board`, `bank_loaded`, `chat`, `chat_options`, `chat_continue_component_id`,
+`make_products`, `main_make`, `quest_statuses`, `widgets`, `side_tabs`, `component`,
+`varps`, `world`, `scene`, `camera`, `map_flag`, `hint_tile`, the three trade containers
+(`trade_my_offer`, `trade_their_offer`, `trade_side_pack`), `shop`, `modals`,
 `count_dialog_open`, `active_side_tab`, `login_message`, `menu_entries`,
 `main_modal_texts`, `chat_modal_texts`, `run_controls`, `retaliate_controls`,
-`world_tile`, `varp`, `component_items`, `component_text`,
+`bank_note_controls`, `world_tile`, `varp`, `component_items`, `component_text`,
 `component_model_obj_id`, `side_tab_interface`. `ReadContext` is `Copy`
 (a single reference).
