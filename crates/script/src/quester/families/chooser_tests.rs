@@ -435,7 +435,17 @@ fn alternating_reachability_stops_after_the_bound_not_the_settle() {
         );
         // Two cows alternate which side of the fence they stand on. Every
         // swap would restart the walk; the bound must stop that long before
-        // the 20 s settle.
+        // the 20 s settle. `NativeActions::begin` clears the outbox, so collect
+        // each tick's walk request ids instead of counting the final outbox.
+        let mut walk_requests = std::collections::BTreeSet::new();
+        let mut note_walks = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            for action in &ledger.as_ref().unwrap().outbox {
+                if matches!(&action.effect, HostEffect::Walk(_)) {
+                    walk_requests.insert(action.request_id);
+                }
+            }
+        };
+        note_walks(&ledger);
         for tick in 3..=14 {
             if tick % 2 == 0 {
                 snapshot.seed_npcs(vec![
@@ -454,17 +464,12 @@ fn alternating_reachability_stops_after_the_bound_not_the_settle() {
                 })
                 .is_pending()
             );
+            note_walks(&ledger);
         }
-        let walks = ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
-            .count();
+        let walks = walk_requests.len();
         assert!(
             walks <= 7,
-            "alternating reachability must stop after the 6 re-picks, not run to the settle, got {walks} walks: {:?}",
+            "alternating reachability must stop after the 6 re-picks, not run to the settle, got {walks} distinct walks: {:?}",
             describe(&ledger)
         );
     });
