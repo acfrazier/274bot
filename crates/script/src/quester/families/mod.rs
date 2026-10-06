@@ -2584,6 +2584,7 @@ impl StepPlan for UseOnPlan {
             accepted: false,
             chat_since: 0,
             target_tile: self.target_tile,
+            anchored_stand_arrived: false,
             default_dialogue: self.default_dialogue,
             dialogue_options: self.dialogue_options.clone(),
             dialogue: None,
@@ -2619,6 +2620,8 @@ struct UseOnRun {
     round_deadline: Option<Duration>,
     chat_since: i32,
     target_tile: Option<WorldTile>,
+    /// Retained across retries so only the initial approach can defer the deadline.
+    anchored_stand_arrived: bool,
     default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
@@ -2801,9 +2804,8 @@ impl StepRun for UseOnRun {
                         if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
                             self.target_tile = Some(loc.tile);
                             if !reach::loc_arrived(&cx.tick.cx, loc) {
-                                // Direct anchored arrival replaces the pre-settle anchor walk.
-                                // Repeated uses still share their original settle deadline.
-                                if self.tile.is_some() && self.accepted_tick.is_none() {
+                                // Defer the anchored loc deadline until its first legal stand.
+                                if self.tile.is_some() && !self.anchored_stand_arrived {
                                     self.deadline = None;
                                 }
                                 self.walk = Some(cx.tick.actions.begin::<Walk>(
@@ -2816,6 +2818,9 @@ impl StepRun for UseOnRun {
                                     &mut cx.tick.cx,
                                 )?);
                                 return Poll::Pending;
+                            }
+                            if self.tile.is_some() {
+                                self.anchored_stand_arrived = true;
                             }
                         }
                         (loc.tile, None, None)

@@ -501,6 +501,8 @@ rules. Being inside the authored anchor radius alone is not interaction proof.
 The selected tile stays fixed while approaching, and dispatch retains the exact
 loc id as well as its display name; a nearer or co-located same-name loc cannot
 replace it.
+For an anchored loc, the settle deadline starts on arrival at the first legal
+stand and is shared by all repeated `until` attempts; retries do not restart it.
 
 The `ground_item_near` fact may declare `at: [x,z,level]`. It then requires the
 selected item id at that exact tile and within the declared radius; a nearby
