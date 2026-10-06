@@ -262,6 +262,15 @@ fn exposure(path: RoutePath<'_>, row: &ZoneInterval) -> Result<(i32, i32), Unkno
     let end = path.interval_end_tick(row)?;
     Ok((start, end))
 }
+fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, UnknownWhy> {
+    let npc = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
+    let r = npc
+        .maxrange
+        .checked_add(npc.attackrange.max(1))
+        .ok_or(UnknownWhy::Overflow)?;
+    add(mul(r, 2)?, LAG)
+}
+
 fn hits(
     path: RoutePath<'_>,
     plan: &RoutePlan,
@@ -294,12 +303,7 @@ fn hits(
         }
     }
     for live in input.live.iter().take(usize::from(input.live_len)) {
-        let row = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-        let r = row
-            .maxrange
-            .checked_add(row.attackrange.max(1))
-            .ok_or(UnknownWhy::Overflow)?;
-        let duration = add(mul(r, 2)?, LAG)?;
+        let duration = origin_duration(live, tables)?;
         if tick < duration && tick % i32::from(live.rate) == 0 {
             damage = add(damage, i32::from(live.max_hit))?;
         }
@@ -448,6 +452,13 @@ pub fn replay(
     let mut duration = path.ticks();
     for row in &plan.intervals {
         duration = duration.max(path.interval_end_tick(row)?);
+    }
+    // An endpoint does not retire an origin attacker or its queued impact.
+    for live in input.live_iter() {
+        duration = duration.max(origin_duration(live, tables)?);
+        if let Some(due) = live.due() {
+            duration = duration.max(add(i32::from(due.wrapping_sub(input.tick)), 1)?);
+        }
     }
     for tick in 0..duration {
         while usize::from(i) + 1 < path.len()
@@ -662,20 +673,12 @@ fn assess_inner(
     // Validate report bounds before replay, so a huge transport hold cannot
     // turn a bounded Unknown(Overflow) assessment into a billion-tick replay.
     let mut display = Vec::with_capacity(plan.crossings.len().min(8));
-    let mut max_volley = 0;
     let mut origin_volley = 0;
     let mut origin_worst = 0;
+    let mut unaffordable_floor = None;
     if unknown.is_none() {
         for live in input.live.iter().take(usize::from(input.live_len)) {
-            let npc = context
-                .combat
-                .npc(live.ident)
-                .ok_or(UnknownWhy::AlreadyEngaged)?;
-            let r = npc
-                .maxrange
-                .checked_add(npc.attackrange.max(1))
-                .ok_or(UnknownWhy::Overflow)?;
-            let duration = add(mul(r, 2)?, LAG)?;
+            let duration = origin_duration(live, context.combat)?;
             origin_volley = add(origin_volley, i32::from(live.max_hit))?;
             origin_worst = add(
                 origin_worst,
@@ -689,6 +692,7 @@ fn assess_inner(
             }
         }
     }
+    let mut max_volley = origin_volley;
     for (index, c) in plan.crossings.iter().enumerate() {
         let mut v = 0;
         let mut deep = 0;
@@ -697,10 +701,13 @@ fn assess_inner(
         for i in c.first..=c.last {
             v = v.max(volley(&plan, i, false)?);
             if unknown.is_none() {
-                deep = deep.max(
-                    estimated_floor(path, &plan, i, &input, context.combat, context.allow)?
-                        .unwrap_or(255),
-                );
+                let floor = estimated_floor(path, &plan, i, &input, context.combat, context.allow)?;
+                deep = deep.max(floor.unwrap_or(255));
+                if unaffordable_floor.is_none()
+                    && floor.is_some_and(|cost| cost >= i32::from(input.hp_max))
+                {
+                    unaffordable_floor = Some((i, floor.unwrap_or(255)));
+                }
             }
         }
         let mut worst = if credited { v } else { 0 };
@@ -753,7 +760,7 @@ fn assess_inner(
     let mut bites = 0;
     let mut extra_food = None;
     if unknown.is_none() {
-        if no_way_out.is_some() {
+        if no_way_out.is_some() || unaffordable_floor.is_some() {
             verdict = Verdict::Unsurvivable;
         } else {
             let baseline = replay(
@@ -767,7 +774,9 @@ fn assess_inner(
             )?;
             hp_after = bounded_hp(baseline.hp_after)?;
             bites = baseline.bites;
-            if !baseline.passed {
+            // Poison alone never refuses a no-crossing walk. Known origin
+            // attackers still retain their complete, raw admission budget.
+            if !baseline.passed && (!plan.crossings.is_empty() || input.live_len > 0) {
                 verdict = Verdict::Unsurvivable;
                 let carried = input
                     .food_iter()
@@ -883,6 +892,14 @@ fn assess_inner(
         }
         let _ = write!(reason, "no way out on foot; ");
     }
+    if let Some((index, cost)) = unaffordable_floor {
+        let point = path.point(index).ok_or(UnknownWhy::Overflow)?;
+        let _ = write!(
+            reason,
+            "way out at {},{} costs {cost}, at least max HP {}; ",
+            point.tile.x, point.tile.z, input.hp_max
+        );
+    }
     if let Some(row) = plan.intervals.first() {
         let kind = &zones.kinds()[usize::from(zones.zones()[usize::from(row.zone)].kind)];
         let _ = write!(
@@ -908,7 +925,7 @@ fn assess_inner(
         let _ = write!(reason, "needs {count} {name}; ");
     }
     if input.more_food {
-        let _ = write!(reason, "only six largest ordinary food kinds replayed; ");
+        let _ = write!(reason, "only six largest carried food kinds replayed; ");
     }
     for (id, count) in input.food_iter() {
         if count > 0 && context.combat.food(id).is_some_and(|food| !ordinary(food)) {

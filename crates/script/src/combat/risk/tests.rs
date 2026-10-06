@@ -560,6 +560,87 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     assert_eq!(assess(&safe, &cx, poisoned).input.poison, poisoned.poison);
 }
 
+#[test]
+fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
+    let tables = tables();
+    let zones = one_zone(&tables, 120, 1);
+    let risks = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let cx = context(&zones, &risks, &tables, &wilderness);
+    let safe = route(10, 30);
+    let mut poisoned = input(10, 40, 0, &tables);
+    poisoned.poison = PoisonState::Poisoned {
+        per_tick: 11,
+        last_tick: 0,
+    };
+    let assessment = assess(&safe, &cx, poisoned);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(assessment.verdict, Verdict::Survivable);
+    assert_eq!(
+        assessment.hp_after, 0,
+        "retain the conservative poison replay"
+    );
+    assert_eq!(assessment.input.poison, poisoned.poison);
+    assert!(assessment
+        .supplies
+        .contains(&SupplyNeed::Info(InfoNeed::Antipoison)));
+    assert!(!assessment
+        .supplies
+        .iter()
+        .any(|need| matches!(need, SupplyNeed::Food { .. })));
+}
+
+#[test]
+fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
+    let tables = tables();
+    let zones = one_zone(&tables, 120, 1);
+    let risks = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let cx = context(&zones, &risks, &tables, &wilderness);
+    let short = route(10, 10);
+    let mut value = input(90, 90, 0, &tables);
+    value.pos = tile(10);
+    value.prayer = 99;
+    value.prayer_base = 99;
+    value.live_len = 1;
+    value.live[0] = LiveRow {
+        actor: crate::combat::ActorRef {
+            kind: crate::combat::ActorKind::Npc,
+            index: 7,
+        },
+        ident: known_kind(&tables).npc_id,
+        max_hit: 6,
+        rate: 4,
+        due_tick: 4,
+    };
+    let assessment = assess(&short, &cx, value);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(
+        (assessment.verdict, assessment.hp_after, assessment.volley),
+        (Verdict::Survivable, 60, 6),
+        "four raw origin volleys plus the retained launch"
+    );
+    let mut hits = Vec::new();
+    replay(
+        RoutePath::new(&short).unwrap(),
+        &assessment.plan,
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |tick, _, _, damage, _| {
+            if damage > 0 {
+                hits.push((tick, damage));
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(hits, [(0, 6), (4, 12), (8, 6), (12, 6)]);
+    value.hp = 20;
+    value.hp_max = 40;
+    assert_eq!(assess(&short, &cx, value).verdict, Verdict::Unsurvivable);
+}
+
 fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Ladder,
@@ -720,13 +801,18 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
 fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
     let tables = tables();
     let w = WildernessRules::default();
-    let kinds = (0..4)
-        .map(|i| {
-            let mut kind = known_kind(&tables);
-            kind.id = format!("ice{i}").into();
-            kind
-        })
-        .collect();
+    let kinds = [
+        "icewarrior",
+        "zombie_armed",
+        "giantspider2",
+        "pirate_aggressive",
+    ]
+    .into_iter()
+    .map(|config| {
+        let npc = tables.selected().npc_by_config(config).unwrap();
+        ZoneKind::new(config, config, npc.id, 1, false, false)
+    })
+    .collect();
     let zones = zone_table(
         (0..4)
             .map(|i| Zone::npc(tile(100 + i), 1, ZoneClass::Always, u16::MAX, i as u16))
@@ -865,14 +951,16 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         &w,
     );
     let risk = RiskTables::build(&burst, &tables);
-    assert_eq!(
-        assess(
-            &route,
-            &context(&burst, &risk, &tables, &w),
-            input(20, 40, 0, &tables)
-        )
-        .verdict,
-        Verdict::Unsurvivable
+    let burst_assessment = assess(
+        &route,
+        &context(&burst, &risk, &tables, &w),
+        input(20, 40, 0, &tables),
+    );
+    assert_eq!(burst_assessment.verdict, Verdict::Unsurvivable);
+    assert!(
+        burst_assessment.reason.contains("max HP"),
+        "{}",
+        burst_assessment.reason
     );
     let overflow = zone_table(
         (0..44)
@@ -1086,8 +1174,10 @@ fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
         bites.iter().map(|(tick, _, _)| *tick).collect::<Vec<_>>(),
         independent.3
     );
-    let mut false_allow = WalkAllow::default();
-    false_allow.food = false;
+    let false_allow = WalkAllow {
+        food: false,
+        ..WalkAllow::default()
+    };
     assert_eq!(
         replay(
             path,

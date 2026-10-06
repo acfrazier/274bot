@@ -91,7 +91,7 @@ impl<'a> RoutePath<'a> {
                         }
                         offset += 1;
                     }
-                    tick += i32::from(edge.ticks);
+                    tick += edge.ticks;
                 }
             }
         }
@@ -112,9 +112,7 @@ impl<'a> RoutePath<'a> {
                         offset
                     };
                     if takeoff >= usize::from(lo) && takeoff < usize::from(hi) {
-                        cost = cost
-                            .checked_add(i32::from(edge.ticks))
-                            .ok_or(UnknownWhy::Overflow)?;
+                        cost = cost.checked_add(edge.ticks).ok_or(UnknownWhy::Overflow)?;
                     }
                     if !attached(self.route, leg) {
                         offset += 1;
@@ -253,7 +251,7 @@ fn interval(
     let e = envelope_first.unwrap_or(a);
     let f = envelope_last.unwrap_or(a);
     let b = last_after.unwrap_or(a);
-    Ok(ZoneInterval::new(
+    ZoneInterval::new(
         index,
         kind.npc_id,
         WorldTile {
@@ -273,7 +271,7 @@ fn interval(
         risk.unknown_for(input.map_members).is_some(),
         kind.ap,
         kind.npc_id < 0,
-    )?)
+    )
 }
 
 /// Retains every interval/crossing, not just the eight display witnesses.

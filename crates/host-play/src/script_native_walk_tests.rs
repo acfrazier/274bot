@@ -3673,6 +3673,22 @@ fn s2a_compute_only_per_bot_layouts() {
         std::mem::size_of::<script::combat::Combat>(),
         std::mem::size_of::<script::combat::WalkGuard>()
     );
+    // S2a adds no field to any ordinary per-bot owner. Pin the measured
+    // default-feature macOS layout; other targets retain the portable bounds.
+    #[cfg(all(
+        target_os = "macos",
+        target_arch = "aarch64",
+        not(feature = "memory-profile")
+    ))]
+    assert_eq!(
+        (
+            std::mem::size_of::<NavBot>(),
+            std::mem::size_of::<script::SlotScript>(),
+            std::mem::size_of::<script::combat::Combat>(),
+            std::mem::size_of::<script::combat::WalkGuard>()
+        ),
+        (3448, 4024, 512, 256)
+    );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 256);
 }
