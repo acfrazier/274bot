@@ -206,6 +206,13 @@ pub struct CompiledAcquireRecipe {
     /// Items explicitly proven absent by an authored recipe settle predicate.
     pub consumed_ids: Arc<[i32]>,
 }
+#[derive(Clone)]
+pub struct CompiledGatherToolNeed {
+    pub item_id: i32,
+    pub catalog: Arc<GatherCatalog>,
+    pub methods: Arc<[usize]>,
+    pub tools: Arc<[BankItem]>,
+}
 
 pub struct CompiledProvisioning {
     pub path: FactKey,
@@ -214,6 +221,7 @@ pub struct CompiledProvisioning {
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
     pub tools: Arc<[BankItem]>,
+    pub gather_tool_needs: Arc<[CompiledGatherToolNeed]>,
     pub keep_ids: Arc<[i32]>,
     pub coin_float: i32,
     pub coin: Option<CompiledCarry>,
@@ -714,12 +722,43 @@ pub(super) fn compile_uncached(
             .map_err(|error| error.with_path(document.id.clone()))?;
         recipe_peaks.insert(name.clone(), (peak_items, consumed_ids));
     }
+    let gather_steps = header
+        .acquire
+        .values()
+        .flat_map(|steps| steps.iter())
+        .chain(role.prelude.iter())
+        .chain(
+            role.sequences
+                .iter()
+                .flat_map(|sequence| sequence.steps.iter()),
+        )
+        .chain(role.progress_reader.iter());
+    let mut gather_tool_needs = Vec::new();
+    for step in gather_steps {
+        if step.kind == "gather" && step.version == 1 {
+            let catalog = gathering
+                .as_ref()
+                .ok_or_else(|| CompileError::code("gathering-unavailable"))?;
+            gather_tool_needs.push(families::gather::provisioning_tool_need(
+                &step.args,
+                Arc::clone(catalog),
+                selected,
+            )?);
+        }
+    }
     let mut tools = Vec::with_capacity(header.tools.len());
     for tool in &header.tools {
         let alias = tool
             .strip_prefix("obj:")
             .ok_or_else(|| CompileError::code("invalid-tool"))?;
         tools.push(resolve_bank_item(selected, alias)?);
+    }
+    for need in &gather_tool_needs {
+        for item in need.tools.iter() {
+            if !tools.iter().any(|known: &BankItem| known.id == item.id) {
+                tools.push(item.clone());
+            }
+        }
     }
     let mut loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>> = HashMap::new();
     let mut carry_row_count = 0usize;
@@ -947,6 +986,7 @@ pub(super) fn compile_uncached(
         bank_required,
         items: compiled_items,
         tools: Arc::from(tools),
+        gather_tool_needs: Arc::from(gather_tool_needs),
         keep_ids,
         coin_float,
         coin,

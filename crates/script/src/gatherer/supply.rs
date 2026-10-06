@@ -333,16 +333,22 @@ pub(crate) fn method_ready(
     Ok(true)
 }
 
+pub(crate) fn method_tool_candidates<'a>(
+    method: &'a GatherMethod,
+    stats: &'a [StatView],
+) -> impl Iterator<Item = &'a api::gather_methods::ToolUse> + 'a {
+    known_rows(&method.tools)
+        .iter()
+        .filter(move |tool| tool.use_gate.is_none_or(|gate| meets_gate(stats, gate)))
+}
+
 fn best_method_tool(
     method: &GatherMethod,
     stats: &[StatView],
     inventory: &[ItemView],
     equipment: &[ItemView],
 ) -> Option<ToolChoice> {
-    known_rows(&method.tools).iter().find_map(|tool| {
-        if tool.use_gate.is_some_and(|gate| !meets_gate(stats, gate)) {
-            return None;
-        }
+    method_tool_candidates(method, stats).find_map(|tool| {
         let worn = equipment
             .iter()
             .any(|row| row.def.id == tool.item && row.count > 0);
