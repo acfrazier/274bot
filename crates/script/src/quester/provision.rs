@@ -254,6 +254,56 @@ impl Provisioner {
             };
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
         }
+        for need in plan.gather_tool_needs.iter() {
+            let Some(stats) = snapshot.stats() else {
+                continue;
+            };
+            let mut ready = false;
+            let mut first_tool = None;
+            let mut banked_tool = None;
+            for &index in need.methods.iter() {
+                let Some(method) = need.catalog.methods().get(index) else {
+                    continue;
+                };
+                match crate::gatherer::supply::method_ready(snapshot, method, true) {
+                    Ok(true) => {
+                        ready = true;
+                        break;
+                    }
+                    Err("gather usable tool missing") => {
+                        for candidate in
+                            crate::gatherer::supply::method_tool_candidates(method, stats.value)
+                        {
+                            let Some(item) =
+                                need.tools.iter().find(|item| item.id == candidate.item)
+                            else {
+                                continue;
+                            };
+                            first_tool.get_or_insert(item);
+                            if cx.bank.known() && cx.bank.count(candidate.item).unwrap_or(0) > 0 {
+                                banked_tool = Some(item);
+                                break;
+                            }
+                        }
+                    }
+                    Ok(false) | Err(_) => {}
+                }
+                if banked_tool.is_some() {
+                    break;
+                }
+            }
+            if ready {
+                continue;
+            }
+            let candidate = if cx.bank.known() {
+                banked_tool
+            } else {
+                first_tool
+            };
+            if let Some(item) = candidate {
+                needs.require(item, 1, MissingKind::Optional, inventory, cx.bank)?;
+            }
+        }
 
         let active_recipe =
             if let Some(need) = needs.acquire.as_ref().filter(|_| needs.blocked.is_none()) {
@@ -1291,12 +1341,14 @@ mod tests {
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
-    use crate::quester::compile::CompiledQuestItem;
+    use crate::quester::compile::{self, CompiledQuestItem};
     use crate::quester::families::tests::{def, local_player, with_tick};
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_facts::QuestCatalog;
     use api::selected::{ClientRevision, FactKey};
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use api::snapshot::{
+        GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView, WorldStateView,
+    };
     use std::collections::HashMap;
 
     fn quest_catalog() -> QuestCatalog {
@@ -1405,6 +1457,7 @@ mod tests {
             bank_required: false,
             items: Arc::from(items),
             tools: Arc::from(Vec::new()),
+            gather_tool_needs: Arc::from(Vec::new()),
             keep_ids: Arc::from(Vec::new()),
             coin_float: 0,
             coin: None,
@@ -1916,6 +1969,89 @@ mod tests {
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
         assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let data = Arc::clone(&selected);
+        let _gather_catalog = api::selected::FamilyPreparation::run(move |worker| {
+            api::gather_methods::prepare(&data, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let mut document = compile::decode_cook().unwrap();
+        let mut step = document.roles[0].sequences[0].steps[0].clone();
+        step.id = FactKey::new("gather-normal-logs");
+        step.kind = "gather".into();
+        step.version = 1;
+        step.args = serde_json::json!({
+            "skill": "woodcutting",
+            "resource": "normal",
+            "until": { "obj": { "id": 1511 }, "qty": 3 }
+        });
+        step.advances = Some(false);
+        step.skip_if = crate::quester::path::PredicateDocument::Any(Vec::new());
+        step.settle = crate::quester::path::PredicateDocument::Any(Vec::new());
+        document.roles[0].sequences[0].steps.push(step);
+        let path = compile::compile_uncached_for_test(&document, &selected, &quests).unwrap();
+        let axe_id = selected.item_by_alias("bronze_axe").unwrap().id;
+        assert_eq!(path.provisioning.gather_tool_needs.len(), 1);
+        assert!(path.provisioning.tools.iter().any(|tool| tool.id == axe_id));
+
+        let mut memo = BankMemo::default();
+        memo.update(&BankReceipt {
+            counts: path
+                .provisioning
+                .memo_ids
+                .iter()
+                .map(|&id| crate::native_bank::BankCount {
+                    id,
+                    count: if id == axe_id { 1 } else { 0 },
+                })
+                .collect(),
+            complete: true,
+        });
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 1,
+            base: 1,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_world(WorldStateView {
+            members: true,
+            ..Default::default()
+        });
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let banks = Arc::new(NamedBankFacts::empty());
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            &memo,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        let Some(crate::native_bank::BankAction::WithdrawTo { withdrawals }) =
+            provisioner.bank_run.as_ref().map(|run| &run.action)
+        else {
+            panic!("gather tool did not enter the Quester bank withdrawal path");
+        };
+        assert!(withdrawals
+            .iter()
+            .any(|withdrawal| withdrawal.id == axe_id && withdrawal.target == 1));
     }
 
     #[test]

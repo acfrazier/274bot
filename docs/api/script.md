@@ -625,10 +625,12 @@ and Stop/Pause revocation still govern all captures and closes.
 
 ### Quester finite gathering
 
-The `gather` step reuses the Gatherer's native resource action for Mining and
-Fishing. It has no banking, area loop or map survey. Declare exactly one selected
-`resource` key or `method` ID, an `until` inventory goal, and the outer step's
-`advances` value:
+The `gather` step reuses the Gatherer's native resource action for Woodcutting,
+Mining and Fishing. If no method-usable tool is carried or equipped, Quester's
+Provisioner can withdraw one compatible tool from the bank using its normal
+scan, capacity and withdrawal path. It does not bank the inventory goal, run an
+area loop or survey the map. Declare exactly one selected `resource` key or
+`method` ID, an `until` inventory goal, and the outer step's `advances` value:
 
 ```json
 {"skill":"mining","resource":"copper","until":{"obj":{"id":436},"qty":1}}
