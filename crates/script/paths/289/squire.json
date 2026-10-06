@@ -884,6 +884,28 @@
       ],
       "acquire:rimmington-iron": [
         {
+          "id": "ensure-pickaxe-for-iron",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
+        {
           "id": "gather-iron-ore-rimmington",
           "kind": "gather",
           "version": 1,
@@ -896,14 +918,169 @@
               "tile": [2968, 3239, 0],
               "source": "maps/m46_50.jm2:5666 (ironrock1 at [2968,3239,0]); pack/loc.pack:2093; scripts/skill_mining/configs/mine.dbrow:49-60"
             },
-            "radius": 3
+            "radius": 3,
+            "settle_ms": 300000
           },
-          "comment": "Banked bars and ore are attempted first by the stage steps. If both are exhausted, gather eight iron ore at Rimmington; the rock requires Mining 15.",
+          "comment": "Banked bars and ore are attempted first. Five minutes covers the Falador-to-Rimmington approach walk plus gathering eight Mining 15 iron ore and respawn waits; the default 120-second deadline covers the whole step.",
           "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}},
           "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}}
         }
       ],
+      "acquire:best-pickaxe": [
+        {
+          "id": "pickaxe-bank-scan",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "scan", "at": "nearest"},
+          "skip_if": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "settle": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "comment": "Scan before choosing one banked tool, from the gather family's best-first pickaxe order."
+        },
+        {
+          "id": "withdraw-rune-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "rune_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+          "comment": "Withdraw only the best available owned tier; once it is held or worn, lower-tier withdrawals skip."
+        },
+        {
+          "id": "withdraw-adamant-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "adamant_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "adamant_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-mithril-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "mithril_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "mithril_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-steel-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "steel_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "steel_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-iron-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "iron_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "iron_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-bronze-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "bronze_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "bronze_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+        }
+      ],
       "acquire:blurite": [
+        {
+          "id": "ensure-pickaxe-for-blurite",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
         {
           "id": "ice-dungeon-kit",
           "kind": "loadout",
@@ -993,6 +1170,82 @@
               }
             }
           }
+        },
+        {
+          "id": "walk-to-ice-dungeon-entrance",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3009, 3150, 0],
+            "source": "C maps/m47_49.jm2:4359 (ladder anchor at [3009,3150,0], east approach); Mudskipper Point, outside the ice dungeon",
+            "radius": 2
+          },
+          "comment": "Stop at the exterior ladder tile before any dungeon crossing.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3009, 3150, 0], "radius": 2}}},
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "ice_dungeon"}}}
+          ]},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3009, 3150, 0], "radius": 2}}}
+        },
+        {
+          "id": "check-blurite-mining-prerequisites",
+          "kind": "wait",
+          "version": 1,
+          "args": {
+            "until": {"All": [
+              {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+              {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+              ]}
+            ]},
+            "max_ticks": 1
+          },
+          "comment": "Fail closed at the exterior dungeon entrance: Mining 10 and a supported pickaxe held or worn are required before entry, so a failed check parks here instead of walking into the ice-warrior corridor.",
+          "skip_if": {"All": [
+            {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+            {"Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+            ]}
+          ]},
+          "settle": {"All": [
+            {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+            {"Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+            ]}
+          ]}
         },
         {
           "id": "enter-ice-dungeon",
@@ -1520,6 +1773,12 @@
       "obj:iron_ore",
       "obj:iron_bar",
       "obj:blurite_ore",
+      "obj:rune_pickaxe",
+      "obj:adamant_pickaxe",
+      "obj:mithril_pickaxe",
+      "obj:steel_pickaxe",
+      "obj:iron_pickaxe",
+      "obj:bronze_pickaxe",
       "obj:faladian_sword",
       "obj:lobster"
     ],
@@ -2495,9 +2754,10 @@
                   "tile": [3048, 9567, 0],
                   "source": "maps/m47_149.jm2:5521 (bluriterock at [3049,9566,0]); pack/loc.pack:2111; scripts/skill_mining/configs/mine.dbrow:143-152"
                 },
-                "radius": 2
+                "radius": 2,
+                "settle_ms": 300000
               },
-              "comment": "After bank withdrawal and the existing cross-enabled ice-dungeon walk, mine one blurite ore at Mining 10. The guard is best-effort; watch the live health and prayer state.",
+              "comment": "Five minutes covers any approach to the blurite anchor plus the Mining 10 gather attempt and deadline margin; the default 120 seconds covers the entire step. The guard remains best-effort; watch the live health and prayer state.",
               "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blurite_ore", "qty": 1}}},
               "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blurite_ore", "qty": 1}}}
             },
