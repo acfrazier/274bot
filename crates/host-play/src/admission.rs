@@ -260,12 +260,17 @@ pub fn permits(
     if !admission.enforce || admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
         return true;
     }
+    // A failed or unavailable assessment (for example `Unknown(Overflow)`)
+    // carries an empty, incomplete plan. That is not evidence of a safe-only
+    // route, and replaying its empty plan would certify nothing.
+    if !assessment.plan.complete {
+        return false;
+    }
     if assessment.verdict == Verdict::Survivable {
         return true;
     }
     // Fleeing cannot be refused because an attacker or snapshot is unknown.
-    // Incomplete geometry is not evidence of a safe-only route.
-    if assessment.plan.complete && assessment.plan.crossings.is_empty() {
+    if assessment.plan.crossings.is_empty() {
         return true;
     }
     let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {

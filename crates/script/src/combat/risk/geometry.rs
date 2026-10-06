@@ -364,12 +364,11 @@ fn acquired(
             let bit = 1u64 << (index % 64);
             if active && seen[word] & bit == 0 {
                 seen[word] |= bit;
-                let origin = path.point(0).ok_or(UnknownWhy::Overflow)?.tile;
-                let mut next = if in_envelope(origin, index, zones, risks, input)? {
-                    0
-                } else {
-                    i
-                };
+                // `i` is the first acquisition index. It is 0 only when the
+                // origin is engaged (inside A_z and active), the router's own
+                // origin predicate. A fringe origin inside E_z but outside A_z
+                // that walks into A_z enters the zone: a judged crossing.
+                let mut next = i;
                 let mut start = 0;
                 loop {
                     let row = interval(path, zones, risks, input, index, next, start)?;
@@ -408,6 +407,10 @@ fn crossing_runs(
 ) -> Result<usize, UnknownWhy> {
     // Retain origin exposure for observation/replay, but never make leaving
     // it an admission crossing. Re-entering after its exit has a later `a`.
+    // `ZoneInterval::new` enforces `e <= a`, so every `a = 0` row is escaping
+    // and, sorted by `a`, escaping rows are exactly the prefix. (An engaged
+    // origin outside its own envelope fails as `Unknown(Overflow)` instead.)
+    debug_assert!(intervals.iter().all(|row| row.escaping() == (row.a == 0)));
     let mut start = intervals.partition_point(|row| row.escaping());
     let mut count = 0usize;
     while start < intervals.len() {

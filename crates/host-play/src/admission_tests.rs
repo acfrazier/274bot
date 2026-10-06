@@ -1806,3 +1806,136 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
         }
     }
 }
+
+/// R3 M-A: the named retry's keys never reach `admission.grants`, so the
+/// retried route must be judged. From a fringe origin (inside E_z, outside
+/// A_z) walking into A_z is a crossing, never an unjudged escape.
+#[test]
+fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
+    let combat = selected_combat();
+    let kind = ice_kind(&combat);
+    let spawn = 30;
+    let world = fixture_world(
+        combat,
+        open_corridor(70, 3, 1),
+        vec![zone(spawn, 0, None)],
+        vec![kind],
+        Vec::new(),
+        TransportGraph::default(),
+    );
+    let r = i32::from(tables(&world).unwrap().risks.kind(0).unwrap().r);
+    let from = tile(spawn - r, 1);
+    let to = tile(69, 1);
+    let state = WorldState::default();
+    let options = FindOptions::default();
+    for (hp, refusal) in [(12, Some(WalkRefusal::Unsurvivable)), (99, None)] {
+        let request = make_admission(
+            RiskPolicy::Inherit,
+            RiskInput {
+                pos: from,
+                ..input(hp)
+            },
+        );
+        let result = route(
+            &world,
+            &request,
+            options,
+            |opts| real_search(&world, from, to, opts, &state, &[]),
+            || real_witness(&world, from, to, options, &state, &[]),
+        );
+        assert_eq!(result.tried, 1, "HP {hp}: strict NoPath, one named retry");
+        assert_eq!(request.grants, ZoneExempt::NONE);
+        let assessment = result.assessment.as_ref().unwrap();
+        assert_eq!(assessment.plan.crossings.len(), 1, "HP {hp}");
+        assert!(assessment.plan.intervals.iter().all(|row| !row.escaping()));
+        assert_eq!(result.refusal, refusal, "HP {hp}: {}", assessment.reason);
+    }
+}
+
+/// R3 L-C (`nav_fares_live` "refusal armed a walk"): a held default manual
+/// NoPath is the pre-S2b bare refusal. It must not create an arm for the
+/// focused slot, nor stop the walk an existing arm is following. Enforcing
+/// refusals keep S2b's retained arm refusal.
+#[test]
+fn held_manual_no_path_leaves_walk_arms_untouched() {
+    const { assert!(!crate::NET_AVAILABLE) };
+    let world = known_corridor(&[12]);
+    let state = WorldState::default();
+    let from = nav::tile::Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let to = nav::tile::Tile {
+        x: 23,
+        z: 1,
+        level: 0,
+    };
+    let walking = Arc::new(nav::router::Route {
+        legs: vec![Leg::Walk {
+            tiles: vec![tile(0, 1), tile(1, 1)],
+        }],
+        dest: tile(1, 1),
+        ticks: 0.5,
+    });
+    let arms = crate::WalkArms::default();
+    arms.lock().unwrap().insert(
+        "alice".into(),
+        Arc::new(std::sync::Mutex::new(crate::WalkArm {
+            route: Some(Arc::clone(&walking)),
+            ..Default::default()
+        })),
+    );
+    let held = Admission::manual(
+        FindOptions::default(),
+        RiskInput {
+            pos: tile(0, 1),
+            ..input(99)
+        },
+        1,
+        crate::WalkGlobals::default(),
+    );
+    assert!(!held.enforce);
+    for name in ["alice", "bob"] {
+        let refused = crate::arm_walk_on(
+            &world,
+            from,
+            to,
+            FindOptions::default(),
+            &state,
+            &[],
+            held,
+            &arms,
+            Some(name),
+        )
+        .unwrap_err();
+        assert!(refused.refusal.is_some(), "the witness names the blocker");
+    }
+    {
+        let arms = arms.lock().unwrap();
+        assert!(!arms.contains_key("bob"), "a held NoPath creates no arm");
+        let alice = arms["alice"].lock().unwrap();
+        assert!(Arc::ptr_eq(alice.route.as_ref().unwrap(), &walking));
+        assert!(alice.refusal.is_none());
+    }
+    let enforcing = Admission {
+        enforce: true,
+        ..held
+    };
+    let refused = crate::arm_walk_on(
+        &world,
+        from,
+        to,
+        FindOptions::default(),
+        &state,
+        &[],
+        enforcing,
+        &arms,
+        Some("alice"),
+    )
+    .unwrap_err();
+    let arms = arms.lock().unwrap();
+    let alice = arms["alice"].lock().unwrap();
+    assert!(alice.route.is_none(), "an enforcing refusal stops the walk");
+    assert_eq!(alice.refusal, refused.refusal);
+}

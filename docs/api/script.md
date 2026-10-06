@@ -1136,9 +1136,12 @@ An explicit Forbid still applies S2b assessment refusal, while an explicit Allow
 may proceed with its honest Unknown assessment. A refused route cannot take its
 own first hop to clear uncertainty, and waiting alone does not clear it.
 Zero entering crossings are always admitted, even under unknown/player attackers,
-unattributed hits, missing facts or input overflow. Leaving an envelope containing
-the origin is not entry; re-entry after exiting is. The same rule holds at
-publication. Recovery evidence becomes usable only with S2c's observer.
+unattributed hits, missing facts or input overflow. Leaving a zone the origin is
+engaged in (inside its active acquisition area) is not entry; walking into a
+zone from inside only its pursuit envelope is, and so is re-entry after
+exiting. A failed assessment (for example `Unknown(Overflow)`) is refused by
+every enforcing non-Proceed admission. The same rules hold at publication.
+Recovery evidence becomes usable only with S2c's observer.
 An assessment does not fetch supplies or execute an escape.
 
 The guard holds protection without attacking or flicking. It uses Combat's eat

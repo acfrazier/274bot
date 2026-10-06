@@ -2544,7 +2544,7 @@ impl TuiSession {
                 .lock()
                 .unwrap()
                 .get(name)
-                .and_then(|a| a.lock().unwrap().route.as_deref().cloned());
+                .and_then(|a| a.lock().unwrap().route.clone());
             if self.walk_clear.swap(false, Ordering::Relaxed) {
                 app.walk_dest = None;
             }

@@ -44,19 +44,30 @@ fn wait_for(
     }
 }
 
+fn env_port(name: &str, default: u16) -> u16 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 #[test]
 #[ignore = "LIVE=1, NAV_ORIGIN_ENGINE and NAV_ORIGIN_PACK required; absence fails"]
 fn live_walkto_from_ardougne_pocket_near_and_far() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let engine_dir =
         PathBuf::from(std::env::var_os("NAV_ORIGIN_ENGINE").expect("NAV_ORIGIN_ENGINE"));
+    // The shared-engine convention: WORLD_GAME_PORT/WORLD_HTTP_PORT select
+    // another local engine; the defaults are this fixture's original ones.
+    let port = env_port("WORLD_GAME_PORT", 45594);
+    let http_port = env_port("WORLD_HTTP_PORT", 2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(45594),
-        http_port: Some(2080),
+        port: Some(port),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         nav_pack: Some(PathBuf::from(
             std::env::var_os("NAV_ORIGIN_PACK").expect("NAV_ORIGIN_PACK"),
@@ -74,13 +85,16 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
     println!(
         "{}",
         json!({"phase":"identity", "nav_sha256":identity.nav_sha256,
-        "format":nav::pack::FORMAT_ID, "game_port":45594, "http_port":2080})
+        "format":nav::pack::FORMAT_ID, "game_port":port, "http_port":http_port})
     );
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = format!("navorigin{}", serial % 1_000);
+    let name = match std::env::var("BOT_LIVE_NAME_PREFIX") {
+        Ok(prefix) => format!("{prefix}{}", serial % 100_000_000),
+        Err(_) => format!("navorigin{}", serial % 1_000),
+    };
     let mut client = template
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("client");

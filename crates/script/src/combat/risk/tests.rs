@@ -2599,3 +2599,155 @@ fn u1_transport_input_hold_boundaries_cover_attached_and_standalone_legs() {
         .unwrap()
         .input_held(0));
 }
+
+/// S2b R3 M-A: an escape starts only from an engaged origin (inside A_z and
+/// active). A fringe origin inside E_z but outside A_z that walks into A_z
+/// enters the zone and is a crossing.
+#[test]
+fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
+    let tables = tables();
+    let zones = one_zone(&tables, 100, 0);
+    let risk = RiskTables::build(&zones, &tables);
+    let r = i32::from(risk.kind(0).unwrap().r);
+    assert!(r > 0, "the envelope must be wider than the radius-0 rect");
+    let value = input(99, 99, 0, &tables);
+    let wilderness = WildernessRules::default();
+    let plan_from = |first: i32| {
+        let walk = route(first, 100 + r + 5);
+        build_plan(
+            RoutePath::new(&walk).unwrap(),
+            &zones,
+            &risk,
+            &wilderness,
+            &value,
+        )
+        .unwrap()
+    };
+    let fringe = plan_from(100 - r);
+    assert_eq!(fringe.intervals.len(), 1);
+    assert_eq!(i32::from(fringe.intervals[0].a), r, "acquired at the spawn");
+    assert_eq!(fringe.intervals[0].e, 0, "the origin is exposed");
+    assert!(!fringe.intervals[0].escaping());
+    assert_eq!(fringe.crossings.len(), 1, "walking into A_z is entry");
+    let engaged = plan_from(100);
+    assert_eq!(engaged.intervals.len(), 1);
+    assert!(engaged.intervals[0].escaping());
+    assert!(engaged.crossings.is_empty(), "leaving A_z is escape");
+}
+
+/// S2b R3 N1 (reviewer probe `partition_point_skips_a_non_escaping_origin_row`):
+/// an engaged origin outside its own envelope (rect wider than spawn ± R)
+/// would be a non-escaping `a = 0` row and break the escaping-prefix
+/// partition. `ZoneInterval::new` rejects `e > a`, so the plan fails closed
+/// as `Unknown(Overflow)`, never as a misfiled escape or crossing.
+#[test]
+fn r3_engaged_origin_outside_its_envelope_fails_closed() {
+    let tables = tables();
+    let probe = one_zone(&tables, 100, 0);
+    let r = i32::from(RiskTables::build(&probe, &tables).kind(0).unwrap().r);
+    let at = |x: i32, z: i32| WorldTile { x, z, level: 0 };
+    let origin = at(300, 300);
+    // P's rect (radius 2R) covers the origin; its envelope ends at z = 299.
+    let wide = Zone::npc(
+        at(300, 299 - r),
+        u8::try_from(2 * r).unwrap(),
+        ZoneClass::Always,
+        u16::MAX,
+        0,
+    );
+    let local = Zone::npc(origin, 0, ZoneClass::Always, u16::MAX, 0);
+    let zones = zone_table(
+        vec![wide, local],
+        vec![known_kind(&tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let risk = RiskTables::build(&zones, &tables);
+    let mut tiles = vec![origin, at(300, 299), origin];
+    tiles.extend((301..=300 + r + 3).map(|x| at(x, 300)));
+    let walk = Route {
+        dest: *tiles.last().unwrap(),
+        legs: vec![Leg::Walk { tiles }],
+        ticks: 10.0,
+    };
+    let mut value = input(99, 99, 0, &tables);
+    value.pos = origin;
+    assert_eq!(
+        build_plan(
+            RoutePath::new(&walk).unwrap(),
+            &zones,
+            &risk,
+            &WildernessRules::default(),
+            &value,
+        )
+        .unwrap_err(),
+        UnknownWhy::Overflow
+    );
+    let assessment = assess(
+        &walk,
+        &context(&zones, &risk, &tables, &WildernessRules::default()),
+        value,
+    );
+    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+    assert!(!assessment.plan.complete);
+    assert!(admission_passes(
+        &walk,
+        &assessment,
+        &zones,
+        &tables,
+        WalkAllow::default(),
+        ZoneExempt::NONE
+    )
+    .is_err());
+}
+
+/// S2b R3 M-B: a failed assessment carries an empty, incomplete plan.
+/// Replaying that empty plan must never certify the route.
+#[test]
+fn r3_admission_never_passes_an_incomplete_plan() {
+    let tables = tables();
+    // Forty-one overlapping envelopes on a valid walk: the summed way-out
+    // floor exceeds the u8 report bound, so the estimate fails after a
+    // successful `build_plan`.
+    let zones = zone_table(
+        (100..=140)
+            .map(|x| Zone::npc(tile(x), 0, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![known_kind(&tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let risk = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let walk = route(80, 170);
+    assert!(build_plan(
+        RoutePath::new(&walk).unwrap(),
+        &zones,
+        &risk,
+        &wilderness,
+        &input(99, 99, 0, &tables),
+    )
+    .is_ok_and(|plan| !plan.crossings.is_empty()));
+    let assessment = assess(
+        &walk,
+        &context(&zones, &risk, &tables, &wilderness),
+        input(99, 99, 0, &tables),
+    );
+    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+    assert!(!assessment.plan.complete);
+    for grants in [ZoneExempt::NONE, ZoneExempt::all()] {
+        assert_eq!(
+            admission_passes(
+                &walk,
+                &assessment,
+                &zones,
+                &tables,
+                WalkAllow::default(),
+                grants
+            ),
+            Err(UnknownWhy::Overflow)
+        );
+    }
+}

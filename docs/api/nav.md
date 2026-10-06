@@ -623,8 +623,12 @@ Before following a worker result, publication compares the observed HP,
 food, prayer, position, live actor/due identity, poison and cleanup debt.
 Changed inputs are reassessed and may refuse entering crossings before movement;
 zero entering crossings always remain admitted, including missing facts or an
-unknown attacker. Leaving an envelope containing the origin is escape exposure,
-not a crossing. Re-entering that envelope after exiting is a crossing.
+unknown attacker. Leaving a zone the origin is engaged in (inside its active
+acquisition area, the router's origin rule) is escape exposure, not a crossing.
+An origin only inside a pursuit envelope is not engaged: walking into that
+zone's acquisition area is a crossing, as is re-entering after an escape.
+A failed assessment (for example `Unknown(Overflow)`) proves nothing about
+crossings, so every enforcing non-Proceed admission refuses it.
 Bank-bound and observed post-fetch routes use the same seam; bank completion
 keeps the precomputed final route and reassesses it without another search.
 Both frontends publish manual admission above their outer hold/mover gates;
@@ -638,10 +642,12 @@ The stored default is **When survivable**, but S2b's single
 source, including migration and explicit selection. While held, default and
 inherited walks keep exactly the pre-S2b router outcome and route, including
 origin-inside walks and destination-zone completion. Their assessments are
-informational, not new admission refusals. Explicit script/per-walk overrides
-and named grants keep their S2b semantics. Panel and TUI display the held middle
-level as **When survivable (not available yet: acts as Never)**; the host emits
-one informational held-state note per slot session, not a warning on every walk.
+informational, not new admission refusals; a held manual NoPath neither
+creates a walk arm nor stops the one already walking. Explicit script/per-walk
+overrides and named grants keep their S2b semantics. Panel and TUI display the
+held middle level as **When survivable (not available yet: acts as Never)**; the
+host emits one informational held-state note per slot session, not a warning on
+every walk.
 The live observer, ordinary-walk safety behavior and escape execution belong
 to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and

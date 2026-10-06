@@ -2789,14 +2789,6 @@ fn walk_permissions_projection_reads_only_after_peer_write() {
 }
 
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
-    // These picker geometry fixtures have no combat observations. Opt in
-    // explicitly instead of inventing risk facts for admission.
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(true),
-    )
-    .unwrap();
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);
     s.server_profile = Some(Arc::clone(fixture.template.profile()));
