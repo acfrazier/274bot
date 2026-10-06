@@ -350,15 +350,11 @@ impl Play {
     /// decodes to ([`slot_bank_memory::memory_key`]). `Unknown` with no
     /// rows for a never-observed or unknown account.
     pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
-        self.bank_memories
-            .get(slot_bank_memory::memory_key(name).as_ref())
-            .map_or_else(nav::bank_fetch::BankRows::default, |memory| {
-                let memory = memory.read();
-                nav::bank_fetch::BankRows {
-                    origin: memory.origin(),
-                    rows: memory.rows().to_vec(),
-                }
-            })
+        slot_bank_memory::planner_rows(
+            self.bank_memories
+                .get(slot_bank_memory::memory_key(name).as_ref())
+                .map(|memory| &**memory),
+        )
     }
 
     /// WORLD membership bound to this process profile. Unknown is false.
@@ -545,6 +541,8 @@ mod api_gather_live_tests;
 mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;
+#[cfg(test)]
+mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;
 #[cfg(test)]

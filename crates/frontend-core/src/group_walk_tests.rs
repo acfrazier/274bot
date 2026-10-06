@@ -9,6 +9,7 @@ use api::snapshot::WorldTile;
 use host_play as map_host;
 use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
+use nav::bank_fetch::BankRows;
 use nav::collision::WorldCollision;
 use nav::map::identity::Digest;
 use nav::router::{AvoidRect, FindOptions};
@@ -206,7 +207,7 @@ fn marks(uids: &[i32]) -> MarkedSelection {
 fn empty_inputs(_: &str) -> WalkInputs {
     WalkInputs {
         state: WorldState::empty(),
-        bank: Vec::new(),
+        bank: BankRows::default(),
         risk_input: Default::default(),
     }
 }

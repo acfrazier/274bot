@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
 use nav::map::identity::Digest;
 use nav::map::spatial::{snap_walkable, GameTile};
 use nav::router::{FindOptions, Leg, Route};
@@ -569,7 +569,8 @@ impl WalkSlotStatus {
 pub struct WalkSlotRequest<'a> {
     pub name: &'a str,
     pub state: &'a WorldState,
-    pub bank: &'a [(i32, i32)],
+    /// The slot's bank memory rows ([`crate::Play::bank_rows`]).
+    pub bank: &'a BankRows,
     pub risk_input: RiskInput,
 }
 
@@ -946,7 +947,7 @@ fn blocking_zones_for_walk(
     let plan = plan_bank_fetch(
         &missing,
         slot.state,
-        slot.bank,
+        &nav::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
         world.banks(),
         from,
         &world.collision,
@@ -1008,7 +1009,7 @@ impl MapCommand {
         current: &MapContext,
         name: &str,
         state: &WorldState,
-        bank: &[(i32, i32)],
+        bank: &BankRows,
         admission: Admission,
         arms: &WalkArms,
     ) -> Result<WalkRoute, ActionError> {
@@ -1233,7 +1234,7 @@ impl Play {
         command: MapCommand,
         current: &MapContext,
         state: &WorldState,
-        bank: &[(i32, i32)],
+        bank: &BankRows,
         input: RiskInput,
         arms: &WalkArms,
     ) -> Result<WalkRoute, ActionError> {

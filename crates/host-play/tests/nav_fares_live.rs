@@ -10,6 +10,7 @@ use client::client::Client;
 use host::Pump;
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
+use nav::bank_fetch::BankRows;
 use nav::map::identity::Digest;
 use nav::router::{FindOptions, Leg};
 use nav::tile::Tile;
@@ -217,7 +218,15 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             0,
             host_play::WalkGlobals::default(),
         );
-        let result = command.walk_on(&world, &context, account, &state, &[], admission, &arms);
+        let result = command.walk_on(
+            &world,
+            &context,
+            account,
+            &state,
+            &BankRows::default(),
+            admission,
+            &arms,
+        );
         if initial_coins == 30 {
             let error = result.unwrap_err();
             let message = error.to_string();
@@ -466,7 +475,15 @@ fn live_shilo_cart_ten_coins_to_zero() {
         host_play::WalkGlobals::default(),
     );
     let route = command
-        .walk_on(&world, &context, &account, &state, &[], admission, &arms)
+        .walk_on(
+            &world,
+            &context,
+            &account,
+            &state,
+            &BankRows::default(),
+            admission,
+            &arms,
+        )
         .expect("native cart fare is ten coins")
         .route;
     let carts: Vec<_> = route

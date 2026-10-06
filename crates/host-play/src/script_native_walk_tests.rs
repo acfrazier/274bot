@@ -2,6 +2,7 @@
 //! delivery and native drain, the off-pump route worker and `step_nav_bot`.
 use super::*;
 use client::dash3d::CollisionFlag;
+use nav::bank_fetch::BankRows;
 use script::native::walk::Walk;
 use script::native::{
     ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
@@ -447,6 +448,7 @@ impl Rig {
             self.world.as_ref(),
             false,
             false,
+            None,
             no_reach,
         );
     }
@@ -1651,7 +1653,7 @@ fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
         navs: Arc::clone(&rig.navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     }
     .queue_route_in_snapshot(
         &rig.snapshot,
@@ -2354,6 +2356,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         &rig.navs,
         &rig.world,
         Some(WorldState::empty()),
+        None,
         "alice",
     );
     {
@@ -2428,7 +2431,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
         navs: Arc::clone(&rig.navs),
         name: "alice".into(),
         state: Some(WorldState::empty()),
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     let completed = arm
         .queue_route_in_snapshot_synced(
@@ -3346,7 +3349,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         navs: Arc::clone(&rig.navs),
         name: "alice".to_owned(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     assert!(arm.refresh_route_in_snapshot(
         &rig.snapshot,
@@ -3441,6 +3444,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         arrival: ArrivalKind::Area,
         opts: FindOptions::default(),
         state: None,
+        bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
@@ -3778,6 +3782,11 @@ fn s2b_admission_per_bot_layouts() {
     // 264) and `traveller` +16 (nav-door-expire's per-hop `DoorRetry` re-Open
     // pacing state). Field probe: CORE-INTEGRATOR-6 probe-b656.log /
     // probe-head.log.
+    // BANK-SNAPSHOT-S5 adds nothing: the queued `pending_route` and the
+    // inspect `pending` capture each keep the bank memory's origin beside
+    // its rows (design-bank-snapshot §4 F6) as their own field, so the byte
+    // packs into each holder's existing padding. Carrying a padded
+    // `BankRows` there instead measured 3488 (S5 round 1).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",

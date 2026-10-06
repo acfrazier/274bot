@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
+use nav::bank_fetch::BankRows;
 use nav::collision::{pack_walk, WorldCollision};
 use nav::map::formats::{ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois};
 use nav::map::identity::{CatalogueIdentity, Digest};
@@ -554,7 +555,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
             &ctx,
             "alice",
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &arms,
         )
@@ -586,7 +587,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
                 &ctx,
                 "alice",
                 &WorldState::empty(),
-                &[],
+                &BankRows::default(),
                 routing_test_admission(),
                 &arms
             )
@@ -618,7 +619,7 @@ fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
             &ctx,
             "alice",
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &arms,
         )
@@ -702,7 +703,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
             &context,
             "alice",
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &arms,
         )
@@ -961,7 +962,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
             command,
             &ctx,
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             Default::default(),
             &arms,
         )
@@ -995,7 +996,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
             command,
             &foreign,
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             Default::default(),
             &arms
         )
@@ -1363,7 +1364,7 @@ fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
             t(3, 3, 0),
             FindOptions::default(),
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &arms,
             Some("alice"),
@@ -1420,7 +1421,7 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
         command,
         &bob_ctx,
         &WorldState::empty(),
-        &[],
+        &BankRows::default(),
         Default::default(),
         &arms,
     )
@@ -1475,7 +1476,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(model.select_tile(&baked, dest), Some(dest));
 
     let empty = WorldState::empty();
-    let bank: [(i32, i32); 0] = [];
+    let bank = BankRows::default();
     let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
     let reqs: Vec<WalkSlotRequest<'_>> = names
         .iter()
@@ -1636,7 +1637,7 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
         .unwrap();
 
     let state = WorldState::empty();
-    let bank: [(i32, i32); 0] = [];
+    let bank = BankRows::default();
     let request = [WalkSlotRequest {
         name: "alice",
         state: &state,
@@ -1762,7 +1763,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
             &ctx,
             "alice",
             &state,
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &arms,
         )

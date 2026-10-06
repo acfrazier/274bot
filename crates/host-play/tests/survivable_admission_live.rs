@@ -384,7 +384,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &[],
+            &nav::bank_fetch::BankRows::default(),
             Admission::manual(strict_options, input, 1, WalkGlobals::default()),
             &arms,
         )
@@ -427,7 +427,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &[],
+            &nav::bank_fetch::BankRows::default(),
             strict_admission,
             &arms,
         )
@@ -493,7 +493,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &[],
+            &nav::bank_fetch::BankRows::default(),
             Admission::manual(allow_options, input, 2, WalkGlobals::default()),
             &arms,
         )
@@ -590,7 +590,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &[],
+            &nav::bank_fetch::BankRows::default(),
             Admission::manual(strict_options, escape_input, 3, WalkGlobals::default()),
             &arms,
         )

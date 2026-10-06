@@ -1717,7 +1717,10 @@ mod bank_fetch_fixtures {
             },
         );
         c.bump_gens(ServerProt::IF_OPENMAIN);
-        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        // The withdraw grid's full inventory packet: the bank is loaded, as
+        // the slot's bank memory needs before it observes the rows.
+        let mut full = client::io::Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 0, 0]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
         c
     }
 

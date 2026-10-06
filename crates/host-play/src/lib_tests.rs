@@ -1,7 +1,9 @@
 use super::*;
+use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
 use host::{Guardian, InputEv};
+use nav::bank_fetch::BankRows;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -3320,7 +3322,7 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
         navs: Arc::clone(&navs),
         name: "retry".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     // Both searches have no in-world approach tile. Each call must actually
     // run a new search, while retaining the unrelated route on failure.
@@ -3378,7 +3380,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
 
     assert!(
@@ -3467,7 +3469,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(b.x, b.z, b.level, FindOptions::default(), 1, true, 8));
 
@@ -3544,7 +3546,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(b.x, b.z, b.level, FindOptions::default(), 1, true, 8));
 
@@ -3710,7 +3712,7 @@ fn bank_fetch_session_refuses_exact_walk_near() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(
         !arm.route_with_radius(2, 2, 0, FindOptions::default(), 0),
@@ -3737,7 +3739,7 @@ fn missing_nav_world_publishes_a_failed_walk_outcome() {
         navs: Arc::clone(&navs),
         name: "noworld".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(!arm.route_with_radius(2820, 3556, 0, FindOptions::default(), 1));
     let bot = &navs.lock().unwrap()["noworld"];
@@ -4012,7 +4014,7 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(!arm.queue_route(2820, 3556, 0, FindOptions::default(), 1, true, 42));
     let bot = &navs.lock().unwrap()["bank"];
@@ -4150,7 +4152,7 @@ fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
         navs: Arc::clone(&navs),
         name: "noworld".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     let iso = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -4179,7 +4181,7 @@ fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
         navs: Arc::clone(&navs),
         name: "noworld".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     let iso = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -4247,7 +4249,7 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
         navs: Arc::clone(&navs),
         name: "coal".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(
         arm.queue_route(
@@ -4327,7 +4329,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         navs: Arc::clone(&navs),
         name: "coal".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(!arm.queue_route(
         dest.x,
@@ -4419,7 +4421,8 @@ fn same_key_pending_route_refuses_distinct_id() {
                 radius: 1,
                 opts: FindOptions::default(),
                 state: None,
-                bank: vec![],
+                bank_origin: Origin::Unknown,
+                bank: Vec::new(),
                 live_candidates: None,
                 completion: Default::default(),
                 exclusions: None,
@@ -4435,7 +4438,7 @@ fn same_key_pending_route_refuses_distinct_id() {
         navs: Arc::clone(&navs),
         name: "pend".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(!arm.queue_route(
         dest.x,
@@ -4492,7 +4495,7 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         navs: Arc::clone(&navs),
         name: "coal".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(
         dest.x,
@@ -4585,7 +4588,7 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
         navs: Arc::clone(&navs),
         name: "coal".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(
         dest.x,
@@ -4672,7 +4675,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         navs: Arc::clone(&navs),
         name: "coal".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(
         dest.x,
@@ -4831,7 +4834,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     let iso = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -4865,7 +4868,7 @@ fn exact_walk_near_replaces_published_nearby_route() {
         navs: Arc::clone(&navs),
         name: "bank".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(6, 6, 0, FindOptions::default(), 1));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -4964,7 +4967,8 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         radius: 0,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
@@ -5055,7 +5059,8 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5109,7 +5114,8 @@ fn radius_calculate_drops_wall_separated_candidate() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5168,7 +5174,8 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5205,6 +5212,7 @@ fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
                 0,
                 crate::WalkGlobals::default(),
             ),
+            bank_origin: Default::default(),
             loc_id: None,
             arrival: nav::arrival::ArrivalKind::Reach,
             generation: 0,
@@ -5276,7 +5284,8 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5338,7 +5347,8 @@ fn radius_calculate_drops_detour_outside_radius() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5398,7 +5408,8 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         radius: 2,
         opts: FindOptions::default(),
         state: None,
-        bank: vec![],
+        bank_origin: Origin::Unknown,
+        bank: Vec::new(),
         live_candidates: None,
         completion: Default::default(),
         exclusions: None,
@@ -5501,7 +5512,7 @@ fn arming_the_same_walk_slot_twice_cancels_the_first_request_once() {
             destination,
             FindOptions::default(),
             &WorldState::empty(),
-            &[],
+            &BankRows::default(),
             routing_test_admission(),
             &travellers,
             Some(slot),
@@ -5535,6 +5546,10 @@ fn bank_session_and_direct_route_both_emit_replaced_once() {
         .iter()
         .map(|item| (item.def.id, item.count))
         .collect::<Vec<_>>();
+    let bank = BankRows {
+        origin: Origin::Session,
+        rows: bank,
+    };
     let travellers: WalkArms = Arc::new(Mutex::new(HashMap::new()));
     let from = Tile {
         x: 0,
@@ -5818,7 +5833,7 @@ fn arm_walk_on_routes_and_latches_the_focused_arm() {
         dest,
         FindOptions::default(),
         &WorldState::empty(),
-        &[],
+        &BankRows::default(),
         routing_test_admission(),
         &travellers,
         Some("alice"),
@@ -5862,7 +5877,7 @@ fn arm_walk_on_without_focus_latches_no_arm() {
         },
         FindOptions::default(),
         &WorldState::empty(),
-        &[],
+        &BankRows::default(),
         routing_test_admission(),
         &travellers,
         None,
@@ -12694,7 +12709,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         navs: Arc::clone(&navs),
         name: "flags".into(),
         state: None,
-        bank: vec![],
+        bank: BankRows::default(),
     };
     assert!(arm.queue_route(
         dest.x,
@@ -13406,7 +13421,10 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: Some(state),
-        bank: bank_rows,
+        bank: BankRows {
+            origin: Origin::Session,
+            rows: bank_rows.clone(),
+        },
     };
     let worker_done = arm
         .queue_route_in_snapshot_synced(
@@ -13471,7 +13489,10 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: Some(state),
-        bank: bank_rows,
+        bank: BankRows {
+            origin: Origin::Session,
+            rows: bank_rows.clone(),
+        },
     };
     assert!(
         arm.queue_route(
@@ -13591,7 +13612,10 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
         navs: Arc::clone(&navs),
         name: "compat-full-pack".into(),
         state: Some(state.clone()),
-        bank: vec![(2, 30)],
+        bank: BankRows {
+            origin: Origin::Session,
+            rows: vec![(2, 30)],
+        },
     };
     // Compat v1 enables fetch on every walk; use that same host boundary.
     assert!(arm.queue_route(
@@ -13841,7 +13865,10 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: Some(state),
-        bank: bank_rows,
+        bank: BankRows {
+            origin: Origin::Session,
+            rows: bank_rows.clone(),
+        },
     };
     assert!(
         arm.queue_route(
@@ -13883,6 +13910,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         Some(&world),
         false,
         false,
+        None,
         no_reach,
     );
     let all = navs.lock().unwrap();
@@ -19759,6 +19787,7 @@ fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
         &rig.navs,
         &rig.world,
         None,
+        None,
         "alice",
     );
     assert_eq!(
@@ -21309,6 +21338,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         world.as_ref(),
         true,
         false,
+        None,
         no_reach,
     );
     assert_eq!(d.walked, None, "hold freezes the follow");
@@ -21328,6 +21358,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(d.walked, Some((4, 0)), "the hop resumes after the hold");
@@ -22085,6 +22116,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             &navs,
             &world_opt,
             Some(WorldState::empty()),
+            None,
             "test",
             requests,
             None,
@@ -22124,6 +22156,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&reach),
     );
     assert!(
@@ -22144,6 +22177,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&reach),
     );
     assert!(
@@ -22188,6 +22222,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             &navs,
             &world_opt,
             Some(WorldState::empty()),
+            None,
             "test",
             requests,
             None,
@@ -22377,6 +22412,7 @@ export function tick(api) {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&reach),
     );
     assert!(
@@ -22399,6 +22435,7 @@ export function tick(api) {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&reach),
     );
 
@@ -22484,6 +22521,7 @@ export function tick(api) {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&reach),
     );
     assert_eq!(
@@ -22554,6 +22592,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(d.walked, Some((4, 0)), "the hop targets the dest tile");
@@ -22577,6 +22616,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(queued(&navs), None, "arrival clears the armed route");
@@ -22793,6 +22833,7 @@ fn host_walk_recovers_when_a_late_modal_stalls_the_first_reissue() {
             Some(&world),
             false,
             false,
+            None,
             no_reach,
         );
     };
@@ -22883,7 +22924,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
     // The approach enumeration picks the lowest-x ring tile among the ties.
@@ -22910,6 +22951,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
             Some(&world),
             false,
             false,
+            None,
             no_reach,
         )
     };
@@ -23047,6 +23089,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(queued(&navs), None);
@@ -23110,7 +23153,7 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
     assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
@@ -23132,6 +23175,7 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
             Some(&world),
             false,
             false,
+            None,
             reach,
         )
     };
@@ -23224,7 +23268,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     let worker_done = arm
         .queue_route_in_snapshot_synced(
@@ -23284,6 +23328,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
         Some(&world),
         false,
         false,
+        None,
         || Arc::clone(&inside_view),
     );
     let all = navs.lock().unwrap();
@@ -23337,7 +23382,7 @@ fn arm_snapshot_route(
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     let worker_done = arm
         .queue_route_in_snapshot_synced(
@@ -23761,7 +23806,7 @@ fn assert_snapshot_route_no_path(
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     arm.queue_route_in_snapshot_synced(
         snapshot,
@@ -23972,7 +24017,7 @@ fn arm_route_outcome(
     radius: i32,
     opts: FindOptions,
     state: Option<WorldState>,
-    bank: Vec<(i32, i32)>,
+    bank: BankRows,
 ) -> (Option<Arc<nav::router::Route>>, Option<PendingBankFetch>) {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
     let arm = ScriptWalkArm {
@@ -24052,7 +24097,7 @@ fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
             radius,
             opts,
             None,
-            Vec::new(),
+            BankRows::default(),
         );
         let route = route.expect("the detour reaches a stand");
         assert!(session.is_none());
@@ -24160,6 +24205,10 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         .iter()
         .map(|item| (item.def.id, item.count))
         .collect();
+    let bank = BankRows {
+        origin: Origin::Session,
+        rows: bank,
+    };
     let stand = WorldTile {
         x: 61,
         z: 50,
@@ -24259,13 +24308,16 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
     let cases = [
         (
             carried,
-            Vec::new(),
+            BankRows::default(),
             Vec::new(),
             vec![BankStep::Wear { id: 3 }],
         ),
         (
             WorldState::empty(),
-            vec![(3, 1)],
+            BankRows {
+                origin: Origin::Session,
+                rows: vec![(3, 1)],
+            },
             vec![booth],
             vec![
                 BankStep::Walk {
@@ -24378,7 +24430,10 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
             inv: HashMap::from([(3, 1), (995, 1)]),
             ..WorldState::empty()
         }),
-        vec![(995, i32::MAX)],
+        BankRows {
+            origin: Origin::Session,
+            rows: vec![(995, i32::MAX)],
+        },
     );
     let session = session.expect("wearing the carried obj 3 opens the door");
     assert_eq!(session.dest, stand);
@@ -24526,6 +24581,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
             ..FindOptions::default()
         },
         state: None,
+        bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_candidates: None,
         exclusions: None,
@@ -24619,7 +24675,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         navs: Arc::clone(&navs),
         name: "alice".into(),
         state: None,
-        bank: Vec::new(),
+        bank: BankRows::default(),
     };
     let dest = WorldTile {
         x: 30,
@@ -24667,6 +24723,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
             Some(&world),
             false,
             false,
+            None,
             reach,
         )
     };
@@ -24914,6 +24971,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(d.held_ops, 1, "one OP_HELD4 rub sent");
@@ -24933,6 +24991,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         world.as_ref(),
         false,
         false,
+        None,
         no_reach,
     );
     assert_eq!(
@@ -25805,6 +25864,8 @@ mod read_journal_tests {
         assert_eq!(slot.last_error(), Some("read callback panicked"));
     }
 }
+#[path = "bank_fetch_memory_tests.rs"]
+mod bank_fetch_memory;
 #[path = "bank_memory_borrow_tests.rs"]
 mod bank_memory_borrow;
 #[path = "script_journal_paint_tests.rs"]
@@ -26162,7 +26223,7 @@ mod host_batch_tests {
             navs: Arc::clone(&rig.navs),
             name: "alice".into(),
             state: None,
-            bank: Vec::new(),
+            bank: BankRows::default(),
         };
         assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
         assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
@@ -26179,6 +26240,7 @@ mod host_batch_tests {
             rig.world.as_ref(),
             false,
             false,
+            None,
             no_reach,
         );
     }
