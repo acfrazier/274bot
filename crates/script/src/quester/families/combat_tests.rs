@@ -379,7 +379,11 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                 let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
                     panic!("the compiled combat transition must submit a native walk");
                 };
-                assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
+                assert_eq!(
+                    request.protect,
+                    protect || aborted,
+                    "{expected:?}: cross={cross}"
+                );
                 if cross {
                     assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
                 } else {
@@ -1207,6 +1211,9 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
         index: 4,
     });
     aborted.engaged_npc_type = 477;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
 
     for end in [WalkEnd::UserInput, WalkEnd::Failed] {
         let mut run = combat_test_run(
@@ -1219,12 +1226,17 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
         run.last_report = Some(aborted);
         run.refresh_outcome();
         let user_input = end == WalkEnd::UserInput;
-        let result = run.on_abort_walk(WalkReceipt {
-            request_id: 7,
-            evidence: aborted.evidence,
-            end,
-            blocked: None,
-            detail: None,
+        let result = with_step_context(&snapshot, &mut ledger, 14, |cx| {
+            run.on_abort_walk(
+                WalkReceipt {
+                    request_id: 7,
+                    evidence: aborted.evidence,
+                    end,
+                    blocked: None,
+                    detail: None,
+                },
+                cx,
+            )
         });
 
         if user_input {
@@ -1245,6 +1257,420 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
         assert_eq!(retained.report.engaged, aborted.engaged);
         assert_eq!(retained.report.engaged_npc_type, aborted.engaged_npc_type);
     }
+}
+
+fn aborting_npc(index: usize, npc_type: i32, tile: api::WorldTile) -> api::snapshot::NpcView {
+    let mut npc = finish_npc(index, npc_type);
+    npc.tile = tile;
+    npc.network = tile;
+    npc.target = Some(api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: 0,
+    });
+    npc.in_combat = true;
+    npc
+}
+
+fn seed_abort_scene(
+    snapshot: &mut GameSnapshot,
+    here: api::WorldTile,
+    hp: i32,
+    attackers: Vec<api::snapshot::NpcView>,
+    food_id: Option<i32>,
+    food_name: Option<&str>,
+) {
+    snapshot.seed_ingame(2);
+    snapshot.seed_world(api::snapshot::WorldStateView::default());
+    let mut local = super::super::tests::local_player(here);
+    local.player.actor.health = hp;
+    local.player.actor.total_health = 40;
+    local.player.actor.in_combat = !attackers.is_empty();
+    local.player.actor.target = attackers.first().map(|npc| api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Npc,
+        index: npc.index,
+    });
+    snapshot.seed_local_player(local);
+    snapshot.seed_inventory(
+        food_id
+            .zip(food_name)
+            .map(|(id, name)| vec![inventory_item(id, name, 2)])
+            .unwrap_or_default(),
+        28,
+    );
+    snapshot.seed_equipment(vec![]);
+    snapshot.seed_players(vec![]);
+    snapshot.seed_projectiles(vec![]);
+    snapshot.seed_chat_lines(vec![]);
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [api::snapshot::HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    snapshot.seed_varps(
+        (0..api::prayer::PRAYER_COUNT)
+            .map(|index| api::snapshot::VarpView {
+                index: api::prayer::PRAYER_VARP0 + index as i32,
+                value: 0,
+            })
+            .chain([api::snapshot::VarpView {
+                index: crate::combat::OPTION_NODEF,
+                value: 0,
+            }])
+            .collect(),
+    );
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| api::snapshot::StatView {
+                index,
+                name: String::new(),
+                effective: match index {
+                    3 => hp,
+                    5 => 43,
+                    _ => 40,
+                },
+                base: if index == 5 { 43 } else { 40 },
+                xp: 0,
+                used: api::snapshot::stat_used(index as usize),
+            })
+            .collect(),
+    );
+    snapshot.seed_npcs(attackers);
+}
+
+fn guard_request_from_outbox(
+    ledger: &Option<Box<crate::native::ledger::Ledger>>,
+) -> crate::native::WalkRequest {
+    let crate::native::HostEffect::Walk(request) =
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+    else {
+        panic!("combat abort must emit its native escape walk");
+    };
+    let mut guard_request = super::reach::walk_request(
+        request.target,
+        request.radius,
+        request.loc_id,
+        request.required_after,
+    );
+    guard_request.protect = request.protect;
+    guard_request.allow = request.allow;
+    guard_request
+}
+
+#[test]
+fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_falls() {
+    use crate::combat::{facts, GuardOp, WalkGuard};
+
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let heavy = data.npc_by_config("khazard_warlord").unwrap();
+    let light = data
+        .npc_names()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|row| facts::npc_max_hit(row) == Some(4))
+        .expect("selected content includes a known-hit lower threat");
+    assert!(facts::npc_max_hit(heavy).unwrap() > facts::npc_max_hit(light).unwrap());
+    let lobster = data.item_by_alias("lobster").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(
+        &mut snapshot,
+        here,
+        40,
+        vec![
+            aborting_npc(
+                7,
+                heavy.id,
+                api::WorldTile {
+                    x: here.x + 1,
+                    ..here
+                },
+            ),
+            aborting_npc(
+                8,
+                light.id,
+                api::WorldTile {
+                    x: here.x - 1,
+                    ..here
+                },
+            ),
+        ],
+        Some(lobster.id),
+        lobster.name.as_deref(),
+    );
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    run.protect = true;
+    let aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
+        crate::combat::PrepItem::Ammo,
+    )));
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(aborted, cx)
+    })
+    .is_pending());
+    let request = guard_request_from_outbox(&ledger);
+    assert!(request.protect, "abort walks must arm WalkGuard protection");
+    assert!(
+        request.allow.prayer,
+        "abort walk must retain the step's prayer permission"
+    );
+    assert!(
+        request.allow.food,
+        "abort WalkGuard must retain food permission"
+    );
+    assert!(
+        request.target.x < here.x,
+        "the heavier Warlord must be the retreat reference"
+    );
+
+    let mut guard = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        WalkGuard::begin_with(&request, &cx.tick.cx.snapshot(), Arc::clone(&run.tables))
+            .expect("Prayer-43 abort walk admits WalkGuard")
+    });
+    let first = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        let view = cx.tick.cx.snapshot();
+        let op = guard.tick(&view);
+        if let Some(op) = op.as_ref() {
+            guard.admitted(op, &view);
+        }
+        op
+    });
+    assert!(matches!(first, Some(GuardOp::IfButton { .. })));
+
+    seed_abort_scene(
+        &mut snapshot,
+        here,
+        1,
+        vec![
+            aborting_npc(
+                7,
+                heavy.id,
+                api::WorldTile {
+                    x: here.x + 1,
+                    ..here
+                },
+            ),
+            aborting_npc(
+                8,
+                light.id,
+                api::WorldTile {
+                    x: here.x - 1,
+                    ..here
+                },
+            ),
+        ],
+        Some(lobster.id),
+        lobster.name.as_deref(),
+    );
+    let falling_hp = with_step_context(&snapshot, &mut ledger, 14, |cx| {
+        guard.tick(&cx.tick.cx.snapshot())
+    });
+    assert!(matches!(falling_hp, Some(GuardOp::Eat { .. })));
+}
+
+#[test]
+fn aborted_walk_to_authored_stand_arms_walk_guard() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(
+        &mut snapshot,
+        here,
+        40,
+        vec![aborting_npc(
+            7,
+            warlord.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        )],
+        None,
+        None,
+    );
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    run.protect = true;
+    let mut aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
+        crate::combat::PrepItem::Ammo,
+    )));
+    aborted.engaged = Some(crate::combat::ActorRef {
+        kind: api::snapshot::ActorKind::Npc,
+        index: 7,
+    });
+    aborted.engaged_npc_type = warlord.id;
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(aborted, cx)
+    })
+    .is_pending());
+    let crate::native::HostEffect::Walk(request) =
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+    else {
+        panic!("combat abort must emit its native stand walk");
+    };
+    assert_eq!(request.target, stand);
+    assert!(request.protect);
+    assert!(request.allow.food);
+    assert!(request.allow.prayer);
+}
+
+#[test]
+fn prep_abort_without_live_attacker_keeps_legacy_blocked_handoff() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, vec![], None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut ledger = None;
+
+    let result = with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(
+            report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                crate::combat::PrepItem::Ammo,
+            ))),
+            cx,
+        )
+    });
+    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
+}
+
+#[test]
+fn failed_abort_walk_keeps_guarded_hold_until_its_bound() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let lobster = data.item_by_alias("lobster").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    let attacker = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    seed_abort_scene(
+        &mut snapshot,
+        here,
+        1,
+        vec![attacker.clone()],
+        Some(lobster.id),
+        lobster.name.as_deref(),
+    );
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(
+            report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                crate::combat::PrepItem::Ammo,
+            ))),
+            cx,
+        )
+    })
+    .is_pending());
+    let request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 13,
+            sequence: 13,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("route fixture failure")),
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+
+    let hold = with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx));
+    assert!(
+        hold.is_pending(),
+        "route failure must enter bounded guarded hold"
+    );
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            &action.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                action,
+                ..
+            }) if action == "Eat"
+        )
+    }));
+
+    let mut terminal = None;
+    for tick in 15..=80 {
+        let outcome = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
+        if outcome.is_ready() {
+            terminal = Some(outcome);
+            break;
+        }
+    }
+    let Some(Poll::Ready(Err(ActionError::Blocked(reason)))) = terminal else {
+        panic!("a failed abort route must end its guarded hold with a bounded reason");
+    };
+    assert!(reason.to_ascii_lowercase().contains("hold"));
 }
 
 #[test]
@@ -1304,7 +1730,7 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 }
 
 #[test]
-fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
+fn return_walks_retain_authored_protection_and_abort_walks_stay_protected() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 3125,
@@ -1334,6 +1760,7 @@ fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
                 run.cross = Arc::from([Arc::from("draynor-jail-guards")]);
             }
             run.protect = protect;
+            let aborting = matches!(&end, CombatEnd::Aborted(_));
             assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
                 run.on_combat_report(report(end), cx)
             })
@@ -1345,7 +1772,11 @@ fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
             };
             assert_eq!(request.target, stand);
             assert_eq!(request.radius, 1);
-            assert_eq!(request.protect, protect);
+            assert_eq!(request.protect, protect || aborting);
+            if aborting {
+                assert_eq!(request.allow.prayer, protect);
+                assert!(request.allow.food);
+            }
             if cross {
                 assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
             } else {
@@ -1419,7 +1850,7 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
                 detail: None,
             };
             if abort {
-                run.on_abort_walk(receipt)
+                run.on_abort_walk(receipt, cx)
             } else {
                 run.on_return_walk(receipt, cx)
             }

@@ -1238,6 +1238,11 @@ impl Combat {
     fn pending_row(&self, kind: RowKind) -> bool {
         self.pending.iter().any(|pending| pending.row.kind == kind)
     }
+    fn pending_wear(&self, slot: u8) -> bool {
+        self.pending
+            .iter()
+            .any(|pending| pending.row.kind == RowKind::Wear && pending.row.aux == slot)
+    }
     fn pending_id(&self, kind: RowKind, id: i32) -> bool {
         self.pending
             .iter()
@@ -2122,8 +2127,13 @@ impl Combat {
             }
             return Ok(plan);
         }
-        if self.request.style == Style::Ranged && !self.ranged_prepare(frame, tick) {
-            return self.plan(frame, tick, cx);
+        if self.request.style == Style::Ranged {
+            if !self.ranged_prepare(frame, tick) {
+                return self.plan(frame, tick, cx);
+            }
+            if self.pending_wear(3) || self.pending_wear(13) {
+                return Ok(plan);
+            }
         }
         if self.phase == Phase::Prep {
             let weapon = self.desired(3);
@@ -2502,7 +2512,12 @@ impl Combat {
             );
             return false;
         };
-        let ammo = if ranged::thrown(weapon) {
+        let thrown = ranged::thrown(weapon);
+        let slot = if thrown { 3 } else { 13 };
+        if self.pending_wear(slot) {
+            return true;
+        }
+        let ammo = if thrown {
             Some(weapon.obj_id)
         } else {
             self.request
@@ -2539,17 +2554,19 @@ impl Combat {
                     )
                     .any(|row| row.def.id == id && row.count > 0)
         });
-        let slot = if ranged::thrown(weapon) { 3 } else { 13 };
-        let failed = (self.prep_failures >> (slot * 3)) & 3 >= 2;
+        let shift = u32::from(slot) * 3;
+        let failed = (self.prep_failures >> shift) & 3 >= 2;
         if !usable || failed {
-            self.finish(
-                CombatEnd::Aborted(if prep {
-                    AbortReason::PrepFailed(PrepItem::Ammo)
+            let reason = if prep {
+                AbortReason::PrepFailed(if thrown {
+                    PrepItem::Weapon
                 } else {
-                    AbortReason::Unprotected(Unprotected::NoAmmo)
-                }),
-                tick,
-            );
+                    PrepItem::Ammo
+                })
+            } else {
+                AbortReason::Unprotected(Unprotected::NoAmmo)
+            };
+            self.finish(CombatEnd::Aborted(reason), tick);
             return false;
         }
         self.ranged_mut().ammo_pick = ammo.expect("usable ammo");

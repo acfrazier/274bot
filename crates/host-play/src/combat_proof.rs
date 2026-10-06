@@ -597,7 +597,19 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
                 "type": npc.r#type,
                 "name": npc.name,
                 "tile": npc.tile,
-                "distance": npc.distance,
+                "network": npc.network,
+                "size": npc.size,
+                // Match the launch oracle's packet-time nearest-footprint distance.
+                // Retain the rendered tile above only as visual evidence.
+                "distance": snapshot.tile().map(|(x, z, level)| {
+                    if level != npc.network.level {
+                        return i32::MAX;
+                    }
+                    let size = npc.size.max(1);
+                    let closest_x = x.clamp(npc.network.x, npc.network.x + size - 1);
+                    let closest_z = z.clamp(npc.network.z, npc.network.z + size - 1);
+                    (x - closest_x).abs().max((z - closest_z).abs())
+                }),
                 "health": npc.health,
                 "total_health": npc.total_health,
                 "face_entity": npc.face_entity,
@@ -676,6 +688,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         json!({
             "name": player.player.actor.name,
             "tile": player.player.actor.tile,
+            "network": player.player.network,
             "in_combat": player.player.actor.in_combat,
             "target": player.player.actor.target.map(|target| {
                 json!({"kind": format!("{:?}", target.kind), "index": target.index})
@@ -721,4 +734,57 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
             "actions": item.actions,
         })).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    #[test]
+    fn combat_receipt_distance_uses_network_tile_not_rendered_pose() {
+        let here = WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        };
+        let rendered = WorldTile { x: 105, ..here };
+        let network = WorldTile { x: 101, ..here };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tile(here);
+        snapshot.seed_npcs(vec![NpcView {
+            index: 7,
+            r#type: Some(477),
+            name: Some("Khazard Warlord".into()),
+            actions: vec![Some("Attack".into())],
+            tile: rendered,
+            distance: 5,
+            animation: -1,
+            animation_frame: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 170,
+            total_health: 170,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 112,
+            size: 1,
+            network,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+        let facts = snapshot_facts(&snapshot, None);
+        assert_eq!(facts["nearby_npcs"][0]["distance"], 1);
+        assert_eq!(facts["nearby_npcs"][0]["network"], json!(network));
+        assert_eq!(facts["nearby_npcs"][0]["tile"], json!(rendered));
+        assert_eq!(facts["nearby_npcs"][0]["size"], 1);
+    }
 }
