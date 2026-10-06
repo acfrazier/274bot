@@ -528,21 +528,11 @@ impl AcceptedClickWindow {
 
 /// An already-captured state and its session-only evidence. This value reducer
 /// performs no observation, I/O, clock reads, or host operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PoisonMemory {
     pub state: PoisonState,
     pub session_invalid: bool,
     pub death_seen: bool,
-}
-
-impl Default for PoisonMemory {
-    fn default() -> Self {
-        Self {
-            state: PoisonState::default(),
-            session_invalid: false,
-            death_seen: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

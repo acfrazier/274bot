@@ -529,7 +529,8 @@ silent reapplication until a confirmed own antipoison decrement or observed
 death followed by respawn. Unknown poison requires the complete accepted-click
 phase evidence to clear; a hitmark kind above two invalidates the whole
 session until reconnect. Poison damages the entire route timeline, including
-safe gaps. Unknown poison alone does not refuse a route without crossings.
+safe gaps. Poison alone never refuses a route without crossings: the replay
+and antipoison information remain, but walking adds no new poison risk.
 
 `RiskTables` is immutable and reused across assessments. Ordinary slot
 creation does not construct it, and no per-bot state is added by this
