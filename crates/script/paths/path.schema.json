@@ -2532,7 +2532,7 @@
         "qty": {
           "type": "integer",
           "default": 1,
-          "description": "Requested quantity; omitted uses 1 and values below 1 are rejected.",
+          "description": "Target held count for `withdraw`; ignored by `deposit`.\nOmitted defaults to 1; `withdraw` rejects values below 1.",
           "minimum": 1
         }
       },
@@ -2597,7 +2597,7 @@
         "qty": {
           "type": "integer",
           "minimum": 1,
-          "description": "Number of items to buy; must be at least 1."
+          "description": "Desired held count after buying; must be at least 1."
         },
         "est_gp": {
           "type": "integer",

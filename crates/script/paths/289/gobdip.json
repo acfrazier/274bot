@@ -98,59 +98,36 @@
           "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
         },
         {
-          "id": "buy-first-redberry",
-          "kind": "buy",
+          "id": "walk-to-redberry-patch",
+          "kind": "walk",
           "version": 1,
+          "advances": false,
           "args": {
-            "shop": {
-              "npc": "wydin",
-              "anchor": {
-                "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
-              }
-            },
-            "obj": "redberries",
-            "qty": 1,
-            "est_gp": 20
+            "tile": [3271, 3366, 0],
+            "source": "content/maps/m51_52.jm2:6256-6260; engine/src/engine/GameMap.ts:71-73,162-164 (redberry spawn at [3271,3366,0])",
+            "radius": 3
           },
-          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 1 } } },
-          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 1 } } }
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 3 } } }
         },
         {
-          "id": "buy-second-redberry",
-          "kind": "buy",
+          "id": "take-redberries-from-patch",
+          "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
-            "shop": {
-              "npc": "wydin",
-              "anchor": {
-                "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
-              }
+            "target": { "ground": "redberries" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3271, 3366, 0],
+              "source": "content/maps/m51_52.jm2:6256-6260; engine/src/engine/GameMap.ts:71-73,162-164"
             },
-            "obj": "redberries",
-            "qty": 1,
-            "est_gp": 20
+            "radius": 12,
+            "wait_if_missing": true,
+            "until": { "obj": "redberries", "qty": 3 },
+            "settle_ms": 300000
           },
-          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 2 } } },
-          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 2 } } }
-        },
-        {
-          "id": "buy-third-redberry",
-          "kind": "buy",
-          "version": 1,
-          "args": {
-            "shop": {
-              "npc": "wydin",
-              "anchor": {
-                "tile": [3014, 3204, 0],
-                "source": "scripts/areas/area_port_sarim/configs/port_sarim.npc:155-185; scripts/areas/area_port_sarim/configs/port_sarim.inv:105-119; maps/m47_50.jm2:10005 (Wydin at [3014,3204,0])"
-              }
-            },
-            "obj": "redberries",
-            "qty": 1,
-            "est_gp": 20
-          },
+          "comment": "The map has three static redberry spawns in this radius; redberries have no item-specific respawn override, so the default 100-tick (one-minute) respawn applies. The five-minute settle bound allows the ground spawns to return if needed. Sources: content/maps/m51_52.jm2:6256-6260; content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj:157-165; engine/src/cache/config/ObjType.ts:181-182,284-285; engine/src/engine/GameMap.ts:160-175; engine/src/engine/script/handlers/ObjOps.ts:156-159.",
           "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
           "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } }
         }
@@ -375,18 +352,6 @@
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
             },
             {
-              "id": "acquire-onions-orange",
-              "kind": "acquire",
-              "version": 1,
-              "args": { "recipe": "acquire:onions" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
-              ] },
-              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } }
-            },
-            {
               "id": "acquire-redberries-orange",
               "kind": "acquire",
               "version": 1,
@@ -397,6 +362,18 @@
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
               ] },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } }
+            },
+            {
+              "id": "acquire-onions-orange",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:onions" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "onion", "qty": 2 } } }
             },
             {
               "id": "acquire-orange-dye",
