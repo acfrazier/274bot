@@ -28,14 +28,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use api::bank_memory::{BankMemory, HintRowsError, MAX_HINT_ROWS};
+use client::util::JString;
 use serde::{Deserialize, Serialize};
 use vault::{read_private_file, valid_component, write_private_file};
 
 /// The on-disk format this build writes and the only one it reads.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The most characters a game account name has: the login form's limit and
-/// what `JString.toUserhash` reads.
+/// The most characters of a name the client's login hash reads
+/// (`JString.toUserhash`): the rest of a longer name is not part of the
+/// account.
 pub const MAX_ACCOUNT_CHARS: usize = 12;
 
 /// The largest hint file read: the row cap at the widest JSON a row takes
@@ -70,8 +72,9 @@ impl fmt::Display for HintError {
             HintError::UnsafeAccount(name) => {
                 write!(
                     f,
-                    "account {name:?} is not a login name (at most {MAX_ACCOUNT_CHARS} letters, \
-                     digits, spaces or underscores)"
+                    "account {name:?} is not a login name (letters, digits, spaces and \
+                     underscores only, with a letter or digit in the first \
+                     {MAX_ACCOUNT_CHARS})"
                 )
             }
             HintError::UnsafeProfile(name) => {
@@ -114,14 +117,20 @@ impl From<HintRowsError> for HintError {
 }
 
 /// The account name as the one path component the client's login identity
-/// gives it, or why it cannot be one. The game takes at most
-/// [`MAX_ACCOUNT_CHARS`] characters of ASCII letters, digits, spaces and
-/// underscores; its login hash (`JString.toUserhash`) folds case, treats a
-/// space and an underscore as the same separator and drops leading and
-/// trailing separators, so `Alice Smith`, `alice_smith` and ` alice smith`
-/// are one account and get one file, `alice_smith.json`. Anything else — any
-/// other character, a longer name, a name of separators only — is rejected,
-/// which means no load and no save for that slot.
+/// gives it, or why it cannot be one. The identity is what the client logs
+/// the name in as, computed by the client's own decoder:
+/// `JString.toRawUsername(JString.toUserhash(name))` — a whitespace trim,
+/// the first [`MAX_ACCOUNT_CHARS`] characters hashed base-37 (case folded,
+/// a space and an underscore both the zero digit, so leading zeros vanish
+/// and the name ends at its last letter or digit), decoded back. So
+/// `Alice Smith`, `alice_smith` and ` alice smith` are one account and get
+/// one file, `alice_smith.json`; `_ab3456789xyz` logs in as
+/// `ab3456789xy` (the underscore spends one of the twelve) and gets that
+/// file; `ab3456789xyz1` logs in as `ab3456789xyz`. A name with any other
+/// character is refused before it is hashed (the hash would fold it to a
+/// separator), and so is a name the hash spells as no account at all (no
+/// letter or digit within the twelve, e.g. `____________a`), which means no
+/// load and no save for that slot.
 pub fn account_component(account: &str) -> Result<String, HintError> {
     let unsafe_account = || HintError::UnsafeAccount(account.to_owned());
     if !account
@@ -130,17 +139,18 @@ pub fn account_component(account: &str) -> Result<String, HintError> {
     {
         return Err(unsafe_account());
     }
-    let trimmed = account.trim_matches([' ', '_']);
-    if trimmed.is_empty() || trimmed.len() > MAX_ACCOUNT_CHARS {
+    let hash = JString::to_userhash(account);
+    // The decoder answers `invalid_name` for a hash that spells no account;
+    // of what `to_userhash` can return, that is exactly zero.
+    if hash == 0 {
         return Err(unsafe_account());
     }
-    Ok(trimmed
-        .bytes()
-        .map(|byte| match byte {
-            b' ' => '_',
-            letter => letter.to_ascii_lowercase() as char,
-        })
-        .collect())
+    let identity = JString::to_raw_username(hash as i64);
+    debug_assert!(
+        valid_component(&identity),
+        "the decoder spells {account:?} as {identity:?}"
+    );
+    Ok(identity)
 }
 
 /// The persisted document, schema 1:
@@ -242,6 +252,11 @@ impl HintFile {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The account identity the file carries ([`account_component`]).
+    pub fn account(&self) -> &str {
+        &self.account
     }
 
     /// Read and check the file, holding no guard: `Ok(Some)` carries the
@@ -386,8 +401,14 @@ mod tests {
 
     #[test]
     fn account_component_spells_the_name_as_the_client_login_identity() {
-        // Case folds, a space is an underscore, surrounding separators go:
-        // one account, one file.
+        // Every accepted spelling is the client's own login identity: case
+        // folds, a space is an underscore, surrounding separators go,
+        // leading separators spend the twelve-character budget, and a
+        // longer name logs in as its first twelve characters.
+        let twelve = "ab3456789xyZ";
+        assert_eq!(twelve.len(), MAX_ACCOUNT_CHARS);
+        let thirteen = "ab3456789xyz1";
+        assert_eq!(thirteen.len(), MAX_ACCOUNT_CHARS + 1);
         for (typed, file) in [
             ("alice", "alice"),
             ("Alice Smith", "alice_smith"),
@@ -395,9 +416,19 @@ mod tests {
             ("ALICE_SMITH", "alice_smith"),
             (" alice smith", "alice_smith"),
             ("alice smith_", "alice_smith"),
+            ("_alice_smith_", "alice_smith"),
             ("bm4h30nbov_0", "bm4h30nbov_0"),
             ("Bob_2", "bob_2"),
             ("a  b", "a__b"),
+            (twelve, "ab3456789xyz"),
+            // Surrounding whitespace is trimmed before the twelve.
+            (" ab3456789xyZ ", "ab3456789xyz"),
+            // REVIEW-BANK-SNAPSHOT-S2-R2 M1-R2: a leading underscore is one
+            // of the twelve, so the last letter falls off, as it does at
+            // the client's login.
+            ("_ab3456789xyz", "ab3456789xy"),
+            ("__ab3456789xyz", "ab3456789x"),
+            (thirteen, "ab3456789xyz"),
         ] {
             assert_eq!(account_component(typed).unwrap(), file, "{typed:?}");
             assert_eq!(
@@ -406,23 +437,13 @@ mod tests {
                 "{typed:?}: the file name is the client's login spelling"
             );
         }
-        let twelve = "ab3456789xyZ";
-        assert_eq!(twelve.len(), MAX_ACCOUNT_CHARS);
-        assert_eq!(account_component(twelve).unwrap(), "ab3456789xyz");
-        assert_eq!(
-            account_component(twelve).unwrap(),
-            client_login_name(twelve)
-        );
-        // Surrounding separators are not part of the twelve.
-        assert_eq!(account_component(" ab3456789xyZ ").unwrap(), "ab3456789xyz");
     }
 
     #[test]
-    fn account_component_rejects_long_hostile_and_separator_only_names() {
-        let thirteen = "ab3456789xyz1";
-        assert_eq!(thirteen.len(), MAX_ACCOUNT_CHARS + 1);
-        for rejected in [
-            thirteen,
+    fn account_component_rejects_hostile_and_no_account_names() {
+        // Refused before the hash sees them: the client would fold each of
+        // these characters to a separator and log into some other account.
+        for hostile in [
             "a/b",
             "a\\b",
             "..",
@@ -434,17 +455,26 @@ mod tests {
             "tab\tname",
             "del\x7f",
             "élan",
-            "",
-            " ",
-            "___",
-            "_ _",
         ] {
             assert!(
                 matches!(
-                    account_component(rejected),
-                    Err(HintError::UnsafeAccount(name)) if name == rejected
+                    account_component(hostile),
+                    Err(HintError::UnsafeAccount(name)) if name == hostile
                 ),
-                "{rejected:?} must be refused"
+                "{hostile:?} must be refused"
+            );
+        }
+        // Refused after the hash: the client's decoder spells these as no
+        // account (`invalid_name`), including a letter past twelve
+        // separators (M1-R2).
+        for empty in ["", " ", "___", "_ _", "____________a"] {
+            assert_eq!(client_login_name(empty), "invalid_name", "{empty:?}");
+            assert!(
+                matches!(
+                    account_component(empty),
+                    Err(HintError::UnsafeAccount(name)) if name == empty
+                ),
+                "{empty:?} must be refused"
             );
         }
     }
