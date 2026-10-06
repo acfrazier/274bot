@@ -1,10 +1,12 @@
-//! Host-side protected-walk driver. Hold-mode prayer only: no eat, no attack,
-//! no flick. The host native follow site owns one driver per armed route.
+//! Host-side followed-route safety driver. It holds protection and can eat,
+//! but never attacks or flicks. The host native follow site owns one driver per armed route.
 use super::arbiter;
 use super::frame::Frame;
 use super::policy;
 use super::prayer::RaisedPrayers;
-use super::schedule::{elapsed, reached, InputEffect, OpKind, Schedule};
+use super::schedule::{
+    elapsed, reached, InputEffect, OpKind, Schedule, EAT_OBSERVATION_WINDOW_TICKS,
+};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
 use super::threats::ThreatSet;
@@ -45,6 +47,9 @@ pub enum GuardOp {
     Drink {
         name: Arc<str>,
     },
+    Eat {
+        name: Arc<str>,
+    },
     Locked {
         until: u16,
     },
@@ -63,8 +68,8 @@ pub enum GuardRefusal {
     Tables,
 }
 
-/// Per-followed-route protect driver. Threats plus a few clocks; tables live
-/// behind an `Arc`.
+/// Per-followed-route protection and eat driver. Threats plus a few clocks;
+/// tables live behind an `Arc`.
 pub struct WalkGuard {
     threats: ThreatSet,
     tables: Arc<CombatTables>,
@@ -79,10 +84,15 @@ pub struct WalkGuard {
     flags: u8,
     drink_points: u8,
     drink_doses: u8,
+    eat_id: i32,
+    eat_count: u16,
+    eat_hp: i16,
+    eat_admission_tick: u16,
 }
 
 const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
+const FLAG_FOOD_ALLOWED: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
 
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
@@ -104,6 +114,16 @@ fn prayer_base(snapshot: &SnapshotView<'_>) -> Option<i32> {
         .iter()
         .find(|row| row.index == PRAYER_STAT)
         .map(|row| row.base)
+}
+
+fn food_count(frame: &Frame<'_>, id: i32) -> u16 {
+    frame
+        .inventory
+        .iter()
+        .filter(|row| row.def.id == id)
+        .fold(0u16, |total, row| {
+            total.saturating_add(u16::try_from(row.count.max(0)).unwrap_or(u16::MAX))
+        })
 }
 
 fn protect_kind(tables: &CombatTables, fact: &PrayerFact) -> Option<GuardProtect> {
@@ -158,9 +178,17 @@ impl WalkGuard {
             raised_prayers: RaisedPrayers::default(),
             prayer_admission_tick: 0,
             unprotectable: 0,
-            flags: 0,
+            flags: if request.allow.food {
+                FLAG_FOOD_ALLOWED
+            } else {
+                0
+            },
             drink_points: 0,
             drink_doses: 0,
+            eat_id: 0,
+            eat_count: 0,
+            eat_hp: 0,
+            eat_admission_tick: 0,
         })
     }
 
@@ -250,11 +278,30 @@ impl WalkGuard {
                 self.schedule
                     .admitted(OpKind::Drink, tick, 0, false, InputEffect::Standard);
             }
+            GuardOp::Eat { name } => {
+                let Some((id, food)) = frame.inventory.iter().find_map(|row| {
+                    let food = self.tables.food(row.def.id)?;
+                    row.def
+                        .name
+                        .as_deref()
+                        .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
+                        .then_some((row.def.id, food))
+                }) else {
+                    return;
+                };
+                let (hp, _) = arbiter::stat(&frame, HITPOINTS_STAT);
+                self.schedule
+                    .admitted(OpKind::Eat, tick, 0, false, InputEffect::Food(food));
+                self.eat_admission_tick = tick;
+                self.eat_id = id;
+                self.eat_count = food_count(&frame, id);
+                self.eat_hp = hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+            }
             _ => {}
         }
     }
 
-    /// Observe threats and return at most one proposed prayer interaction.
+    /// Observe threats and return at most one proposed interaction.
     /// Commit a sent proposal with [`Self::admitted`].
     pub fn tick(&mut self, snapshot: &SnapshotView<'_>) -> Option<GuardOp> {
         let frame = Frame::borrow(*snapshot)?;
@@ -265,6 +312,8 @@ impl WalkGuard {
         self.flags |= FLAG_SEEN;
         self.last_tick = tick;
         self.threats.observe(&frame, &self.tables, tick);
+        let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
+        self.settle_eat(&frame, tick, hp);
         if self.blocks_follow(tick) {
             return Some(GuardOp::Locked {
                 until: if self.schedule.locked(tick) {
@@ -275,12 +324,40 @@ impl WalkGuard {
             });
         }
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
-        let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
         self.observe_protect(&frame);
         self.settle_drink(&frame, tick, points);
-        let wanted =
-            policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
-        let kind = protect_kind(&self.tables, wanted)?;
+        let danger = self
+            .threats
+            .danger(&frame, &self.tables, tick, false, false);
+        let eat_choice = if self.flags & FLAG_FOOD_ALLOWED != 0
+            && !self.schedule.pending(OpKind::Eat)
+            && self.schedule.unsettled[OpKind::Eat.index()] < 3
+        {
+            policy::eat_choice(
+                &frame,
+                &self.tables,
+                &self.schedule,
+                danger,
+                hp,
+                hp_max,
+                tick,
+            )
+        } else {
+            None
+        };
+        if danger != Some(0) && hp <= select::lines(danger, hp_max).emergency {
+            if let Some(eat) = self.eat_op(&frame, eat_choice) {
+                return Some(eat);
+            }
+        }
+        let Some(wanted) =
+            policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
+        else {
+            return self.eat_op(&frame, eat_choice);
+        };
+        let Some(kind) = protect_kind(&self.tables, wanted) else {
+            return self.eat_op(&frame, eat_choice);
+        };
         if points == 0
             && !self.schedule.pending(OpKind::Drink)
             && arbiter::potion_id(&frame, &self.tables, PotionKind::Prayer).is_none()
@@ -295,7 +372,7 @@ impl WalkGuard {
         if base < wanted.level {
             let bit = kind_bit(kind);
             if self.unprotectable & bit != 0 {
-                return None;
+                return self.eat_op(&frame, eat_choice);
             }
             self.unprotectable |= bit;
             return Some(GuardOp::Unprotectable {
@@ -304,20 +381,24 @@ impl WalkGuard {
             });
         }
         if select::prayer_on(&frame, wanted.varp) {
-            return self.maybe_floor_sip(&frame, tick, points, base, hp, hp_max);
+            return self
+                .maybe_floor_sip(&frame, tick, points, base, hp, hp_max)
+                .or_else(|| self.eat_op(&frame, eat_choice));
         }
         let same_toggle = self.pending_com == wanted.button_com;
         if self.schedule.pending(OpKind::Prayer) && same_toggle {
             if !self.schedule.ready(OpKind::Prayer, tick) {
-                return None;
+                return self.eat_op(&frame, eat_choice);
             }
             self.schedule.timeout(OpKind::Prayer);
         }
         if !self.schedule.ready(OpKind::Prayer, tick) && same_toggle {
-            return None;
+            return self.eat_op(&frame, eat_choice);
         }
         if points == 0 {
-            return self.drink(&frame, tick, hp, hp_max, true);
+            return self
+                .drink(&frame, tick, hp, hp_max, true)
+                .or_else(|| self.eat_op(&frame, eat_choice));
         }
         Some(GuardOp::IfButton {
             component: wanted.button_com,
@@ -375,6 +456,40 @@ impl WalkGuard {
             .and_then(|row| row.def.name.as_deref())
             .map(Arc::<str>::from)?;
         Some(GuardOp::Drink { name })
+    }
+
+    fn eat_op(&self, frame: &Frame<'_>, choice: Option<policy::EatChoice>) -> Option<GuardOp> {
+        let choice = choice?;
+        let id = choice.ordinary.or(choice.combo)?;
+        let name = frame
+            .inventory
+            .iter()
+            .find(|row| row.def.id == id)
+            .and_then(|row| row.def.name.as_deref())
+            .map(Arc::<str>::from)?;
+        Some(GuardOp::Eat { name })
+    }
+
+    fn settle_eat(&mut self, frame: &Frame<'_>, tick: u16, hp: i32) {
+        if !self.schedule.pending(OpKind::Eat) {
+            return;
+        }
+        let observed = food_count(frame, self.eat_id) < self.eat_count
+            || (hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16) > self.eat_hp;
+        if observed {
+            self.schedule.settle(OpKind::Eat);
+            self.eat_id = 0;
+            self.eat_count = 0;
+            self.eat_hp = 0;
+            self.eat_admission_tick = 0;
+        } else if elapsed(tick, self.eat_admission_tick) >= u16::from(EAT_OBSERVATION_WINDOW_TICKS)
+        {
+            self.schedule.timeout(OpKind::Eat);
+            self.eat_id = 0;
+            self.eat_count = 0;
+            self.eat_hp = 0;
+            self.eat_admission_tick = 0;
+        }
     }
 
     fn settle_drink(&mut self, frame: &Frame<'_>, tick: u16, points: i32) {
@@ -594,6 +709,24 @@ mod tests {
             self.refresh();
         }
 
+        fn launch_known_melee_threat(&mut self) {
+            let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            let row = data
+                .npc_names()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| {
+                    row.attack_kind.is_none()
+                        && super::super::select::facts::npc_max_hit(row).is_some_and(|hit| hit > 0)
+                        && !row.bespoke
+                })
+                .expect("selected content includes a known-damage melee NPC");
+            self.npcs[0].r#type = Some(row.id as usize);
+            self.npcs[0].name = row.display.clone();
+            self.face_us();
+        }
+
         fn launch_style(&mut self, spotanim: i32) {
             self.face_us();
             self.projectiles = vec![ProjectileView {
@@ -660,6 +793,67 @@ mod tests {
                 component_id: 3214,
             });
             self.refresh();
+        }
+        fn add_food(&mut self, alias: &str, slot: i32, count: i32) {
+            let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            let item = data.item_by_alias(alias).unwrap();
+            self.inventory.push(ItemView {
+                def: ItemDefView {
+                    id: item.id,
+                    name: item.name.clone(),
+                    stackable: false,
+                    members: false,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot,
+                count,
+                actions: vec![Some("Eat".into())],
+                component_id: 3214,
+            });
+            self.refresh();
+        }
+
+        fn launch_unknown(&mut self) {
+            self.face_us();
+            self.projectiles = vec![ProjectileView {
+                spotanim: i32::MAX,
+                level: 0,
+                src: self.npcs[0].tile,
+                target: Some(ActorTargetView {
+                    kind: ActorKind::Player,
+                    index: 1,
+                }),
+                t1: 0,
+                t2: 30,
+            }];
+            self.refresh();
+        }
+
+        fn launch_troll_rock(&mut self) {
+            let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            let thrower = data.npc_by_config("death_troll_thrower1").unwrap();
+            self.npcs[0].r#type = Some(thrower.id as usize);
+            self.npcs[0].name = thrower.display.clone();
+            self.npcs[0].animation = 1142;
+            self.npcs[0].tile = self.local.player.actor.tile;
+            self.npcs[0].network = self.local.player.actor.tile;
+            self.launch_style(276);
+            self.projectiles[0].t1 = 364;
+            self.projectiles[0].t2 = 381;
+            self.refresh();
+            self.snapshot.seed_hitmarks(HitmarksView {
+                marks: [HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                }; 4],
+                loop_cycle: 364,
+            });
         }
     }
 
@@ -1312,6 +1506,285 @@ mod tests {
         assert!(
             matches!(second, Some(GuardOp::Drink { .. })),
             "a later dose may be proposed after the admitted dose times out"
+        );
+    }
+    fn is_eat(op: &Option<GuardOp>) -> bool {
+        matches!(op, Some(GuardOp::Eat { .. }))
+    }
+
+    fn assert_eat(op: Option<&GuardOp>, item: &str) {
+        match op {
+            Some(GuardOp::Eat { name }) => assert_eq!(name.as_ref(), item),
+            other => panic!("wanted Eat {item}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn live_thrower_at_half_max_eats_the_largest_fitting_food() {
+        let mut scene = Scene::new(37);
+        scene.stats[3].effective = 20;
+        for slot in 0..4 {
+            scene.add_food("lobster", slot, 1);
+        }
+        scene.add_food("shrimp", 4, 1);
+        scene.launch_troll_rock();
+        let mut guard = scene.begin().unwrap();
+
+        let op = guard.tick(&scene.view());
+        assert_eat(op.as_ref(), "Lobster");
+    }
+
+    #[test]
+    fn zero_danger_does_not_trigger_eating() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 1;
+        scene.add_food("lobster", 0, 1);
+        let mut guard = scene.begin().unwrap();
+
+        let op = guard.tick(&scene.view_at(0));
+        assert!(!is_eat(&op), "a Some(0) danger must not eat: {op:?}");
+        assert_eq!(op, None);
+    }
+
+    #[test]
+    fn unknown_danger_uses_half_max_and_the_combo_drink_gate() {
+        for (hp, should_eat) in [(20, true), (21, false)] {
+            let mut scene = Scene::new(43);
+            scene.stats[3].effective = hp;
+            scene.launch_unknown();
+            scene.add_food("lobster", 0, 1);
+            let mut guard = scene.begin().unwrap();
+
+            let op = guard.tick(&scene.view_at(0));
+            assert_eq!(is_eat(&op), should_eat, "unknown danger at {hp}/40: {op:?}");
+        }
+
+        for (hp, should_eat) in [(2, false), (3, true)] {
+            let mut scene = Scene::new(43);
+            scene.stats[3].effective = hp;
+            scene.launch_unknown();
+            scene.add_food("tbwt_cooked_karambwan", 0, 1);
+            let mut guard = scene.begin().unwrap();
+
+            let op = guard.tick(&scene.view_at(0));
+            assert_eq!(
+                is_eat(&op),
+                should_eat,
+                "combo at {hp}/40 must cross the strict half-max gate: {op:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_food_waits_for_its_schedule_clock_after_count_drop() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 1;
+        scene.launch_arrow();
+        scene.add_food("lobster", 0, 2);
+        let mut guard = scene.begin().unwrap();
+
+        let first = guard.tick(&scene.view_at(0)).unwrap();
+        assert_eat(Some(&first), "Lobster");
+        guard.admitted(&first, &scene.view_at(0));
+
+        scene.inventory[0].count = 1;
+        scene.refresh();
+        let observed = guard.tick(&scene.view_at(1));
+        assert!(
+            !is_eat(&observed),
+            "the next-food clock is not ready: {observed:?}"
+        );
+        assert!(!guard.schedule.pending(OpKind::Eat));
+        assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
+
+        let early = guard.tick(&scene.view_at(2));
+        assert!(!is_eat(&early), "food must wait through tick 2: {early:?}");
+        let ready = guard.tick(&scene.view_at(3));
+        assert_eat(ready.as_ref(), "Lobster");
+    }
+
+    #[test]
+    fn hp_rise_settles_an_admitted_eat() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 1;
+        scene.launch_arrow();
+        scene.add_food("lobster", 0, 1);
+        let mut guard = scene.begin().unwrap();
+
+        let eat = guard.tick(&scene.view_at(0)).unwrap();
+        guard.admitted(&eat, &scene.view_at(0));
+        assert!(guard.schedule.pending(OpKind::Eat));
+
+        scene.stats[3].effective = 40;
+        scene.refresh();
+        let _ = guard.tick(&scene.view_at(1));
+        assert!(!guard.schedule.pending(OpKind::Eat));
+        assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
+    }
+
+    #[test]
+    fn lagged_karambwan_settles_and_retries_at_the_emergency_line() {
+        let mut scene = Scene::new(43);
+        scene.launch_unknown();
+        for slot in 0..4 {
+            scene.add_food("tbwt_cooked_karambwan", slot, 1);
+        }
+        let emergency = {
+            let frame = Frame::borrow(scene.view_at(0)).unwrap();
+            let mut threats = ThreatSet::default();
+            threats.observe(&frame, &scene.tables, 0);
+            let danger = threats.danger(&frame, &scene.tables, 0, false, false);
+            assert_ne!(danger, Some(0));
+            select::lines(danger, 40).emergency
+        };
+        scene.stats[3].effective = emergency;
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+
+        for tick in [0, 4, 8, 12] {
+            assert_eq!(scene.stats[3].effective, emergency);
+            let eat = guard.tick(&scene.view_at(tick)).unwrap();
+            assert_eat(Some(&eat), "Cooked karambwan");
+            guard.admitted(&eat, &scene.view_at(tick));
+
+            let pending = guard.tick(&scene.view_at(tick.wrapping_add(1)));
+            assert!(
+                !is_eat(&pending),
+                "a pending Eat must not repeat: {pending:?}"
+            );
+            assert!(
+                guard.schedule.pending(OpKind::Eat),
+                "the observation window must outlast the food clock"
+            );
+            assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
+
+            scene.inventory.remove(0);
+            scene.refresh();
+            let settled = guard.tick(&scene.view_at(tick.wrapping_add(2)));
+            assert!(
+                !is_eat(&settled),
+                "the combo input lock is still active: {settled:?}"
+            );
+            assert!(!guard.schedule.pending(OpKind::Eat));
+            assert_eq!(
+                guard.schedule.unsettled[OpKind::Eat.index()],
+                0,
+                "each two-tick count-drop observation must settle the Eat"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unobserved_eat_times_out_three_times_then_stops() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 1;
+        scene.launch_arrow();
+        scene.add_food("lobster", 0, 1);
+        let mut guard = scene.begin().unwrap();
+
+        let first = guard.tick(&scene.view_at(0)).unwrap();
+        assert_eat(Some(&first), "Lobster");
+        guard.admitted(&first, &scene.view_at(0));
+        let window = u16::from(EAT_OBSERVATION_WINDOW_TICKS);
+        for tick in 1..window {
+            let op = guard.tick(&scene.view_at(tick));
+            assert!(!is_eat(&op), "a pending Eat must not repeat: {op:?}");
+            assert!(guard.schedule.pending(OpKind::Eat));
+        }
+
+        for (tick, unsettled) in [(window, 1), (window * 2, 2)] {
+            let op = guard.tick(&scene.view_at(tick));
+            assert_eat(op.as_ref(), "Lobster");
+            assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], unsettled);
+            guard.admitted(op.as_ref().unwrap(), &scene.view_at(tick));
+        }
+
+        let stopped = guard.tick(&scene.view_at(window * 3));
+        assert!(
+            !is_eat(&stopped),
+            "third timeout must stop food: {stopped:?}"
+        );
+        assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 3);
+        assert!(!guard.schedule.pending(OpKind::Eat));
+    }
+
+    #[test]
+    fn message_delay_food_locks_the_follow_clock() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.launch_unknown();
+        scene.add_food("tbwt_cooked_karambwan", 0, 1);
+        let mut guard = scene.begin().unwrap();
+
+        let eat = guard.tick(&scene.view_at(0)).unwrap();
+        assert_eat(Some(&eat), "Cooked karambwan");
+        guard.admitted(&eat, &scene.view_at(0));
+        assert!(guard.blocks_follow(1));
+        assert_eq!(
+            guard.tick(&scene.view_at(1)),
+            Some(GuardOp::Locked { until: 4 })
+        );
+        assert!(guard.blocks_follow(0));
+        assert!(guard.blocks_follow(2));
+        assert!(guard.blocks_follow(3));
+        assert!(!guard.blocks_follow(4));
+    }
+
+    #[test]
+    fn emergency_eating_precedes_protection_but_protection_wins_above_emergency() {
+        let mut scene = Scene::new(43);
+        scene.launch_known_melee_threat();
+        scene.add_food("lobster", 0, 1);
+        let lines = {
+            let frame = Frame::borrow(scene.view_at(0)).unwrap();
+            let mut threats = ThreatSet::default();
+            threats.observe(&frame, &scene.tables, 0);
+            let danger = threats
+                .danger(&frame, &scene.tables, 0, false, false)
+                .expect("the live melee NPC has known danger");
+            assert!(danger > 0);
+            select::lines(Some(danger), 40)
+        };
+        assert!(lines.emergency < lines.eat);
+        scene.stats[3].effective = lines.emergency;
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+        assert_eat(guard.tick(&scene.view_at(0)).as_ref(), "Lobster");
+
+        scene.stats[3].effective = lines.emergency + 1;
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+        let op = guard.tick(&scene.view_at(0));
+        assert!(
+            matches!(
+                op,
+                Some(GuardOp::IfButton { component })
+                    if component == scene.tables.prayer(PrayerRole::Protect, 2).unwrap().button_com
+            ),
+            "protection must win before an ordinary Eat: {op:?}"
+        );
+    }
+
+    #[test]
+    fn food_permission_defaults_true_and_can_disable_eating() {
+        assert!(crate::native::WalkAllow::default().food);
+
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 1;
+        scene.launch_arrow();
+        scene.add_food("lobster", 0, 1);
+        let mut request = scene.request();
+        request.allow.food = false;
+        let mut guard =
+            WalkGuard::begin_with(&request, &scene.view(), Arc::clone(&scene.tables)).unwrap();
+        let op = guard.tick(&scene.view_at(0));
+        assert!(
+            matches!(
+                op,
+                Some(GuardOp::IfButton { component })
+                    if component == scene.missiles().button_com
+            ),
+            "food denial must still allow protection: {op:?}"
         );
     }
 }

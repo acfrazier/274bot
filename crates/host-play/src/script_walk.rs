@@ -142,6 +142,25 @@ pub(crate) fn apply_guard_op(
                 });
             (sent, "drink", None)
         }
+        GuardOp::Eat { name } => {
+            let sent = snapshot
+                .inventory()
+                .iter()
+                .find(|row| {
+                    row.def
+                        .name
+                        .as_deref()
+                        .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
+                })
+                .is_some_and(|item| {
+                    matches!(
+                        Interactions::new(snapshot, driver)
+                            .interact(OpTarget::Item(item), ActionSpec::Label("Eat".into())),
+                        api::interact::SendResult::Sent { .. }
+                    )
+                });
+            (sent, "eat", None)
+        }
         _ => return false,
     };
     #[cfg(test)]

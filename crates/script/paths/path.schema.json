@@ -1941,7 +1941,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, reaching `until` completes immediately, even with an open page.\nIt does not adopt a new page or continue draining one already open; the next owner\nhandles it.\n`settle_ms` bounds the step while a page is open and is not extended by dialogue\ndraining.\nA count first observed after the deadline times out.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         },
         "until": {
           "anyOf": [
@@ -2235,7 +2235,7 @@
               "type": "null"
             }
           ],
-          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
+          "description": "Omission drains optional chat and selected Scroll/Book pages without answering menus.\nNo-page completion requires a fresh idle-player tick after acceptance.\nScene targets outside interaction range also need post-acceptance\nmovement or primary animation; targets within range do not.\nWith omitted dialogue, reaching `until` completes immediately, even with an open page.\nIt does not adopt a new page or continue draining one already open; the next owner\nhandles it.\n`settle_ms` bounds the step while a page is open and is not extended by dialogue\ndraining.\nA count first observed after the deadline times out.\nExplicit forms require a page after each accepted round.\nThe none mode never touches dialogue."
         }
       },
       "required": [

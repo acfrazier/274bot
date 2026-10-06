@@ -1344,3 +1344,69 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
 fn navs_for_test() -> Arc<Mutex<HashMap<String, NavBot>>> {
     Arc::new(Mutex::new(HashMap::new()))
 }
+
+#[test]
+fn walk_guard_eat_dispatches_held_eat_and_records_only_sent_actions() {
+    use api::obj_names::ItemDefView;
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+    use script::combat::GuardOp;
+
+    let account = "guard-eat-unit";
+    let capture = Arc::new(Mutex::new(super::combat_proof::CombatCapture::default()));
+    let _registration =
+        super::combat_proof::CaptureRegistration::install(account, Arc::clone(&capture));
+    let client = attached_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: ItemDefView {
+                id: 379,
+                name: Some("Lobster".into()),
+                stackable: false,
+                members: false,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Eat".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    let mut driver = MenuRec::default();
+    assert!(super::script_walk::apply_guard_op(
+        &mut driver,
+        &snapshot,
+        &GuardOp::Eat {
+            name: "Lobster".into()
+        },
+        Some(account),
+    ));
+    assert_eq!(driver.actions.len(), 1);
+    assert_eq!(
+        driver.menus.last().map(|row| (row.1, row.2, row.3, row.4)),
+        Some((MiniMenuAction::OP_HELD1, 379, 0, 3214))
+    );
+    let recorded = capture.lock().unwrap();
+    assert_eq!(recorded.actions.len(), 1);
+    assert_eq!(recorded.actions[0]["op"], "eat");
+    assert!(recorded.actions[0]["component_id"].is_null());
+    drop(recorded);
+    snapshot.seed_inventory(Vec::new(), 28);
+    assert!(!super::script_walk::apply_guard_op(
+        &mut driver,
+        &snapshot,
+        &GuardOp::Eat {
+            name: "Lobster".into()
+        },
+        Some(account),
+    ));
+    assert_eq!(driver.actions.len(), 1);
+    assert_eq!(capture.lock().unwrap().actions.len(), 1);
+}

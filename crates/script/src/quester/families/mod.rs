@@ -1573,6 +1573,14 @@ pub(crate) struct InteractArgs {
     pub(crate) settle_ms: Option<u64>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Scene targets outside interaction range also need post-acceptance
+    /// movement or primary animation; targets within range do not.
+    /// With omitted dialogue, reaching `until` completes immediately, even with an open page.
+    /// It does not adopt a new page or continue draining one already open; the next owner
+    /// handles it.
+    /// `settle_ms` bounds the step while a page is open and is not extended by dialogue
+    /// draining.
+    /// A count first observed after the deadline times out.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -1733,6 +1741,8 @@ impl StepPlan for InteractPlan {
             dialogue_started: None,
             dialogue_completed: false,
             accepted_tick: None,
+            scene_activity_observed: false,
+            scene_in_range_at_acceptance: false,
             until: begin_until(self.until.as_ref(), cx)?,
             target_tile: self.target_tile,
             reachable_only: self.reachable_only,
@@ -1768,6 +1778,8 @@ struct InteractRun {
     dialogue_started: Option<Duration>,
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
+    scene_activity_observed: bool,
+    scene_in_range_at_acceptance: bool,
     until: Option<(i32, i32)>,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
@@ -1787,10 +1799,27 @@ impl InteractRun {
         self.dialogue_started = None;
         self.dialogue_completed = false;
         self.accepted_tick = None;
+        self.scene_activity_observed = false;
+        self.scene_in_range_at_acceptance = false;
     }
 }
 impl StepRun for InteractRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let deadline = self.deadline;
+        let now = cx.tick.cx.active_now();
+        let reached = self.reach.is_none() && until_reached(self.until, &cx.tick.cx);
+        if deadline.is_some_and(|deadline| now >= deadline) && !(deadline == Some(now) && reached) {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "interact settle timeout",
+            ))));
+        }
+        if self.default_dialogue && reached {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
         if let Some(handle) = &self.dialogue {
             match poll_dialogue_step(handle, cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1806,30 +1835,56 @@ impl StepRun for InteractRun {
                         .cx
                         .active_now()
                         .saturating_sub(self.dialogue_started.take().unwrap());
-                    self.deadline = self
-                        .deadline
-                        .map(|deadline| deadline.saturating_add(elapsed));
                     self.round_deadline = self
                         .round_deadline
                         .map(|deadline| deadline.saturating_add(elapsed));
                 }
             }
         }
+        if self.round_accepted
+            && !self.dialogue_completed
+            && self.default_dialogue
+            && dialogue::page_open(&cx.tick.cx)
+        {
+            self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Continuation,
+                    options: dialogue::DialogueOptions::continue_only(),
+                },
+                &mut cx.tick.cx,
+            )?);
+            self.dialogue_started = Some(cx.tick.cx.active_now());
+            return Poll::Pending;
+        }
+        let deadline = self.deadline;
+        let now = cx.tick.cx.active_now();
+        let reached = self.reach.is_none() && until_reached(self.until, &cx.tick.cx);
+        if deadline.is_some_and(|deadline| now >= deadline) && !(deadline == Some(now) && reached) {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "interact settle timeout",
+            ))));
+        }
+        if reached {
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
+        }
         if self.round_accepted && !self.dialogue_completed && self.default_dialogue {
-            if dialogue::page_open(&cx.tick.cx) {
-                self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                    dialogue::DialogueArgs {
-                        target: dialogue::DialogueTarget::Continuation,
-                        options: dialogue::DialogueOptions::continue_only(),
-                    },
-                    &mut cx.tick.cx,
-                )?);
-                self.dialogue_started = Some(cx.tick.cx.active_now());
-                return Poll::Pending;
-            }
-            // A fresh idle-player observation anchors absence after arrival or
-            // the primary animation, without a fixed opening delay.
-            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick) {
+            let scene_target = matches!(
+                &self.kind,
+                reach::ReachKind::Loc { .. }
+                    | reach::ReachKind::Npc { .. }
+                    | reach::ReachKind::Name { .. }
+            );
+            self.scene_activity_observed |=
+                scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
+            if !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                || (scene_target
+                    && !self.scene_activity_observed
+                    && !self.scene_in_range_at_acceptance)
+            {
                 return Poll::Pending;
             }
         }
@@ -1849,18 +1904,6 @@ impl StepRun for InteractRun {
             self.reachable_only || self.until.is_some(),
         ) && (!matches!(self.kind, reach::ReachKind::Ground { .. })
             || cx.tick.cx.snapshot().inventory().is_some());
-        if self.reach.is_none() && until_reached(self.until, &cx.tick.cx) {
-            return Poll::Ready(Ok(StepOutcome {
-                progress: None,
-                evidence: cx.tick.cx.evidence(),
-                receipt: None,
-            }));
-        }
-        if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "interact settle timeout",
-            ))));
-        }
         if self.round_accepted {
             let (id, _) = self.until.unwrap();
             let Some(count) = inventory_count(&cx.tick.cx, id) else {
@@ -1982,9 +2025,24 @@ impl StepRun for InteractRun {
                     self.reach = None;
                     self.round_accepted = true;
                     self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+                    self.scene_in_range_at_acceptance = scene_target_within_interaction_range(
+                        &cx.tick.cx,
+                        &self.kind,
+                        Some(&self.op),
+                        self.radius,
+                        self.target_tile,
+                        self.reachable_only || self.until.is_some(),
+                    );
                     if self.until.is_some() {
                         self.round_deadline =
                             Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
+                    }
+                    if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: None,
+                        }));
                     }
                     if let Some(options) = &self.dialogue_options {
                         self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2116,12 +2174,119 @@ fn primary_animation_active(cx: &crate::native::ActionContext<'_>) -> bool {
         .is_some_and(|player| player.value.player.actor.animation >= 0)
 }
 
+/// Moving or primary-animation activity observed after acceptance satisfies the
+/// scene-effect gate for targets not already within interaction range.
+fn player_activity_after(
+    cx: &crate::native::ActionContext<'_>,
+    accepted_tick: Option<u64>,
+) -> bool {
+    accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
+        && cx.snapshot().local_player().is_some_and(|player| {
+            let actor = &player.value.player.actor;
+            actor.moving || actor.animation >= 0
+        })
+}
+
 fn fresh_idle_after(cx: &crate::native::ActionContext<'_>, accepted_tick: Option<u64>) -> bool {
     accepted_tick.is_some_and(|tick| cx.evidence().tick > tick)
         && cx.snapshot().local_player().is_some_and(|player| {
             let actor = &player.value.player.actor;
             !actor.moving && actor.animation < 0
         })
+}
+fn loc_within_interaction_range(
+    cx: &crate::native::ActionContext<'_>,
+    id: Option<i32>,
+    name: Option<&str>,
+    op: Option<&str>,
+    radius: i32,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
+) -> bool {
+    reach::nearest_loc(cx, id, name, op, radius, target_tile, reachable_only)
+        .is_some_and(|loc| loc.distance <= 1)
+}
+
+fn npc_within_interaction_range(
+    cx: &crate::native::ActionContext<'_>,
+    id: i32,
+    op: Option<&str>,
+    radius: i32,
+) -> bool {
+    cx.snapshot().npcs().is_some_and(|npcs| {
+        npcs.value
+            .iter()
+            .filter(|npc| {
+                npc.r#type == Some(id as usize)
+                    && npc.distance <= radius
+                    && op.is_none_or(|op| {
+                        npc.actions
+                            .iter()
+                            .flatten()
+                            .any(|action| action.eq_ignore_ascii_case(op))
+                    })
+            })
+            .min_by_key(|npc| npc.distance)
+            .is_some_and(|npc| npc.distance <= 1)
+    })
+}
+
+fn scene_target_within_interaction_range(
+    cx: &crate::native::ActionContext<'_>,
+    kind: &reach::ReachKind,
+    op: Option<&str>,
+    radius: i32,
+    target_tile: Option<WorldTile>,
+    reachable_only: bool,
+) -> bool {
+    match kind {
+        reach::ReachKind::Npc { id, .. } => npc_within_interaction_range(cx, *id, op, radius),
+        reach::ReachKind::Loc { id, name } => loc_within_interaction_range(
+            cx,
+            *id,
+            name.as_deref(),
+            op,
+            if id.is_some() {
+                reach::PROBE_RADIUS
+            } else {
+                radius
+            },
+            target_tile,
+            reachable_only,
+        ),
+        reach::ReachKind::Name { name } => loc_within_interaction_range(
+            cx,
+            None,
+            Some(name),
+            op,
+            radius,
+            target_tile,
+            reachable_only,
+        ),
+        reach::ReachKind::Ground { .. } | reach::ReachKind::Held { .. } => false,
+    }
+}
+
+fn use_on_target_within_interaction_range(
+    cx: &crate::native::ActionContext<'_>,
+    kind: &str,
+    target_id: i32,
+    radius: i32,
+    target_tile: Option<WorldTile>,
+) -> bool {
+    match kind {
+        "loc" => loc_within_interaction_range(
+            cx,
+            Some(target_id),
+            None,
+            None,
+            radius,
+            target_tile,
+            false,
+        ),
+        "npc" => npc_within_interaction_range(cx, target_id, None, radius),
+        _ => false,
+    }
 }
 
 /// Use a selected held item on one target, with optional observed settlement.
@@ -2154,6 +2319,14 @@ pub(super) struct UseOnArgs {
     no_product: Option<PredicateDocument>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
+    /// Scene targets outside interaction range also need post-acceptance
+    /// movement or primary animation; targets within range do not.
+    /// With omitted dialogue, reaching `until` completes immediately, even with an open page.
+    /// It does not adopt a new page or continue draining one already open; the next owner
+    /// handles it.
+    /// `settle_ms` bounds the step while a page is open and is not extended by dialogue
+    /// draining.
+    /// A count first observed after the deadline times out.
     /// Explicit forms require a page after each accepted round.
     /// The none mode never touches dialogue.
     #[serde(default)]
@@ -2308,6 +2481,8 @@ impl StepPlan for UseOnPlan {
             dialogue_started: None,
             dialogue_completed: false,
             accepted_tick: None,
+            scene_activity_observed: false,
+            scene_in_range_at_acceptance: false,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -2341,6 +2516,8 @@ struct UseOnRun {
     dialogue_started: Option<Duration>,
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
+    scene_activity_observed: bool,
+    scene_in_range_at_acceptance: bool,
 }
 impl UseOnRun {
     fn clear_round(&mut self) {
@@ -2352,12 +2529,31 @@ impl UseOnRun {
         self.dialogue_started = None;
         self.dialogue_completed = false;
         self.accepted_tick = None;
+        self.scene_activity_observed = false;
+        self.scene_in_range_at_acceptance = false;
     }
 }
 
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         loop {
+            if self.dialogue.is_some() {
+                let deadline = self.deadline;
+                let now = cx.tick.cx.active_now();
+                let reached = until_reached(self.until, &cx.tick.cx);
+                let reached_at_deadline = deadline == Some(now) && reached;
+                if deadline.is_some_and(|deadline| now >= deadline) && !reached_at_deadline {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
+                }
+                if self.default_dialogue && reached && (self.interaction.is_none() || self.accepted)
+                {
+                    return Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }));
+                }
+            }
             if let Some(handle) = &self.dialogue {
                 match poll_dialogue_step(handle, cx) {
                     Poll::Pending => return Poll::Pending,
@@ -2368,9 +2564,6 @@ impl StepRun for UseOnRun {
                             .cx
                             .active_now()
                             .saturating_sub(self.dialogue_started.take().unwrap());
-                        self.deadline = self
-                            .deadline
-                            .map(|deadline| deadline.saturating_add(elapsed));
                         self.round_deadline = self
                             .round_deadline
                             .map(|deadline| deadline.saturating_add(elapsed));
@@ -2379,8 +2572,11 @@ impl StepRun for UseOnRun {
                     }
                 }
             }
-            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d)
-                && !until_reached(self.until, &cx.tick.cx);
+            let deadline = self.deadline;
+            let now = cx.tick.cx.active_now();
+            let timed_out = deadline.is_some_and(|deadline| now >= deadline);
+            let reached_at_deadline =
+                deadline == Some(now) && until_reached(self.until, &cx.tick.cx);
             if let Some(handle) = &self.walk {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                     Poll::Ready(Ok(receipt))
@@ -2388,7 +2584,7 @@ impl StepRun for UseOnRun {
                     {
                         return Poll::Ready(Err(ActionError::UserInput))
                     }
-                    _ if timed_out => {
+                    _ if timed_out && !reached_at_deadline => {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
                     }
                     Poll::Pending => return Poll::Pending,
@@ -2399,8 +2595,15 @@ impl StepRun for UseOnRun {
                     }
                 }
             }
-            if timed_out {
+            if timed_out && !reached_at_deadline {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
+            }
+            if self.default_dialogue && self.accepted && until_reached(self.until, &cx.tick.cx) {
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                }));
             }
             if self.interaction.is_none() {
                 if until_reached(self.until, &cx.tick.cx) {
@@ -2428,6 +2631,8 @@ impl StepRun for UseOnRun {
                     // follow the observed target without re-entering that area.
                     self.tile = None;
                 }
+                self.deadline
+                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
                 if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
                 {
                     self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
@@ -2440,8 +2645,6 @@ impl StepRun for UseOnRun {
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
-                self.deadline
-                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
                 let snapshot = cx.tick.cx.snapshot();
                 let Some(inventory) = snapshot.inventory() else {
                     return Poll::Pending;
@@ -2574,6 +2777,8 @@ impl StepRun for UseOnRun {
                 self.dialogue_completed = false;
                 self.dialogue_started = None;
                 self.accepted_tick = None;
+                self.scene_activity_observed = false;
+                self.scene_in_range_at_acceptance = false;
                 return Poll::Pending;
             }
             if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
@@ -2583,11 +2788,25 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Ok(chat_since)) => {
                         self.accepted = true;
                         self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+                        self.scene_in_range_at_acceptance = use_on_target_within_interaction_range(
+                            &cx.tick.cx,
+                            &self.kind,
+                            self.target_id,
+                            self.radius,
+                            self.target_tile,
+                        );
                         self.chat_since = chat_since;
                         if self.until.is_some() && self.round_before.is_some() {
                             self.round_deadline = Some(
                                 cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS),
                             );
+                        }
+                        if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
+                            return Poll::Ready(Ok(StepOutcome {
+                                progress: None,
+                                evidence: cx.tick.cx.evidence(),
+                                receipt: None,
+                            }));
                         }
                     }
                 }
@@ -2610,6 +2829,13 @@ impl StepRun for UseOnRun {
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     return Poll::Pending;
                 }
+            }
+            if self.accepted && until_reached(self.until, &cx.tick.cx) {
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                }));
             }
             let pred = PredicateContext {
                 cx: &cx.tick.cx,
@@ -2634,9 +2860,15 @@ impl StepRun for UseOnRun {
                 }
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
             }
+            let scene_target = matches!(self.kind.as_ref(), "loc" | "npc");
+            self.scene_activity_observed |=
+                scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
             if self.default_dialogue
                 && !self.dialogue_completed
-                && !fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                && (!fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                    || (scene_target
+                        && !self.scene_activity_observed
+                        && !self.scene_in_range_at_acceptance))
             {
                 return Poll::Pending;
             }
