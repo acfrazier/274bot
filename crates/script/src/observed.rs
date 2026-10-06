@@ -327,6 +327,7 @@ pub struct Skill {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Skills {
     pub hitpoints: Option<Skill>,
+    pub thieving: Option<Skill>,
     pub prayer: Option<Skill>,
     pub magic: Option<Skill>,
     pub firemaking: Option<Skill>,
@@ -351,6 +352,8 @@ impl Skills {
             let name = row.name().unwrap_or_default();
             let slot = if name == "hitpoints" {
                 &mut skills.hitpoints
+            } else if name.eq_ignore_ascii_case("thieving") {
+                &mut skills.thieving
             } else if name.eq_ignore_ascii_case("prayer") {
                 &mut skills.prayer
             } else if name.eq_ignore_ascii_case("magic") {
@@ -1891,6 +1894,31 @@ mod tests {
             );
             assert_eq!(skills.prayer, None);
             assert_eq!(skills.firemaking, None);
+        });
+    }
+
+    #[test]
+    fn thieving_skill_preserves_effective_level_when_base_is_higher() {
+        on_reset();
+        let stats = [StatInput {
+            index: 17,
+            name: "thieving",
+            xp: 1_650,
+            base: 30,
+            effective: 29,
+        }];
+        let mut snap = empty(1);
+        snap.stats = &stats;
+        apply_bytes(&encode_snapshot(&snap));
+        with(|scene| {
+            assert_eq!(
+                scene.latest().stats().expect("posted stats").thieving,
+                Some(Skill {
+                    xp: 1_650,
+                    base: 30,
+                    effective: 29,
+                })
+            );
         });
     }
 

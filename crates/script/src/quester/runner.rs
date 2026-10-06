@@ -7,6 +7,7 @@ use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::queue::QueueStatus;
+use super::registry::PathSource;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
@@ -34,6 +35,8 @@ use std::time::Duration;
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
 const QUEUE_QUEST_STATUS_WAIT: Duration = Duration::from_secs(30);
+// Pair admission uses the broker's ten-minute inactivity budget in active time.
+const PAIR_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
@@ -80,6 +83,12 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
+    custom_reader: Option<Box<dyn StepRun>>,
+    custom_read_after: Option<api::quest_progress::EvidenceStamp>,
+    pair_admission: Option<Box<dyn StepRun>>,
+    pair_admission_since: Option<Duration>,
+    pair_admitted: bool,
+    gang_reader: super::gang::GangRead,
     bank: BankMemo,
     last_read: Option<Arc<JournalRead>>,
     journal_text: Option<Arc<str>>,
@@ -88,6 +97,8 @@ pub struct Quester {
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
+    /// Freshness boundary for the active step; overwritten at each successful begin.
+    step_after: api::quest_progress::EvidenceStamp,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
@@ -389,6 +400,12 @@ impl Quester {
             stage: None,
             progress: None,
             journal: None,
+            custom_reader: None,
+            custom_read_after: None,
+            pair_admission: None,
+            pair_admission_since: None,
+            pair_admitted: false,
+            gang_reader: super::gang::GangRead::default(),
             bank: BankMemo::default(),
             last_read: None,
             journal_text: None,
@@ -397,6 +414,11 @@ impl Quester {
             seq_index: 0,
             step_index: 0,
             step: None,
+            step_after: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 0,
+                sequence: 0,
+            },
             clear_prayers: None,
             prayer_cleanup_pending: false,
             prayer_cleanup_owned: RaisedPrayers::empty(),
@@ -1008,6 +1030,10 @@ impl Quester {
         self.last_outcome = None;
         self.published_bank_receipt = None;
         self.journal = None;
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
         self.settling = false;
@@ -1089,6 +1115,9 @@ impl Quester {
     }
 
     fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
+        if self.path.progress_reader.is_some() {
+            return self.read_custom_stage(tick, retarget);
+        }
         let progress = if let Some(handle) = self.journal.as_ref() {
             match tick.actions.poll(handle, &mut tick.cx) {
                 Poll::Pending => return false,
@@ -1121,6 +1150,17 @@ impl Quester {
                 }
                 Poll::Ready(Ok(read)) => {
                     self.journal = None;
+                    if super::pair::PairQuest::from_path(self.path.id.0.as_ref())
+                        == Some(super::pair::PairQuest::Arrav)
+                    {
+                        if let Some(port) = tick.pairs {
+                            if let Err(error) = port.observe_gang(&read) {
+                                self.record_failure(error.action());
+                                self.parked = true;
+                                return false;
+                            }
+                        }
+                    }
                     let progress = resolve_journal(&self.path, &read, self.progress.as_deref());
                     self.journal_text = Some(Arc::from(
                         read.lines
@@ -1199,6 +1239,15 @@ impl Quester {
                 Arc::new(tick.cx.pin().clone()),
             )
         };
+        self.adopt_progress(tick, Arc::new(progress), retarget)
+    }
+
+    fn adopt_progress(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        progress: Arc<QuestProgress>,
+        retarget: bool,
+    ) -> bool {
         let stage = match &progress.stage {
             Knowledge::Known(stage) => Some(stage.clone()),
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
@@ -1206,7 +1255,7 @@ impl Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
-        self.progress = Some(Arc::new(progress));
+        self.progress = Some(progress);
         self.dirty = true;
         let sequence = stage
             .as_ref()
@@ -1244,6 +1293,249 @@ impl Quester {
         self.needs_read = false;
         self.read_requested = false;
         true
+    }
+
+    fn valid_progress(
+        &self,
+        tick: &NativeTick<'_>,
+        progress: &QuestProgress,
+        after: api::quest_progress::EvidenceStamp,
+    ) -> bool {
+        progress.quest == self.path.id
+            && progress.binding == self.path.progress.binding
+            && progress.role == self.path.role
+            && progress.pin.as_ref() == tick.cx.pin()
+            && progress.evidence.meets(after)
+            && progress.evidence != after
+            && tick.cx.evidence().meets(progress.evidence)
+            && match &progress.stage {
+                Knowledge::Known(stage) => {
+                    self.path.progress.stage_keys.contains(stage)
+                        && (progress.complete != Truth::True
+                            || stage == &self.path.progress.colour_complete)
+                }
+                Knowledge::Unknown(_) | Knowledge::Partial { .. } => {
+                    progress.complete != Truth::True
+                }
+            }
+            && progress.flags.iter().all(|flag| {
+                self.path
+                    .progress
+                    .flags
+                    .iter()
+                    .any(|rule| rule.flag == flag.flag)
+            })
+    }
+
+    fn read_custom_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
+        if self.custom_reader.is_none() {
+            let result = {
+                let after = tick.cx.evidence();
+                let mut cx = StepContext {
+                    tick,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: after,
+                    bank: &self.bank,
+                    banks: &self.banks,
+                    choices: &self.choices,
+                };
+                self.path
+                    .progress_reader
+                    .as_ref()
+                    .unwrap()
+                    .plan
+                    .begin(&mut cx)
+            };
+            match result {
+                Ok(reader) => {
+                    self.custom_reader = Some(reader);
+                    self.custom_read_after = Some(tick.cx.evidence());
+                }
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                    return false
+                }
+                Err(error) => {
+                    self.record_failure(error);
+                    self.parked = true;
+                    return false;
+                }
+            }
+        }
+        let mut reader = self.custom_reader.take().unwrap();
+        let result = {
+            let after = self.custom_read_after.unwrap();
+            let mut cx = StepContext {
+                tick,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: after,
+                bank: &self.bank,
+                banks: &self.banks,
+                choices: &self.choices,
+            };
+            reader.poll(&mut cx)
+        };
+        match result {
+            Poll::Pending => {
+                self.custom_reader = Some(reader);
+                false
+            }
+            Poll::Ready(Err(error)) => {
+                self.record_failure(error);
+                self.parked = true;
+                false
+            }
+            Poll::Ready(Ok(outcome)) => {
+                let after = self.custom_read_after.take().unwrap();
+                let Some(progress) = outcome.progress else {
+                    self.record_failure(ActionError::Blocked(Arc::from(
+                        "progress reader returned no owned progress",
+                    )));
+                    self.parked = true;
+                    return false;
+                };
+                if outcome.evidence != progress.evidence
+                    || !self.valid_progress(tick, &progress, after)
+                {
+                    self.record_failure(ActionError::Stale);
+                    self.parked = true;
+                    return false;
+                }
+                self.adopt_progress(tick, progress, retarget)
+            }
+        }
+    }
+
+    fn pair_step_active(&self) -> bool {
+        self.step.is_some()
+            && self
+                .current_step()
+                .is_some_and(|step| step.kind.as_ref() == "partner")
+    }
+
+    fn pair_work_pending(&self) -> bool {
+        self.pair_admission_since.is_some()
+            || self.pair_admission.is_some()
+            || self.pair_step_active()
+    }
+
+    fn wait_for_pair_admission(&mut self, now: Duration) -> bool {
+        let _ = self.pair_admission_since.get_or_insert(now);
+        self.waiting = Some(("Partner admission", Arc::clone(&self.path.id.0)));
+        self.dirty = true;
+        false
+    }
+
+    fn fail_pair_admission(&mut self, error: ActionError) -> bool {
+        self.pair_admission = None;
+        self.pair_admission_since = None;
+        self.waiting = None;
+        self.record_failure(error);
+        self.parked = true;
+        false
+    }
+
+    fn admit_pair(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        if self.path.partner.is_none() {
+            return true;
+        }
+        if self.pair_admitted {
+            self.pair_admission_since = None;
+            return true;
+        }
+
+        let now = tick.cx.active_now();
+        if self
+            .pair_admission_since
+            .is_some_and(|since| now.saturating_sub(since) >= PAIR_ADMISSION_TIMEOUT)
+        {
+            return self.fail_pair_admission(ActionError::Blocked(Arc::from(
+                "partner admission timed out; Stop and Start both accounts",
+            )));
+        }
+
+        let result = tick
+            .pairs
+            .ok_or_else(|| {
+                ActionError::Unavailable(Arc::from(
+                    "partner capability is not installed in this Play",
+                ))
+            })
+            .and_then(|port| {
+                port.settings(tick.cx.run())
+                    .map_err(super::pair::PairError::action)
+            });
+        match result {
+            Ok(_) => {}
+            Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                return self.wait_for_pair_admission(now);
+            }
+            Err(error) => return self.fail_pair_admission(error),
+        }
+
+        if tick
+            .pairs
+            .is_some_and(|port| port.gang(tick.cx.run()).is_err())
+        {
+            match self.gang_reader.poll(tick, &self.quests) {
+                Poll::Pending => return false,
+                Poll::Ready(Ok(_)) => {}
+                Poll::Ready(Err(error)) => return self.fail_pair_admission(error),
+            }
+        }
+        if self.pair_admission.is_none() {
+            let _ = self.pair_admission_since.get_or_insert(now);
+            let result = super::families::partner::admission(&self.path).and_then(|plan| {
+                let after = tick.cx.evidence();
+                let mut cx = StepContext {
+                    tick,
+                    quests: &self.quests,
+                    progress: self.progress_slice(),
+                    required_after: after,
+                    bank: &self.bank,
+                    banks: &self.banks,
+                    choices: &self.choices,
+                };
+                plan.begin(&mut cx)
+            });
+            match result {
+                Ok(run) => self.pair_admission = Some(run),
+                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                    return self.wait_for_pair_admission(now);
+                }
+                Err(error) => return self.fail_pair_admission(error),
+            }
+        }
+
+        let mut run = self.pair_admission.take().unwrap();
+        let result = {
+            let after = tick.cx.evidence();
+            let mut cx = StepContext {
+                tick,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: after,
+                bank: &self.bank,
+                banks: &self.banks,
+                choices: &self.choices,
+            };
+            run.poll(&mut cx)
+        };
+        match result {
+            Poll::Pending => {
+                self.pair_admission = Some(run);
+                self.wait_for_pair_admission(now)
+            }
+            Poll::Ready(Ok(_)) => {
+                self.pair_admitted = true;
+                self.pair_admission_since = None;
+                self.waiting = None;
+                self.dirty = true;
+                true
+            }
+            Poll::Ready(Err(error)) => self.fail_pair_admission(error),
+        }
     }
 
     fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
@@ -1299,11 +1591,24 @@ impl Quester {
 }
 
 impl Script for Quester {
+    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
+        let declaration = self.path.partner.as_ref()?;
+        Some(super::pair::PairBinding {
+            path: &self.path.id,
+            protocol: &declaration.protocol,
+            digest: &self.path.digest,
+            role: self.path.role.as_ref()?,
+        })
+    }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+            self.waiting = None;
+            self.pair_admitted = false;
             self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
@@ -1478,10 +1783,15 @@ impl Script for Quester {
         {
             return Ok(self.finish_quest(tick));
         }
+        if !self.admit_pair(tick) {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
         if self.settling {
             let truth = {
                 let pred = PredicateContext {
                     cx: &tick.cx,
+                    pairs: tick.pairs,
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
@@ -1530,6 +1840,7 @@ impl Script for Quester {
             let selected = {
                 let pred = PredicateContext {
                     cx: &tick.cx,
+                    pairs: tick.pairs,
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
@@ -1609,6 +1920,7 @@ impl Script for Quester {
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
                     self.step = Some(run);
+                    self.step_after = required_after;
                     self.last_outcome = None;
                     self.dirty = true;
                     self.clear_last_error();
@@ -1672,6 +1984,16 @@ impl Script for Quester {
                 }
             }
             Poll::Ready(Ok(outcome)) => {
+                if let Some(progress) = &outcome.progress {
+                    if outcome.evidence != progress.evidence
+                        || !self.valid_progress(tick, progress, self.step_after)
+                    {
+                        self.record_step_failure(ActionError::Stale, tick);
+                        self.step = None;
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    self.adopt_progress(tick, Arc::clone(progress), false);
+                }
                 if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
                     self.active_loadout = Some(loadout);
                 }
@@ -1749,6 +2071,24 @@ impl Script for Quester {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        let cancel_pair_work = matches!(event, Interrupt::Pause | Interrupt::SessionEnded);
+        let pair_work_pending = self.pair_work_pending();
+        if !matches!(event, Interrupt::Hold(_)) {
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+        }
+        if cancel_pair_work {
+            self.pair_admitted = false;
+            if self.pair_step_active() {
+                self.step = None;
+            }
+            if pair_work_pending {
+                self.waiting = None;
+            }
+        }
+        self.gang_reader.cancel();
         self.watchdog = Watchdog::default();
         self.dirty = true;
         match event {
@@ -1793,33 +2133,47 @@ impl Script for Quester {
         }
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        let preserve_pair_work = self.pair_work_pending();
         self.watchdog = Watchdog::default();
-        // Dropping these guards revokes their native owners before the host can dispatch them.
-        self.capture_prayer_cleanup();
-        self.step = None;
-        self.provisioner.cancel();
-        self.clear_prayers = None;
-        self.journal = None;
-        self.needs_read = true;
-        self.published_bank_receipt = None;
-        self.last_outcome = None;
-        self.last_combat = None;
-        self.advances = false;
-        self.attempts = 0;
-        self.progress = None;
-        self.settling = false;
-        self.settle_deadline = Duration::ZERO;
-        self.unreadable_since = None;
-        self.journal_attempts = 0;
-        self.journal_retry_pending = false;
-        self.journal_quiet_since = None;
-        self.selection_since = None;
-        self.waiting = None;
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.gang_reader.cancel();
+        if !preserve_pair_work {
+            self.pair_admission = None;
+            self.pair_admission_since = None;
+            // Dropping these guards revokes their native owners before the host can dispatch them.
+            self.capture_prayer_cleanup();
+            self.step = None;
+            self.provisioner.cancel();
+            self.clear_prayers = None;
+            self.journal = None;
+            self.needs_read = true;
+            self.published_bank_receipt = None;
+            self.last_outcome = None;
+            self.last_combat = None;
+            self.advances = false;
+            self.attempts = 0;
+            self.progress = None;
+            self.settling = false;
+            self.settle_deadline = Duration::ZERO;
+            self.unreadable_since = None;
+            self.journal_attempts = 0;
+            self.journal_retry_pending = false;
+            self.journal_quiet_since = None;
+            self.selection_since = None;
+            self.waiting = None;
+        }
         self.dirty = true;
         RandomClaim::Host
     }
 
     fn on_stop(&mut self, _reason: StopReason) {
+        self.custom_reader = None;
+        self.custom_read_after = None;
+        self.pair_admission = None;
+        self.pair_admission_since = None;
+        self.pair_admitted = false;
+        self.gang_reader.cancel();
         self.step = None;
         self.provisioner.cancel();
         self.journal = None;
@@ -1851,18 +2205,20 @@ impl Script for Quester {
     }
 }
 
-/// Queue ownership stays outside the active executor: only one Path is compiled
-/// and retained at a time, and activation never decodes selected facts on-pump.
+/// Queue ownership stays outside the active executor: folder snapshots share
+/// validated bytes, and only the active compiled Path is retained per run.
 pub struct QueuedQuester {
     run: RunKey,
     selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
     choices: super::choices::QuestChoices,
-    queue: super::queue::Queue<'static>,
+    queue: super::queue::Queue,
     active: Option<Box<Quester>>,
     active_index: Option<usize>,
     preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
+    gang_reader: super::gang::GangRead,
+    pair_selection: Option<(usize, super::pair::Gang)>,
     completed: u16,
     deaths: u16,
     max_deaths: u8,
@@ -1881,7 +2237,7 @@ impl QueuedQuester {
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
         banks: Arc<api::named_banks::NamedBankFacts>,
-        queue: super::queue::Queue<'static>,
+        queue: super::queue::Queue,
     ) -> Self {
         Self::new_with_max_deaths(run, selected, quests, banks, queue, default_max_deaths())
     }
@@ -1891,7 +2247,7 @@ impl QueuedQuester {
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
         banks: Arc<api::named_banks::NamedBankFacts>,
-        queue: super::queue::Queue<'static>,
+        queue: super::queue::Queue,
         max_deaths: u8,
     ) -> Self {
         let mut this = Self {
@@ -1904,6 +2260,8 @@ impl QueuedQuester {
             active: None,
             active_index: None,
             preparing: None,
+            gang_reader: super::gang::GangRead::default(),
+            pair_selection: None,
             completed: 0,
             deaths: 0,
             max_deaths,
@@ -1967,6 +2325,29 @@ impl QueuedQuester {
                 value: StatusValue::Integer(i64::from(self.deaths)),
             },
         ];
+        if let Some(report) = self.queue.path_report() {
+            fields.push(StatusField {
+                key: "path_validation",
+                label: "Path validation",
+                value: StatusValue::Text(Arc::clone(report)),
+            });
+            if let Some(index) = self.active_index {
+                static SOURCES: std::sync::LazyLock<[Arc<str>; 3]> =
+                    std::sync::LazyLock::new(|| {
+                        [
+                            Arc::from(PathSource::Bundled.label()),
+                            Arc::from(PathSource::Folder.label()),
+                            Arc::from(PathSource::Draft.label()),
+                        ]
+                    });
+                let source = self.queue.path_source(index);
+                fields.push(StatusField {
+                    key: "path_source",
+                    label: "Path source",
+                    value: StatusValue::Text(Arc::clone(&SOURCES[source as usize])),
+                });
+            }
+        }
         if let Some(quest) = &self.last_retreat {
             fields.push(StatusField {
                 key: "last_retreat",
@@ -2120,6 +2501,19 @@ impl QueuedQuester {
                     Arc::clone(&self.quests),
                     Arc::clone(&self.banks),
                 );
+                tick.output.log(
+                    api::hostlog::Level::Info,
+                    &format!(
+                        "Quester Start: Path {} source={} digest={} step_comment={:?}",
+                        active.path.id.0,
+                        self.queue.path_source(index).label(),
+                        super::registry::digest_text(&active.path.digest),
+                        active
+                            .current_step()
+                            .and_then(|step| step.comment.as_deref())
+                            .unwrap_or(""),
+                    ),
+                );
                 active.choices = self.choices;
                 active.prior_deaths = self.deaths;
                 active.max_deaths = self.max_deaths;
@@ -2160,12 +2554,61 @@ impl QueuedQuester {
         }
         self.refresh_fields();
     }
+    fn prepare_pair_role(
+        &mut self,
+        index: usize,
+        tick: &mut NativeTick<'_>,
+    ) -> Poll<Result<super::pair::Gang, ActionError>> {
+        if let Some((selected, gang)) = self.pair_selection {
+            if selected == index {
+                return Poll::Ready(Ok(gang));
+            }
+        }
+        match self.gang_reader.poll(tick, &self.quests) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(observed)) => {
+                let gang = match observed {
+                    Knowledge::Known(Some(gang)) => {
+                        if self.queue.gang.is_some_and(|declared| declared != gang) {
+                            return Poll::Ready(Err(super::pair::PairError::WrongGang.action()));
+                        }
+                        gang
+                    }
+                    Knowledge::Known(None) => {
+                        let Some(gang) = self.queue.gang else {
+                            return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                                "choose an irreversible gang explicitly for this unjoined account",
+                            ))));
+                        };
+                        gang
+                    }
+                    _ => return Poll::Ready(Err(super::pair::PairError::UnknownGang.action())),
+                };
+                self.pair_selection = Some((index, gang));
+                Poll::Ready(Ok(gang))
+            }
+        }
+    }
 }
 
 impl Script for QueuedQuester {
+    fn pair_settings(&self) -> Option<super::pair::PairSettings> {
+        Some(super::pair::PairSettings {
+            partner: self.queue.partner_account.clone(),
+            gang: self.queue.gang,
+        })
+    }
+    fn pair_binding(&self) -> Option<super::pair::PairBinding<'_>> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.pair_binding())
+    }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.run != tick.cx.run() {
             self.run = tick.cx.run();
+            self.gang_reader.cancel();
+            self.pair_selection = None;
             self.queue.refresh_blocked();
             self.quest_status_since = None;
             self.refresh_fields();
@@ -2278,20 +2721,42 @@ impl Script for QueuedQuester {
             return Ok(ScriptFlow::Continue);
         }
         if let Some(index) = self.queue.next_candidate() {
+            let paired = super::pair::PairQuest::from_path(self.queue.id(index).unwrap()).is_some();
+            let gang = if paired {
+                match self.prepare_pair_role(index, tick) {
+                    Poll::Pending => {
+                        self.publish(tick.output, NativePhase::Waiting);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Poll::Ready(Ok(gang)) => Some(gang),
+                    Poll::Ready(Err(error)) => {
+                        self.queue.mark_blocked(
+                            index,
+                            Arc::from(format!("partner admission: {error:?}")),
+                        );
+                        self.refresh_fields();
+                        return Ok(ScriptFlow::Continue);
+                    }
+                }
+            } else {
+                None
+            };
             let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
+            let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
             self.active_index = Some(index);
-            let worker = api::selected::FamilyPreparation::run(move |_| {
-                let bytes = super::card::released_path(&id)
-                    .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
-                super::compile::compile_path(bytes, &selected, &quests).map_err(|error| {
-                    let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
-                    Arc::from(match &error.step {
-                        Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
-                        None => format!("{}: {detail}", error.code),
+            let worker = api::selected::FamilyPreparation::run(move |cap| {
+                let bytes =
+                    bytes.ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
+                super::compile::compile_path_for_gang(bytes.as_ref(), &selected, &quests, cap, gang)
+                    .map_err(|error| {
+                        let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
+                        Arc::from(match &error.step {
+                            Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
+                            None => format!("{}: {detail}", error.code),
+                        })
                     })
-                })
             });
             match worker {
                 Ok(worker) => self.preparing = Some(worker),
@@ -2319,18 +2784,24 @@ impl Script for QueuedQuester {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         if let Some(active) = self.active.as_mut() {
             active.interrupt(event);
         }
     }
 
     fn on_stop(&mut self, reason: StopReason) {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         if let Some(active) = self.active.as_mut() {
             active.on_stop(reason);
         }
     }
 
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        self.gang_reader.cancel();
+        self.pair_selection = None;
         self.active
             .as_mut()
             .map_or(RandomClaim::Host, |active| active.on_random(event))
@@ -2651,11 +3122,18 @@ mod tests {
 
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_path(
-            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
-            &data,
-            &quests,
-        )
+        let path = super::super::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            let quests = Arc::clone(&quests);
+            move |cap| {
+                super::super::compile::compile_path(
+                    include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+                    &data,
+                    &quests,
+                    cap,
+                )
+            }
+        })
         .unwrap();
         let run = RunKey {
             slot: 1,
@@ -3348,6 +3826,177 @@ mod tests {
             }
         }
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+    #[test]
+    fn missing_partner_admission_expires_with_clear_stop_start_reason() {
+        use crate::quester::pair::{
+            AccountKey, Gang, PairError, PairFrame, PairRegistration, PairRequest, PairSettings,
+            PairStep, PairToken, PartnerDeclaration, PartnerRole, QuestPairPort, RoleReceipt,
+        };
+        use std::task::Poll;
+        use std::time::Instant;
+
+        struct MissingPeer;
+        static PORT: MissingPeer = MissingPeer;
+        impl QuestPairPort for MissingPeer {
+            fn shared(&self) -> Arc<dyn QuestPairPort> {
+                Arc::new(Self)
+            }
+            fn observe(&self, _: PairRegistration, _: PairFrame<'_>) {}
+            fn invalidate(&self, _: RunKey) {}
+            fn busy(&self) -> bool {
+                false
+            }
+            fn world_changed(&self, _: &str, _: u16) {}
+            fn settings(&self, _: RunKey) -> Result<PairSettings, PairError> {
+                Ok(PairSettings {
+                    partner: Some(AccountKey(Arc::from("bob"))),
+                    gang: Some(Gang::Phoenix),
+                })
+            }
+            fn observe_gang(
+                &self,
+                _: &api::quest_progress::JournalRead,
+            ) -> Result<Knowledge<Option<Gang>>, PairError> {
+                Ok(Knowledge::Known(None))
+            }
+            fn gang(
+                &self,
+                caller: RunKey,
+            ) -> Result<(Knowledge<Option<Gang>>, EvidenceStamp), PairError> {
+                Ok((
+                    Knowledge::Known(None),
+                    EvidenceStamp {
+                        run: caller,
+                        tick: 1,
+                        sequence: 1,
+                    },
+                ))
+            }
+            fn partner_item_count(
+                &self,
+                _: EvidenceStamp,
+                _: &crate::quester::pair::PairItemRequest,
+            ) -> Result<i32, PairError> {
+                Ok(0)
+            }
+            fn waiting(&self, _: RunKey) -> bool {
+                false
+            }
+            fn token(&self, _: RunKey, _: &FactKey) -> Result<PairToken, PairError> {
+                Err(PairError::NotReady)
+            }
+            fn register_action(
+                &self,
+                _: &PairToken,
+                _: RunKey,
+                _: crate::native::ActionRevoker,
+            ) -> Result<(), PairError> {
+                Ok(())
+            }
+            fn begin(&self, _: PairRequest) -> Result<PairToken, PairError> {
+                Err(PairError::PartnerNotInPlay)
+            }
+            fn poll(&self, _: &PairToken, _: RunKey) -> Poll<Result<PairStep, PairError>> {
+                Poll::Ready(Err(PairError::PartnerNotInPlay))
+            }
+            fn report(&self, _: &PairToken, _: RoleReceipt) -> Result<(), PairError> {
+                Ok(())
+            }
+            fn trade_ready(
+                &self,
+                _: &PairToken,
+                _: RunKey,
+                _: bool,
+                _: EvidenceStamp,
+            ) -> Result<bool, PairError> {
+                Ok(false)
+            }
+            fn gameplay_progress(&self, _: RunKey, _: EvidenceStamp, _: Instant) {}
+            fn cancel(&self, _: &PairToken) {}
+        }
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.partner = Some(PartnerDeclaration {
+            protocol: FactKey::new("arrav"),
+            roles: [
+                PartnerRole {
+                    id: FactKey::new("phoenix"),
+                    gang: Gang::Phoenix,
+                },
+                PartnerRole {
+                    id: FactKey::new("blackarm"),
+                    gang: Gang::BlackArm,
+                },
+            ],
+        });
+        let mut phoenix = document.roles[0].clone();
+        phoenix.role = Some(FactKey::new("phoenix"));
+        let mut blackarm = document.roles[0].clone();
+        blackarm.role = Some(FactKey::new("blackarm"));
+        document.roles = vec![phoenix, blackarm];
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let path = super::super::compile::prepare_for_test({
+            let selected = Arc::clone(&selected);
+            let quests = Arc::clone(&quests);
+            move |worker| {
+                super::super::compile::compile_path_for_gang(
+                    &bytes,
+                    &selected,
+                    &quests,
+                    worker,
+                    Some(Gang::Phoenix),
+                )
+            }
+        })
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&selected),
+            Arc::clone(&quests),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let facts = quests.quest("cook").unwrap();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                name: facts.display.to_string(),
+                component_id: 1,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+
+        assert_eq!(
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+                tick.pairs = Some(&PORT);
+                script.tick(tick).unwrap()
+            }),
+            ScriptFlow::Continue
+        );
+
+        let _ = super::super::families::tests::with_tick(&snapshot, &mut ledger, 1002, |tick| {
+            tick.pairs = Some(&PORT);
+            script.tick(tick).unwrap()
+        });
+        assert!(
+            script.parked,
+            "the 10-minute active-time bound must park the Quester"
+        );
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "partner admission timed out; Stop and Start both accounts"
+        );
     }
 }
 

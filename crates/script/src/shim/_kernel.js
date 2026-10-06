@@ -24,9 +24,8 @@ export async function runMachine(family, args, hooks) {
     return out;
 }
 
-// Start a Rust machine family that settles inside its begin (a frozen
-// synchronous call) and return its envelope without awaiting:
-// `{ kind: 'done', value }` or `{ kind: 'refused', reason }`.
+// Start a Rust machine synchronously and return its start envelope without
+// awaiting. A running result includes a handle to park or drain.
 export function machineNow(family, args) {
     return globalThis.__rs2b0t_machine_start(family, args, {});
 }

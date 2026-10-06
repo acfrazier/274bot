@@ -20,6 +20,8 @@ mod actions;
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
+pub mod thieve;
+pub(crate) mod thieving_core;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{HostAction, HostAuthority, HostEffect, QuietReadOwner};
@@ -308,6 +310,14 @@ pub struct ScriptFailure {
 }
 
 pub trait Script: Send {
+    /// Visible per-account pairing intent; the Play broker never starts another slot.
+    fn pair_settings(&self) -> Option<crate::quester::pair::PairSettings> {
+        None
+    }
+    /// Paired Path currently active; no binding while queued, unpaired or finished.
+    fn pair_binding(&self) -> Option<crate::quester::pair::PairBinding<'_>> {
+        None
+    }
     fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure>;
     fn configure(&mut self, _next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
         Err(ConfigError::new(
@@ -589,6 +599,24 @@ impl<'a> ActionContext<'a> {
 pub struct ActionHandle<M: NativeMachine> {
     owner: Arc<owner::Owner>,
     machine: RefCell<Option<M>>,
+}
+
+/// Revocation only: a Play-owned pair lease can fence queued work without
+/// taking the actor's slot lock or accessing its machine.
+#[derive(Clone)]
+pub struct ActionRevoker(Arc<owner::Owner>);
+impl ActionRevoker {
+    pub fn run(&self) -> RunKey {
+        self.0.run
+    }
+    pub fn revoke(&self) {
+        self.0.revoke();
+    }
+}
+impl<M: NativeMachine> ActionHandle<M> {
+    pub fn revoker(&self) -> ActionRevoker {
+        ActionRevoker(Arc::clone(&self.owner))
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionError {

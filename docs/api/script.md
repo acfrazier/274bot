@@ -134,8 +134,15 @@ scripts end their live step at either boundary.
 Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 `quests` selects quest IDs (an empty list selects all released Paths);
 `order_override` prioritizes selected IDs and `skip` excludes IDs. `partner_account`
-and `gang` are per-account settings, not bulk-copy settings; partner quest
-execution remains separate from this release slice.
+and `gang` are per-account settings, not bulk-copy settings. Partner selection uses
+configured vault identities, including saved accounts not currently loaded.
+
+A roster row can be unavailable on this server: it carries `name` and an
+end-user `unavailable` reason instead of being released (it may keep its
+authored `file` for validation). The queue keeps such a row blocked with that
+reason and never compiles or starts it; an empty selection leaves it out, and a
+selection of only unavailable quests refuses Start with their reasons. Quest
+pickers list it as non-selectable, and a stored pick shows the reason.
 
 `crest_gauntlets` is also per-account: `chaos` (the default), `cooking`, or
 `goldsmith`. Runtime account choices are available to quest handlers when a step
@@ -151,6 +158,72 @@ two deaths can recover, and the third stops Quester as blocked with a
 maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
+
+Shield of Arrav and Hero's Quest require two accounts explicitly running their
+own Quester in the same Play, with reciprocal partner settings and opposite
+effective gangs. A separate panel or TUI process is not the same Play. The owned
+Arrav journal determines existing membership; an unjoined account must explicitly
+choose its irreversible gang. Conflicting or ambiguous membership blocks before
+either account joins. A completed quest does not enlist a partner.
+Starts need not be simultaneous. An account waits up to ten minutes of active
+admission time for its saved partner to Start and become ready; expiry parks the
+Path with `partner admission timed out; Stop and Start both accounts`. A peer
+already bound to another Path or protocol is refused before either account is
+reserved.
+
+Gang proofs belong to the current run, selected content and world. Outside a
+reserved phase, losing readiness clears the cached proof; the same run rereads
+its own Arrav journal before continuing. A transient reserved-phase hold retains
+the role's owned proof without opening a competing journal transaction. Changing
+world or losing the session clears the proof and revokes the phase.
+Saved profile names remain exact vault identities. In-game counterpart matching
+uses the client's account ID, which treats case, spaces and underscores consistently.
+Two saved names for the same in-game account cannot form a pair.
+
+Each handoff reserves a finite reciprocal phase and dispatches only the actor's
+own role action. Trades check the configured counterpart and exact unnoted offers
+on both offer and confirmation screens; acceptance clicks do not prove success.
+Both inventories must prove the transfer. Stop, Pause, removal, session loss or a
+failed role revokes both phase-owned action authorities before queued work drains.
+Transient guardian, readiness, welcome and same-session boundary holds retain a
+reserved phase. Either account's hold fences both accounts' phase actions and
+pauses both phase deadlines until both accounts are ready again. Death, an actual
+session loss, or the explicit revokers above still cancel the phase.
+The peer blocks rather than being stopped or automatically restarted; explicitly
+Start both accounts again after inspecting server-side items and quest progress.
+Transfer recovery checks bounded native backpack receipts from the matching active
+reciprocal roles. A missing local shield half is not collected again when its
+counterpart already holds that half or the resulting certificates. Missing,
+stale or mismatched peer evidence remains unknown; it is never treated as an
+empty backpack or replaced with a saved session counter.
+
+A paired waiter, including admission before a lease exists, suspends only its
+own gameplay-wedge clock. The actor's gameplay watchdog and both scheduler
+watchdogs remain live. New observed gameplay from a
+joined role, or a peer bound to the same compiled pair, can extend a phase's
+ten-minute inactivity bound, never its sixty-minute active total bound.
+Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
+Retryable trade-start conditions keep the planned transfer and wait for the next
+eligible frame. A failed, still-owned trade enters bounded decline/close cleanup
+and retains the original failure until screen closure is observed and debounced
+or the cleanup deadline expires. Revoked owners cannot send cleanup input.
+
+Miniquest Paths use an owned typed progress reader instead of inventing a quest-tab
+row. The reader runs initially and after advancing steps, and only matching fresh
+run, selected-pin, binding and role evidence is accepted. Nearest-first sequences
+choose the closest uncompleted authored anchor; unknown guards still block selection.
+For `talk`, `interact`, and `use_on`, that anchor is the authored approach `anchor`,
+not an exact `target.tile`. Nearest-first compilation refuses a step without that approach anchor.
+
+A Path's existing preparation worker loads selected gathering data for any
+`gather` step in its preludes, sequences, acquisition recipes or role's
+`progress_reader`. Gang-specific compilation uses that same worker capability.
+
+Progress returned by a completed step must be newer than that step's begin
+stamp and must have the same stamp as its final outcome. These are separate
+checks: matching outcome and progress stamps are required, not stale evidence.
+Future or foreign-run evidence is never accepted.
+
 
 Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
 recreation and reconnect preserve its death count, consumed chat watermark,
@@ -320,13 +393,20 @@ without talking or walking, under the same adopted-page rule.
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
 after every accepted round, including every `until` round. No page after the
-bounded opening wait fails with `expected dialogue did not open`. Omission is
-strict Continue-only: Continue pages opened by the step's own accepted action
-are drained; an option menu fails with a clear reason and is never answered;
-the step never requires a page, has no fixed wall-clock no-page delay, and does
-not settle while its own page is open. Authors who need menu choices use the
-object form. Explicit `"none"` never touches dialogue and leaves those pages to
-the next owner, including during count repetition.
+bounded opening wait fails with `expected dialogue did not open`.
+
+Omission is strict Continue-only for observed chat pages and selected Scroll/Book
+pages. It drains Continue pages and refuses option menus without sending an
+answer. It leaves unrelated main interfaces untouched. If no page opens, the
+operation waits for acceptance and a newer evidence tick with an observed player
+who is not moving and has no primary animation. Loc/Npc/name interactions require
+their own accepted dispatch receipt. This observation boundary covers pages that
+open on arrival or during the primary animation, without a fixed no-page delay.
+Once the boundary is reached with no page, the normal success conditions can
+complete the step. A page that opens later is outside this optional window.
+Use explicit `"continue"` when content requires a page, or the object form when
+it requires menu answers. Explicit `"none"` never touches dialogue and leaves
+those pages to the next owner, including during count repetition.
 A Continue-only page remains active even when its chat root is absent.
 Neither operation settles while its owned continuation remains active.
 Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
@@ -464,6 +544,60 @@ start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
 
+### Quester finite gathering
+
+The `gather` step reuses the Gatherer's native resource action for Mining and
+Fishing. It has no banking, area loop or map survey. Declare exactly one selected
+`resource` key or `method` ID, an `until` inventory goal, and the outer step's
+`advances` value:
+
+```json
+{"skill":"mining","resource":"copper","until":{"obj":{"id":436},"qty":1}}
+```
+
+`until.obj` accepts a selected alias or a closed exact `{"id":436}` selector.
+`qty` accepts a positive fixed quantity or the shared counted-progress quantity.
+Optional `anchor` is `{"tile":[x,z,level],"source":"content citation"}`.
+`radius` defaults to 12 (1–32); `settle_ms` defaults to 120000 and must be positive.
+The deadline covers the whole step, including waits for usable observations.
+Admission checks selected effective skill, tools, bait, membership and products.
+
+Set the outer step's completion `skip_if` to the same held-count
+`item_count_at_least` predicate as its `settle`. A staged Path can reselect
+the current stage; this guard skips an already-satisfied gather goal instead
+of selecting it again.
+
+Fishing Contest's selected method is `fishing.0_41_53_sinisterfishspot.op1`.
+It requires Fishing 10, a rod and red-vine worms, and awards carp but no Fishing XP.
+The authored quest Path owns its quest-stage gate. Bonzo can consume the third carp
+directly: use held-count goals for the first two catches and a quest-state handoff
+for the third, not an impossible held count of three.
+
+### Quester finite thieving
+
+The `thieve` step selects a pickpocketable NPC by config alias or display name
+with `target: { "npc": "man" }` and an `until` inventory goal. Item goals accept
+a selected alias or an exact `{ "id": number }`; `qty` uses the shared quantity
+form. Optional `anchor` and `radius` bound target search (radius defaults to 12,
+maximum 32); `settle_ms` is a positive overall deadline, defaulting to 60000.
+It reuses the native thieving action, checks selected level requirements, and
+does not bank, train or silently retry a refused walk. Declare the outer step's
+`advances` and completion `skip_if` predicate as for other repeatable-stage steps.
+
+### Compatibility NPC pickpocketing
+
+`Npc.interact('Pickpocket' | 'Steal-from')` remains a one-shot queued NPC
+operation: an open or unknown chat modal and unobserved inventory do not
+suppress the click. The host refuses only when an observed effective Thieving
+level is below the selected NPC requirement; an NPC without a selected
+pickpocket row defaults to level 1, and an unobserved stat does not refuse.
+This intentional native-wins gate diverges from the frozen queue-only helper
+because content itself checks `stat(thieving)` against the pickpocket row
+(`content/scripts/skill_thieving/scripts/pickpocketing/pickpocket.rs2`).
+`stat(thieving)` is effective level, so this check uses effective rather than
+base level. It does not attach the native Thieving machine's attempt, stun,
+completion, inventory, or dialogue policy to this compat click.
+
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
@@ -471,6 +605,12 @@ equipped tool, at the Start area, a named Site, a Custom location or an Auto-sel
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
+
+Gatherer resource and tool-use gates, and Quester gather admission, use the
+observed effective skill level: boosts can satisfy a gate and drains can block
+it. Equipment's separate Attack requirement still uses base Attack.
+An ordinary Gatherer server supply refusal returns to modal tending and
+supply revalidation; it is not a terminal native `action-error`.
 
 With random-event handling enabled, a lost axe or pickaxe head is picked up
 before the two held pieces are reattached. Recovery is bounded to twelve

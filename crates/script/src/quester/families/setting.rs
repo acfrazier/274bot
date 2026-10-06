@@ -302,6 +302,7 @@ mod tests {
                 let bank = crate::quester::bank_memo::BankMemo::default();
                 let context = PredicateContext {
                     cx: &tick.cx,
+                    pairs: tick.pairs,
                     quests: &quests,
                     progress: &[],
                     required_after: tick.cx.evidence(),

@@ -20,6 +20,9 @@ pub struct PathDocument {
     pub schema_url: Option<String>,
     pub id: FactKey,
     pub display_name: String,
+    /// Miniquests use an owned typed reader instead of a quest-list binding.
+    #[serde(default)]
+    pub kind: PathKind,
     pub required: Vec<FactKey>,
     pub tested_stats: Option<Vec<SkillMinimum>>,
     pub partner: Option<PartnerDeclaration>,
@@ -30,6 +33,22 @@ pub struct PathDocument {
 }
 
 pub const PATH_SCHEMA: u16 = 3;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+pub enum PathKind {
+    #[default]
+    Quest,
+    Miniquest,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SequenceOrder {
+    #[default]
+    Authored,
+    Nearest,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -141,6 +160,9 @@ pub struct PathRoleDocument {
     pub progress_binding: FactKey,
     #[serde(default)]
     pub progress: Option<ProgressDocument>,
+    /// An owned reader invoked initially and after every advancing step.
+    #[serde(default)]
+    pub progress_reader: Option<StepDocument>,
     #[serde(default)]
     pub prelude: Vec<StepDocument>,
     pub sequences: Vec<SequenceDocument>,
@@ -201,6 +223,8 @@ pub struct SequenceDocument {
     pub required: Vec<FactKey>,
     pub terminal: bool,
     pub recovery_entry: Option<FactKey>,
+    #[serde(default)]
+    pub order: SequenceOrder,
     pub steps: Vec<StepDocument>,
 }
 
