@@ -1,5 +1,6 @@
 //! Ordered, tri-valued selection: only a proven `False` may start a step.
 use super::compile::{CompiledPath, CompiledStep, PredicateContext};
+use super::path::SequenceOrder;
 use api::selected::Truth;
 
 pub struct Selection<'a> {
@@ -15,17 +16,20 @@ pub enum SelectionDecision<'a> {
 }
 
 /// Prelude first, then the current sequence. Unknown blocks lower priorities.
+/// `cursor` is where an `Ordered` sequence resumes; other orders ignore it.
 pub fn select<'a>(
     path: &'a CompiledPath,
     sequence: usize,
+    cursor: usize,
     cx: &PredicateContext<'_, '_>,
 ) -> SelectionDecision<'a> {
-    select_with_skips(path, sequence, cx, |_| {})
+    select_with_skips(path, sequence, cursor, cx, |_| {})
 }
 
 pub fn select_with_skips<'a>(
     path: &'a CompiledPath,
     sequence: usize,
+    cursor: usize,
     cx: &PredicateContext<'_, '_>,
     mut on_skip: impl FnMut(&'a CompiledStep),
 ) -> SelectionDecision<'a> {
@@ -51,11 +55,15 @@ pub fn select_with_skips<'a>(
     let Some(sequence) = path.sequences.get(sequence) else {
         return SelectionDecision::Exhausted;
     };
-    let nearest = sequence.order == super::path::SequenceOrder::Nearest;
+    let nearest = sequence.order == SequenceOrder::Nearest;
+    let first = match sequence.order {
+        SequenceOrder::Ordered => cursor,
+        SequenceOrder::Authored | SequenceOrder::Nearest => 0,
+    };
     let here = nearest.then(|| cx.cx.snapshot().here()).flatten();
     let mut chosen = None;
     let mut best = (i64::MAX, i32::MAX);
-    for (index, step) in sequence.steps.iter().enumerate() {
+    for (index, step) in sequence.steps.iter().enumerate().skip(first) {
         match step.skip_if.evaluate(cx) {
             Truth::True => on_skip(step),
             Truth::Unknown => {
@@ -106,11 +114,12 @@ mod tests {
         compile_uncached_for_test, decode_cook, PredicateContext, RUNE_MYSTERIES_JSON, SHEEP_JSON,
     };
     use crate::quester::path::{PathDocument, PredicateDocument};
+    use crate::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
     use api::game_data::SelectedGameData;
     use api::obj_names::ItemDefView;
     use api::quest_facts::QuestCatalog;
-    use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
-    use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
+    use api::quest_progress::{EvidenceStamp, QuestProgress};
+    use api::selected::{ClientRevision, FactKey, RunKey, Truth};
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -173,43 +182,6 @@ mod tests {
         snapshot
     }
 
-    fn progress(
-        path: &CompiledPath,
-        data: &SelectedGameData,
-        stage: &str,
-        flags: &[(&str, Truth, Option<u32>)],
-    ) -> QuestProgress {
-        let stage = FactKey::new(stage);
-        QuestProgress {
-            quest: path.id.clone(),
-            stage: Knowledge::Known(stage.clone()),
-            complete: Truth::False,
-            signals: Arc::from(Vec::new()),
-            flags: Arc::from(
-                flags
-                    .iter()
-                    .map(|(flag, truth, count)| ProgressFlag {
-                        flag: FactKey::new(flag),
-                        truth: *truth,
-                        count: *count,
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            evidence: stamp(),
-            binding: path.progress.binding.clone(),
-            role: path.progress.role.clone(),
-            rule: Knowledge::Known(stage),
-            pin: data.selected_pin().unwrap(),
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    enum Choice {
-        Step(String),
-        Unknown,
-        Exhausted,
-    }
-
     fn choice_for_stage(
         path: &CompiledPath,
         stage: &str,
@@ -218,36 +190,18 @@ mod tests {
         progress: &[QuestProgress],
         bank: &crate::quester::bank_memo::BankMemo,
     ) -> Choice {
-        let sequence = sequence_for_stage(path, stage).unwrap();
-        let mut ledger = None;
-        crate::quester::families::tests::with_tick(snapshot, &mut ledger, 1, |tick| {
-            let cx = PredicateContext {
-                cx: &tick.cx,
-                pairs: tick.pairs,
-                quests,
-                progress,
-                required_after: stamp(),
-                chat_since: 0,
-                outcome: None,
-                bank,
-            };
-            match select(path, sequence, &cx) {
-                SelectionDecision::Selected(selected) => {
-                    Choice::Step(selected.step.id.0.to_string())
-                }
-                SelectionDecision::Unknown(_) => Choice::Unknown,
-                SelectionDecision::Exhausted => Choice::Exhausted,
-            }
-        })
+        Probe {
+            path,
+            selected: &selected(),
+            quests,
+            progress,
+            bank,
+        }
+        .choice(stage, 0, snapshot)
     }
 
-    fn known_empty_bank() -> crate::quester::bank_memo::BankMemo {
-        let mut bank = crate::quester::bank_memo::BankMemo::default();
-        bank.update(&crate::native_bank::BankReceipt {
-            counts: Vec::new(),
-            complete: true,
-        });
-        bank
+    fn chosen(id: &str) -> Choice {
+        Choice::Step(FactKey::new(id))
     }
 
     #[test]
@@ -286,7 +240,7 @@ mod tests {
             outcome: None,
             bank: &bank,
         };
-        let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
+        let SelectionDecision::Selected(picked) = select(&compiled, 0, 0, &pred) else {
             panic!("never-skip start must select");
         };
         assert_eq!(picked.step.id.0.as_ref(), "start");
@@ -300,7 +254,10 @@ mod tests {
         };
         let compiled = compile_uncached_for_test(&unknown, &data, &quests).unwrap();
         assert!(
-            matches!(select(&compiled, 0, &pred), SelectionDecision::Unknown(_)),
+            matches!(
+                select(&compiled, 0, 0, &pred),
+                SelectionDecision::Unknown(_)
+            ),
             "unknown inventory must wait, never select an action on login"
         );
     }
@@ -336,7 +293,7 @@ mod tests {
                             outcome: None,
                             bank,
                         };
-                        let SelectionDecision::Selected(picked) = select(&path, sequence, &pred)
+                        let SelectionDecision::Selected(picked) = select(&path, sequence, 0, &pred)
                         else {
                             panic!("observed inventory and bank state must select a step");
                         };
@@ -357,7 +314,7 @@ mod tests {
         let data = selected();
         let quests = quests(&data);
         let compiled = path(RUNE_MYSTERIES_JSON, &data, &quests);
-        let pending = progress(
+        let pending = progress_for_stage(
             &compiled,
             &data,
             "runemysteries:1",
@@ -379,7 +336,7 @@ mod tests {
                 std::slice::from_ref(&pending),
                 &unknown_bank,
             ),
-            Choice::Step("deliver-talisman".into())
+            chosen("deliver-talisman")
         );
         assert_eq!(
             choice_for_stage(
@@ -390,7 +347,7 @@ mod tests {
                 std::slice::from_ref(&pending),
                 &known_bank,
             ),
-            Choice::Step("deliver-talisman".into())
+            chosen("deliver-talisman")
         );
 
         let empty = inventory_snapshot(&data, &[]);
@@ -403,7 +360,7 @@ mod tests {
                 std::slice::from_ref(&pending),
                 &unknown_bank,
             ),
-            Choice::Step("scan-bank".into()),
+            chosen("scan-bank"),
             "a bank scan remains available when no quest item is held"
         );
         assert_eq!(
@@ -415,11 +372,11 @@ mod tests {
                 std::slice::from_ref(&pending),
                 &known_bank,
             ),
-            Choice::Step("recover-duke".into())
+            chosen("recover-duke")
         );
 
         let package = inventory_snapshot(&data, &[("research_package", 1)]);
-        let package_pending = progress(
+        let package_pending = progress_for_stage(
             &compiled,
             &data,
             "runemysteries:1",
@@ -437,10 +394,10 @@ mod tests {
                 std::slice::from_ref(&package_pending),
                 &unknown_bank,
             ),
-            Choice::Step("deliver-package".into())
+            chosen("deliver-package")
         );
 
-        let package_delivered = progress(
+        let package_delivered = progress_for_stage(
             &compiled,
             &data,
             "runemysteries:1",
@@ -458,7 +415,7 @@ mod tests {
                 std::slice::from_ref(&package_delivered),
                 &known_bank,
             ),
-            Choice::Step("collect-notes".into())
+            chosen("collect-notes")
         );
         assert_eq!(
             choice_for_stage(
@@ -469,7 +426,7 @@ mod tests {
                 std::slice::from_ref(&package_delivered),
                 &unknown_bank,
             ),
-            Choice::Step("collect-notes".into()),
+            chosen("collect-notes"),
             "after delivery, obtain Aubury's notes before generic bank recovery"
         );
 
@@ -483,7 +440,7 @@ mod tests {
                 std::slice::from_ref(&package_delivered),
                 &known_bank,
             ),
-            Choice::Step("deliver-notes".into())
+            chosen("deliver-notes")
         );
     }
 
@@ -492,7 +449,7 @@ mod tests {
         let data = selected();
         let quests = quests(&data);
         let compiled = path(SHEEP_JSON, &data, &quests);
-        let sequence_progress = progress(
+        let sequence_progress = progress_for_stage(
             &compiled,
             &data,
             "sheep:1",
@@ -514,7 +471,7 @@ mod tests {
                 &progress,
                 &bank,
             ),
-            Choice::Step("shear".into()),
+            chosen("shear"),
             "the 12 remaining balls minus 8 held balls requires only 4 new wool; the bronze sword is not a quest equip"
         );
 
@@ -536,7 +493,7 @@ mod tests {
                 &progress,
                 &bank,
             ),
-            Choice::Step("spin".into())
+            chosen("spin")
         );
 
         let mixed_partial =
@@ -550,7 +507,7 @@ mod tests {
                 &progress,
                 &bank,
             ),
-            Choice::Step("spin".into()),
+            chosen("spin"),
             "existing wool plus held balls already meets the remaining shear target"
         );
 
@@ -564,19 +521,21 @@ mod tests {
                 &progress,
                 &bank,
             ),
-            Choice::Step("hand-in".into())
+            chosen("hand-in")
         );
 
         let no_progress = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 8)]);
-        assert_eq!(
-            choice_for_stage(&compiled, "sheep:1", &no_progress, &quests, &[], &bank,),
-            Choice::Unknown,
+        assert!(
+            matches!(
+                choice_for_stage(&compiled, "sheep:1", &no_progress, &quests, &[], &bank),
+                Choice::Unknown(_)
+            ),
             "a partial inventory must wait for journal quantity evidence"
         );
         let full_supply = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 20)]);
         assert_eq!(
             choice_for_stage(&compiled, "sheep:1", &full_supply, &quests, &[], &bank,),
-            Choice::Step("hand-in".into()),
+            chosen("hand-in"),
             "the full hand-in quantity remains usable before the first journal read"
         );
     }
@@ -619,7 +578,7 @@ mod tests {
             ));
             assert_eq!(
                 choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-                Choice::Step(expected.into()),
+                chosen(expected),
                 "{kind} must select by its authored approach, not authored order or exact target"
             );
         }
@@ -710,13 +669,13 @@ mod tests {
         let bank = known_empty_bank();
         assert_eq!(
             choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-            Choice::Step("near".into())
+            chosen("near")
         );
         Arc::get_mut(&mut path).unwrap().sequences[0].steps[1].skip_if =
             Arc::new(Skip(Truth::True));
         assert_eq!(
             choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-            Choice::Step("tie".into())
+            chosen("tie")
         );
         snapshot.seed_local_player(crate::quester::families::tests::local_player(
             api::WorldTile {
@@ -727,18 +686,18 @@ mod tests {
         ));
         assert_eq!(
             choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-            Choice::Step("far".into())
+            chosen("far")
         );
         Arc::get_mut(&mut path).unwrap().sequences[0].steps[2].skip_if =
             Arc::new(Skip(Truth::Unknown));
         assert_eq!(
             choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-            Choice::Unknown
+            Choice::Unknown(FactKey::new("tie"))
         );
         let missing_here = inventory_snapshot(&data, &[]);
         assert_eq!(
             choice_for_stage(&path, "cook:0", &missing_here, &quests, &[], &bank),
-            Choice::Unknown
+            Choice::Unknown(FactKey::new("far"))
         );
         for step in &mut Arc::get_mut(&mut path).unwrap().sequences[0].steps {
             step.skip_if = Arc::new(Skip(Truth::True));
@@ -750,7 +709,96 @@ mod tests {
         Arc::get_mut(&mut path).unwrap().prelude = vec![step("authored-prelude", 1000, 0)];
         assert_eq!(
             choice_for_stage(&path, "cook:0", &snapshot, &quests, &[], &bank),
-            Choice::Step("authored-prelude".into())
+            chosen("authored-prelude")
         );
+    }
+
+    /// Five indistinguishable wait steps; `third_skip` replaces step 3's skip.
+    fn five_step_path(order: &str, third_skip: serde_json::Value) -> Arc<CompiledPath> {
+        let data = selected();
+        let quests = quests(&data);
+        let mut document: serde_json::Value =
+            serde_json::from_str(crate::quester::compile::COOK_JSON).unwrap();
+        document["roles"][0]["prelude"] = serde_json::json!([]);
+        document["roles"][0]["sequences"][0]["order"] = serde_json::json!(order);
+        document["roles"][0]["sequences"][0]["steps"] = serde_json::json!((1..=5)
+            .map(|n| serde_json::json!({
+                "id": format!("step-{n}"), "kind": "wait", "version": 1,
+                "args": {"until": {"All": []}, "max_ticks": 10},
+                "advances": false,
+                "skip_if": if n == 3 { third_skip.clone() } else { serde_json::json!({"Any": []}) },
+                "settle": {"All": []}
+            }))
+            .collect::<Vec<_>>());
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        compile_uncached_for_test(&document, &data, &quests).unwrap()
+    }
+
+    #[test]
+    fn ordered_sequence_selects_from_the_cursor_and_jumps_proven_skips() {
+        let data = selected();
+        let quests = quests(&data);
+        let bank = known_empty_bank();
+        let empty = inventory_snapshot(&data, &[]);
+        let path = five_step_path("ordered", serde_json::json!({"Any": []}));
+        for (cursor, expected) in [(0, "step-1"), (1, "step-2"), (2, "step-3"), (4, "step-5")] {
+            assert_eq!(
+                Probe {
+                    path: &path,
+                    selected: &data,
+                    quests: &quests,
+                    progress: &[],
+                    bank: &bank,
+                }
+                .choice("cook:0", cursor, &empty),
+                chosen(expected),
+                "cursor {cursor} resumes at its own step, never at step 1"
+            );
+        }
+        assert_eq!(
+            Probe {
+                path: &path,
+                selected: &data,
+                quests: &quests,
+                progress: &[],
+                bank: &bank,
+            }
+            .choice("cook:0", 5, &empty),
+            Choice::Exhausted,
+            "a cursor past the last step is exhausted, not wrapped"
+        );
+
+        let egg_skip =
+            serde_json::json!({"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "egg"}}});
+        let path = five_step_path("ordered", egg_skip);
+        let egg = inventory_snapshot(&data, &[("egg", 1)]);
+        let probe = Probe {
+            path: &path,
+            selected: &data,
+            quests: &quests,
+            progress: &[],
+            bank: &bank,
+        };
+        assert_eq!(probe.choice("cook:0", 2, &egg), chosen("step-4"));
+        assert_eq!(probe.choice("cook:0", 2, &empty), chosen("step-3"));
+    }
+
+    #[test]
+    fn authored_sequence_ignores_the_cursor() {
+        let data = selected();
+        let quests = quests(&data);
+        let bank = known_empty_bank();
+        let empty = inventory_snapshot(&data, &[]);
+        let path = five_step_path("authored", serde_json::json!({"Any": []}));
+        let probe = Probe {
+            path: &path,
+            selected: &data,
+            quests: &quests,
+            progress: &[],
+            bank: &bank,
+        };
+        for cursor in [0, 3, 5] {
+            assert_eq!(probe.choice("cook:0", cursor, &empty), chosen("step-1"));
+        }
     }
 }

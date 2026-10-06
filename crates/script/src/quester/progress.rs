@@ -54,6 +54,18 @@ pub struct ProgressRuleDiagnostic {
     pub stage: FactKey,
     pub varp: Option<i32>,
 }
+
+/// A journal rule that first-win resolution never reaches: fed exactly its
+/// own needles, an earlier rule (or none) matches instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowedRule {
+    pub index: usize,
+    pub stage: FactKey,
+    /// The needles resolved: the rule's `all` plus the one `any` needle tried.
+    pub needles: Vec<Arc<str>>,
+    /// The stage that won instead; `None` when the rule cannot match itself.
+    pub resolved: Option<FactKey>,
+}
 impl CompiledProgress {
     /// Return the authored rule for a resolved stage, preserving authored
     /// newest-first order.
@@ -77,6 +89,47 @@ impl CompiledProgress {
 
     pub fn varp_hint(&self, stage: &FactKey) -> Option<i32> {
         self.rule_for_stage(stage).and_then(|rule| rule.varp)
+    }
+
+    /// Rules whose own needles resolve to another stage, or to none. Each
+    /// rule is tried with its `all` needles plus each `any` needle in turn,
+    /// joined by a separator no needle can contain. An earlier rule that only
+    /// wins through a `not` needle present in the live journal but absent from
+    /// the later rule's needles is reported too: pin that text in the later
+    /// rule's `all` to prove the distinction.
+    pub fn shadowed_rules(&self) -> Vec<ShadowedRule> {
+        let mut shadowed = Vec::new();
+        for (index, rule) in self.rules.iter().enumerate() {
+            let alternatives: Vec<Option<&Arc<str>>> = if rule.any.is_empty() {
+                vec![None]
+            } else {
+                rule.any.iter().map(Some).collect()
+            };
+            for alternative in alternatives {
+                let needles: Vec<Arc<str>> = rule.all.iter().chain(alternative).cloned().collect();
+                let text = needles
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                let resolved = self
+                    .rules
+                    .iter()
+                    .find(|candidate| {
+                        rule_matches(&candidate.all, &candidate.any, &candidate.not, &text)
+                    })
+                    .map(|candidate| candidate.stage.clone());
+                if resolved.as_ref() != Some(&rule.stage) {
+                    shadowed.push(ShadowedRule {
+                        index,
+                        stage: rule.stage.clone(),
+                        needles,
+                        resolved,
+                    });
+                }
+            }
+        }
+        shadowed
     }
 }
 
@@ -876,6 +929,62 @@ mod tests {
             &negated.stage,
             Knowledge::Known(stage) if stage.0.as_ref() == "synthetic:1"
         ));
+    }
+
+    #[test]
+    fn shadowed_rules_report_unreachable_and_unmatchable_rules() {
+        // The Plague City 24/25 shape: an earlier rule's needle is a substring
+        // of a later rule's text, so the later rule never wins.
+        let shadowed = path(
+            vec![
+                rule("synthetic:2", &["bravek"], &[], &[]),
+                rule("synthetic:1", &["bravek might give me clearance"], &[], &[]),
+            ],
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            shadowed.progress.shadowed_rules(),
+            vec![ShadowedRule {
+                index: 1,
+                stage: FactKey::new("synthetic:1"),
+                needles: vec![Arc::from("bravek might give me clearance")],
+                resolved: Some(FactKey::new("synthetic:2")),
+            }]
+        );
+
+        // Distinct needles, `not` exclusions and every `any` alternative resolve
+        // to their own rule; a rule whose `not` needle sits inside its own
+        // `all` can never match and is reported with no winner.
+        let unmatchable = path(
+            vec![
+                rule("synthetic:2", &["hello"], &[], &["blocked"]),
+                rule("synthetic:1", &["hello blocked"], &["left", "right"], &[]),
+                rule("synthetic:0", &["never clear"], &[], &["clear"]),
+            ],
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            unmatchable.progress.shadowed_rules(),
+            vec![ShadowedRule {
+                index: 2,
+                stage: FactKey::new("synthetic:0"),
+                needles: vec![Arc::from("never clear")],
+                resolved: None,
+            }]
+        );
+
+        // Needles are joined so no earlier rule can match across two of them.
+        let joined = path(
+            vec![
+                rule("synthetic:2", &["hello world"], &[], &[]),
+                rule("synthetic:1", &["hello", "world"], &[], &[]),
+            ],
+            Vec::new(),
+            false,
+        );
+        assert!(joined.progress.shadowed_rules().is_empty());
     }
 
     #[test]

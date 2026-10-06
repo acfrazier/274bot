@@ -716,7 +716,7 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
                 outcome: None,
             };
             let crate::quester::select::SelectionDecision::Selected(selected) =
-                crate::quester::select::select(&path, 0, &context)
+                crate::quester::select::select(&path, 0, 0, &context)
             else {
                 panic!("the observed safe/arrived tile must select its next real family");
             };
@@ -771,7 +771,7 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
-            crate::quester::select::select(&path, 0, &context)
+            crate::quester::select::select(&path, 0, 0, &context)
         else {
             panic!("Aborted(Unattackable) must select the Path walk-out step");
         };
@@ -833,7 +833,7 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
-            crate::quester::select::select(&path, 0, &context)
+            crate::quester::select::select(&path, 0, 0, &context)
         else {
             panic!("leaving the tree after Unattackable must keep the caller walk-out selected");
         };
@@ -884,7 +884,7 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
         };
         assert!(
             matches!(
-                crate::quester::select::select(&path, 0, &context),
+                crate::quester::select::select(&path, 0, 0, &context),
                 crate::quester::select::SelectionDecision::Exhausted
             ),
             "arrived walk-out after Unattackable must not loop the walk step"

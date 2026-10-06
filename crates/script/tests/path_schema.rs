@@ -475,3 +475,113 @@ fn symbolic_skill_requirement_uses_stats_index() {
             if minimum.skill == 16 && minimum.level == 25
     ));
 }
+
+fn bundled_documents() -> Vec<(String, PathDocument)> {
+    let root = paths_dir();
+    let index: ReleaseIndex =
+        serde_json::from_slice(&std::fs::read(root.join("index.json")).expect("read index.json"))
+            .expect("decode index.json");
+    index
+        .paths
+        .into_iter()
+        .filter_map(|entry| entry.file)
+        .map(|file| {
+            let document: PathDocument = serde_json::from_value(read_path(&root.join(&file)))
+                .unwrap_or_else(|error| panic!("decode {file}: {error}"));
+            (file, document)
+        })
+        .collect()
+}
+
+/// First-win journal resolution makes a later rule unreachable when an earlier
+/// rule's needles are contained in its text (the Plague City 24/25 shape). Every
+/// bundled rule, fed exactly its own needles, must resolve to itself.
+#[test]
+fn bundled_paths_have_no_shadowed_journal_rules() {
+    let _home = script::IsolatedEnv::enter("path-schema-shadows");
+    let (selected, quests) = selected_and_quests();
+    for (file, document) in bundled_documents() {
+        let compiled = compile_uncached_for_test(&document, &selected, &quests)
+            .unwrap_or_else(|error| panic!("{file}: {}", error.code));
+        script::quester::probe::assert_no_shadowed_rules(&compiled);
+    }
+}
+
+/// `Probe::choice` answers "which step would start here?" for a seeded
+/// snapshot, so a Path's resume points can be pinned without a live run.
+#[test]
+fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use script::quester::path::SequenceOrder;
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-probe");
+    let (selected, quests) = selected_and_quests();
+    let mut document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("cook.json"))).expect("cook decodes");
+    let bank = known_empty_bank();
+    let mut empty = GameSnapshot::new();
+    empty.seed_ingame(2);
+    empty.seed_inventory(Vec::new(), 28);
+    empty.seed_equipment(Vec::new());
+    let egg = selected.item_by_alias("egg").expect("egg");
+    let mut holding_egg = GameSnapshot::new();
+    holding_egg.seed_ingame(2);
+    holding_egg.seed_inventory(
+        vec![ItemView {
+            def: api::obj_names::ItemDefView {
+                id: egg.id,
+                name: Some("Egg".into()),
+                stackable: false,
+                members: false,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        }],
+        28,
+    );
+    holding_egg.seed_equipment(Vec::new());
+
+    let compiled = compile_uncached_for_test(&document, &selected, &quests).expect("cook compiles");
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    assert_eq!(
+        probe.choice("cook:1", 0, &empty),
+        Choice::Step(FactKey::new("egg"))
+    );
+    assert_eq!(
+        probe.choice("cook:1", 0, &holding_egg),
+        Choice::Step(FactKey::new("milk")),
+        "a held egg skips its acquisition"
+    );
+
+    // The same sequence in ordered form resumes at the cursor instead.
+    document.roles[0].sequences[1].order = SequenceOrder::Ordered;
+    let ordered =
+        compile_uncached_for_test(&document, &selected, &quests).expect("ordered cook compiles");
+    let probe = Probe {
+        path: &ordered,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    assert_eq!(
+        probe.choice("cook:1", 2, &empty),
+        Choice::Step(FactKey::new("flour"))
+    );
+    assert_eq!(probe.choice("cook:1", 4, &empty), Choice::Exhausted);
+}
