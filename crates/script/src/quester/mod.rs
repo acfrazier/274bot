@@ -11,6 +11,8 @@ pub mod loadouts;
 mod nav_coverage;
 pub mod pair;
 pub mod path;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod probe;
 pub mod progress;
 pub mod provision;
 pub mod queue;
