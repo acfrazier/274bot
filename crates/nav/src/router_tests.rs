@@ -5377,8 +5377,12 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
             stats: (0..21).map(|skill| (skill, 1)).collect(),
             ..WorldState::empty()
         };
+        // Draynor to Lumbridge's (3224,3200) now routes: the brown bear's
+        // rectangle no longer blocks it, and the giant rat tiles it crosses
+        // are ones the engine's rat flood cannot reach. The rat pocket at
+        // (3212,3179) south of it is still refused by two rats.
         let from = tile(3123, 3245, 0);
-        let to = tile(3224, 3200, 0);
+        let to = tile(3212, 3179, 0);
         assert!(matches!(
             find_with(&world.collision, &world.graph, from, to, opts, &fresh),
             Err(RouteError::NoPath)
@@ -5393,16 +5397,16 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
             &[],
         )
         .unwrap();
-        let bear = table.resolve("brownbear@3176,3223,0").unwrap();
-        let rat = table.resolve("giantrat1@3211,3195,0").unwrap();
-        assert_eq!(keys, vec![rat, bear], "{keys:?}");
+        let north_rat = table.resolve("giantrat1@3211,3195,0").unwrap();
+        let south_rat = table.resolve("giantrat1@3211,3187,0").unwrap();
+        assert_eq!(keys, vec![south_rat, north_rat], "{keys:?}");
         let route = find_with(
             &world.collision,
             &world.graph,
             from,
             to,
             FindOptions {
-                zones: ZoneExempt::named(&[bear, rat]).unwrap(),
+                zones: ZoneExempt::named(&[north_rat, south_rat]).unwrap(),
                 ..opts
             },
             &fresh,
@@ -5410,7 +5414,7 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
         .unwrap();
         assert_eq!(
             (route.ticks, zone_route_cell_count(&route), route.legs.len()),
-            (53.5, 108, 3)
+            (62.0, 125, 3)
         );
     }
 }
@@ -5654,6 +5658,36 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
     )
     .expect("active zone witness");
     assert!(blocked.contains(&mage), "{blocked:?}");
+}
+
+#[test]
+fn blocked_normal_ghast_membership_follows_its_engine_wander_over_the_bog() {
+    // REVIEW-NAV-WWM-ROUTE R1: `ghast_invis` (size 2, `moverestrict=
+    // blocked+normal`, which the engine steps under LINE_OF_SIGHT) wanders
+    // from (3478,3328) over Mort Myre bog to (3477,3325), cardinal-adjacent to
+    // (3476,3325). A NORMAL flood carved that tile.
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let table = world.graph.zones.as_ref().expect("v12 zones");
+    let ghast = table.resolve("ghast_invis@3478,3328,0").unwrap();
+    let ZoneKey::Zone(index) = ghast else {
+        panic!("the ghast is ungrouped");
+    };
+    let zone = table.zones()[usize::from(index)];
+    let member = |x: i32, z: i32| table.at(tile(x, z, 0)).any(|hit| hit == index);
+    assert!(
+        member(3476, 3325),
+        "the wander witness's player tile stays dangerous"
+    );
+    let members = (zone.min_z..=zone.max_z)
+        .flat_map(|z| (zone.min_x..=zone.max_x).map(move |x| (x, z)))
+        .filter(|&(x, z)| member(x, z))
+        .count();
+    // The engine's own StepValidator/LineValidator flood over the same raw
+    // flags (NAV-WWM-ROUTE-R2 `oracle/engine-audit.ts`) acquires from exactly
+    // 187 of the 289 rectangle tiles.
+    assert_eq!(members, 187);
 }
 
 #[path = "router/consumption_tests.rs"]
