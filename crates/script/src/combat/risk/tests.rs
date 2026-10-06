@@ -144,6 +144,21 @@ fn context<'a>(
     }
 }
 
+pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<RouteAssessment> {
+    let tables = tables();
+    let zones = one_zone(&tables, 100, 1);
+    let risks = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = poison;
+    let walk = if crossing {
+        route(88, 112)
+    } else {
+        route(10, 20)
+    };
+    assess(&walk, &context(&zones, &risks, &tables, &wilderness), value)
+}
+
 #[test]
 fn u9_compact_layout_and_limit_round_trips() {
     assert!(std::mem::size_of::<RiskInput>() <= 128);
@@ -269,20 +284,147 @@ fn u9_compact_layout_and_limit_round_trips() {
 }
 
 #[test]
-fn u3_c4_uncapped_counts_ignore_built_limited_or_incomplete_scene() {
-    // All these have a built scene, but none certifies the horizon: >15 tiles,
-    // the 255-NPC view cap, a retained row absent now, and disjoint identities.
+fn r1_m3_scene_counts_cannot_reduce_the_uncapped_union() {
     for (live, estimate, nearby) in [(1, 2, 1), (4, 300, 255), (1, 1, 0), (2, 3, 3)] {
-        assert_eq!(
-            attacker_count(live, estimate, None).unwrap(),
-            live + estimate
+        assert!(
+            live + estimate > nearby,
+            "nearby count is incomplete evidence"
+        );
+        assert_eq!(attacker_count(live, estimate).unwrap(), live + estimate);
+    }
+    assert_eq!(attacker_count(u16::MAX, 1), Err(UnknownWhy::Overflow));
+}
+
+#[test]
+fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
+    let tables = tables();
+    let wilderness = WildernessRules::default();
+    for (config, members, class) in [
+        ("barbarian", false, UnknownKind::Bespoke),
+        ("red_dragon", false, UnknownKind::Dragonfire),
+        ("trail_hard2", false, UnknownKind::CounterProtect),
+        ("ikov_firewarrior", false, UnknownKind::Magic),
+        ("wizard", false, UnknownKind::Mixed),
+        ("man", false, UnknownKind::MissingStat),
+        ("poisonspider", true, UnknownKind::Poison),
+    ] {
+        let npc = tables.selected().npc_by_config(config).unwrap();
+        let zones = zone_table(
+            vec![Zone::npc(tile(100), 2, ZoneClass::Always, u16::MAX, 0)],
+            vec![ZoneKind::new(
+                config,
+                config,
+                npc.id,
+                1,
+                npc.ap_attack,
+                false,
+            )],
+            vec![],
+            vec![],
+            &wilderness,
+        );
+        let risks = RiskTables::build(&zones, &tables);
+        let mut value = input(90, 90, 10, &tables);
+        value.map_members = members;
+        let assessment = assess(
+            &route(88, 112),
+            &context(&zones, &risks, &tables, &wilderness),
+            value,
         );
         assert_eq!(
-            attacker_count(live, estimate, Some(nearby)).unwrap(),
-            (live + estimate).min(nearby)
+            assessment.verdict,
+            Verdict::Unknown(UnknownWhy::Kind(0)),
+            "{config}"
+        );
+        assert!(assessment.reason.contains(config), "{config}");
+        assert!(
+            assessment.reason.contains(&format!("{class:?}")),
+            "{config}"
         );
     }
-    assert_eq!(attacker_count(u16::MAX, 1, None), Err(UnknownWhy::Overflow));
+}
+
+#[test]
+fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
+    let tables = tables();
+    let wilderness = WildernessRules::default();
+    // Scene readiness/count is deliberately not an assessment input. These
+    // cases encode beyond-view, count-limited, absent-retained and disjoint
+    // scenarios at the real assessment seam, not just n(k) arithmetic.
+    for (case, live, estimated) in [
+        ("horizon beyond distance 15", 1, 2),
+        ("more than 255 nearby NPCs", 4, 300),
+        ("retained row absent from current view", 1, 1),
+        ("disjoint live and estimated actors", 2, 3),
+    ] {
+        let zones = zone_table(
+            (0..estimated)
+                .map(|index| {
+                    let spawn = if estimated > 255 {
+                        WorldTile {
+                            x: 100 + (index % 20) as i32,
+                            z: 93 + (index / 20) as i32,
+                            level: 0,
+                        }
+                    } else {
+                        tile(100 + index as i32)
+                    };
+                    Zone::npc(
+                        spawn,
+                        if estimated > 255 { 8 } else { 1 },
+                        ZoneClass::Always,
+                        u16::MAX,
+                        0,
+                    )
+                })
+                .collect(),
+            vec![known_kind(&tables)],
+            vec![],
+            vec![],
+            &wilderness,
+        );
+        let mut risks = RiskTables::build(&zones, &tables);
+        if estimated > 255 {
+            // A synthetic broad tether makes all 300 distinct spawns persist
+            // beyond the 255-row view, without invalid acquisition geometry.
+            risks.kinds[0].r = 64;
+        }
+        let mut value = input(255, 255, 0, &tables);
+        value.free_slots = 0;
+        value.live_len = live;
+        for (index, row) in value.live.iter_mut().take(usize::from(live)).enumerate() {
+            *row = LiveRow {
+                actor: crate::combat::ActorRef {
+                    kind: crate::combat::ActorKind::Npc,
+                    index: 1000 + index as u16,
+                },
+                ident: known_kind(&tables).npc_id,
+                max_hit: 6,
+                rate: 4,
+                due_tick: u16::MAX,
+            };
+        }
+        let assessment = assess(
+            &route(80, 120),
+            &context(&zones, &risks, &tables, &wilderness),
+            value,
+        );
+        if estimated > 255 {
+            assert_eq!(
+                assessment.verdict,
+                Verdict::Unknown(UnknownWhy::Overflow),
+                "{case}"
+            );
+        } else {
+            assert_eq!(assessment.plan.intervals.len(), estimated, "{case}");
+            assert_eq!(assessment.volley, 6 * (live + estimated as u8), "{case}");
+            assert_eq!(
+                assessment.crossings[0].worst,
+                24 * u16::from(live) + 18 * estimated as u16,
+                "{case}: every live row and every spawn contributes"
+            );
+        }
+    }
 }
 
 #[test]
@@ -666,6 +808,112 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
         quest_gates: None,
     }
 }
+
+#[test]
+fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
+    let tables = tables();
+    let zones = one_zone(&tables, 100, 6);
+    let risks = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let walk = Route {
+        legs: vec![
+            Leg::Walk {
+                tiles: (85..=98).map(tile).collect(),
+            },
+            Leg::Transport {
+                edge: Box::new(edge(tile(98), tile(99), 9)),
+            },
+            Leg::Walk {
+                tiles: (99..=125).map(tile).collect(),
+            },
+        ],
+        dest: tile(125),
+        ticks: 0.0,
+    };
+    let path = RoutePath::new(&walk).unwrap();
+    let mut value = input(40, 40, 6, &tables);
+    value.pos = tile(85);
+    let assessment = assess(&walk, &context(&zones, &risks, &tables, &wilderness), value);
+    let mut hold_bites = Vec::new();
+    let mut hold_damage = 0;
+    let baseline = replay(
+        path,
+        &assessment.plan,
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |tick, _, _, damage, bite| {
+            if (21..30).contains(&tick) {
+                hold_damage += damage;
+                if let Some(id) = bite {
+                    hold_bites.push((tick, id));
+                }
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(hold_damage, 12, "hits still land during the delay");
+    assert!(
+        hold_bites.is_empty(),
+        "server drops hold bites: {hold_bites:?}"
+    );
+    assert!(
+        !baseline.passed,
+        "the unavailable +12 cannot save this crossing"
+    );
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+}
+
+#[test]
+fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
+    let tables = tables();
+    let zones = one_zone(&tables, 500, 1);
+    let risks = RiskTables::build(&zones, &tables);
+    let wilderness = WildernessRules::default();
+    let walk = Route {
+        legs: vec![
+            Leg::Walk {
+                tiles: vec![tile(80)],
+            },
+            Leg::Transport {
+                edge: Box::new(edge(tile(80), tile(81), 9)),
+            },
+            Leg::Walk {
+                tiles: vec![tile(81), tile(82)],
+            },
+        ],
+        dest: tile(82),
+        ticks: 0.0,
+    };
+    let path = RoutePath::new(&walk).unwrap();
+    let mut value = input(10, 40, 2, &tables);
+    value.poison = PoisonState::Poisoned {
+        per_tick: 5,
+        last_tick: 0,
+    };
+    let plan = build_plan(path, &zones, &risks, &wilderness, &value).unwrap();
+    let mut trace = Vec::new();
+    replay(
+        path,
+        &plan,
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |tick, _, hp, _, bite| trace.push((tick, hp, bite)),
+    )
+    .unwrap();
+    assert!(trace[0].2.is_some(), "click before the hold is available");
+    for (tick, hp, bite) in trace.iter().filter(|(tick, ..)| (2..11).contains(tick)) {
+        assert_eq!(*hp, 5, "pending heal cannot land during delay at {tick}");
+        assert!(bite.is_none(), "input is locked at {tick}");
+    }
+    assert_eq!(
+        trace[11].1, 17,
+        "the pending heal lands once access returns"
+    );
+}
 #[test]
 fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() {
     let tables = tables();
@@ -1034,8 +1282,7 @@ fn u9_assessment_allocation_and_cpu_measurement() {
 fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
     let tables = tables();
     let w = WildernessRules::default();
-    let mut npc = known_kind(&tables);
-    npc.ap = true;
+    let npc = known_kind(&tables);
     let zones = zone_table(
         vec![Zone::shaped_npc(
             tile(100),
@@ -1051,7 +1298,21 @@ fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
         vec![0b010101010],
         &w,
     );
-    let risk = RiskTables::build(&zones, &tables);
+    let mut risk = RiskTables::build(&zones, &tables);
+    let fact = risk.kinds[0];
+    risk.kinds[0] = KindRisk::new(
+        fact.max_hit,
+        fact.rate,
+        fact.r,
+        fact.reach,
+        fact.style,
+        fact.unknown,
+        fact.poison,
+        fact.shared_attack(),
+        fact.forcemulti(),
+        true,
+        fact.hazard(),
+    );
     let shaped = Route {
         legs: vec![Leg::Walk {
             tiles: vec![
@@ -1755,7 +2016,25 @@ fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
         vec![1 << 3],
         &w,
     );
-    let risk = RiskTables::build(&zones, &tables);
+    let mut risk = RiskTables::build(&zones, &tables);
+    assert!(
+        !risk.kinds[0].ap(),
+        "selected NPC facts override the zone ap hint"
+    );
+    let fact = risk.kinds[0];
+    risk.kinds[0] = KindRisk::new(
+        fact.max_hit,
+        fact.rate,
+        fact.r,
+        fact.reach,
+        fact.style,
+        fact.unknown,
+        fact.poison,
+        fact.shared_attack(),
+        fact.forcemulti(),
+        true,
+        fact.hazard(),
+    );
     let walk = Route {
         legs: vec![Leg::Walk {
             tiles: vec![tile(98), tile(99), tile(98), tile(97), tile(96)],
@@ -1814,4 +2093,56 @@ fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
     );
     assert_eq!(result.verdict, Verdict::Unsurvivable);
     assert!(result.reason.contains("NoWayOut"));
+}
+
+#[test]
+fn u1_transport_input_hold_boundaries_cover_attached_and_standalone_legs() {
+    for (legs, first, start, end) in [
+        (
+            vec![
+                Leg::Walk {
+                    tiles: vec![tile(80)],
+                },
+                Leg::Transport {
+                    edge: Box::new(edge(tile(80), tile(81), 9)),
+                },
+                Leg::Walk {
+                    tiles: vec![tile(81)],
+                },
+            ],
+            0,
+            2,
+            11,
+        ),
+        (
+            vec![
+                Leg::Transport {
+                    edge: Box::new(edge(tile(80), tile(81), 9)),
+                },
+                Leg::Walk {
+                    tiles: vec![tile(81)],
+                },
+            ],
+            0,
+            0,
+            9,
+        ),
+    ] {
+        let route = Route {
+            legs,
+            dest: tile(81),
+            ticks: 0.0,
+        };
+        let point = RoutePath::new(&route).unwrap().point(first).unwrap();
+        assert!(!point.input_held(start - 1));
+        assert!(point.input_held(start));
+        assert!(point.input_held(end - 1));
+        assert!(!point.input_held(end));
+    }
+    let walk = route(80, 81);
+    assert!(!RoutePath::new(&walk)
+        .unwrap()
+        .point(0)
+        .unwrap()
+        .input_held(0));
 }

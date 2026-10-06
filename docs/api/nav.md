@@ -512,10 +512,16 @@ Retreat stays in the same walk leg, and teleports are never credited as
 on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
 `NoWayOut` in its reason.
 
+S2a always sums live and estimated attackers, even when their identities may
+overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
+distance-limited or count-limited scene cannot certify coverage or erase a
+retained live row. Single-way flags remain false until S3 establishes eligibility.
+
 Food is simulated from actual counts, using the shared guard picker, a
-three-tick bite clock, delayed heals and exact threshold gating. Pre-entry
-top-up never wastes a heal. Message-delay and combo foods are excluded and
-named; only the six largest carried food kinds are retained. Protection
+three-tick bite clock, delayed heals and exact threshold gating. Transport
+holds lock food input; a pending heal cannot land until the delay ends.
+Pre-entry top-up never wastes a heal. Message-delay and combo foods are excluded
+and named; only the six largest carried food kinds are retained. Protection
 requires the current level, points, compatible styles and ownership
 conditions, keeps one unprotected volley and never credits carried potions
 or already-launched damage. `FixableWith` reports the least additional
@@ -526,7 +532,9 @@ remain explicit `Unknown` verdicts.
 `PoisonMemory` exposes pure transitions, not a live observer. Known poison
 retains the largest observed pulse through silence, decreasing marks and
 silent reapplication until a confirmed own antipoison decrement or observed
-death followed by respawn. Unknown poison requires the complete accepted-click
+death followed by respawn. A fresh onset chat line resets even established
+poison to Unknown: the old server poison expired and the new severity is not
+known until its first mark. Unknown poison requires the complete accepted-click
 phase evidence to clear; a hitmark kind above two invalidates the whole
 session until reconnect. Poison damages the entire route timeline, including
 safe gaps. Poison alone never refuses a route without crossings: the replay

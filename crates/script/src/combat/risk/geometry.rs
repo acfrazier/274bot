@@ -10,6 +10,14 @@ pub struct RoutePoint {
     pub leg: u8,
     pub tick: i32,
     pub duration: i32,
+    /// Server input delay at the end of this point's duration.
+    pub hold_ticks: i32,
+}
+impl RoutePoint {
+    pub fn input_held(self, tick: i32) -> bool {
+        let end = self.tick + self.duration;
+        self.hold_ticks > 0 && (end - self.hold_ticks..end).contains(&tick)
+    }
 }
 /// Borrowed indexing over the found route: no copied tile sequence or timeline.
 #[derive(Clone, Copy)]
@@ -61,11 +69,12 @@ impl<'a> RoutePath<'a> {
                     let local = usize::from(index).checked_sub(offset)?;
                     if local < tiles.len() {
                         let start = walk_ticks(local).ok()?;
-                        let mut duration = walk_ticks(local + 1).ok()? - start;
+                        let walk_duration = walk_ticks(local + 1).ok()? - start;
+                        let mut hold_ticks = 0;
                         if local + 1 == tiles.len() {
                             if let Some(Leg::Transport { edge }) = self.route.legs.get(leg + 1) {
                                 if edge.takeoff.unwrap_or(edge.at) == tiles[local] {
-                                    duration += edge.ticks;
+                                    hold_ticks = edge.ticks;
                                 }
                             }
                         }
@@ -73,7 +82,8 @@ impl<'a> RoutePath<'a> {
                             tile: tiles[local],
                             leg: leg as u8,
                             tick: tick + start,
-                            duration,
+                            duration: walk_duration + hold_ticks,
+                            hold_ticks,
                         });
                     }
                     offset += tiles.len();
@@ -87,6 +97,7 @@ impl<'a> RoutePath<'a> {
                                 leg: leg as u8,
                                 tick,
                                 duration: edge.ticks,
+                                hold_ticks: edge.ticks,
                             });
                         }
                         offset += 1;
@@ -269,7 +280,7 @@ fn interval(
         risk.rate,
         risk.style,
         risk.unknown_for(input.map_members).is_some(),
-        kind.ap,
+        risk.ap(),
         kind.npc_id < 0,
     )
 }
@@ -353,7 +364,7 @@ fn crossing_runs(
         while end < intervals.len() {
             let next = intervals[end];
             let gap = path.point(next.a).ok_or(UnknownWhy::Overflow)?.tick - tail;
-            if gap >= 7 {
+            if gap >= 2 * super::consts::LAG + 3 {
                 break;
             }
             last = last.max(next.b);

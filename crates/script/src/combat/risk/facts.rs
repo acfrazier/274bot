@@ -243,16 +243,24 @@ fn missing_main_stat(row: &NpcNameRow) -> bool {
     }
 }
 
+pub(super) fn npc_envelope_radius(row: &NpcNameRow) -> Option<u8> {
+    if row.maxrange < 0 || row.attackrange < 0 {
+        return None;
+    }
+    let radius = i64::from(row.maxrange).checked_add(i64::from(row.attackrange).max(1))?;
+    u8::try_from(radius).ok()
+}
+
 fn compact_ranges(row: &NpcNameRow) -> Option<(u8, u8)> {
     if row.maxrange < 0 || row.attackrange < 0 || row.size <= 0 {
         return None;
     }
     let attackrange = i64::from(row.attackrange);
-    let radius = i64::from(row.maxrange).checked_add(attackrange.max(1))?;
+    let radius = npc_envelope_radius(row)?;
     let reach = (if row.ap_attack { attackrange } else { 1 })
         .checked_add(i64::from(row.size))?
         .checked_sub(1)?;
-    Some((u8::try_from(radius).ok()?, u8::try_from(reach).ok()?))
+    Some((radius, u8::try_from(reach).ok()?))
 }
 
 fn flight_ticks(attackrange: i32) -> Option<u8> {

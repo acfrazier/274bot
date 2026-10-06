@@ -32,6 +32,16 @@ pub enum Style {
     Unknown,
 }
 
+impl From<Style> for super::super::threats::StyleObs {
+    fn from(style: Style) -> Self {
+        match style {
+            Style::Melee => Self::Melee,
+            Style::Ranged => Self::Ranged,
+            Style::Unknown => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoisonState {
     Unknown { since: u16 },
@@ -594,7 +604,7 @@ impl PoisonMemory {
                 self.death_seen = false;
             }
             PoisonEvent::PoisonChat { tick } => {
-                if !self.session_invalid && !matches!(self.state, PoisonState::Poisoned { .. }) {
+                if !self.session_invalid {
                     self.state = PoisonState::Unknown { since: tick };
                 }
             }
