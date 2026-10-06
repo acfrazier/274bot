@@ -255,6 +255,18 @@ impl Provisioner {
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
         }
 
+        let active_recipe =
+            if let Some(need) = needs.acquire.as_ref().filter(|_| needs.blocked.is_none()) {
+                Some(plan.recipes.get(need.recipe.as_ref()).ok_or_else(|| {
+                    ActionError::Unavailable(Arc::from("compiled acquisition recipe missing"))
+                })?)
+            } else {
+                None
+            };
+        let safe_slots = safe_deposit_rows(inventory, &plan.base_spillover_keep) as i32;
+
+        // Optional floats can be deferred, so account for the active recipe
+        // before admitting them to the withdrawal plan.
         if plan.coin_float <= 0 {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
@@ -262,13 +274,36 @@ impl Provisioner {
                 if count_item(inventory, coin.item.id) >= coin.qty {
                     self.set_coin_drawn(true);
                 } else {
-                    needs.require(
-                        &coin.item,
-                        coin.qty,
-                        MissingKind::Optional,
-                        inventory,
-                        cx.bank,
-                    )?;
+                    let fits = !cx.bank.known() || {
+                        let incoming = incoming_slots(
+                            count_item(inventory, coin.item.id),
+                            coin.qty,
+                            coin.stackable,
+                            cx.bank.count(coin.item.id).unwrap_or(0),
+                        );
+                        let active_need =
+                            needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
+                        let already_planned = planned_required_slots(
+                            plan,
+                            &needs,
+                            inventory,
+                            active_need,
+                            active_recipe,
+                        );
+                        incoming
+                            <= capacity
+                                .saturating_add(safe_slots)
+                                .saturating_sub(already_planned)
+                    };
+                    if fits {
+                        needs.require(
+                            &coin.item,
+                            coin.qty,
+                            MissingKind::Optional,
+                            inventory,
+                            cx.bank,
+                        )?;
+                    }
                 }
             }
         }
@@ -282,25 +317,40 @@ impl Provisioner {
                 if row.qty <= 0 || count_item(inventory, row.item.id) >= row.qty {
                     self.set_carry_latch(row.latch_index);
                 } else {
-                    needs.require(
-                        &row.item,
-                        row.qty,
-                        MissingKind::Optional,
-                        inventory,
-                        cx.bank,
-                    )?;
+                    let fits = !cx.bank.known() || {
+                        let incoming = incoming_slots(
+                            count_item(inventory, row.item.id),
+                            row.qty,
+                            row.stackable,
+                            cx.bank.count(row.item.id).unwrap_or(0),
+                        );
+                        let active_need =
+                            needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
+                        let already_planned = planned_required_slots(
+                            plan,
+                            &needs,
+                            inventory,
+                            active_need,
+                            active_recipe,
+                        );
+                        incoming
+                            <= capacity
+                                .saturating_add(safe_slots)
+                                .saturating_sub(already_planned)
+                    };
+                    if fits {
+                        needs.require(
+                            &row.item,
+                            row.qty,
+                            MissingKind::Optional,
+                            inventory,
+                            cx.bank,
+                        )?;
+                    }
                 }
             }
         }
 
-        let active_recipe =
-            if let Some(need) = needs.acquire.as_ref().filter(|_| needs.blocked.is_none()) {
-                Some(plan.recipes.get(need.recipe.as_ref()).ok_or_else(|| {
-                    ActionError::Unavailable(Arc::from("compiled acquisition recipe missing"))
-                })?)
-            } else {
-                None
-            };
         if let Some(recipe) = active_recipe {
             for input in recipe.peak_items.iter() {
                 needs.require(
@@ -312,8 +362,6 @@ impl Provisioner {
                 )?;
             }
         }
-
-        let safe_slots = safe_deposit_rows(inventory, &plan.base_spillover_keep) as i32;
         for item in plan
             .items
             .iter()
@@ -324,12 +372,16 @@ impl Provisioner {
             })?;
             if cx.bank.known() {
                 let pack = count_item(inventory, item.id);
-                let take = target
-                    .saturating_sub(pack)
-                    .min(cx.bank.count(item.id).unwrap_or(0).max(0));
-                let incoming = slots_for_count(pack.saturating_add(take), item.stackable)
-                    .saturating_sub(slots_for_count(pack, item.stackable));
-                let immediate = planned_slots(plan, &needs, inventory, None, None, false, false);
+                let incoming = incoming_slots(
+                    pack,
+                    target,
+                    item.stackable,
+                    cx.bank.count(item.id).unwrap_or(0),
+                );
+                let immediate = {
+                    let active_need = needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
+                    planned_required_slots(plan, &needs, inventory, active_need, active_recipe)
+                };
                 if incoming
                     > capacity
                         .saturating_add(safe_slots)
@@ -366,33 +418,16 @@ impl Provisioner {
         }
         let active_need = needs.acquire.as_ref().filter(|_| needs.blocked.is_none());
 
-        let mut required_slots = if let (Some(need), Some(recipe)) = (active_need, active_recipe) {
-            planned_slots(
-                plan,
-                &needs,
-                inventory,
-                Some(need),
-                Some(recipe),
-                true,
-                false,
-            )
-            .max(planned_slots(
-                plan,
-                &needs,
-                inventory,
-                Some(need),
-                Some(recipe),
-                false,
-                true,
-            ))
-        } else {
-            planned_slots(plan, &needs, inventory, None, None, false, false)
-        };
+        let mut required_slots =
+            planned_required_slots(plan, &needs, inventory, active_need, active_recipe);
         if required_slots.saturating_sub(capacity) > safe_slots {
-            // Recipe peaks can include an unknown transformation. Only an
-            // immediate withdrawal can prove that preparation cannot fit;
-            // leave speculative acquisition pressure to the running family.
-            required_slots = planned_slots(plan, &needs, inventory, None, None, false, false);
+            // Keep an impossible speculative peak out of the fallback, but
+            // preserve immediate withdrawals and the active need's final slot.
+            let immediate = planned_slots(plan, &needs, inventory, None, None, false, false);
+            let active_need_slots = active_need.map_or(immediate, |need| {
+                planned_slots(plan, &needs, inventory, Some(need), None, false, true)
+            });
+            required_slots = immediate.max(active_need_slots);
         }
         let deficit = required_slots.saturating_sub(capacity);
         if deficit > 0 {
@@ -1020,6 +1055,12 @@ fn slots_for_count(count: i32, stackable: bool) -> i32 {
     }
 }
 
+fn incoming_slots(pack: i32, target: i32, stackable: bool, bank_count: i32) -> i32 {
+    let take = target.saturating_sub(pack).min(bank_count.max(0));
+    slots_for_count(pack.saturating_add(take), stackable)
+        .saturating_sub(slots_for_count(pack, stackable))
+}
+
 fn has_withdrawal(needs: &Needs, id: i32) -> bool {
     needs
         .withdrawals
@@ -1212,6 +1253,38 @@ fn planned_slots(
     }
     slots
 }
+
+fn planned_required_slots(
+    plan: &CompiledProvisioning,
+    needs: &Needs,
+    inventory: &[ItemView],
+    active_need: Option<&RecipeNeed>,
+    recipe: Option<&CompiledAcquireRecipe>,
+) -> i32 {
+    if let (Some(need), Some(recipe)) = (active_need, recipe) {
+        planned_slots(
+            plan,
+            needs,
+            inventory,
+            Some(need),
+            Some(recipe),
+            true,
+            false,
+        )
+        .max(planned_slots(
+            plan,
+            needs,
+            inventory,
+            Some(need),
+            Some(recipe),
+            false,
+            true,
+        ))
+    } else {
+        planned_slots(plan, needs, inventory, None, None, false, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
