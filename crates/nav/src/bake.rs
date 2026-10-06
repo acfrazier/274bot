@@ -49,8 +49,9 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// derivation; reach bits also depend on `paint.rs` (`bake_reach`) and
 /// `router.rs` (`step_ok`). Traveller and grid-search changes do not decide
 /// those bytes.
-pub const GENERATOR_SOURCES: [&str; 47] = [
+pub const GENERATOR_SOURCES: [&str; 48] = [
     "src/bake.rs",
+    "../api/src/line_of_sight.rs",
     "src/canlight.rs",
     "src/collision.rs",
     "src/map/services.rs",
@@ -329,6 +330,7 @@ struct PendingZone {
     zone: Zone,
     npc_id: i32,
     shape_bits: Option<u64>,
+    carve_visibility: bool,
 }
 
 fn derive_zone_table(
@@ -484,6 +486,15 @@ fn derive_zone_table(
             zone,
             npc_id: spawn.npc_id,
             shape_bits,
+            // A zero-wander hunter acquires from its spawn, even if it can
+            // subsequently pursue. Moving acquisition centres retain the
+            // conservative envelope; only fixed, LOS-checked ranged centres
+            // can prove a permanently occluded tile safe.
+            carve_visibility: ap
+                && definition.check_lineofsight
+                && (definition.stationary
+                    || definition.never_wanders
+                    || definition.wanderrange == 0),
         });
     }
     pending.sort_unstable_by_key(|row| {
@@ -503,11 +514,25 @@ fn derive_zone_table(
     let level_rule_count = npc_count - always_count;
     let mut zones = Vec::with_capacity(npc_count + crate::zones::curated::HAZARDS.len());
     let mut shapes = Vec::new();
+    let mut carves = Vec::new();
     for mut row in pending {
         if let Some(bits) = row.shape_bits {
             row.zone.shape = u16::try_from(shapes.len())
                 .map_err(|_| "zone shape count exceeds the packed limit".to_string())?;
             shapes.push(bits);
+        }
+        if row.carve_visibility
+            && !inputs.openable_doors.iter().any(|door| {
+                door.level == i32::from(row.zone.level)
+                    && door.x >= row.zone.min_x - 1
+                    && door.x <= row.zone.max_x + 1
+                    && door.z >= row.zone.min_z - 1
+                    && door.z <= row.zone.max_z + 1
+            })
+        {
+            // Closed openable doors are not permanent cover. Keep the
+            // conservative rectangle wherever such a door could affect LOS.
+            append_ranged_visibility_carves(collision, &row.zone, zones.len(), &mut carves)?;
         }
         zones.push(row.zone);
     }
@@ -567,7 +592,7 @@ fn derive_zone_table(
         zones,
         kinds,
         groups,
-        Vec::new(),
+        carves,
         shapes,
         collision.origin,
         u32::try_from(collision.width).map_err(|_| "zone grid width exceeds u32".to_string())?,
@@ -642,6 +667,66 @@ fn stationary_ranged_bounds(
         return Err("stationary hunter range intersection is empty".into());
     }
     Ok((min_x, min_z, max_x, max_z))
+}
+
+/// Keep the range-derived index bounds, subtracting only cells permanently
+/// hidden from the fixed acquisition centre. Reuse the shared collision ray;
+/// the engine's HuntIterator casts from the player to the NPC's SW tile.
+/// Horizontal runs keep the existing packed carve representation compact.
+fn append_ranged_visibility_carves(
+    collision: &WorldCollision,
+    zone: &Zone,
+    index: usize,
+    carves: &mut Vec<(u16, crate::router::AvoidRect)>,
+) -> Result<(), String> {
+    use api::line_of_sight::{has_line_of_sight_local, Footprint};
+
+    if collision.flags.is_none() {
+        return Err("ranged visibility carving requires raw baked collision flags".into());
+    }
+    let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
+    let level = i32::from(zone.level);
+    let npc = Footprint {
+        lx: zone.spawn_x,
+        lz: zone.spawn_z,
+        size: 1,
+    };
+    let visible = |x, z| {
+        has_line_of_sight_local(
+            &|x, z| Some(collision.flag(x, z, level) as i32),
+            Footprint {
+                lx: x,
+                lz: z,
+                size: 1,
+            },
+            npc,
+        )
+    };
+    for z in zone.min_z..=zone.max_z {
+        let mut x = zone.min_x;
+        while x <= zone.max_x {
+            if visible(x, z) {
+                x += 1;
+                continue;
+            }
+            let min_x = x;
+            while x < zone.max_x && !visible(x + 1, z) {
+                x += 1;
+            }
+            carves.push((
+                index,
+                crate::router::AvoidRect {
+                    min_x,
+                    max_x: x,
+                    min_z: z,
+                    max_z: z,
+                    level: Some(level),
+                },
+            ));
+            x += 1;
+        }
+    }
+    Ok(())
 }
 
 fn stationary_melee_shape(
@@ -935,12 +1020,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let level_rule_count = derived_zones.level_rule_count;
     let shaped_count = derived_zones.shaped_count;
     let total_npc_spawns = derived_zones.total_npc_spawns;
+    let carve_count = derived_zones.table.carves().len();
     graph.zones = Some(derived_zones.table);
     notes.push(format!(
         "zones: {zone_count} ({npc_count} NPC, {hazard_count} hazard), \
          {npc_kind_count} NPC kinds, {group_count} groups, {shaped_count} stationary melee shapes; \
          {total_npc_spawns} map NPC spawns counted; {always_count} Always / {level_rule_count} LevelRule; \
-         0 carves"
+         {carve_count} carves"
     ));
     if audit.converted != 0 {
         notes.push(format!(
