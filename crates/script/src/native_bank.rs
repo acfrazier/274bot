@@ -1718,7 +1718,7 @@ impl NativeMachine for Close {
 mod tests {
     use super::*;
     use crate::native::{HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::{with_tick, with_tick_reach};
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
 
     fn catalog_bank(name: &str) -> NamedBank {
@@ -1899,6 +1899,8 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        // The shared chooser trusts a flood only from the live player tile.
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![
             bank_object_loc(2694, "Shantay chest", "Bank", bank.tile, 0),
             bank_object_loc(2693, "Shantay chest", "Open", loc_tile, 1),
@@ -1944,6 +1946,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![bank_object_loc(
             2693,
             "Shantay chest",
@@ -2027,6 +2030,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![
             bank_object_loc(4001, "Closed chest", "Open", loc_tile, 1),
             bank_object_loc(4001, "Closed chest", "Open", other_loc_tile, 1),
@@ -2090,6 +2094,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![bank_object_loc(
             2693,
             "Shantay chest",
@@ -2165,6 +2170,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![bank_object_loc(
             2693,
             "Shantay chest",
@@ -2222,6 +2228,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
         snapshot.seed_locs(vec![bank_object_loc(
             4001,
             "Closed chest",
