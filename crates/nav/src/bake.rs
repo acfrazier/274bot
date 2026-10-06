@@ -346,6 +346,52 @@ struct MobileReach {
     hunt_range: i32,
     /// The hunt mode requires `check_vis=lineofsight`.
     line_of_sight: bool,
+    /// The collision rule the engine steps this NPC under.
+    strategy: StepStrategy,
+}
+
+/// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
+/// tested per tile by `CollisionStrategy.canMove`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepStrategy {
+    /// `normal` and `passthru`, and the stand-in for `indoors`/`outdoors`:
+    /// those add a roof test to the same mask test, and the bake carries no
+    /// roof flag, so NORMAL reaches a superset of their tiles.
+    Normal,
+    /// `blocked`: only onto blocked ground (`FLOOR`), still stopped by walls,
+    /// scenery and ground decor.
+    Blocked,
+    /// `blocked+normal` (`CollisionType.LINE_OF_SIGHT`): only projectile-
+    /// blocking walls and scenery stop it; ground and ordinary scenery don't.
+    LineOfSight,
+}
+
+impl StepStrategy {
+    fn of(restrict: crate::map::services::MoveRestrict) -> Option<Self> {
+        use crate::map::services::MoveRestrict;
+        match restrict {
+            MoveRestrict::Normal
+            | MoveRestrict::Passthru
+            | MoveRestrict::Indoors
+            | MoveRestrict::Outdoors => Some(Self::Normal),
+            MoveRestrict::Blocked => Some(Self::Blocked),
+            MoveRestrict::BlockedNormal => Some(Self::LineOfSight),
+            MoveRestrict::Nomove => None,
+        }
+    }
+
+    /// `CollisionStrategy.canMove(collision, tileFlag, blockFlag)`.
+    fn can_move(self, tile: u32, block: u32) -> bool {
+        const FLOOR: u32 = 0x20_0000;
+        // Walls (`0xff`) and scenery (`0x100`); `<< 9` turns each into its
+        // projectile-blocker bit.
+        const LINE_OF_SIGHT_MOVEMENT: u32 = 0x1ff;
+        match self {
+            Self::Normal => tile & block == 0,
+            Self::Blocked => tile & block & !FLOOR == 0 && tile & FLOOR != 0,
+            Self::LineOfSight => tile & ((block & LINE_OF_SIGHT_MOVEMENT) << 9) == 0,
+        }
+    }
 }
 
 fn derive_zone_table(
@@ -459,7 +505,7 @@ fn derive_zone_table(
                 definition.id
             ));
         }
-        let (zone, shape_bits, mobile_reach) = if definition.stationary && !ap {
+        let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
             let width = u8::try_from(size)
                 .ok()
                 .filter(|size| *size <= 6)
@@ -476,7 +522,7 @@ fn derive_zone_table(
                 Some(bits),
                 None,
             )
-        } else if definition.stationary && ap {
+        } else if definition.stationary() && ap {
             let (min_x, min_z, max_x, max_z) =
                 stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
                     .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
@@ -509,11 +555,15 @@ fn derive_zone_table(
                 .checked_add(size)
                 .ok_or_else(|| format!("hunter NPC {} chase radius overflows", definition.id))?
                 .max(wander);
+            let strategy = StepStrategy::of(definition.move_restrict).ok_or_else(|| {
+                format!("hunter NPC {} walks but has no step rule", definition.id)
+            })?;
             let reach = MobileReach {
                 size,
                 move_radius,
                 hunt_range: definition.huntrange,
                 line_of_sight: definition.check_lineofsight,
+                strategy,
             };
             (Zone::npc(tile, radius, class, cap, kind), None, Some(reach))
         };
@@ -522,7 +572,7 @@ fn derive_zone_table(
         // hunters around their spawn tile.
         let carve_visibility = ap
             && definition.check_lineofsight
-            && (definition.stationary || definition.wanderrange == 0);
+            && (definition.stationary() || definition.wanderrange == 0);
         pending.push(PendingZone {
             zone,
             npc_id: spawn.npc_id,
@@ -804,9 +854,9 @@ fn openable_door_within(
 }
 
 /// Engine `routefinder/flags.ts` movement masks. The baked raw flags share the
-/// engine's wall (`0xff`), loc (`0x100`), ground-decor (`0x40000`) and ground
-/// (`0x200000`) bits; dynamic NPC/player occupancy is never baked, so it is
-/// treated as open.
+/// engine's wall (`0xff`), loc (`0x100`), projectile-blocker (`0x3fe00`),
+/// ground-decor (`0x40000`) and ground (`0x200000`) bits; dynamic NPC/player
+/// occupancy is never baked, so it is treated as open.
 mod npc_block {
     pub const SOUTH: u32 = 0x24_0102;
     pub const NORTH: u32 = 0x24_0120;
@@ -825,17 +875,18 @@ mod npc_block {
 /// Whether the engine moves a `size`×`size` NPC whose south-west tile is
 /// `(x, z)` one step by `(dx, dz)`: `PathingEntity.takeStep` takes a diagonal
 /// only for width-1 NPCs and otherwise tries the E/W then the N/S component,
-/// each through `StepValidator.canTravel` under `CollisionType.NORMAL` with no
-/// dynamic extra flag.
+/// each through `StepValidator.canTravel` under the NPC's own collision
+/// `strategy` with no dynamic extra flag.
 fn npc_step_ok(
     flag: &impl Fn(i32, i32) -> u32,
     x: i32,
     z: i32,
     (dx, dz): (i32, i32),
     size: i32,
+    strategy: StepStrategy,
 ) -> bool {
     use npc_block::*;
-    let open = |x: i32, z: i32, mask: u32| flag(x, z) & mask == 0;
+    let open = |x: i32, z: i32, mask: u32| strategy.can_move(flag(x, z), mask);
     let s = size;
     match (dx, dz) {
         (0, -1) if s == 1 => open(x, z - 1, SOUTH),
@@ -881,9 +932,10 @@ fn npc_step_ok(
 
 /// Tiles of a moving hunter's zone rectangle from which the engine could
 /// acquire a player: the NPC's south-west tile reaches a cell by engine steps
-/// from its spawn without leaving `move_radius`, and the player stands within
-/// `huntrange` of it (plus, for `lineofsight` hunt modes, the player-to-NPC
-/// ray the engine's `HuntIterator` casts). Row-major over the zone bounds.
+/// (under its own collision strategy) from its spawn without leaving
+/// `move_radius`, and the player stands within `huntrange` of it (plus, for
+/// `lineofsight` hunt modes, the player-to-NPC ray the engine's `HuntIterator`
+/// casts). Row-major over the zone bounds.
 fn mobile_acquisition(collision: &WorldCollision, zone: &Zone, reach: MobileReach) -> Vec<bool> {
     use api::line_of_sight::{has_line_of_sight_local, Footprint};
 
@@ -914,7 +966,7 @@ fn mobile_acquisition(collision: &WorldCollision, zone: &Zone, reach: MobileReac
             let Some(next) = cell(x + dx, z + dz) else {
                 continue;
             };
-            if occupied[next] || !npc_step_ok(&flag, x, z, (dx, dz), reach.size) {
+            if occupied[next] || !npc_step_ok(&flag, x, z, (dx, dz), reach.size, reach.strategy) {
                 continue;
             }
             occupied[next] = true;

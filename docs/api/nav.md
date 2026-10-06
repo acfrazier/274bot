@@ -102,7 +102,14 @@ where it clips their eight-tile hunt boxes, and needs no `cross` grant.
 Every other moving hunter keeps its range-derived rectangle as bounds, and the
 bake carves every cell where it could never acquire a player. The NPC's south-west tile floods
 from its spawn by the engine's own steps: `StepValidator.canTravel` masks, with
-diagonal steps only for size-1 NPCs, as `PathingEntity.takeStep` does. The
+diagonal steps only for size-1 NPCs, as `PathingEntity.takeStep` does. Each step
+uses the NPC's own `moverestrict` strategy (`getCollisionStrategy`):
+`blocked+normal` steps under LINE_OF_SIGHT, so only projectile-blocking walls
+and scenery stop it. That lets the Mort Myre ghasts cross bog that a NORMAL
+walker cannot. `blocked` steps only onto blocked ground. `indoors` and
+`outdoors` flood as NORMAL, since the bake has no roof flag, so they reach a
+superset of the engine's tiles. An unknown `moverestrict` on a hunter fails the
+bake. The
 flood is bounded by the larger of `wanderrange` and the farthest a valid chase
 can carry it (`maxrange` plus the tether reach plus the NPC's size). A
 non-wandering NPC stays wherever a chase ended, so it uses the same bound. A
