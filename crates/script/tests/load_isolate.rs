@@ -2910,6 +2910,104 @@ export default class T extends TaskBot {
     iso.join();
 }
 
+// A published bank-open snapshot completes its compat Rust machine without
+// advancing the observed tick or replaying lifecycle work.
+#[test]
+fn snapshot_wake_settles_bank_open_machine_without_advancing_tick() {
+    let iso = spawn_ready(
+        r#"
+import { Bank } from '../../api/bank/Bank.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+BotHost.addTickListener(() => {
+    globalThis.__listeners = (globalThis.__listeners || 0) + 1;
+});
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (globalThis.__loops !== 1) return;
+        Execution.delayTicks(1).then(() => { globalThis.__delayed = Game.tick(); });
+        globalThis.__opened = await Bank.openNearest('Bank booth', 'Use-quickly');
+        globalThis.__openedAt = Game.tick();
+    }
+    onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    let actions = ["Use-quickly".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 101,
+        z: 100,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }];
+    let mut snap = ready_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.locs = &locs;
+    snap.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
+    post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::OpenBooth { id: 2213, .. }]
+    ));
+    assert_eq!(iso.probe("globalThis.__opened ?? null").unwrap(), serde_json::Value::Null);
+    let loops = iso.probe("globalThis.__loops").unwrap();
+    let paints = iso.probe("globalThis.__paints ?? 0").unwrap();
+    let listeners = iso.probe("globalThis.__listeners").unwrap();
+
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_snapshot_change_at(1, 0);
+
+    assert_eq!(iso.probe("globalThis.__opened").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__openedAt").unwrap(), 1);
+    assert_eq!(iso.probe("Game.tick()").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), loops);
+    assert_eq!(iso.probe("globalThis.__paints ?? 0").unwrap(), paints);
+    assert_eq!(iso.probe("globalThis.__listeners").unwrap(), listeners);
+    assert_eq!(
+        iso.probe("globalThis.__delayed ?? null").unwrap(),
+        serde_json::Value::Null,
+        "delayTicks(1) must retain its requested next game tick"
+    );
+
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("globalThis.__delayed").unwrap(), 2);
+    assert_eq!(iso.probe("globalThis.__listeners").unwrap(), 2);
+    iso.join();
+}
+
 #[test]
 fn snapshot_wake_settles_bank_wait_without_advancing_tick_or_loop() {
     let iso = spawn_ready(
