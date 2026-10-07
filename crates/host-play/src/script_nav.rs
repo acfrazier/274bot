@@ -2330,7 +2330,7 @@ impl ScriptRouteRequest {
         RouteOutcome::NoPath
     }
 
-    fn calculate_admitted(&self) -> (crate::admission::RouteAdmission, Vec<WorldTile>) {
+    pub(crate) fn calculate_admitted(&self) -> (crate::admission::RouteAdmission, Vec<WorldTile>) {
         let targets = self.targets();
         let result = crate::admission::route(
             &self.world,
