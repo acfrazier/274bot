@@ -1400,3 +1400,330 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
     assert_eq!(chosen(3413, 3488), step("douse-vampire-coffin"));
     assert_eq!(chosen(3414, 3487), step("douse-vampire-coffin"));
 }
+
+/// PORT-S6-DRAFTS-FIX F1: the Varrock stand spawns are `giantrat1` (id 87),
+/// not `giantrat` (id 86), so the rat hunt must target both configs.
+/// Fails on `45aec8ec3` where the target is the single `"giantrat"`.
+#[test]
+fn druid_rat_hunt_targets_both_giantrat_configs() {
+    let _home = script::IsolatedEnv::enter("path-schema-druid-rats");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("druid.json"));
+    let step = find_step_mut(&mut value, "hunt-rat-for-meat").expect("hunt step");
+    let npc = step
+        .pointer("/args/target/npc")
+        .expect("hunt target npc")
+        .clone();
+    let names: Vec<String> = match npc {
+        Value::String(one) => vec![one],
+        Value::Array(many) => many
+            .iter()
+            .map(|name| name.as_str().expect("npc name").to_string())
+            .collect(),
+        other => panic!("unexpected npc arg shape: {other}"),
+    };
+    assert!(
+        names.contains(&"giantrat".to_string()),
+        "keeps the base giantrat config: {names:?}"
+    );
+    assert!(
+        names.contains(&"giantrat1".to_string()),
+        "covers the stand spawns (id 87): {names:?}"
+    );
+    compile_value(value, &selected, &quests).expect("druid compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F3: `pick-snake` must not advance the journal: with only
+/// the unidentified herb held the content journal prints no matching line, so
+/// an `advances: true` read parks the run. Fails on `45aec8ec3` (`true`).
+#[test]
+fn junglepotion_pick_snake_does_not_advance() {
+    let _home = script::IsolatedEnv::enter("path-schema-jungle-snake");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("junglepotion.json"));
+    let step = find_step_mut(&mut value, "pick-snake").expect("pick-snake");
+    assert_eq!(
+        step.get("advances"),
+        Some(&serde_json::json!(false)),
+        "pick-snake must settle without a journal re-read"
+    );
+    compile_value(value, &selected, &quests).expect("junglepotion compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F6: handing Fluffs to Gertrude advances the quest varp,
+/// so the step must re-read the journal instead of replaying stage 4.
+/// Fails on `45aec8ec3` (`false`).
+#[test]
+fn fluffs_kitten_handoff_advances() {
+    let _home = script::IsolatedEnv::enter("path-schema-fluffs-kitten");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("fluffs.json"));
+    let step = find_step_mut(&mut value, "give-fluffs-her-kitten").expect("kitten handoff");
+    assert_eq!(
+        step.get("advances"),
+        Some(&serde_json::json!(true)),
+        "give-fluffs-her-kitten changes progress and must advance"
+    );
+    compile_value(value, &selected, &quests).expect("fluffs compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F5: the Brimhaven <-> Ardougne boat costs 30 coins each
+/// way in content (`customs_officer.rs2:80-82` out, `captain_barnaby.rs2:2`
+/// via `karamja_sailor_dialogue` back), so the non-`owns_inventory` Path must
+/// float at least the 60-coin round trip. Fails on `45aec8ec3` (`0`).
+#[test]
+fn totem_coin_float_covers_the_round_trip_fare() {
+    let _home = script::IsolatedEnv::enter("path-schema-totem-fare");
+    let (selected, quests) = selected_and_quests();
+    let value = read_path(&paths_dir().join("totem.json"));
+    let float = value
+        .pointer("/quest/coin_float")
+        .and_then(serde_json::Value::as_i64)
+        .expect("quest.coin_float");
+    assert!(
+        float >= 60,
+        "totem coin_float {float} must cover the 30+30 round trip"
+    );
+    compile_value(value, &selected, &quests).expect("totem compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F2 (real pack): the yard is enclosed and nav does not
+/// model the broken fence as a transport, so the stage-2/3 approach walks
+/// must end outside it at (3305,3492); the old (3305,3496) target is NoPath
+/// from outside even with zones exempt.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn fluffs_yard_entry_walks_end_outside_the_fence() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions};
+    use nav::world::NavWorld;
+    use nav::zones::ZoneExempt;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-fluffs-fence-pack");
+    let mut value = read_path(&paths_dir().join("fluffs.json"));
+    for id in ["walk-to-yard-entry", "walk-to-yard-entry-for-sardine"] {
+        let step = find_step_mut(&mut value, id).expect("yard walk");
+        let tile = step.pointer("/args/tile").expect("walk tile").clone();
+        assert_eq!(
+            tile,
+            serde_json::json!([3305, 3492, 0]),
+            "{id} ends outside"
+        );
+    }
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let from = WorldTile {
+        x: 3255,
+        z: 3288,
+        level: 0,
+    };
+    let outside = WorldTile {
+        x: 3305,
+        z: 3492,
+        level: 0,
+    };
+    let inside = WorldTile {
+        x: 3305,
+        z: 3496,
+        level: 0,
+    };
+    let state = WorldState::empty().with_map_members(true);
+    let free_opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        outside,
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap_or_else(|error| panic!("cow -> outside fence must route: {error:?}"));
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            inside,
+            free_opts,
+            &state
+        )
+        .is_err(),
+        "the old yard-side target stays unreachable even exempt"
+    );
+}
+
+/// PORT-S6-DRAFTS-FIX F4 (real pack): the dungeon and herb legs cross named
+/// danger zones, so the grant-carrying walks must resolve and route at low
+/// combat where the strict search refuses.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn danger_cross_grants_route_low_combat_legs() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions};
+    use nav::world::NavWorld;
+    use nav::zones::ZoneExempt;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
+    let mut druid = read_path(&paths_dir().join("druid.json"));
+    for id in ["walk-to-prison-door", "walk-to-dungeon-exit"] {
+        let step = find_step_mut(&mut druid, id).expect("dungeon walk");
+        let cross = step
+            .pointer("/args/cross")
+            .expect("cross list")
+            .as_array()
+            .expect("cross array");
+        assert!(cross.len() <= 8, "{id} fits the 8-grant limit");
+        for zone in [
+            "skeleton_unarmed@2882,9826,0",
+            "skeleton_unarmed@2885,9819,0",
+            "skeleton_armed@2884,9836,0",
+        ] {
+            assert!(
+                cross.iter().any(|entry| entry.as_str() == Some(zone)),
+                "{id} grants {zone}"
+            );
+        }
+    }
+    let mut jungle = read_path(&paths_dir().join("junglepotion.json"));
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "walk-to-snake-weed",
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "jungle_spider@2780,3029,0",
+                "tribesman@2771,3014,0",
+            ],
+        ),
+        (
+            "walk-to-volencia-moss",
+            &["snake@2836,3043,0", "snake@2847,3042,0"],
+        ),
+        (
+            "walk-to-rogues-purse",
+            &["jogre@2826,9518,0", "jogre@2848,9483,0"],
+        ),
+    ];
+    for (id, zones) in expected {
+        let step = find_step_mut(&mut jungle, id).expect("herb walk");
+        let cross = step
+            .pointer("/args/cross")
+            .expect("cross list")
+            .as_array()
+            .expect("cross array");
+        for zone in *zones {
+            assert!(
+                cross.iter().any(|entry| entry.as_str() == Some(*zone)),
+                "{id} grants {zone}"
+            );
+        }
+    }
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let table = world.graph.zones.as_ref().expect("baked zones");
+    let tile = |x, z| WorldTile { x, z, level: 0 };
+    // (from, to, combat, cross-list): the strict search refuses each of the
+    // zone-gated legs at low combat; the named grants restore them.
+    let legs = &[
+        (
+            (2884, 9797),
+            (2888, 9831),
+            20,
+            &[
+                "skeleton_unarmed@2882,9826,0",
+                "skeleton_unarmed@2885,9819,0",
+                "skeleton_unarmed@2885,9823,0",
+                "skeleton_unarmed@2886,9812,0",
+                "skeleton_unarmed@2886,9816,0",
+                "skeleton_unarmed@2887,9821,0",
+                "skeleton_armed@2884,9836,0",
+                "poisonspider@2876,9806,0",
+            ] as &[&str],
+        ),
+        (
+            (2809, 3086),
+            (2761, 3015),
+            3,
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "hobgoblin_unarmed@2791,3013,0",
+                "hobgoblin_unarmed@2794,3013,0",
+                "jungle_spider@2780,3029,0",
+                "jungle_spider@2780,3031,0",
+                "tribesman@2771,3014,0",
+                "tribesman@2773,3017,0",
+                "tribesman@2777,3068,0",
+            ] as &[&str],
+        ),
+        (
+            (2830, 9521),
+            (2850, 9477),
+            3,
+            &[
+                "jogre@2826,9518,0",
+                "jogre@2834,9499,0",
+                "jogre@2834,9513,0",
+                "jogre@2836,9522,0",
+                "jogre@2838,9490,0",
+                "jogre@2848,9483,0",
+            ] as &[&str],
+        ),
+    ];
+    for ((fx, fz), (tx, tz), cl, cross) in legs {
+        let mut state = WorldState::empty().with_map_members(true);
+        state.combat_level = Some(*cl);
+        assert!(
+            find_with(
+                &world.collision,
+                &world.graph,
+                tile(*fx, *fz),
+                tile(*tx, *tz),
+                FindOptions::default(),
+                &state,
+            )
+            .is_err(),
+            "strict refuses ({fx},{fz}) -> ({tx},{tz}) at combat {cl}"
+        );
+        let keys: Vec<_> = cross
+            .iter()
+            .map(|name| table.resolve(name).expect("known zone"))
+            .collect();
+        let named_opts = FindOptions {
+            zones: ZoneExempt::named(&keys).expect("named grants"),
+            ..FindOptions::default()
+        };
+        find_with(
+            &world.collision,
+            &world.graph,
+            tile(*fx, *fz),
+            tile(*tx, *tz),
+            named_opts,
+            &state,
+        )
+        .unwrap_or_else(|error| {
+            panic!("named grants route ({fx},{fz}) -> ({tx},{tz}) at {cl}: {error:?}")
+        });
+    }
+}
