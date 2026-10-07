@@ -6477,3 +6477,181 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
         (origin, 1, Some(footprint.id))
     );
 }
+
+/// Runs one acquisition the way the runner does (begin, then poll on the
+/// same tick) inside the slot's own frame context, so the slot's per-tick
+/// observation applies.
+struct AcquisitionScript {
+    plan: Arc<dyn StepPlan>,
+    run: Option<Box<dyn StepRun>>,
+}
+
+impl crate::native::Script for AcquisitionScript {
+    fn tick(
+        &mut self,
+        t: &mut NativeTick<'_>,
+    ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+        with_step(t, |cx| {
+            let run = match self.run.as_mut() {
+                Some(run) => run,
+                None => self.run.insert(self.plan.begin(cx).unwrap()),
+            };
+            assert!(run.poll(cx).is_pending(), "the acquisition stays open");
+        });
+        Ok(crate::native::ScriptFlow::Continue)
+    }
+}
+
+/// The shipped Cook `acquire:flour` recipe from `walk-mill-base` on.
+fn mill_descent_slot() -> crate::slot::SlotScript {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let document = crate::quester::compile::decode_cook().unwrap();
+    let path =
+        crate::quester::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let recipe = &path.provisioning.recipes["acquire:flour"];
+    let from = recipe
+        .steps
+        .iter()
+        .position(|step| step.id.0.as_ref() == "walk-mill-base")
+        .unwrap();
+    assert_eq!(recipe.steps[from + 1].id.0.as_ref(), "empty-bin");
+    let mut slot = crate::slot::SlotScript::new();
+    slot.bind_incarnation(91);
+    slot.start_test_script(
+        Box::new(AcquisitionScript {
+            plan: Arc::new(AcquirePlan {
+                recipe: Arc::from("acquire:flour"),
+                steps: Arc::from(&recipe.steps[from..from + 2]),
+                ..AcquirePlan::default()
+            }),
+            run: None,
+        }),
+        Some(data),
+    )
+    .unwrap();
+    slot
+}
+
+/// A frame with the player at `here` and the flour bin showing loc `bin`
+/// (1781 `millbase`, 1782 `millbase_flour`; `all.loc` 10033-10047).
+fn mill_frame(here: WorldTile, bin: i32) -> GameSnapshot {
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(here));
+    snapshot.seed_locs(vec![LocView {
+        tile: WorldTile {
+            x: 3166,
+            z: 3307,
+            level: 0,
+        },
+        distance: 1,
+        width: 2,
+        length: 2,
+        footprint_width: 2,
+        footprint_length: 2,
+        ..loc(bin, "Flour bin", "Empty")
+    }]);
+    snapshot
+}
+
+fn slot_tick(slot: &mut crate::slot::SlotScript, snapshot: &GameSnapshot, tick: u64) {
+    slot.on_game_tick(&mut crate::ScriptCtx {
+        driver: &mut crate::ctx::test_support::NullDriver::default(),
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+}
+
+/// The walk the slot queued this tick, as the host takes it.
+fn take_slot_walk(slot: &mut crate::slot::SlotScript) -> crate::native::HostAuthority {
+    let action = slot.take_native_action().expect("the walk is queued");
+    assert!(matches!(action.effect, HostEffect::Walk(_)));
+    assert!(slot.take_native_action().is_none());
+    action.authority()
+}
+
+/// Answer the walk as the host does when the player arrives.
+fn arrive_slot_walk(
+    slot: &mut crate::slot::SlotScript,
+    authority: &crate::native::HostAuthority,
+    tick: u64,
+) {
+    slot.complete_native_walk(
+        authority,
+        crate::native::WalkReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+        },
+    );
+}
+
+/// The loc ids of every loc op the slot queued this tick.
+fn slot_loc_ops(slot: &mut crate::slot::SlotScript) -> Vec<Option<i32>> {
+    std::iter::from_fn(|| slot.take_native_action())
+        .filter_map(|action| match action.effect {
+            HostEffect::Interaction(InteractReq::Loc { id, .. }) => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Cook live replays (REVIEW-TICK-FIX-ACTIONS F1): `walk-mill-base` arrives
+/// down the ladder and the same-tick handoff emptied loc 1781, the bin as
+/// the client still showed it, although the hopper had already changed it to
+/// 1782 (`windmills.rs2:117-124`); the server rejects the absent id
+/// (`OpLocHandler.ts:30-35`) and the retry came 28 ticks later. The new
+/// level's loc changes follow the PLAYER_INFO that moved the player, so the
+/// bin is chosen on the next tick, from its current id.
+#[test]
+fn level_change_arrival_hands_over_to_the_bin_on_the_next_tick() {
+    let mut slot = mill_descent_slot();
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    slot_tick(&mut slot, &mill_frame(ladder, 1781), 10);
+    let walk = take_slot_walk(&mut slot);
+    arrive_slot_walk(&mut slot, &walk, 11);
+    let below = WorldTile { level: 0, ..ladder };
+    slot_tick(&mut slot, &mill_frame(below, 1781), 11);
+    assert_eq!(
+        slot_loc_ops(&mut slot),
+        Vec::<Option<i32>>::new(),
+        "the arrival tick's frame can still show the old bin"
+    );
+    slot_tick(&mut slot, &mill_frame(below, 1782), 12);
+    assert_eq!(slot_loc_ops(&mut slot), vec![Some(1782)]);
+}
+
+/// The guard is the scene entry, not every arrival: a walk on one level
+/// still hands over on its arrival tick.
+#[test]
+fn same_level_arrival_hands_over_to_the_bin_on_its_arrival_tick() {
+    let mut slot = mill_descent_slot();
+    slot_tick(&mut slot, &mill_frame(tile(3173, 3306), 1782), 10);
+    let walk = take_slot_walk(&mut slot);
+    for (tick, x) in [(11, 3171), (12, 3169)] {
+        slot_tick(&mut slot, &mill_frame(tile(x, 3306), 1782), tick);
+        assert_eq!(slot_loc_ops(&mut slot), Vec::<Option<i32>>::new());
+    }
+    arrive_slot_walk(&mut slot, &walk, 13);
+    slot_tick(&mut slot, &mill_frame(tile(3167, 3306), 1782), 13);
+    assert_eq!(slot_loc_ops(&mut slot), vec![Some(1782)]);
+}

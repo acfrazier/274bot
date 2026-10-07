@@ -294,6 +294,52 @@ pub(crate) struct TickBudget {
     tick: Option<u64>,
     transitions: u8,
     pub(super) events: u8,
+    /// The scene the last observed frame showed the local player in; `None`
+    /// before the slot observed any frame (a run that starts in a scene has
+    /// not just entered it).
+    scene: Option<Option<SceneKey>>,
+    /// This observed tick is the first to show `scene`.
+    entered_scene: bool,
+}
+
+/// The engine's unit of loc delivery around the local player: the build-area
+/// origin, the level and the 8x8 zone (`BuildArea.ts:31-55` tracks zones per
+/// level around the player; `NetworkPlayer.ts:294-315` sends each newly
+/// tracked zone's reset and current loc changes).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SceneKey {
+    origin: Option<(i32, i32)>,
+    level: i32,
+    zone_x: i32,
+    zone_z: i32,
+}
+
+impl SceneKey {
+    fn observe(snapshot: Option<&api::snapshot::GameSnapshot>) -> Option<Self> {
+        let snapshot = snapshot?;
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return None;
+        }
+        let tile = snapshot.local_player()?.player.network;
+        Some(Self {
+            origin: snapshot.base(),
+            level: tile.level,
+            zone_x: tile.x >> 3,
+            zone_z: tile.z >> 3,
+        })
+    }
+
+    /// Walking or running moves at most two tiles a tick, so the player
+    /// crosses at most one zone edge and lands in a zone the engine already
+    /// tracked (it tracks the 7x7 zones around the player). Any other move
+    /// (a level change, a rebuilt build area, a teleport) lands among zones
+    /// whose loc state is still in flight.
+    fn continues(self, next: Self) -> bool {
+        self.origin == next.origin
+            && self.level == next.level
+            && (self.zone_x - next.zone_x).abs() <= 1
+            && (self.zone_z - next.zone_z).abs() <= 1
+    }
 }
 
 impl TickBudget {
@@ -302,7 +348,32 @@ impl TickBudget {
             self.tick = Some(tick);
             self.transitions = 0;
             self.events = 0;
+            self.entered_scene = false;
         }
+    }
+
+    /// One host frame: replenish on a new tick, and mark the tick that first
+    /// shows the player in a new scene.
+    pub fn observe_frame(&mut self, tick: u64, snapshot: Option<&api::snapshot::GameSnapshot>) {
+        self.observe(tick);
+        let scene = SceneKey::observe(snapshot);
+        if let Some(before) = self.scene.replace(scene) {
+            if before != scene
+                && !matches!((before, scene), (Some(before), Some(now)) if before.continues(now))
+            {
+                self.entered_scene = true;
+            }
+        }
+    }
+
+    /// This observed tick is the first to show the player in this scene. The
+    /// engine writes the PLAYER_INFO that moves the player before the zone
+    /// resets and loc changes of the zones it now tracks (`World.ts:1108-1114`,
+    /// `Zone.ts:157-189`), and the client reads at most five packets a frame
+    /// (`client.rs:12497-12501`), so this tick's locs can still be the old
+    /// ones. The next observed tick's PLAYER_INFO arrives after all of them.
+    pub fn entered_scene(&self) -> bool {
+        self.entered_scene
     }
 
     pub fn transition(&mut self) -> bool {
@@ -606,6 +677,61 @@ mod tests {
         budget.observe(8);
         assert!(budget.batch(), "the next observed tick starts uncharged");
         assert_eq!(budget.events, 5);
+    }
+
+    fn scene_frame(level: i32, x: i32, z: i32, origin: (i32, i32)) -> api::snapshot::GameSnapshot {
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: origin.0,
+            map_base_z: origin.1,
+            ..Default::default()
+        });
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile { x, z, level },
+        ));
+        snapshot
+    }
+
+    #[test]
+    fn only_a_level_origin_or_teleport_change_enters_a_scene_for_its_tick() {
+        let origin = (3112, 3256);
+        let mut budget = TickBudget::default();
+        budget.observe_frame(1, Some(&scene_frame(1, 3165, 3307, origin)));
+        assert!(
+            !budget.entered_scene(),
+            "a run that starts in a scene has not just entered it"
+        );
+        budget.observe_frame(2, Some(&scene_frame(1, 3165, 3307, origin)));
+        assert!(!budget.entered_scene());
+        // A walking step across one zone edge stays in tracked zones.
+        budget.observe_frame(3, Some(&scene_frame(1, 3168, 3311, origin)));
+        assert!(!budget.entered_scene());
+
+        // Down the ladder: the new level's loc state follows PLAYER_INFO.
+        budget.observe_frame(4, Some(&scene_frame(0, 3168, 3311, origin)));
+        assert!(budget.entered_scene());
+        budget.observe_frame(4, Some(&scene_frame(0, 3168, 3311, origin)));
+        assert!(
+            budget.entered_scene(),
+            "a same-tick re-observation keeps the entry"
+        );
+        budget.observe_frame(5, Some(&scene_frame(0, 3168, 3311, origin)));
+        assert!(!budget.entered_scene(), "the next tick holds the new locs");
+
+        // A same-level jump of more than one zone is a teleport.
+        budget.observe_frame(6, Some(&scene_frame(0, 3184, 3311, origin)));
+        assert!(budget.entered_scene());
+        // A rebuilt build area resets every tracked zone.
+        budget.observe_frame(7, Some(&scene_frame(0, 3184, 3311, (3120, 3256))));
+        assert!(budget.entered_scene());
+        budget.observe_frame(8, None);
+        assert!(budget.entered_scene(), "leaving the scene is a change");
+        budget.observe_frame(9, None);
+        assert!(!budget.entered_scene());
+        // A relog's first in-game frame enters its scene.
+        budget.observe_frame(10, Some(&scene_frame(0, 3184, 3311, origin)));
+        assert!(budget.entered_scene());
     }
 
     #[test]

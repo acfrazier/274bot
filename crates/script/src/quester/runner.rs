@@ -2373,14 +2373,15 @@ impl Quester {
                 // Select on the snapshot that proved the settle instead of a
                 // tick later. Anything the next tick's prologue would do first
                 // (park, prayer cleanup, a reread) keeps the old order, and a
-                // tick whose single interaction event is spent waits.
+                // tick whose single interaction event is spent, or that first
+                // shows a new scene, waits.
                 if !self.parked && !self.prayer_cleanup_pending {
                     self.request_contradicted_read(tick);
                 }
                 select_now = !self.parked
                     && !self.prayer_cleanup_pending
                     && !self.needs_read
-                    && !tick.cx.interaction_event_spent();
+                    && tick.cx.may_continue_this_tick();
                 // A boundary that owes a progress read (an advancing step, a
                 // contradicted colour) reads now and selects on its result
                 // (TICK-FIX #6, E-Q3): a colour read is immediate, a journal
