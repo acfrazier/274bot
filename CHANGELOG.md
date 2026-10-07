@@ -426,6 +426,9 @@ They are listed here for completeness and are left out of the release notes.
 - Quester: a guide step allowed to cross a guarded area could still be
   refused at the end of its walk inside that area, which stopped The Knight's
   Sword in the Asgarnian Ice Dungeon.
+- Quester: The Knight's Sword searched Sir Vyvin's cupboard while he stood
+  next to the player, which the game refuses, and kept retrying until it
+  stopped. It now waits for him to step away first.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
