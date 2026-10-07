@@ -18,8 +18,8 @@ pub(super) const SHANTAY_NORTH_TO: WorldTile = WorldTile {
 pub(super) const SHANTAY_NORTH_TICKS: i32 = 3;
 
 /// The Shantay henge free desert exit telejumps `movecoord(coord,0,0,3)`
-/// from the player's current tile. Its `to` is derived from the packed
-/// stand by that same +3z operation, so it cannot drift from the content.
+/// from the player's interaction stand. Pinning `takeoff` to `at` makes
+/// `to` the landing from that same stand, as the content requires.
 /// The free desert exit ticks: OP_BASE 1 + the `p_telejump` tick (the
 /// branch's own `p_delay(0)`).
 pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
@@ -200,12 +200,10 @@ pub(super) fn toll_shantay_henge_edges(
     pass_id: i32,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    // The Shantay henge: two edges, one per `[oploc1,shantay_pass_
-    // henge_doorway]` branch — the gated hop `at` the loc's placement
-    // tile (shape 10, unlike the wall doors), and the free desert exit
-    // `at` the stand one tile south of it (the desert-side tile selected
-    // for the edge, so the script's +3z landing derives from the player's
-    // actual tile).
+    // The free desert exit pins its operation stand one tile south of the
+    // henge placement. Other nearby stands also trigger the script's free
+    // branch, but the traveller must operate from this one so its +3z
+    // landing matches the packed `to`.
     let Some(&henge_id) = ids.get("shantay_pass_henge_doorway") else {
         return;
     };
@@ -257,7 +255,7 @@ pub(super) fn toll_shantay_henge_edges(
             quest_gates: None,
         });
         graph.edges.push(TransportEdge {
-            takeoff: None,
+            takeoff: Some(desert_at),
             worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,

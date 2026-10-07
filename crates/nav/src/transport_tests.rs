@@ -512,8 +512,10 @@ queue(shantay_pass_enter, 0, 0);
                 + (tile.x - origin.x) as usize;
             flags[index] = 0;
         };
-        for tile in [start, free_at] {
-            open(tile);
+        for x in 3302..=3304 {
+            for z in 3112..=3115 {
+                open(WorldTile { x, z, level: 0 });
+            }
         }
         for x in 3303..=3308 {
             open(WorldTile {
@@ -570,24 +572,88 @@ queue(shantay_pass_enter, 0, 0);
         assert!(!f2p.allows(e), "F2P cannot pass the Shantay doorway");
         assert!(f2p.clone().with_map_members(true).allows(e));
     }
+    assert!(
+        !wc.standable(free.to),
+        "the game telejumps onto the statue landing and the player walks off it"
+    );
     let members = crate::world_state::WorldState::empty().with_map_members(true);
-    let route = crate::router::find_with(
+    let exact_landing = crate::router::find_with(
         &wc,
         &graph,
         start,
-        destination,
+        free_to,
         crate::router::FindOptions::default(),
         &members,
     )
-    .expect("an exact Irena-to-bank route crosses the free henge exit");
+    .expect("an exact route can end on the statue tile where the game lands");
+    assert_eq!(exact_landing.dest, free_to);
     assert!(
-        route.legs.iter().any(|leg| matches!(
+        exact_landing.legs.iter().any(|leg| matches!(
             leg,
             crate::router::Leg::Transport { edge }
-                if edge.loc_id == 4031 && edge.at == free.at && edge.to == free.to
+                if edge.loc_id == 4031 && edge.to == free_to
         )),
-        "the r=0 route must use the standable +3z Shantay edge: {route:?}"
+        "the exact landing route must end at the engine's +3z destination: {exact_landing:?}"
     );
+
+    // These x=3303 approaches used to take off from (3303,3115) or
+    // (3303,3114), which telejumped to a different tile than the edge's `to`.
+    // Pinning the edge makes each route walk to the actual operation stand.
+    for (label, from) in [
+        (
+            "x=3303 approach at the henge",
+            WorldTile {
+                x: 3304,
+                z: 3115,
+                level: 0,
+            },
+        ),
+        (
+            "x=3303 approach south of the henge",
+            WorldTile {
+                x: 3304,
+                z: 3112,
+                level: 0,
+            },
+        ),
+        ("Irena", start),
+    ] {
+        let route = crate::router::find_with(
+            &wc,
+            &graph,
+            from,
+            destination,
+            crate::router::FindOptions::default(),
+            &members,
+        )
+        .unwrap_or_else(|error| panic!("{label}: exact bank route: {error:?}"));
+        let mut current = from;
+        let mut crossed = false;
+        for leg in &route.legs {
+            match leg {
+                crate::router::Leg::Walk { tiles } => {
+                    if let Some(last) = tiles.last() {
+                        current = *last;
+                    }
+                }
+                crate::router::Leg::Transport { edge }
+                    if edge.loc_id == 4031 && edge.consumed_req.is_empty() =>
+                {
+                    assert_eq!(current, free_at, "{label}: walked to pinned takeoff");
+                    assert_eq!(edge.takeoff, Some(free_at), "{label}: pinned takeoff");
+                    assert_eq!(edge.at, free_at, "{label}: operation stand");
+                    assert_eq!(edge.to, free_to, "{label}: exact engine landing");
+                    crossed = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            crossed,
+            "{label}: route must use the free henge exit: {route:?}"
+        );
+    }
 }
 
 fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
@@ -2023,12 +2089,28 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             );
         }
         for gate in [2882, 2883] {
-            for eastbound in [false, true] {
+            let mut directions = Vec::new();
+            for edge in tolls.iter().filter(|e| e.loc_id == gate) {
+                let direction = edge.dir.expect("toll crossing has a door direction");
+                if !directions.contains(&direction) {
+                    directions.push(direction);
+                }
+            }
+            assert_eq!(
+                directions.len(),
+                2,
+                "gate {gate} has two crossing directions: {directions:?}"
+            );
+            for direction in directions {
                 let crossing: Vec<_> = tolls
                     .iter()
-                    .filter(|e| e.loc_id == gate && (e.to.x > e.at.x) == eastbound)
+                    .filter(|e| e.loc_id == gate && e.dir == Some(direction))
                     .collect();
-                assert_eq!(crossing.len(), 2);
+                assert_eq!(
+                    crossing.len(),
+                    2,
+                    "gate {gate} direction {direction:?}: {crossing:?}"
+                );
                 assert_eq!(
                     crossing
                         .iter()
@@ -2100,6 +2182,11 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             }
         );
         assert_eq!(
+            free.takeoff,
+            Some(free.at),
+            "free exit pins its operation stand"
+        );
+        assert_eq!(
             free.to,
             WorldTile {
                 x: 3302,
@@ -2120,6 +2207,11 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             wc.standable(free.at),
             "the desert-side interaction stand must be standable: {:?}",
             free.at
+        );
+        assert!(
+            !wc.standable(free.to),
+            "the engine's +3z statue landing is not a walkable stand: {:?}",
+            free.to
         );
         assert!(free.consumed_req.is_empty(), "the desert exit is free");
         assert_eq!(free.option, 1, "Go-through op");
@@ -8092,6 +8184,11 @@ fn shantay_henge_packs_the_consumed_entry_and_free_exit() {
                 level: 0
             }
         )
+    );
+    assert_eq!(
+        free.takeoff,
+        Some(free.at),
+        "the free exit pins its operation stand"
     );
     assert_eq!(
         free.to,

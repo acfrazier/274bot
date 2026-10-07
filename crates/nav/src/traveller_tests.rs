@@ -3994,6 +3994,119 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     );
 }
 
+#[test]
+fn follow_shantay_free_exit_uses_its_pinned_takeoff_stand() {
+    let mut c = scene_client();
+    plant_loc(
+        &mut c,
+        SHANTAY_HENGE_LOC_ID,
+        "Shantay pass henge doorway",
+        "Go-through",
+        1,
+        1,
+    );
+    let takeoff = WorldTile {
+        x: 3200,
+        z: 3201,
+        level: 0,
+    };
+    let mut edge = shantay_edge();
+    edge.takeoff = Some(takeoff);
+    edge.at = takeoff;
+    edge.to = WorldTile {
+        x: takeoff.x,
+        z: takeoff.z + 3,
+        level: takeoff.level,
+    };
+    edge.consumed_req.clear();
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: WorldTile {
+            x: takeoff.x,
+            z: takeoff.z + 3,
+            level: takeoff.level,
+        },
+        ticks: 1.0,
+    };
+    let snap = snap_at(&mut c, 0, 1);
+    let mut rec = FollowRec {
+        route: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let mut options = TravelOptions::default();
+
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
+    assert_eq!(rec.loc_ops, 1, "interact from the pinned takeoff stand");
+    assert!(
+        rec.walked.is_empty(),
+        "a Door takeoff does not need loc_transport_ready to send its op"
+    );
+}
+
+#[test]
+fn follow_shantay_free_exit_operates_after_approaching_its_pinned_stand() {
+    let mut c = scene_client();
+    plant_loc(
+        &mut c,
+        SHANTAY_HENGE_LOC_ID,
+        "Shantay pass henge doorway",
+        "Go-through",
+        1,
+        1,
+    );
+    let takeoff = WorldTile {
+        x: 3200,
+        z: 3201,
+        level: 0,
+    };
+    let mut edge = shantay_edge();
+    edge.takeoff = Some(takeoff);
+    edge.at = takeoff;
+    edge.to = WorldTile {
+        x: takeoff.x,
+        z: takeoff.z + 3,
+        level: takeoff.level,
+    };
+    edge.consumed_req.clear();
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: WorldTile {
+            x: takeoff.x,
+            z: takeoff.z + 3,
+            level: takeoff.level,
+        },
+        ticks: 1.0,
+    };
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let mut options = TravelOptions::default();
+
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1, "walk to the pinned takeoff stand");
+    assert_eq!(rec.loc_ops, 0, "do not interact before the pinned stand");
+
+    plant_player(&mut c, 0, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
+    assert_eq!(rec.loc_ops, 1, "interact after reaching the pinned stand");
+    assert_eq!(
+        rec.walked.len(),
+        1,
+        "readiness None for a Door must not resend a same-tile walk"
+    );
+}
+
 const ALKHARID_TOLL_LOC_ID: i32 = 2882;
 const COINS_OBJ: i32 = 995;
 /// Not obj 995 — the no-coins follow test must fail if the follower hard-codes coins.
