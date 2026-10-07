@@ -519,11 +519,18 @@ fn bundled_documents() -> Vec<(String, PathDocument)> {
 
 /// First-win journal resolution makes a later rule unreachable when an earlier
 /// rule's needles are contained in its text (the Plague City 24/25 shape). Every
-/// bundled rule, fed exactly its own needles, must resolve to itself.
+/// bundled rule, fed exactly its own needles, must resolve to itself. Gathering
+/// Paths (Monk's Friend) compile against the shared catalog, which only lives
+/// while someone holds it, so this test holds its own like its siblings do.
 #[test]
 fn bundled_paths_have_no_shadowed_journal_rules() {
     let _home = script::IsolatedEnv::enter("path-schema-shadows");
     let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
     for (file, document) in bundled_documents() {
         let compiled = compile_uncached_for_test(&document, &selected, &quests)
             .unwrap_or_else(|error| panic!("{file}: {}", error.code));
