@@ -19490,7 +19490,7 @@ impl script::native::NativeMachine for SnapshotPumpMachine {
         &mut self,
         cx: &mut script::native::ActionContext<'_>,
     ) -> std::task::Poll<Result<(), script::native::ActionError>> {
-        let open = cx.snapshot.bank_session().is_some_and(|bank| bank.value.open);
+        let open = cx.snapshot().bank_session().is_some_and(|bank| bank.value.open);
         let emitted = cx.emit(script::shim::InteractReq::CloseModal);
         self.0.lock().unwrap().push((cx.evidence().tick, open, emitted));
         std::task::Poll::Pending
