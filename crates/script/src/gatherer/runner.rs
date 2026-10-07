@@ -2039,10 +2039,7 @@ mod tests {
         let mut player = local_player(rendered);
         player.player.network = stand;
         snapshot.seed_local_player(player);
-        assert_eq!(
-            snapshot.local_player().unwrap().player.actor.tile,
-            rendered
-        );
+        assert_eq!(snapshot.local_player().unwrap().player.actor.tile, rendered);
         assert_eq!(snapshot.local_player().unwrap().player.network, stand);
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             gatherer.handle_walk(
