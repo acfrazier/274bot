@@ -23,7 +23,7 @@
     ],
     "acquire": {},
     "bank": { "tile": [2655, 3283, 0], "source": "A defs/tribaltotem.ts:67" },
-    "coin_float": 0,
+    "coin_float": 60,
     "loadouts": {},
     "areas": {
       "mansion": {

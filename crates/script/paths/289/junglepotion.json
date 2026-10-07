@@ -124,10 +124,41 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "walk-to-snake-weed",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2761, 3015, 0],
+                "source": "A defs/junglepotion.ts:40-41",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } }
+              }
+            },
+            {
               "id": "pick-snake",
               "kind": "interact",
               "version": 1,
-              "advances": true,
+              "advances": false,
               "args": {
                 "target": { "loc": "snake_vine_full" },
                 "op": "Search",
@@ -177,6 +208,37 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "walk-to-snake-weed-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2761, 3015, 0],
+                "source": "A defs/junglepotion.ts:40-41",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_snake_weed" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2761, 3015, 0], "radius": 2 } }
+              }
+            },
             {
               "id": "pick-snake-found",
               "kind": "interact",
@@ -448,6 +510,33 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "walk-to-volencia-moss",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2851, 3034, 0],
+                "source": "A defs/junglepotion.ts:56-57",
+                "radius": 1,
+                "cross": [
+                  "snake@2836,3043,0",
+                  "snake@2838,3039,0",
+                  "snake@2838,3047,0",
+                  "snake@2847,3042,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } }
+              }
+            },
+            {
               "id": "pick-volencia",
               "kind": "interact",
               "version": 1,
@@ -501,6 +590,33 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "walk-to-volencia-moss-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2851, 3034, 0],
+                "source": "A defs/junglepotion.ts:56-57",
+                "radius": 1,
+                "cross": [
+                  "snake@2836,3043,0",
+                  "snake@2838,3039,0",
+                  "snake@2838,3047,0",
+                  "snake@2847,3042,0"
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_volencia_moss" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "volencia_moss" } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2851, 3034, 0], "radius": 2 } }
+              }
+            },
             {
               "id": "pick-volencia-found",
               "kind": "interact",
@@ -569,6 +685,37 @@
               },
               "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } },
               "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+            },
+            {
+              "id": "walk-to-rogues-purse",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2850, 9477, 0],
+                "source": "A defs/junglepotion.ts:61-63",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Jogres are level 53 aggressive (engine hunters); the named crossing is an explicit opt-in, not a blanket allowance.",
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } }
+              }
             },
             {
               "id": "pick-rogues",
@@ -661,6 +808,37 @@
                 ]
               },
               "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } }
+            },
+            {
+              "id": "walk-to-rogues-purse-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2850, 9477, 0],
+                "source": "A defs/junglepotion.ts:61-63",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Jogres are level 53 aggressive (engine hunters); the named crossing is an explicit opt-in, not a blanket allowance.",
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } } },
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rogues_purse" } } },
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2850, 9477, 0], "radius": 2 } }
+              }
             },
             {
               "id": "pick-rogues-found",

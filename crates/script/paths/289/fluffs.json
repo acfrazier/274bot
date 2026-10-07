@@ -625,7 +625,7 @@
               "args": {
                 "tile": [
                   3305,
-                  3496,
+                  3492,
                   0
                 ],
                 "source": "A defs/gertrudescat.ts:68-76,181-195",
@@ -658,7 +658,7 @@
                       "args": {
                         "tile": [
                           3305,
-                          3496,
+                          3492,
                           0
                         ],
                         "radius": 2
@@ -674,7 +674,7 @@
                   "args": {
                     "tile": [
                       3305,
-                      3496,
+                      3492,
                       0
                     ],
                     "radius": 2
@@ -963,7 +963,7 @@
               "args": {
                 "tile": [
                   3305,
-                  3496,
+                  3492,
                   0
                 ],
                 "source": "A defs/gertrudescat.ts:68-76,181-195",
@@ -996,7 +996,7 @@
                       "args": {
                         "tile": [
                           3305,
-                          3496,
+                          3492,
                           0
                         ],
                         "radius": 2
@@ -1012,7 +1012,7 @@
                   "args": {
                     "tile": [
                       3305,
-                      3496,
+                      3492,
                       0
                     ],
                     "radius": 2
@@ -2615,7 +2615,7 @@
               "id": "give-fluffs-her-kitten",
               "kind": "use_on",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "item": "gertrudekittens",
                 "target": {
