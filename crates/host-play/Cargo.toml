@@ -17,7 +17,10 @@ sha2 = "=0.10.9"
 libc = "0.2"
 # The hidden passphrase prompt (`passphrase::read_hidden`) reads keys in raw
 # mode, so nothing typed is echoed; same version the tui already builds.
-crossterm = "0.29"
+# `use-dev-tty`: the default Unix event source reads 1 KiB per epoll edge and
+# can leave the rest of a longer burst (a pasted passphrase and its Enter)
+# unread until another key arrives; the poll(2) source reads it all.
+crossterm = { version = "0.29", features = ["use-dev-tty"] }
 zeroize = "=1.9.0"
 vault = { path = "../vault" }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
