@@ -1289,11 +1289,12 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
 }
 
 /// DIAG-CRYPT-GATE-NAV: nav has no edge through either Priest in Peril crypt
-/// gate, and Gate 2's west stand (3431,9897) is outside `monuments`. Leaving
-/// from there must Open Gate 1 from its routable south side instead of asking
-/// nav for its north side, which only exists once the gate is open.
+/// gate, and Gate 2's west stand (3431,9897) is outside `monuments` and north
+/// of Gate 1's wall line, so Gate 1's Open approach from there targets the
+/// unreachable north side. Leaving from there walks to Gate 1's routable
+/// south doorstep first; the Open then runs from inside `monuments`.
 #[test]
-fn priestperil_leave_crypt_opens_gate_1_from_the_gate_2_west_stand() {
+fn priestperil_leave_crypt_walks_to_gate_1_south_from_the_gate_2_west_stand() {
     use script::quester::probe::{known_empty_bank, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-priestperil-gates");
@@ -1321,7 +1322,8 @@ fn priestperil_leave_crypt_opens_gate_1_from_the_gate_2_west_stand() {
 
     // East of Gate 2 the westbound Open runs first; it lands on 3431,9897.
     assert_eq!(leave(3432, 9897), step("crypt-return-through-second-gate"));
-    assert_eq!(leave(3431, 9897), step("crypt-return-through-first-gate"));
+    assert_eq!(leave(3431, 9897), step("crypt-return-to-first-gate-south"));
+    assert_eq!(leave(3405, 9894), step("crypt-return-through-first-gate"));
     assert_eq!(leave(3420, 9890), step("crypt-return-through-first-gate"));
     // North of Gate 1 the gates are behind: walk on to the ladder.
     assert_eq!(leave(3405, 9897), step("crypt-exit-approach"));
