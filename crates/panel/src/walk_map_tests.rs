@@ -21,6 +21,7 @@ use super::{
     MIN_CELL_PPT, OVERLAY_BYTE_CAP, OVERLAY_MAX_H, OVERLAY_MAX_W,
 };
 use crate::game_view::FrameGpu;
+use crate::test_support::headless_gpu;
 use nav::map::poi::PoiKind;
 
 fn open_world(w: usize, h: usize) -> NavWorld {
@@ -498,25 +499,6 @@ impl FrameGpu for RecordingGpu {
     fn unregister_texture(&mut self, tex_id: TextureId) {
         self.unregistered.push(tex_id.id());
     }
-}
-
-fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("274 walk-map test"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::default(),
-    }))
-    .ok()
 }
 
 #[test]

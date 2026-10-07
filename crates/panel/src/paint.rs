@@ -712,6 +712,7 @@ mod tests {
     use script::shim::ScriptPaint;
 
     use super::{chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X};
+    use crate::test_support::headless_gpu;
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -1084,25 +1085,6 @@ mod tests {
         fn unregister_texture(&mut self, tex_id: dear_imgui_rs::TextureId) {
             self.unregistered.push(tex_id.id());
         }
-    }
-
-    fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("274 paint canvas test"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-        }))
-        .ok()
     }
 
     fn gpu_frame(

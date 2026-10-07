@@ -1,9 +1,10 @@
 use dear_imgui_rs::render::DrawData;
 use dear_imgui_rs::Context;
 use dear_imgui_wgpu::{GammaMode, WgpuInitInfo, WgpuRenderer};
-use pollster::block_on;
 use std::sync::mpsc;
 use std::time::Duration;
+
+use crate::test_support::headless_gpu_with_info;
 
 const CELL: u32 = 8;
 const SWATCHES: [[u8; 4]; 5] = [
@@ -14,27 +15,6 @@ const SWATCHES: [[u8; 4]; 5] = [
     [255, 255, 255, 255],
 ];
 const WIDTH: u32 = CELL * SWATCHES.len() as u32;
-
-fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    let info = adapter.get_info();
-    let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("274 panel sRGB present test"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::default(),
-    }))
-    .ok()?;
-    Some((device, queue, info))
-}
 
 fn render_swatches(
     device: &wgpu::Device,
@@ -243,7 +223,7 @@ fn render_and_read_back(
 
 #[test]
 fn auto_srgb_roundtrip_palette_and_gold() {
-    let Some((device, queue, adapter)) = headless_gpu() else {
+    let Some((device, queue, adapter)) = headless_gpu_with_info() else {
         eprintln!("SKIP: no WGPU adapter available");
         return;
     };

@@ -92,7 +92,10 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
     assert_eq!(public.resolved.worlds[0].asset_host, "w1.rs2b2t.com");
     assert_eq!(
         public.resolved.vault,
-        root.join(".274bot/vault-prod").display().to_string()
+        root.join(".274bot")
+            .join("vault-prod")
+            .display()
+            .to_string()
     );
     assert_eq!(public_json["effective_world_members"]["value"], true);
     assert_eq!(

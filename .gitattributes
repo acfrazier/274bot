@@ -1,5 +1,7 @@
-/crates/api/data/game-data/**/*.json text eol=lf
-/crates/host-play/fixtures/ExampleBot.ts text eol=lf
-/crates/script/tests/fixtures/ExampleBot.ts text eol=lf
-/crates/script/host-js/index.d.ts text eol=lf
-/crates/script/src/shim/declared_surface.js text eol=lf
+# Every text file is checked out with LF on every platform, whatever
+# core.autocrlf says (Git for Windows defaults it to true). Sources and data
+# are hashed (the nav generator identity, embedded game-data pins),
+# include_str!'d (the pinned engine door procs) and compared byte-for-byte
+# with their generators (path.schema.json, index.d.ts), so a CRLF checkout
+# would change what they mean. Binary files are detected and left alone.
+* text=auto eol=lf

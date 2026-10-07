@@ -473,9 +473,34 @@ mod tests {
             command
         }
 
+        /// A spawned child that is killed and reaped when dropped, so a test
+        /// that fails while the child still waits at its prompt does not
+        /// leave it running.
+        struct Reaped(std::process::Child);
+
+        impl std::ops::Deref for Reaped {
+            type Target = std::process::Child;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for Reaped {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        impl Drop for Reaped {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
         /// A child attached to a fresh pseudo-terminal as its controlling
         /// terminal, plus the parent's end of it.
-        fn on_a_terminal(mode: &str) -> (std::process::Child, std::fs::File) {
+        fn on_a_terminal(mode: &str) -> (Reaped, std::fs::File) {
             let (mut master, mut slave) = (0, 0);
             // SAFETY: both descriptor out-pointers are valid; the other
             // arguments are optional and null.
@@ -504,7 +529,7 @@ mod tests {
                     Ok(())
                 });
             }
-            let spawned = command.spawn().expect("spawn the terminal child");
+            let spawned = Reaped(command.spawn().expect("spawn the terminal child"));
             drop(command);
             drop(slave);
             let master = std::fs::File::from(master);
@@ -644,7 +669,9 @@ mod tests {
 
         /// The prompt keeps at most [`MAX_PASSPHRASE_BYTES`] and never grows
         /// its buffer to hold more: growth would leave an unwiped copy of the
-        /// text behind.
+        /// text behind. The keys arrive as one burst far over 1 KiB, so this
+        /// also guards the Linux stall where the Enter at the end of a long
+        /// burst stayed unread until another key arrived.
         #[test]
         fn the_terminal_prompt_stops_at_the_byte_limit_without_growing_its_buffer() {
             let (mut spawned, mut master) = on_a_terminal("terminal");
