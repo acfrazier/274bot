@@ -42,7 +42,7 @@ impl Area {
         Self::Circular { center, radius }
     }
 
-    fn contains(self, tile: Tile) -> bool {
+    fn contains(self, tile: Tile, live_center: Option<Tile>) -> bool {
         match self {
             Self::Rectangular {
                 min_x,
@@ -57,7 +57,11 @@ impl Area {
                     && tile.z >= min_z
                     && tile.z <= max_z
             }
-            Self::Circular { center, radius } => {
+            Self::Circular {
+                center: stored_center,
+                radius,
+            } => {
+                let center = live_center.unwrap_or(stored_center);
                 let dx = tile.x - center.x;
                 let dz = tile.z - center.z;
                 tile.level == center.level && dx * dx + dz * dz <= radius * radius
@@ -65,12 +69,12 @@ impl Area {
         }
     }
 
-    fn random_tile(self) -> Tile {
+    fn random_tile(self, live_center: Option<Tile>) -> Tile {
         let mut sample = || random::<f64>();
-        self.random_tile_with(&mut sample)
+        self.random_tile_with(live_center, &mut sample)
     }
 
-    fn random_tile_with(self, sample: &mut impl FnMut() -> f64) -> Tile {
+    fn random_tile_with(self, live_center: Option<Tile>, sample: &mut impl FnMut() -> f64) -> Tile {
         match self {
             Self::Rectangular {
                 min_x,
@@ -83,14 +87,18 @@ impl Area {
                 z: min_z + (sample() * (max_z - min_z + 1.0)).floor(),
                 level,
             },
-            Self::Circular { center, radius } => {
+            Self::Circular {
+                center: stored_center,
+                radius,
+            } => {
+                let center = live_center.unwrap_or(stored_center);
                 for _ in 0..RANDOM_ATTEMPTS {
                     let tile = Tile {
                         x: center.x + (sample() * (2.0 * radius + 1.0)).floor() - radius,
                         z: center.z + (sample() * (2.0 * radius + 1.0)).floor() - radius,
                         level: center.level,
                     };
-                    if self.contains(tile) {
+                    if self.contains(tile, Some(center)) {
                         return tile;
                     }
                 }
@@ -188,13 +196,26 @@ fn run_area<'s>(
         }
         2 => {
             let area = required_area(scope, args.get(1))?;
-            let tile = required_tile(scope, args.get(2), "tile")?;
-            Ok(v8::Boolean::new(scope, area.contains(tile)).into())
+            let Some(tile) = contains_tile(scope, args.get(2), "tile")? else {
+                return Ok(v8::Boolean::new(scope, false).into());
+            };
+            let live_center = if matches!(area, Area::Circular { .. }) {
+                Some(required_tile(scope, args.get(3), "center")?)
+            } else {
+                None
+            };
+            Ok(v8::Boolean::new(scope, area.contains(tile, live_center)).into())
         }
         3 => {
             let area = required_area(scope, args.get(1))?;
-            tile_value(scope, area.random_tile())
+            let live_center = if matches!(area, Area::Circular { .. }) {
+                Some(required_tile(scope, args.get(2), "center")?)
+            } else {
+                None
+            };
+            tile_value(scope, area.random_tile(live_center))
         }
+
         _ => Err("invalid area operation".to_string()),
     }
 }
@@ -271,6 +292,29 @@ fn required_tile(
         level: required_number_field(scope, value, side, "level")?,
     })
 }
+fn contains_tile(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    side: &str,
+) -> Result<Option<Tile>, String> {
+    if value.is_null() || value.is_undefined() || !value.is_object() {
+        return Err(format!("invalid area: {side} must be a Tile-like object"));
+    }
+    let Some(level_value) = optional_field(scope, value, "level")? else {
+        return Ok(None);
+    };
+    if !level_value.is_number() {
+        return Ok(None);
+    }
+    let Some(level) = level_value.number_value(scope) else {
+        return Ok(None);
+    };
+    Ok(Some(Tile {
+        x: required_number_field(scope, value, side, "x")?,
+        z: required_number_field(scope, value, side, "z")?,
+        level,
+    }))
+}
 
 fn optional_field<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -343,6 +387,22 @@ fn tile_value<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn js_min_and_max_match_math_nan_and_signed_zero_behavior() {
+        assert!(js_min(f64::NAN, 1.0).is_nan());
+        assert!(js_min(1.0, f64::NAN).is_nan());
+        assert!(js_max(f64::NAN, 1.0).is_nan());
+        assert!(js_max(1.0, f64::NAN).is_nan());
+
+        assert!(js_min(-0.0, -0.0).is_sign_negative());
+        assert!(js_min(-0.0, 0.0).is_sign_negative());
+        assert!(js_min(0.0, -0.0).is_sign_negative());
+        assert!(!js_min(0.0, 0.0).is_sign_negative());
+        assert!(js_max(-0.0, -0.0).is_sign_negative());
+        assert!(!js_max(0.0, 0.0).is_sign_negative());
+        assert!(!js_max(-0.0, 0.0).is_sign_negative());
+        assert!(!js_max(0.0, -0.0).is_sign_negative());
+    }
 
     fn tile(x: f64, z: f64, level: f64) -> Tile {
         Tile { x, z, level }
@@ -351,19 +411,19 @@ mod tests {
     #[test]
     fn rectangular_contains_inclusive_edges_and_uses_a_level() {
         let area = Area::rectangular(tile(10.0, 20.0, 1.0), tile(12.0, 18.0, 9.0));
-        assert!(area.contains(tile(10.0, 18.0, 1.0)));
-        assert!(area.contains(tile(12.0, 20.0, 1.0)));
-        assert!(!area.contains(tile(9.0, 19.0, 1.0)));
-        assert!(!area.contains(tile(11.0, 21.0, 1.0)));
-        assert!(!area.contains(tile(11.0, 19.0, 9.0)));
+        assert!(area.contains(tile(10.0, 18.0, 1.0), None));
+        assert!(area.contains(tile(12.0, 20.0, 1.0), None));
+        assert!(!area.contains(tile(9.0, 19.0, 1.0), None));
+        assert!(!area.contains(tile(11.0, 21.0, 1.0), None));
+        assert!(!area.contains(tile(11.0, 19.0, 9.0), None));
     }
 
     #[test]
     fn circular_contains_the_radius_edge_only_on_its_level() {
         let area = Area::circular(tile(10.0, 20.0, 2.0), 5.0);
-        assert!(area.contains(tile(13.0, 24.0, 2.0)));
-        assert!(!area.contains(tile(13.0, 25.0, 2.0)));
-        assert!(!area.contains(tile(10.0, 20.0, 1.0)));
+        assert!(area.contains(tile(13.0, 24.0, 2.0), None));
+        assert!(!area.contains(tile(13.0, 25.0, 2.0), None));
+        assert!(!area.contains(tile(10.0, 20.0, 1.0), None));
     }
 
     #[test]
@@ -371,7 +431,9 @@ mod tests {
         let area = Area::rectangular(tile(1.0, 8.0, 3.0), tile(2.0, 9.0, 1.0));
         let mut values = [0.0, 0.0, 0.0, 0.9, 0.9, 0.0, 0.9, 0.9].into_iter();
         let mut sample = || values.next().expect("one sample per coordinate");
-        let tiles: Vec<_> = (0..4).map(|_| area.random_tile_with(&mut sample)).collect();
+        let tiles: Vec<_> = (0..4)
+            .map(|_| area.random_tile_with(None, &mut sample))
+            .collect();
         assert_eq!(
             tiles,
             vec![
@@ -381,7 +443,7 @@ mod tests {
                 tile(2.0, 9.0, 3.0),
             ]
         );
-        assert!(tiles.iter().all(|tile| area.contains(*tile)));
+        assert!(tiles.iter().all(|tile| area.contains(*tile, None)));
     }
 
     #[test]
@@ -393,7 +455,7 @@ mod tests {
             calls += 1;
             0.75
         };
-        assert_eq!(area.random_tile_with(&mut sample), center);
+        assert_eq!(area.random_tile_with(None, &mut sample), center);
         assert_eq!(calls, 2);
     }
 
@@ -406,7 +468,7 @@ mod tests {
             calls += 1;
             0.0
         };
-        assert_eq!(area.random_tile_with(&mut sample), center);
+        assert_eq!(area.random_tile_with(None, &mut sample), center);
         assert_eq!(calls, RANDOM_ATTEMPTS * 2);
     }
 }
