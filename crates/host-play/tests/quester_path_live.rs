@@ -22,11 +22,11 @@
 //!     -p host-play --features "live-harness test-support" \
 //!     --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 //! ```
-//! `QUESTER_TICK_MS` is guarded to Engine Q (`127.0.0.1:44694`); it must not
-//! be used with Engine A or the builder. Run without it to keep the world's
-//! current tick rate.
-//! For a custom local profile, omit `members` so the guarded engine
-//! `world.json` remains the source of world membership.
+//! `QUESTER_TICK_MS` changes world-wide tick speed; use it only on isolated
+//! Engine Q, never on shared Engine A or the builder. Run without it to keep
+//! the world's current tick rate.
+//! For a custom local profile, omit `members` so Engine Q's `world.json`
+//! remains the source of world membership.
 //!
 //! Seeds file shape (`seeds/cook.json`):
 //!

@@ -406,6 +406,8 @@ pub struct ScenarioRunner {
     relog_session: Option<u64>,
     relog_left_session: bool,
     engine_speed_ms: Option<u32>,
+    /// Endpoint reported when the initial world-speed command is sent.
+    tick_speed_endpoint: Option<(String, u16)>,
     engine_speed_sent: bool,
     speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
@@ -479,6 +481,12 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Record the endpoint for diagnostics when the world-wide speed command fires.
+    /// This is logging metadata only; it does not restrict command dispatch.
+    pub fn set_tick_speed_endpoint(&mut self, host: &str, port: u16) {
+        self.tick_speed_endpoint = Some((host.to_owned(), port));
+    }
+
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         // Settings fields are Copy, so read them out before `scenario`
         // moves into the runner below.
@@ -514,6 +522,7 @@ impl ScenarioRunner {
             relog_session: None,
             relog_left_session: false,
             engine_speed_ms,
+            tick_speed_endpoint: None,
             speed_chat_baseline: None,
             engine_speed_sent: false,
             evidence: None,
@@ -897,8 +906,16 @@ impl ScenarioRunner {
             }
             if !self.engine_speed_sent {
                 if let Some(ms) = self.engine_speed_ms {
-                    self.speed_chat_baseline = Some(self.latest_chat_sequence());
-                    cheat(client, &format!("speed {ms}"));
+                    match crate::quest_fast::send_tick_speed(client, &self.snapshot, ms) {
+                        Ok(baseline) => {
+                            self.speed_chat_baseline = Some(baseline);
+                            self.log_tick_speed_endpoint(ms);
+                        }
+                        Err(error) => {
+                            self.finish_fail(&error);
+                            return;
+                        }
+                    }
                 }
                 self.engine_speed_sent = true;
             }
@@ -1159,10 +1176,12 @@ impl ScenarioRunner {
                 .protect_window
                 .as_ref()
                 .is_some_and(|window| window.ready(&self.snapshot, self.obj_names.as_deref())),
-            Proof::WorldSpeedChanged { ms } => self.speed_chat_baseline.is_some_and(|baseline| {
-                crate::proof::world_speed_confirmation_after(&self.snapshot, baseline)
-                    .is_some_and(|(actual, _)| actual == ms)
-            }),
+            Proof::WorldSpeedChanged { ms } => match self.speed_chat_baseline {
+                Some(baseline) => {
+                    crate::quest_fast::tick_speed_confirmed(&self.snapshot, baseline, ms)
+                }
+                None => Proof::WorldSpeedChanged { ms }.check(&self.snapshot, None),
+            },
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
@@ -1713,29 +1732,33 @@ impl ScenarioRunner {
 
     fn tick_terminal_cleanup(&mut self, client: &mut Client) {
         const RESET_TIMEOUT: Duration = Duration::from_secs(12);
-        let Some(cleanup) = self.terminal_cleanup.as_ref() else {
+        let Some((speed_ms, baseline, started)) = self
+            .terminal_cleanup
+            .as_ref()
+            .map(|cleanup| (cleanup.speed_ms, cleanup.baseline, cleanup.started))
+        else {
             self.record_fail("world speed cleanup lost its terminal state");
             return;
         };
-        if cleanup.baseline.is_none() {
-            let baseline = self.latest_chat_sequence();
-            let sent = cheat(client, &format!("speed {}", cleanup.speed_ms)).is_sent();
+        if baseline.is_none() {
+            let baseline =
+                match crate::quest_fast::send_tick_speed(client, &self.snapshot, speed_ms) {
+                    Ok(baseline) => baseline,
+                    Err(error) => {
+                        self.fail_terminal_cleanup(&error);
+                        return;
+                    }
+                };
             if let Some(cleanup) = self.terminal_cleanup.as_mut() {
                 cleanup.baseline = Some(baseline);
             }
-            if !sent {
-                self.fail_terminal_cleanup("speed command was refused");
-            }
             return;
         }
-        let cleanup = self.terminal_cleanup.as_ref().unwrap();
-        let baseline = cleanup.baseline.unwrap();
-        if crate::proof::world_speed_confirmation_after(&self.snapshot, baseline)
-            .is_some_and(|(actual, _)| actual == cleanup.speed_ms)
-        {
+        let baseline = baseline.unwrap();
+        if crate::quest_fast::tick_speed_confirmed(&self.snapshot, baseline, speed_ms) {
             let outcome = self.terminal_cleanup.take().unwrap().outcome;
             self.complete_terminal(outcome);
-        } else if cleanup.started.elapsed() >= RESET_TIMEOUT {
+        } else if started.elapsed() >= RESET_TIMEOUT {
             self.fail_terminal_cleanup("speed confirmation timed out");
         }
     }
@@ -1743,12 +1766,12 @@ impl ScenarioRunner {
     fn fail_terminal_cleanup(&mut self, reason: &str) {
         let message = match self.terminal_cleanup.take().map(|cleanup| cleanup.outcome) {
             Some(TerminalOutcome::Pass) => {
-                format!("could not restore Engine Q world speed to 600ms: {reason}")
+                format!("could not restore world speed to 600ms: {reason}")
             }
-            Some(TerminalOutcome::Fail(original)) => format!(
-                "{original}; additionally could not restore Engine Q world speed to 600ms: {reason}"
-            ),
-            None => format!("could not restore Engine Q world speed to 600ms: {reason}"),
+            Some(TerminalOutcome::Fail(original)) => {
+                format!("{original}; additionally could not restore world speed to 600ms: {reason}")
+            }
+            None => format!("could not restore world speed to 600ms: {reason}"),
         };
         self.record_fail(&message);
     }
@@ -1760,11 +1783,15 @@ impl ScenarioRunner {
         }
     }
 
-    fn latest_chat_sequence(&self) -> i32 {
-        self.snapshot
-            .chat_lines()
-            .first()
-            .map_or(0, |line| line.sequence)
+    fn log_tick_speed_endpoint(&self, speed_ms: u32) {
+        match self.tick_speed_endpoint.as_ref() {
+            Some((host, port)) => {
+                eprintln!("world-wide ::speed {speed_ms}ms target endpoint={host}:{port}");
+            }
+            None => {
+                eprintln!("world-wide ::speed {speed_ms}ms target endpoint=unknown");
+            }
+        }
     }
 
     fn record_pass(&mut self) {

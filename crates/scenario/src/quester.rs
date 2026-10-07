@@ -20,7 +20,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Runtime controls for the live `quester_path` cell only.
+/// Runtime controls for the live `quester_path` cell. `::speed` changes the
+/// world-wide tick rate, so use it only with isolated Engine Q.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuesterFastSettings {
     pub tick_ms: Option<u32>,
@@ -72,7 +73,8 @@ impl QuesterFastSettings {
     }
 }
 
-/// Apply the two opt-in live harness levers to one `quester_path` scenario.
+/// Apply the opt-in live harness levers to one `quester_path` scenario.
+/// The shared runner confirms the speed change and restores 600ms on teardown.
 pub fn apply_quester_fast_settings(scenario: &mut Scenario, settings: QuesterFastSettings) {
     if let Some(ms) = settings.tick_ms {
         scenario.settings.nav.engine_speed_ms = Some(ms);
@@ -1324,7 +1326,7 @@ fn find_anchor_tile(value: &Value) -> Result<Option<WorldTile>, String> {
     Ok(None)
 }
 
-/// Runtime-selected `quester_path` scenario used by `panel-play --live`.
+/// Runtime-selected `quester_path` scenario used by panel-play and tui-play.
 pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
     let fast_settings = QuesterFastSettings::from_env()?;
     let quest = require_quester_path(std::env::var("QUESTER_PATH").ok())?;

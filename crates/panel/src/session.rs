@@ -2621,6 +2621,7 @@ impl Session {
         self.sync_sidecar_cadence();
         let world = self.core.play().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+        runner.set_tick_speed_endpoint(&self.options.host, self.options.port);
         if let Some(play) = self.core.play() {
             runner.set_map_members(play.map_members());
         }
