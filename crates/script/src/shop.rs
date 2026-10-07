@@ -561,11 +561,9 @@ impl Shop {
             let delta = self.batch_delta(probe);
             self.batch_delta = self.batch_delta.max(delta);
             if self.batch_delta == 0 {
-                return if cx.clock().bound_reached() {
-                    self.done(false)
-                } else {
-                    Step::Wait
-                };
+                // A missing shop container is terminal, not a new timeout
+                // window. Only already-observed progress can settle here.
+                return self.done(false);
             }
             self.transferred = self.transferred.saturating_add(self.batch_delta);
             self.batch_delta = 0;
