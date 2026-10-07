@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
-import { parsePack } from './extractors/common.ts';
+import { parsePack, walkContentFiles } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, miningHazards, type GatherSiteWire } from './extractors/gathering.ts';
@@ -37,8 +37,47 @@ const expectedDropNames: Record<number, Record<string, string[]>> = {
 };
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
+/** Item categories as written in the selected content: alias to its `.obj` `category=` literal, or `null` when the section sets none. */
+function extractItemCategories(contentRoot: string): Map<string, string | null> {
+    const byAlias = new Map<string, string | null>();
+    const commit = (alias: string, category: string | null, file: string) => {
+        if (byAlias.has(alias)) {
+            if (byAlias.get(alias) !== category) throw new Error(`${file}: ${alias} category ${category} disagrees with ${byAlias.get(alias)}`);
+            return;
+        }
+        byAlias.set(alias, category);
+    };
+    for (const file of walkContentFiles(path.join(contentRoot, 'scripts'), '.obj')) {
+        const relative = path.relative(contentRoot, file).split(path.sep).join('/');
+        let current: string | null = null;
+        let category: string | null = null;
+        const flush = () => { if (current !== null) commit(current, category, relative); };
+        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith('//')) continue;
+            if (line.startsWith('[') && line.endsWith(']')) {
+                flush();
+                current = line.slice(1, -1);
+                category = null;
+                continue;
+            }
+            if (current === null) continue;
+            if (line.startsWith('category=')) {
+                const value = line.slice('category='.length);
+                if (!value) throw new Error(`${relative}: ${current} empty category`);
+                // A section repeats `category=` once in the selected content (`tomato` sets
+                // `category_86` then `category_131`); the published row carries the last literal,
+                // so last-wins here keeps the verifier anchored to the same value.
+                category = value;
+            }
+        }
+        flush();
+    }
+    if (byAlias.size === 0) throw new Error('no .obj sections found');
+    return byAlias;
+}
 /** One published item row, in the writer's decoded shape. Read under the checks below. */
-type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; tradeable: boolean; stack_variant: boolean };
+type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; category: string | null; tradeable: boolean; stack_variant: boolean };
 /** One published talk_key step spawn. `plane` is the scene plane, never `level`. */
 type PublishedTalkKeySpawn = { x: number; z: number; plane: number };
 /** One published talk_key talk step. */
@@ -360,6 +399,34 @@ async function verifyRevision(revision: number) {
     const frozenFamilies = parseFrozenEquipmentNameArrays(fs.readFileSync(path.join(root, 'tools/game-data/equipment-names.frozen.ts'), 'utf8'));
     const objPack = parsePack(fs.readFileSync(path.join(pin.contentRoot, 'pack/obj.pack'), 'utf8'));
     if (objPack.size === 0) throw new Error(`${revision}: empty pack/obj.pack`);
+    // Item categories: the writer names the engine-decoded category id via `pack/category.pack`, and the
+    // content `.obj` `category=` literal is the same name, so every published row must equal its content
+    // section — the same content-anchored pattern as the equipment `obj.pack` join above. A generator
+    // regression in category naming fails here instead of slipping past the sickle/longbow spot checks.
+    const contentCategories = extractItemCategories(pin.contentRoot);
+    const categoryNames = new Set(parsePack(fs.readFileSync(path.join(pin.contentRoot, 'pack/category.pack'), 'utf8')).keys());
+    for (const item of payload.items as PublishedItemRow[]) {
+        const expected = item.alias === null ? null : (contentCategories.get(item.alias) ?? null);
+        assertEqual(item.category ?? null, expected, `${revision} item ${item.alias} (${item.id}) category`);
+        if (item.category !== null && !categoryNames.has(item.category)) throw new Error(`${revision}: item ${item.alias} category ${item.category} absent from pack/category.pack`);
+    }
+    for (const [alias, expected] of contentCategories) {
+        if (!objPack.has(alias)) continue;
+        const published = byAlias.get(alias) as PublishedItemRow | undefined;
+        if (!published) throw new Error(`${revision}: content item ${alias} missing from published items`);
+        assertEqual(published.category ?? null, expected, `${revision} content item ${alias} category`);
+    }
+    const categoryPin = (alias: string, id: number, category: string | null) => {
+        const row = byAlias.get(alias) as PublishedItemRow | undefined;
+        if (!row || row.id !== id || (row.category ?? null) !== category) throw new Error(`${revision}: item ${alias} category pin ${JSON.stringify(row?.category)}`);
+    };
+    categoryPin('silver_sickle', 2961, 'weapon_slash');
+    categoryPin('unstrung_longbow', 48, 'unstrung_bow');
+    categoryPin('twpart1', 6, 'cannon_parts');
+    categoryPin('dragon_dagger_p', 1231, 'weapon_stab');
+    categoryPin('dragon_dagger', 1215, 'weapon_stab');
+    categoryPin('rune_full_helm', 1163, 'armour_helmet');
+    categoryPin('amulet_of_glory', 1704, null);
     assertEqual(equipment.equipment_source.sha256, 'ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3', `${revision} equipment.ts pin`);
     assertEqual(equipment.equipment_source.bytes, 2360, `${revision} equipment.ts bytes`);
     assertEqual(equipment.equipment_evidence?.sha256, 'ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3', `${revision} equipment evidence pin`);

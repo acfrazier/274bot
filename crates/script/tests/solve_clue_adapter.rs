@@ -54,11 +54,12 @@ const SEARCH_LEVEL: i32 = 1;
 const ENTRANA_ID: i32 = 3579;
 const ENTRANA_X: i32 = 2818;
 const ENTRANA_Z: i32 = 3351;
-/// The refused worn name the frozen matcher folds, and the hard-trail dagger
-/// id the strip unequips but never lists.
+/// Two worn names the monk's category rule restricts (`armour_helmet` and
+/// `weapon_stab`): both are unequipped, listed, deposited and restored in
+/// posted order.
 const HELM_ITEM: i32 = 1163;
 const DDS_ITEM: i32 = 1231;
-/// A worn name the frozen matcher lets through: never a verb, never listed.
+/// A worn name the category rule lets through (uncategorised jewellery): never a verb and stays off the restore list.
 const GLORY_ITEM: i32 = 1704;
 
 /// The posted pages these tests need: the pack page is the `page` argument,
@@ -130,8 +131,7 @@ impl Default for Scene<'_> {
     }
 }
 
-/// One posted worn row: the name the frozen matcher folds, the packed id its
-/// two hard-trail dagger ids are joined by, and the slot the raw page carries.
+/// One posted worn row: the posted display name the unequip and reclaim read, the packed id that selects its category, and the slot the raw page carries.
 fn worn_row(id: i32, name: &str, slot: i32) -> ItemRowInput<'_> {
     ItemRowInput {
         name: Some(name),
@@ -2328,7 +2328,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Unequip {
             name: "Dragon dagger(p)".to_string(),
         }],
-        "the first folded name is the landed unequip — the worn row's own Remove"
+        "the first category-restricted name is the landed unequip — the worn row's own Remove"
     );
     assert_eq!(
         probe_text(
@@ -2362,7 +2362,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Unequip {
             name: "Rune full helm".to_string(),
         }],
-        "the next folded name is unequipped"
+        "the next category-restricted name is unequipped"
     );
     let probe = json(
         &iso,
