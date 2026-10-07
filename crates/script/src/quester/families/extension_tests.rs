@@ -48,6 +48,7 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
                         choose: Arc::from("Carlem Aber Camerinthum Purchai Gabindo"),
                     }]),
                     strict: true,
+                    chat_only: false,
                 }),
                 &mut tick.cx,
             )

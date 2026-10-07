@@ -1286,6 +1286,7 @@ fn compile_dialogue_options(
             })
             .collect(),
         strict: args.strict,
+        chat_only: false,
     })
 }
 
