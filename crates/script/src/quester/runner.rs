@@ -4,6 +4,7 @@ use super::compile::{
     StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
+use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
 use super::queue::QueueStatus;
@@ -35,6 +36,11 @@ use std::time::Duration;
 // click). Adoption consumes a transaction too, but never adds a click.
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
+// Continue drains a single progress read may spend on chat pages no step
+// owns, and the active time they may take together. A page that reopens past
+// either parks with its root and text.
+const JOURNAL_CONTINUE_DRAINS: u8 = 3;
+const JOURNAL_DRAIN_WINDOW: Duration = Duration::from_secs(30);
 const QUEUE_QUEST_STATUS_WAIT: Duration = Duration::from_secs(30);
 // Pair admission uses the broker's ten-minute inactivity budget in active time.
 const PAIR_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -208,6 +214,18 @@ fn trace_root_event(
     );
 }
 
+/// `modal root R (first text)`: the open chat page a journal park names.
+fn chat_page_label(tick: &NativeTick<'_>) -> String {
+    let Some(chat) = tick.cx.snapshot().chat_modal() else {
+        return String::from("an unobserved chat page");
+    };
+    let mut label = format!("modal root {}", chat.value.root);
+    if let Some(text) = chat.value.texts.iter().find(|text| !text.is_empty()) {
+        let _ = write!(label, " ({text})");
+    }
+    label
+}
+
 fn trace_error_reason(error: &ActionError) -> &str {
     match error {
         ActionError::Unavailable(reason)
@@ -229,6 +247,11 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
+    /// Continuation driver for an unowned chat continue page that blocks the
+    /// journal read; see `drain_unowned_continue`.
+    journal_drain: Option<ActionHandle<Dialogue>>,
+    journal_drains: u8,
+    journal_drain_since: Option<Duration>,
     custom_reader: Option<Box<dyn StepRun>>,
     custom_read_after: Option<EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
@@ -550,6 +573,9 @@ impl Quester {
             stage: None,
             progress: None,
             journal: None,
+            journal_drain: None,
+            journal_drains: 0,
+            journal_drain_since: None,
             custom_reader: None,
             custom_read_after: None,
             pair_admission: None,
@@ -1377,6 +1403,7 @@ impl Quester {
         self.clear_prayers = None;
         self.last_outcome = None;
         self.journal = None;
+        self.journal_drain = None;
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
@@ -1479,9 +1506,142 @@ impl Quester {
         self.wait_for_read(tick, reason)
     }
 
+    /// Journal `begin` is Busy on a chat continue page (`chat_page_open`).
+    /// While a step or provisioning run is live, that page is its dialogue's
+    /// and the latched-continue Busy rule holds: the owner advances it. With
+    /// no live owner (a zone trigger's player chat, or the tail of a finished
+    /// step's conversation) nothing else will click it, so the read drains it
+    /// with the shared continuation driver, continue clicks only (a menu fails
+    /// strict), and retries. A read spends at most `JOURNAL_CONTINUE_DRAINS`
+    /// drains within `JOURNAL_DRAIN_WINDOW`; a page that keeps reopening then
+    /// parks with its root and text. `None`: not drainable, so the caller waits.
+    fn drain_unowned_continue(&mut self, tick: &mut NativeTick<'_>) -> Option<bool> {
+        if self.step.is_some() || self.provisioner.run_live() {
+            return None;
+        }
+        let main_closed = tick
+            .cx
+            .snapshot()
+            .main_modal()
+            .is_some_and(|modal| modal.value.root == -1 && modal.value.texts.is_empty());
+        let continue_open = tick
+            .cx
+            .snapshot()
+            .chat_modal()
+            .is_some_and(|chat| chat.value.continue_component_id >= 0);
+        if !main_closed || !continue_open {
+            return None;
+        }
+        if self.journal_drains >= JOURNAL_CONTINUE_DRAINS {
+            self.park_on_reopening_continue(
+                tick,
+                format_args!("the chat continue reopened after {JOURNAL_CONTINUE_DRAINS} drains"),
+            );
+            return Some(false);
+        }
+        let args = DialogueArgs {
+            target: DialogueTarget::Continuation,
+            options: DialogueOptions::continue_only(),
+        };
+        match tick.actions.begin::<Dialogue>(args, &mut tick.cx) {
+            Ok(handle) => {
+                let page = chat_page_label(tick);
+                self.trace.record(
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {}: journal read drains an unowned chat continue ({page})",
+                        self.path.id.0
+                    ),
+                );
+                self.journal_drain = Some(handle);
+                self.journal_drains += 1;
+                self.journal_drain_since.get_or_insert(tick.cx.active_now());
+                self.journal_quiet_since = None;
+                self.dirty = true;
+                // Never a completed read: the read retries once the page is gone.
+                self.poll_journal_drain(tick);
+                Some(false)
+            }
+            Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => None,
+            Err(error) => {
+                self.record_failure(error);
+                self.parked = true;
+                Some(false)
+            }
+        }
+    }
+
+    /// Polls the continue drain. `true` while it runs or after it parked the
+    /// read; `false` once it is gone, so the read retries on this tick.
+    fn poll_journal_drain(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(handle) = self.journal_drain.as_ref() else {
+            return false;
+        };
+        if self
+            .journal_drain_since
+            .is_some_and(|since| tick.cx.active_now().saturating_sub(since) >= JOURNAL_DRAIN_WINDOW)
+        {
+            // Dropping the handle revokes the driver before it clicks again.
+            self.journal_drain = None;
+            self.park_on_reopening_continue(
+                tick,
+                format_args!(
+                    "the chat continue kept reopening for {} s",
+                    JOURNAL_DRAIN_WINDOW.as_secs()
+                ),
+            );
+            return true;
+        }
+        let result = match tick.actions.poll(handle, &mut tick.cx) {
+            Poll::Pending => return true,
+            Poll::Ready(result) => result,
+        };
+        self.journal_drain = None;
+        self.dirty = true;
+        match result {
+            // A failed or interrupted drain spent its budget; the retried
+            // read drains again or parks on the cap.
+            Ok(_)
+            | Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::BudgetExhausted
+                | ActionError::Stale
+                | ActionError::Cancelled,
+            ) => false,
+            Err(error) => {
+                self.parked = true;
+                self.park_reason = "journal blocked by an unowned chat page";
+                let page = chat_page_label(tick);
+                self.set_last_error(
+                    QuesterFailureKind::Other,
+                    Arc::from(format!(
+                        "journal blocked by {page}: {}",
+                        trace_error_reason(&error)
+                    )),
+                );
+                true
+            }
+        }
+    }
+
+    fn park_on_reopening_continue(&mut self, tick: &NativeTick<'_>, cause: fmt::Arguments<'_>) {
+        self.parked = true;
+        self.park_reason = "journal blocked by a reopening chat continue";
+        let page = chat_page_label(tick);
+        self.set_last_error(
+            QuesterFailureKind::Other,
+            Arc::from(format!("journal blocked by {page}: {cause}")),
+        );
+    }
+
     fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
         if self.path.progress_reader.is_some() {
             return self.read_custom_stage(tick, retarget);
+        }
+        if self.poll_journal_drain(tick) {
+            return false;
         }
         let progress = if let Some(handle) = self.journal.as_ref() {
             match tick.actions.poll(handle, &mut tick.cx) {
@@ -1563,6 +1723,9 @@ impl Quester {
                     });
                     if !closed {
                         self.journal_quiet_since = None;
+                        if let Some(read) = self.drain_unowned_continue(tick) {
+                            return read;
+                        }
                         return self
                             .wait_for_journal_read(tick, "journal retry quiet period unavailable");
                     }
@@ -1596,6 +1759,9 @@ impl Quester {
                         self.dirty = true;
                     }
                     Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                        if let Some(read) = self.drain_unowned_continue(tick) {
+                            return read;
+                        }
                         return self
                             .wait_for_journal_read(tick, "journal blocked by an occupied modal");
                     }
@@ -1627,6 +1793,8 @@ impl Quester {
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
         };
         self.journal_attempts = 0;
+        self.journal_drains = 0;
+        self.journal_drain_since = None;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
         if self.progress.is_none() {
@@ -2768,9 +2936,12 @@ impl Script for Quester {
                 self.last_combat = None;
                 self.settling = false;
                 self.journal = None;
+                self.journal_drain = None;
                 self.progress = None;
                 self.unreadable_since = None;
                 self.journal_attempts = 0;
+                self.journal_drains = 0;
+                self.journal_drain_since = None;
                 self.journal_retry_pending = false;
                 self.journal_quiet_since = None;
                 self.selection_since = None;
@@ -2785,10 +2956,13 @@ impl Script for Quester {
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
+                self.journal_drain = None;
                 self.progress = None;
                 self.settling = false;
                 self.needs_read = true;
                 self.journal_attempts = 0;
+                self.journal_drains = 0;
+                self.journal_drain_since = None;
                 self.journal_retry_pending = false;
                 self.journal_quiet_since = None;
                 self.waiting = None;
@@ -2816,6 +2990,7 @@ impl Script for Quester {
             self.provisioner.cancel();
             self.clear_prayers = None;
             self.journal = None;
+            self.journal_drain = None;
             self.needs_read = true;
             self.last_outcome = None;
             self.last_combat = None;
@@ -2826,6 +3001,8 @@ impl Script for Quester {
             self.settle_deadline = Duration::ZERO;
             self.unreadable_since = None;
             self.journal_attempts = 0;
+            self.journal_drains = 0;
+            self.journal_drain_since = None;
             self.journal_retry_pending = false;
             self.journal_quiet_since = None;
             self.selection_since = None;
@@ -2846,6 +3023,7 @@ impl Script for Quester {
         self.step = None;
         self.provisioner.cancel();
         self.journal = None;
+        self.journal_drain = None;
         self.settling = false;
         self.dirty = true;
         self.waiting = None;
