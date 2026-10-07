@@ -2994,7 +2994,7 @@ export default class T extends LoopingBot {
 
     assert_eq!(iso.probe("globalThis.__opened").unwrap(), true);
     assert_eq!(iso.probe("globalThis.__openedAt").unwrap(), 1);
-    assert_eq!(iso.probe("Game.tick()").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__rs2b0t_host.tick").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__loops").unwrap(), loops);
     assert_eq!(iso.probe("globalThis.__paints ?? 0").unwrap(), paints);
     assert_eq!(iso.probe("globalThis.__listeners").unwrap(), listeners);
@@ -8947,7 +8947,7 @@ export default class T extends LoopingBot {
 
     assert_eq!(iso.probe("globalThis.__bought").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__finishedAt").unwrap(), 1);
-    assert_eq!(iso.probe("Game.tick()").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__rs2b0t_host.tick").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__loops").unwrap(), loops);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
