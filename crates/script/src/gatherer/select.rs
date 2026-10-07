@@ -216,6 +216,7 @@ pub struct SelectedTarget {
 impl SelectedTarget {
     /// One approach policy for Gatherer and finite quest gathering.
     /// Live NPC ops own client-side approach; locs settle at their footprint.
+    /// Arrival uses the observed server position, never the rendered actor pose.
     pub(crate) fn approach(
         &self,
         snapshot: api::snapshot::SnapshotView<'_>,
@@ -232,15 +233,15 @@ impl SelectedTarget {
         } else if self.plan.npc_index >= 0 {
             false
         } else {
-            !snapshot.here().is_some_and(|here| match loc_id {
+            !snapshot.local_player().is_some_and(|player| match loc_id {
                 Some(id) => snapshot.walk_loc_arrived(
-                    here.value,
+                    player.value.player.network,
                     self.plan.tile,
                     i32::from(RESOURCE_APPROACH_RADIUS),
                     id,
                 ),
                 None => snapshot.walk_arrived(
-                    here.value,
+                    player.value.player.network,
                     self.plan.tile,
                     i32::from(RESOURCE_APPROACH_RADIUS),
                 ),
@@ -1235,6 +1236,76 @@ mod tests {
     use api::gather_methods::{GatherTarget, SpotId};
     use api::snapshot::{LocLayer, LocView, NpcView};
     use std::collections::HashMap;
+
+    #[test]
+    fn loc_arrival_consumers_use_server_position_while_rendering_trails() {
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::RunKey;
+        use api::snapshot::{GameSnapshot, SnapshotView};
+
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let rendered = WorldTile { x: 3195, ..tile };
+        let mut client = client::client::Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = tile.x - 52;
+        client.map_build_base_z = tile.z - 52;
+        client.minusedlevel = tile.level;
+        client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        let mut player = crate::quester::families::tests::local_player(rendered);
+        player.player.network = tile;
+        player.player.actor.moving = true;
+        snapshot.seed_local_player(player);
+        snapshot.seed_locs(vec![loc(1, tile)]);
+        let selected = SelectedTarget {
+            class: PlacementClass::Live,
+            plan: TargetPlan {
+                entity: EntityId::Loc(1),
+                tile,
+                op: Arc::from("Chop down"),
+                alias: Arc::from("Tree"),
+                products: [0; MAX_PRODUCTS],
+                products_len: 0,
+                skill_stat: 8,
+                method_index: 0,
+                npc_index: NO_NPC_INDEX,
+            },
+        };
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.walk_loc_arrived(tile, tile, 1, 1));
+        assert!(
+            selected.approach(view, stamp).is_none(),
+            "the observed server arrival must not launch a redundant approach"
+        );
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(
+                crate::quester::families::reach::loc_arrived(&tick.cx, &loc(1, tile)),
+                "quest loc arrival must use the same server position as native Walk"
+            );
+        });
+    }
 
     fn target(entity: EntityId, class: TargetClass) -> GatherTarget {
         GatherTarget {
