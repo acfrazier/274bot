@@ -277,6 +277,8 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   only when the layer is first shown.
 - Opening WalkTo before the vault is unlocked says the map loads once the
   vault is unlocked, instead of saying the navigation pack is missing.
+- On Windows the WalkTo map no longer fails now and then while antivirus is
+  scanning its files.
 
 ### Panel
 
@@ -328,6 +330,8 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   when you edit those settings again before the first save finishes. The start
   is not reported as a failure while it waits, and it does not run on the
   older settings.
+- Starting a script whose file has been deleted now says the file is missing,
+  instead of running an older cached copy (seen on Linux).
 - A native script that can't continue (for example, out of a required supply
   or unable to walk back to its spot) now stops and keeps the reason, shown as
   "stopped (blocked)" in the panel and the TUI.
@@ -402,8 +406,9 @@ They are listed here for completeness and are left out of the release notes.
 - Quester: a burnt pie stopped The Knight's Sword instead of baking another;
   quest steps that make an item now try again (a few times at most) when a
   chance step fails. Priest in Peril needed coins it never fetched, waited in
-  the crypt after the coffin, and couldn't get back through the first gate;
-  The Tourist Trap was refused on the walk to the mining camp captain.
+  the crypt after the coffin, couldn't get back through the first gate, and
+  could try to douse the coffin through the cell bars; The Tourist Trap was
+  refused on the walk to the mining camp captain.
 - Gatherer: after banking at Draynor it could pick a spot inside the bank to
   walk back to, lose sight of the fishing spot and give up; at Catherby and
   some other fishing spots it could pick a spot it can't stand on.
@@ -411,6 +416,11 @@ They are listed here for completeness and are left out of the release notes.
   wolves' real reach, so Lumbridge to Ardougne by land was refused even for
   high-level characters; it now routes for combat 51 and above. Ghasts in
   Mort Myre are tracked by how they really move.
+- Vault: pasting a passphrase of about 1,000 characters or more at the Linux
+  terminal prompt waited for another key press; saving the vault on Windows
+  could fail while antivirus scanned the file.
+- Startup: on Windows a reused copy of the downloaded game files could be
+  cleaned up first because its last-used time didn't update.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
