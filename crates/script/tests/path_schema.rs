@@ -799,16 +799,21 @@ fn elena_stage_24_25_merge_and_area_boxes_resolve() {
 /// `near` facts resolve off the player tile, and an empty scene keeps every
 /// `loc_present` false.
 fn snapshot_at(x: i32, z: i32) -> api::snapshot::GameSnapshot {
+    snapshot_at_level(x, z, 0)
+}
+
+/// [`snapshot_at`] on map level `level`, for areas authored above the ground.
+fn snapshot_at_level(x: i32, z: i32, level: i32) -> api::snapshot::GameSnapshot {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
-            network: api::WorldTile { x, z, level: 0 },
+            network: api::WorldTile { x, z, level },
             actor: api::snapshot::ActorView {
                 name: None,
                 actions: vec![],
-                tile: api::WorldTile { x, z, level: 0 },
+                tile: api::WorldTile { x, z, level },
                 distance: 0,
                 animation: -1,
                 animation_frame: 0,
@@ -930,8 +935,19 @@ fn snapshot_with_items(
     selected: &SelectedGameData,
     items: &[(&str, i32)],
 ) -> api::snapshot::GameSnapshot {
+    snapshot_with_items_at_level(x, z, 0, selected, items)
+}
+
+/// [`snapshot_with_items`] on map level `level`.
+fn snapshot_with_items_at_level(
+    x: i32,
+    z: i32,
+    level: i32,
+    selected: &SelectedGameData,
+    items: &[(&str, i32)],
+) -> api::snapshot::GameSnapshot {
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
-    let mut snapshot = snapshot_at(x, z);
+    let mut snapshot = snapshot_at_level(x, z, level);
     let mut slot = 0;
     let mut rows = Vec::new();
     for &(alias, units) in items {
@@ -1327,4 +1343,53 @@ fn priestperil_leave_crypt_walks_to_gate_1_south_from_the_gate_2_west_stand() {
     assert_eq!(leave(3420, 9890), step("crypt-return-through-first-gate"));
     // North of Gate 1 the gates are behind: walk on to the ladder.
     assert_eq!(leave(3405, 9897), step("crypt-exit-approach"));
+}
+
+/// DIAG-PRIEST-TEMPLE: after the bless chase the player stands on the
+/// south-east walkway (3416,3486,2), east of the prison wall and below
+/// `cell_inside`. `leave-cell-with-holy-water` has to stay selected there:
+/// douse walks the coffin's west side, which only the opened door reaches.
+/// Standing west of the wall (or already out) douse runs directly.
+#[test]
+fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousing() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-priestperil-walkway");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("priestperil.json")))
+            .expect("priestperil decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(
+        &compiled,
+        &selected,
+        "priestperil:6",
+        &[],
+    )];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    let step = |id: &str| Choice::Step(FactKey::new(id));
+    let holding_holy_water =
+        |x, z| snapshot_with_items_at_level(x, z, 2, &selected, &[("bucket_blessedwater", 1)]);
+    let chosen = |x, z| probe.choice("priestperil:6", 0, &holding_holy_water(x, z));
+
+    // Inside the cell, east of the door: the stall tile and its neighbours.
+    assert_eq!(chosen(3416, 3486), step("leave-cell-with-holy-water"));
+    assert_eq!(chosen(3418, 3484), step("leave-cell-with-holy-water"));
+    assert_eq!(chosen(3417, 3488), step("leave-cell-with-holy-water"));
+    // West of the wall at the overnight pour stand: no door left to open.
+    assert_eq!(chosen(3413, 3488), step("douse-vampire-coffin"));
+    assert_eq!(chosen(3414, 3487), step("douse-vampire-coffin"));
 }

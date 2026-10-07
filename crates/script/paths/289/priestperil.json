@@ -2597,6 +2597,18 @@
         ],
         "source": "C maps/m53_54.jm2:5526,5777 east side of cell door and Drezel"
       },
+      "cell_walkway": {
+        "boxes": [
+          [
+            3416,
+            3484,
+            3419,
+            3486,
+            2
+          ]
+        ],
+        "source": "C maps/m53_54.jm2:5498,5526,5777 south-east walkway east of the x=3415 prison wall (loc 3460 z3484-3487), below cell_inside; leave-cell-with-holy-water only"
+      },
       "crypt": {
         "boxes": [
           [
@@ -3593,24 +3605,50 @@
               },
               "skip_if": {
                 "Not": {
-                  "Fact": {
-                    "kind": "in_area",
-                    "version": 1,
-                    "args": {
-                      "area": "cell_inside"
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "cell_inside"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "cell_walkway"
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               },
               "settle": {
                 "Not": {
-                  "Fact": {
-                    "kind": "in_area",
-                    "version": 1,
-                    "args": {
-                      "area": "cell_inside"
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "cell_inside"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "cell_walkway"
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               },
               "advances": false
