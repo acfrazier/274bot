@@ -372,8 +372,8 @@ impl SlotLive {
                 if !Self::send_ok(hold) {
                     return Ok(());
                 }
-                interact::cheat(client, "setvar tutorial 1000");
-                interact::cheat(client, "getvar tutorial");
+                interact::cheat(client, api::interact::TUTORIAL_SETVAR);
+                interact::cheat(client, api::interact::TUTORIAL_GETVAR);
                 self.last_action = now;
                 self.prep = Prep::WaitTutorial;
             }
