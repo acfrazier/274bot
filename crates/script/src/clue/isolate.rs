@@ -25,8 +25,14 @@
 //! row that is a selected search
 //! membership — a selected `trail_loc=^true` **and** a decodable selected
 //! `trail_coord` on the same row — walks to its decoded tile and then
-//! dispatches the Search/Open picker over the posted loc page; the machine
-//! family enqueues both verbs as `InteractReq::Walk` / `InteractReq::Loc`.
+//! the machine enqueues `InteractReq::WalkNear` / `InteractReq::Loc`.
+//!
+//! Search, dig and the clue's other destination steps walk into the
+//! `ARRIVE_RADIUS` rather than onto the decoded anchor. Native Sherlock may
+//! attach a posted loc identity to the same `walk-near` shape when its
+//! loc-approach fact proves the current stand cannot operate it; compatibility
+//! callers keep the existing radius-walk verb mapping.
+//!
 //! The picker is the frozen one, minus its `walkLeg`: nearest then action rank,
 //! always at the row's own posted tile and id.
 //!
@@ -321,6 +327,7 @@ use scene::*;
 use talk::*;
 pub(crate) use verbs::verb_req;
 
+use crate::clue::ARRIVE_RADIUS;
 use crate::food_policy::food_forms_for;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
@@ -1443,10 +1450,12 @@ impl ClueRuntime {
     /// scene; every other row idles exactly as before.
     ///
     /// The two pages are the latest posted `here` and loc page, never a cached
-    /// world copy. Emitting `walk` and `loc` repeats while the row stays held,
-    /// because arrival is `here` and a stale loc id is the host's own refuse:
-    /// the session waits the tick out instead of abandoning, and the later
-    /// family pass re-picks from its posted scene.
+    /// world copy. Native Sherlock latches the `walk-near` in a typed action
+    /// until arrival; compatibility callers retain the same radius-walk step
+    /// while the clue row stays held. A posted `can_operate_here=false` fact
+    /// lets native Sherlock attach the selected loc id and route to its legal
+    /// stand. If the host refuses a stale loc id, the next pass re-picks from
+    /// its posted scene instead of abandoning the token.
     fn search(&mut self, row: &TrailMembershipRow, input: &Value) -> Value {
         let Some(tile) = search_tile(row) else {
             // Not a search membership: coordinate digs and the special 3554
@@ -1459,10 +1468,21 @@ impl ClueRuntime {
             // to measure, so this tick waits rather than walking blind.
             return self.emit("wait");
         };
-        if here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
-            return self.walk(tile);
+        let pick = pick_loc(input, tile);
+        if let Some(pick) = pick
+            .as_ref()
+            .filter(|pick| pick.can_operate_here == Some(false))
+        {
+            return self.walk(pick.tile, Some(pick.id));
         }
-        match pick_loc(input, tile) {
+        if !pick
+            .as_ref()
+            .is_some_and(|pick| pick.can_operate_here == Some(true))
+            && (here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS))
+        {
+            return self.walk(tile, None);
+        }
+        match pick {
             Some(pick) => json!({
                 "kind": "loc",
                 "token": self.token,
@@ -1581,29 +1601,32 @@ impl ClueRuntime {
     fn dig(&mut self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
-            Arrival::Walking => self.walk(tile),
+            Arrival::Walking => self.walk(tile, None),
             Arrival::Arrived if spade_posted(input) => self.dig_verb(),
             Arrival::Arrived => self.emit(SUPPLIES_NEEDED),
         }
     }
-
     /// The landed arrival walk to a tile: the same verb the search arm and both
     /// dig arms dispatch, so `walk` has one shape on this machine.
     ///
-    /// Every walk the machine dispatches is remembered here and nowhere else,
-    /// including the gate-toll trip's own walk to the selected spawn: that
-    /// memory is what makes a walk live, and the trip is latched before its
-    /// first one goes out, so a shop-phase walk is never read as a new
-    /// intercept.
-    fn walk(&mut self, tile: Tile) -> Value {
+    /// Native Sherlock may add the selected loc id to route to a legal
+    /// operable stand. The kind and radius remain the ordinary compatibility
+    /// `walk-near` contract, so callers without that native fact keep their
+    /// existing verb handling.
+    fn walk(&mut self, tile: Tile, loc_id: Option<i32>) -> Value {
         self.walk_dest = Some(tile);
-        json!({
-            "kind": "walk",
+        let mut step = json!({
+            "kind": "walk-near",
             "token": self.token,
             "x": tile.x,
             "z": tile.z,
             "level": tile.level,
-        })
+            "radius": ARRIVE_RADIUS,
+        });
+        if let Some(loc_id) = loc_id {
+            step["loc_id"] = json!(loc_id);
+        }
+        step
     }
 
     /// The landed held Dig: the selected Spade display the host resolves by
