@@ -334,51 +334,213 @@ fn authored_gap_waits_for_harolds_reopened_page() {
     ));
 }
 
-#[test]
-fn default_gap_would_end_harold_early() {
-    // Harold Blurberry's death-guard equipment-room script
-    // (`death_guard_equiproom.rs2:289-297`) closes chat before ten closed
-    // ticks of delay and then opens another page without a re-arm signal.
-    // The delayed page reopens at tick 13; both gaps complete before it.
-    for gap_ticks in [None, Some(4)] {
-        let mut snapshot = ready();
-        snapshot.seed_chat_modal(100, vec!["Continue?".into()]);
-        snapshot.seed_chat_options(vec![], 101);
-        let mut ledger = None;
-        let options = dialogue::DialogueOptions {
-            gap_ticks,
-            ..Default::default()
-        };
-        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            tick.actions
-                .begin::<dialogue::Dialogue>(continuation(options), &mut tick.cx)
-                .unwrap()
-        });
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| tick
-            .actions
-            .poll(&handle, &mut tick.cx))
-        .is_pending());
-        snapshot.seed_chat_modal(-1, vec![]);
-        snapshot.seed_chat_options(vec![], -1);
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| tick
-            .actions
-            .poll(&handle, &mut tick.cx))
-        .is_pending());
-        let completion_tick = if gap_ticks.is_none() { 4 } else { 7 };
-        for game_tick in 4..completion_tick {
-            assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
-                .actions
-                .poll(&handle, &mut tick.cx))
-            .is_pending());
+/// The compiled talk options of the shipped step `step` in the Path `json`,
+/// whether a top-level or an acquisition step.
+fn shipped_talk_options(json: &str, step: &str) -> dialogue::DialogueOptions {
+    let document: crate::quester::path::PathDocument = serde_json::from_str(json).unwrap();
+    let acquisitions = document
+        .quest
+        .iter()
+        .flat_map(|quest| quest.acquire.values())
+        .flatten();
+    let args = document
+        .roles
+        .iter()
+        .flat_map(|role| &role.sequences)
+        .flat_map(|sequence| &sequence.steps)
+        .chain(acquisitions)
+        .find(|candidate| candidate.id.0.as_ref() == step)
+        .map(|found| found.args.clone())
+        .unwrap_or_else(|| panic!("no step {step}"));
+    let args: TalkArgs = serde_json::from_value(args).unwrap();
+    compile_dialogue_options(DialogueOptionsDocument {
+        prefer: args.prefer,
+        choose: args.choose,
+        line_rules: args.line_rules,
+        strict: args.strict,
+        gap_ticks: args.gap_ticks,
+    })
+    .unwrap()
+}
+
+fn shipped_death_talk_options(step: &str) -> dialogue::DialogueOptions {
+    shipped_talk_options(crate::quester::compile::DEATH_JSON, step)
+}
+
+fn chat_page(snapshot: &mut GameSnapshot, root: i32, text: &str) {
+    snapshot.seed_chat_modal(root, vec![text.into()]);
+    snapshot.seed_chat_options(vec![], root + 1);
+}
+
+fn chat_closed(snapshot: &mut GameSnapshot) {
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+}
+
+/// Harold's Blurberry route with a Blurberry Special carried, driven with
+/// `options` from the first objbox page: after the ale (`ale`) the chat
+/// closes for four ticks (`death_guard_equiproom.rs2:318-335`) and reopens
+/// on the stage-50 menu; "Can I buy you a drink?" runs `harold_drink2`
+/// (`:302-304`), which takes the Blurberry Special, closes the chat for ten
+/// ticks (`:280-297`, no re-arm signal) and opens Harold's last page.
+/// Returns whether the driver still owned the conversation and continued
+/// that last page.
+fn drives_harolds_last_page(options: dialogue::DialogueOptions, ale: bool) -> bool {
+    let mut snapshot = ready();
+    let mut ledger = None;
+    let mut tick = 1;
+    let first = if ale {
+        "You give Harold an Asgarnian Ale."
+    } else {
+        "Hi."
+    };
+    chat_page(&mut snapshot, 300, first);
+    let handle = with_tick(&snapshot, &mut ledger, tick, |t| {
+        t.actions
+            .begin::<dialogue::Dialogue>(continuation(options), &mut t.cx)
+            .unwrap()
+    });
+    let mut step = |snapshot: &GameSnapshot, ledger: &mut Option<Box<ledger::Ledger>>| {
+        tick += 1;
+        with_tick(snapshot, ledger, tick, |t| t.actions.poll(&handle, &mut t.cx)).is_pending()
+    };
+    assert!(step(&snapshot, &mut ledger));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    if ale {
+        chat_closed(&mut snapshot);
+        for _ in 0..4 {
+            if !step(&snapshot, &mut ledger) {
+                return false;
+            }
         }
+        chat_page(&mut snapshot, 100, "Arrh. That hit the spot!");
+        assert!(step(&snapshot, &mut ledger));
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, completion_tick, |tick| tick
-                .actions
-                .poll(&handle, &mut tick.cx)),
-            Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+            emitted(&ledger),
+            InteractReq::ContinueDialog { .. }
         ));
-        assert!(completion_tick < 13, "Harold's page reopens at tick 13");
     }
+    snapshot.seed_chat_modal(200, vec!["Select an Option".into()]);
+    snapshot.seed_chat_options(
+        [
+            "Where were you when you last had the combination?",
+            "Would you like to gamble?",
+            "Can I buy you a drink?",
+        ]
+        .into_iter()
+        .zip(201..)
+        .map(|(text, component_id)| api::snapshot::ChatOptionView {
+            component_id,
+            text: text.into(),
+        })
+        .collect(),
+        -1,
+    );
+    assert!(step(&snapshot, &mut ledger));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Answer { option: 3 }
+    ));
+    chat_page(&mut snapshot, 300, "You give Harold a Blurberry Special.");
+    assert!(step(&snapshot, &mut ledger));
+    chat_closed(&mut snapshot);
+    for _ in 0..10 {
+        if !step(&snapshot, &mut ledger) {
+            return false;
+        }
+    }
+    chat_page(&mut snapshot, 100, "Now THAT hit the spot!");
+    let continued = step(&snapshot, &mut ledger);
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    continued
+}
+
+#[test]
+fn harold_steps_keep_the_blurberry_route_through_harolds_last_page() {
+    // `give-ale-harold` reaches the Blurberry chain when the cocktail is
+    // already carried; the ale's own four-tick value would end it early.
+    let ale = shipped_death_talk_options("give-ale-harold");
+    assert!(drives_harolds_last_page(ale.clone(), true));
+    assert!(!drives_harolds_last_page(
+        dialogue::DialogueOptions {
+            gap_ticks: Some(4),
+            ..ale
+        },
+        true
+    ));
+    assert!(drives_harolds_last_page(
+        shipped_death_talk_options("give-blurberry-harold"),
+        false
+    ));
+}
+
+/// A resumed Traiborn hand-in, driven with `options` from "Give 'em here
+/// then." with three bones held: each bone closes the chat, takes the bone
+/// and sends a message, then waits `p_delay(1)` (`traiborn.rs2:22-29`), and
+/// short of the 25th the loop ends on the "That's all of them." page
+/// (`:191-199`). Returns whether the driver continued that page.
+fn drives_traiborn_bone_loop(options: dialogue::DialogueOptions) -> bool {
+    let bones = |count: i32| vec![held(526, "Bones", 0, 1, None); count as usize];
+    let given = |count: i32| {
+        (1..=count)
+            .map(|sequence| api::snapshot::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "You give Traiborn a set of bones.".into(),
+                sequence,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut snapshot = ready();
+    snapshot.seed_inventory(bones(3), 28);
+    chat_page(&mut snapshot, 100, "Give 'em here then.");
+    let mut ledger = None;
+    let mut tick = 1;
+    let handle = with_tick(&snapshot, &mut ledger, tick, |t| {
+        t.actions
+            .begin::<dialogue::Dialogue>(continuation(options), &mut t.cx)
+            .unwrap()
+    });
+    let mut step = |snapshot: &GameSnapshot, ledger: &mut Option<Box<ledger::Ledger>>| {
+        tick += 1;
+        with_tick(snapshot, ledger, tick, |t| t.actions.poll(&handle, &mut t.cx)).is_pending()
+    };
+    assert!(step(&snapshot, &mut ledger));
+    chat_closed(&mut snapshot);
+    for given_so_far in 1..=3 {
+        // The bone and its message arrive with the close, then every two ticks.
+        snapshot.seed_inventory(bones(3 - given_so_far), 28);
+        snapshot.seed_chat_lines(given(given_so_far));
+        for _ in 0..2 {
+            if !step(&snapshot, &mut ledger) {
+                return false;
+            }
+        }
+    }
+    chat_page(&mut snapshot, 110, "That's all of them.");
+    let continued = step(&snapshot, &mut ledger);
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    continued
+}
+
+#[test]
+fn ask_traiborn_keeps_a_resumed_bone_hand_in_through_its_last_page() {
+    // `ask-traiborn` runs at ritual progress 3-27 (`traiborn.rs2:1-8`).
+    let ask = shipped_talk_options(crate::quester::compile::DEMON_JSON, "ask-traiborn");
+    assert!(drives_traiborn_bone_loop(ask.clone()));
+    assert!(!drives_traiborn_bone_loop(dialogue::DialogueOptions {
+        gap_ticks: None,
+        ..ask
+    }));
 }
 
 #[test]

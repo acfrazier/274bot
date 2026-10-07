@@ -1825,9 +1825,9 @@
                 "prefer": [
                   "Can I buy you a drink?"
                 ],
-                "gap_ticks": 4
+                "gap_ticks": 10
               },
-              "comment": "death_guard_equiproom.rs2:29,302-336: at stage 40 the talk goes straight to harold_drink; with asgarnian_ale held it sets 50 and consumes the ale, then opens a 3-option menu where 'Can I buy you a drink?' leads to harold_drink2 (Blurberry Special request; given here if already carried). gap_ticks 4: death_guard_equiproom.rs2:321-327 closes the chat (if_close) then p_delay(0)+p_delay(2) before the next page (4 engine ticks, no re-arm signal).",
+              "comment": "death_guard_equiproom.rs2:29,302-336: at stage 40 the talk goes straight to harold_drink; with asgarnian_ale held it sets 50 and consumes the ale, closes the chat for p_delay(0)+p_delay(2) (4 ticks, :321-327), then opens a 3-option menu where 'Can I buy you a drink?' leads to harold_drink2 (:302-304). With a Blurberry Special already carried (e.g. one withdrawn on an earlier pass), harold_drink2 takes it and closes the chat for p_delay(0)+p_delay(2)+p_delay(2)+p_delay(2) before the next page (:280-297, 10 ticks, no re-arm signal), so gap_ticks is 10, the longest hole this step reaches.",
               "skip_if": {
                 "Not": {
                   "Fact": {

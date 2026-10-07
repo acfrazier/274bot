@@ -247,9 +247,10 @@
               "I need to get a key given to you by Sir Prysin.",
               "Well, have you got any keys knocking around?",
               "I'll get the bones for you."
-            ]
+            ],
+            "gap_ticks": 3
           },
-          "comment": "At key-hunt varp 2 this opens the ritual (varp 3). At varp 3-27 Traiborn instead takes every bone held (traiborn.rs2:10-32), so a restart here is harmless and may already yield the key.",
+          "comment": "At key-hunt varp 2 this opens the ritual (varp 3). At varp 3-27 Traiborn instead takes every bone held (traiborn.rs2:1-8,10-32), so a restart here is harmless and may already yield the key. That resumed hand-in closes the chat per bone (if_close, inv_del, mes, p_delay(1): 2 ticks, each bone re-arms, :22-29) and, at the 25th bone, runs the incantation (:191-212), whose if_close then p_delay(2) before mes and inv_add, then p_delay(2) before the next page (:206-211) needs gap_ticks 3, as give-traiborn-bones does.",
           "advances": true,
           "skip_if": {
             "Fact": {
