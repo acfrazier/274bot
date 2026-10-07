@@ -1223,6 +1223,9 @@ Cancellation still revokes the fight's action authority; the retirement
 off-clicks belong to the host, not that revoked owner. A completed fight does
 not trigger another clear merely because user prayers remain on. Explicit
 `Prayer.clear` retains its broad all-prayers meaning.
+A Load script's `api.combat` session follows the same rules: it clears its own
+raises before settling a cancelled fight, retires them on death, and hands
+them to the host on any Stop ([js-api-v2.md](js-api-v2.md) "Combat sessions").
 
 ## Nav vs scripts
 

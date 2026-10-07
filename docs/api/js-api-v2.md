@@ -358,6 +358,174 @@ resumes, even if the paused frame is offline, held or has no snapshot. Held
 reconnect walks and the carried host walk are discarded, not replayed after
 the session.
 
+## Combat sessions
+
+`api.combat.fight(request)` runs one fight of the native Combat machine —
+the same machine the Quester's combat steps and Sherlock use — from a Load
+script. One session per slot. `api.snapshot.combat` is the live session
+(`{ token, phase, status }`, `null` when none); `phase` is `preparing` while
+the host resolves the request against the slot's selected game data
+off-pump and `running` once the card is installed. `status` is `null` until
+the card publishes (`stage`: `starting`, `fighting` or `clearing-prayers`;
+`engaged_kind`: `npc`, `player` or `none`; `engaged_index`, -1 when nothing
+is engaged), and changes only when one of those values does. `await`ing
+`fight` settles exactly once, at the session terminal (`value.end`);
+`api.combat.stop()` ends the live session so its `fight` resolves
+`stopped`.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `await api.combat.fight(request)` | one `CombatOutcome` settlement | sync `invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`; host `refused`, `failed`, or a machine abort |
+| `api.combat.stop()` | `HelperResult<null>` | `no-session` (idempotent while live) |
+
+### The request
+
+`CombatRequest` is a plain object; every key but `target` is optional and
+takes the native default. Field names in errors are these keys.
+
+| Key | Meaning |
+| --- | --- |
+| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }` (below) |
+| `pick` | npc targets: `nearest` (default), `random` or `lowestHealth` |
+| `notTargetingOthers` | npc targets: skip npcs already fighting another player (default `true`) |
+| `area` | one `SceneRegionInput` box or 1..16 boxes a target must stand in |
+| `radius` | engage radius in tiles, 1..255 (default 12) |
+| `lostRadius` | tiles before an engaged target counts as lost, 1..255 (default 20) |
+| `style` | `melee` (default), `ranged` or `magic` |
+| `meleeMode` | melee only: `accurate`, `aggressive`, `defensive` or `controlled`; omitted keeps the current attack style |
+| `rangedMode` | ranged only: `accurate`, `rapid` (default) or `longRange` |
+| `spells` | magic only: selected spell aliases (`wind_strike`, `Fire Bolt`) cast manually in this order; omitted casts the strongest castable spell |
+| `fallbackSpells` | magic only: after the order is exhausted, fall back to the strongest castable spell (default `false`) |
+| `prayer` | let the bot raise prayers and drink prayer potions (default `true`) |
+| `food` | let the bot eat (default `true`) |
+| `potions` | let the bot drink potions (default `true`) |
+| `retaliate` | the game's Auto Retaliate setting during the fight (default `true`) |
+| `budgetTicks` | fight budget, 1..65535 game ticks (default 1500); the fight settles `budget` |
+
+**Target.** `{ npc: 'cow' }` takes a selected npc config name; a name that is
+not a config name is matched against display names (ASCII case-insensitive),
+so `{ npc: 'Chicken' }` fights any attackable npc called Chicken. `npc` and
+`npcId` take one value or a list (up to 32). `{ attackers: 'npcs' | 'players'
+| 'any' }` is defensive: it engages only actors already attacking the bot and
+never starts a fight with a player or npc that is not. Names are resolved on
+the host; an unknown name is `done{end:'refused', reason:
+'invalid-setting:target:unknown-npc'}`, an npc with no Attack option is
+`invalid-setting:target:unattackable`, an unknown spell
+`invalid-setting:spells:unknown-spell`.
+
+**Prayer.** Combat waits for one complete observation of all prayer rows,
+and any prayer already on then is the user's: it is kept on through the
+fight and afterwards, and a user's offensive tier is never replaced with a
+stronger one. The bot raises a protection prayer for the style the live
+attackers use (from incoming projectiles first, else from the threats'
+content attack styles) when the account's base Prayer meets that prayer's
+level and points remain; the game allows one protection at a time, so a
+protection the bot needs replaces a different one the user had on, which the
+bot does not restore. In melee fights against targets worth boosting (a
+player, or an npc with at least 40 hitpoints), it also raises the strongest
+Strength and Attack prayers it can afford. It drinks a prayer potion when a
+prayer is wanted or on and points fall to `base − (7 + base/4)` (at least 3).
+`prayer: false` raises nothing and drinks no prayer potion.
+
+**Food and potions.** Food is any item the selected content lists as food.
+The eat line is `2 × danger + 1` hitpoints, where `danger` is the most the
+live threats can hit in one attack after the active protection, from the
+engine's npc facts; when a threat's damage is unknown the line is half the
+bot's hitpoints, and when nothing can hurt the bot it does not eat. The bot
+takes the largest heal that fits the missing hitpoints (else the smallest),
+and adds a no-delay combo food only when ordinary food cannot lift it above
+the drink gate (`3 × danger + 1`). At the emergency line (`danger + 1`, or
+half when unknown) with no food left, the fight ends `aborted` with reason
+`no-food`. Potions are drunk only while hitpoints stay above the drink gate:
+combat boosts (melee: super attack, strength, defence; ranged: ranging and
+super defence; magic: magic and super defence) once the boost has faded and
+only against targets worth boosting, prayer potions as above, and antifire
+against dragonfire. `food: false` / `potions: false` turn these off.
+
+**Weapons and attack styles.** For each style Combat wields a suitable
+weapon (and ammunition) it finds worn or carried, then sets `meleeMode` or
+`rangedMode` on the game's combat tab. The game switches that tab to the
+wielded weapon only once the account is past Tutorial Island, so on an
+account still inside the tutorial a ranged fight waits for the tab and
+settles `budget` without a shot.
+
+**Retaliate.** Combat clicks the combat tab's Auto Retaliate when it differs
+from `retaliate` and does not restore it afterwards. Manual spell casting
+(`spells`, or magic with no autocast staff) keeps Auto Retaliate off, since
+the game would otherwise replace the manual cast with an auto attack.
+
+A non-object request is `invalid-args`. A malformed object (unknown key,
+wrong type, non-integer number) is `invalid-settings`. A semantic failure is
+`invalid-setting:<field>:<code>`, for example `target:required`,
+`target:ambiguous` (two target keys), `target:empty`, `target:duplicate`,
+`pick:requires-npc-target`, `meleeMode:requires-melee`,
+`rangedMode:requires-ranged`, `spells:requires-magic`,
+`area:invalid-box`, `radius:out-of-range` and `budgetTicks:out-of-range`.
+Each admits no session and emits no row.
+
+### Outcomes
+
+The terminal is the nested `value` of the `done` envelope:
+
+- `fought` carries the machine's `report`: `end` (`killed`, `target-gone`,
+  `no-target`, `budget`, `died` or `aborted`), `reason` for `aborted`
+  (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
+  `prep-failed:<weapon|shield|ammo|staff|arm>`, `unresponsive`, ...), the
+  engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,
+  `damageTaken`, `food`, `prayerDoses`, `boostDoses`, `antifireDoses`,
+  `protectSwitches`).
+- `stopped`: `api.combat.stop()` ended it.
+- `interrupted` with `cause`: `pause` (operator Pause; the session settles
+  after Resume), `user-input` (the player moved the bot), `died` (the host
+  saw the death before Combat did; a death Combat sees first is `fought` with
+  `report.end: 'died'`) or `reconnect`.
+- `refused`: the host refused the admitted request before any fight — a name
+  it could not resolve, `busy`, `unavailable:<why>` (for example missing
+  selected game data), or Combat refusing to begin.
+- `failed`: a machine error (`failed:<why>`, `blocked:<why>`) or a card panic.
+
+`refused` appears at two levels, as for Gather: a top-level
+`{ kind: 'refused', reason }` is a synchronous refusal before any session
+(nothing reached the host), while `done` with `end: 'refused'` is the host
+refusing a session it had admitted. Resets, supersessions and terminations
+are `aborted`.
+
+### Lifecycle and prayer ownership
+
+The session follows the native combat prayer ownership rules
+([script.md](script.md) "Native combat prayer ownership"):
+
+- A fight Combat settles clears the prayers it raised in its own wind-down
+  before `fought` resolves.
+- Pause and user input cancel the fight; on the next eligible tick the bot
+  turns off only the prayers it raised (accepted clicks, observed on), then
+  the session settles `interrupted`. User prayers stay on.
+- Death retires the obligation (the game cleared every prayer), so nothing is
+  clicked afterwards, even if the user turns a prayer on after respawning.
+- `api.combat.stop()`, operator Stop and any script stop end the session at
+  once and hand the bot's accepted raises to the host, whose ordinary pump
+  turns exactly those off; the next session waits for that cleanup instead
+  of taking the raised prayers as the user's.
+- A reconnect keeps the session; its fight goes stale and the session
+  settles `interrupted` with `cause: 'reconnect'` after the scoped cleanup.
+  A session reset (logout) ends it with no terminal; the await is `aborted:
+  reset`.
+
+While a session is live the host owns the slot's foreground exactly as for
+Gather: the script's game rows are dropped, not deferred; control rows still
+pass while paused.
+
+**One API session per slot.** A fight is `busy` while a gather session, a
+quest-progress read or a Hunt run is live, and `api.gather.run`,
+`api.questProgress` and every Hunt `*Run` are `busy` while a combat session
+is live. Nothing supersedes. Compatibility (v1) scripts have no `api.combat`;
+their rs2b0t combat helpers run in v1 slots only.
+
+Examples: `crates/script/examples/fight_v2.ts` (one fight) and
+`crates/script/examples/combat_showcase_v2.ts` (melee with an attack-style
+switch, ranged, magic, prayer with a user prayer kept, eating, a potion sip
+and a clean stop).
+
 ## Quest progress
 
 `api.questPaths()` is a sync read of the release Path index — not a
@@ -476,6 +644,13 @@ Hooks are all optional: `log` / `vlog` / `setStatus` notifications, awaited
 target, HP, food, style, safespot, weapon, and supplies. Getters and
 notifications run synchronously (a returned promise is `not impl`); a hook
 that throws rejects the run promise with that value.
+
+Hunt's fight leg (`fightRun`) is its own
+isolate-side stepper with the script's hooks; it is not the native Combat
+machine. To run that machine from a script, use a
+[combat session](#combat-sessions) (`api.combat.fight`). The two do not run
+together: every Hunt `*Run` is refused `busy` while a combat session is live,
+and a fight is `busy` while a Hunt run is.
 
 | Method | Settles with |
 | --- | --- |

@@ -134,7 +134,7 @@ impl SlotScript {
         {
             return;
         }
-        if seat.gather.token().is_some() {
+        if seat.gather.token().is_some() || seat.combat.token().is_some() {
             seat.progress_page = Some(ProgressPage::Refused {
                 token,
                 reason: "busy".into(),

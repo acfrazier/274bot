@@ -343,6 +343,15 @@ pub enum InteractReq {
     /// Native gather-family control; public JS interact rows cannot forge it.
     #[serde(rename = "gather-stop", skip_deserializing)]
     GatherStop { request_id: u64 },
+    /// Native combat-session control; public JS interact rows cannot forge it.
+    #[serde(rename = "combat-fight", skip_deserializing)]
+    CombatFight {
+        request_id: u64,
+        request: std::sync::Arc<crate::api_combat::CombatSessionRequest>,
+    },
+    /// Native combat-session control; public JS interact rows cannot forge it.
+    #[serde(rename = "combat-stop", skip_deserializing)]
+    CombatStop { request_id: u64 },
     /// Reserved native progress-family control; public JS interact rows cannot forge it.
     #[serde(rename = "progress-read", skip_deserializing)]
     ProgressRead { request_id: u64, name: String },
@@ -446,6 +455,8 @@ impl InteractReq {
                 | Self::RunPolicyOverride { .. }
                 | Self::GatherRun { .. }
                 | Self::GatherStop { .. }
+                | Self::CombatFight { .. }
+                | Self::CombatStop { .. }
                 | Self::ProgressRead { .. }
                 | Self::NoteProgress
                 | Self::LoopSettled

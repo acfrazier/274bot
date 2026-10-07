@@ -29,8 +29,8 @@
 use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
 use crate::api_progress::{ProgressPage, QuestProgressRow as ApiQuestProgressRow};
 use crate::isolate_fb::{
-    ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow, QuestStatus, Row,
-    SceneEntity, Snapshot, Stat,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow,
+    QuestStatus, Row, SceneEntity, Snapshot, Stat,
 };
 use api::line_of_sight::CollisionQuery;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
@@ -533,6 +533,12 @@ pub struct GatherOutcomeObservation {
     pub request_id: u64,
     pub end: GatherEnd,
 }
+/// The retained terminal result of the latest combat session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CombatOutcomeObservation {
+    pub request_id: u64,
+    pub end: crate::api_combat::CombatEnd,
+}
 
 /// Which post carried a page, in which scene. Equal stamps are the same
 /// posted table; a new table or a `ResetSession` changes the stamp.
@@ -699,6 +705,9 @@ scene_pages! {
         walk_missing_carry: Vec<CarryRow>,
         api_gather: GatherObservation,
         api_gather_outcome: GatherOutcomeObservation,
+        /// The live combat page identity (gather page shape).
+        api_combat: GatherObservation,
+        api_combat_outcome: CombatOutcomeObservation,
         api_progress: ProgressPage,
     }
 }
@@ -828,6 +837,52 @@ fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObserv
         _ => return None,
     };
     Some(GatherOutcomeObservation { request_id, end })
+}
+
+fn read_combat_outcome(page: ApiCombatOutcome<'_>) -> Option<CombatOutcomeObservation> {
+    use crate::api_combat::{CombatEnd, CombatSummary, InterruptCause, ReportEnd};
+    let request_id = page.request_id();
+    if request_id == 0 {
+        return None;
+    }
+    let reason = page.reason();
+    let end = match page.end() {
+        1 => {
+            let end = ReportEnd::from_code(page.report_end())?;
+            CombatEnd::Fought {
+                token: request_id,
+                report: CombatSummary {
+                    end,
+                    reason: (end == ReportEnd::Aborted).then(|| reason.unwrap_or_default().into()),
+                    npc_type: page.npc_type(),
+                    ticks: page.ticks(),
+                    swings: page.swings(),
+                    casts: page.casts(),
+                    damage_taken: page.damage_taken(),
+                    food: page.food(),
+                    prayer_doses: page.prayer_doses(),
+                    boost_doses: page.boost_doses(),
+                    antifire_doses: page.antifire_doses(),
+                    protect_switches: page.protect_switches(),
+                },
+            }
+        }
+        2 => CombatEnd::Stopped { token: request_id },
+        3 => CombatEnd::Interrupted {
+            token: request_id,
+            cause: InterruptCause::parse(reason?)?,
+        },
+        4 => CombatEnd::Refused {
+            token: request_id,
+            reason: reason.unwrap_or_default().into(),
+        },
+        5 => CombatEnd::Failed {
+            token: request_id,
+            reason: reason.unwrap_or_default().into(),
+        },
+        _ => return None,
+    };
+    Some(CombatOutcomeObservation { request_id, end })
 }
 fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
     let token = page.request_id();
@@ -1451,6 +1506,12 @@ impl Scene {
             if let Some(outcome) = read_gather_outcome(page) {
                 p.api_gather_outcome(outcome);
             }
+        }
+        if let Some(page) = snap.api_combat() {
+            p.api_combat(read_gather_page(page));
+        }
+        if let Some(outcome) = snap.api_combat_outcome().and_then(read_combat_outcome) {
+            p.api_combat_outcome(outcome);
         }
         if let Some(page) = snap.api_progress().and_then(read_api_progress) {
             p.api_progress(page);

@@ -566,6 +566,51 @@ pub(super) fn prepare_run(
     })
 }
 
+/// Off-pump preparation for an API seat's unlisted native card (no Browse
+/// registry entry): `build` creates the card from the selected data on the
+/// preparation worker and returns its prepared configuration.
+#[cfg(feature = "load")]
+pub(super) fn prepare_native_run(
+    run: RunKey,
+    selected: Arc<api::game_data::SelectedGameData>,
+    account: String,
+    build: impl FnOnce(
+            &Arc<api::game_data::SelectedGameData>,
+        ) -> Result<(Box<dyn Script>, Arc<PreparedConfig>), StartError>
+        + Send
+        + 'static,
+) -> Result<Preparation, StartError> {
+    let worker = FamilyPreparation::run(move |_| {
+        PreparationResult(Some((|| {
+            let pin = selected.selected_pin().map_err(StartError::Facts)?;
+            let (script, config) =
+                catch_unwind(AssertUnwindSafe(|| build(&selected))).map_err(|payload| {
+                    StartError::Unavailable(
+                        format!("preparation panic: {}", panic_message(&payload)).into(),
+                    )
+                })??;
+            Ok(CompiledRun {
+                script: ScriptOwner(Some(script)),
+                config,
+                pending: None,
+                run,
+                selected,
+                pin,
+                output: Output {
+                    account,
+                    ..Default::default()
+                },
+                actions: NativeActions { _private: () },
+            })
+        })()))
+    })
+    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    Ok(Preparation {
+        generation: run.run,
+        worker,
+    })
+}
+
 pub(super) fn destroy_run(mut run: Box<CompiledRun>, reason: StopReason) -> Option<String> {
     let stopped = run.script.stop_with_output(reason, &mut run.output);
     let dropped = catch_unwind(AssertUnwindSafe(|| drop(run)));
