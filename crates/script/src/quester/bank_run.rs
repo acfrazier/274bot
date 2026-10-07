@@ -48,8 +48,10 @@ pub(super) struct BankRun {
 /// shortage the bank memory observed **this session** is final, so the trip
 /// is refused before any walk with the counts that refuse it. A `Hint`
 /// shortage is advisory and costs the one verifying trip; an `Unknown` bank
-/// learns. With `partial_ok` the author accepts fewer, so only a bank with
-/// none of the item at all refuses.
+/// learns. With `partial_ok` the author accepts fewer, so the step refuses
+/// only when none of its withdrawn items is obtainable: each is short with
+/// nothing banked (REVIEW-D4-WITHDRAW-SKIPS; a single-item step therefore
+/// refuses exactly when that item has none banked).
 fn session_shortage(
     actions: &[BankAction],
     partial_ok: bool,
@@ -58,20 +60,24 @@ fn session_shortage(
     if stock.banked_origin() != Origin::Session {
         return None;
     }
+    let mut unobtainable = Vec::new();
+    let mut obtainable = false;
     for action in actions {
         match action {
-            BankAction::Withdraw { item, qty } => {
-                if let Err(Shortage::Short { held, banked, .. }) =
-                    stock.plan_withdraw(item.id, *qty)
-                {
-                    if !partial_ok || banked <= 0 {
-                        return Some(Arc::from(format!(
-                            "need {qty} {}; held {held}, banked {banked}",
-                            item.name
-                        )));
+            BankAction::Withdraw { item, qty } => match stock.plan_withdraw(item.id, *qty) {
+                Err(Shortage::Short { held, banked, .. }) => {
+                    let need = format!("need {qty} {}; held {held}, banked {banked}", item.name);
+                    if !partial_ok {
+                        return Some(Arc::from(need));
+                    }
+                    if banked <= 0 {
+                        unobtainable.push(need);
+                    } else {
+                        obtainable = true;
                     }
                 }
-            }
+                Ok(_) | Err(Shortage::Unknown) => obtainable = true,
+            },
             BankAction::WithdrawAny { items, qty } => {
                 let covered = items.iter().any(|item| {
                     stock.has(item.id, *qty) == Truth::True
@@ -92,7 +98,7 @@ fn session_shortage(
             _ => {}
         }
     }
-    None
+    (!obtainable && !unobtainable.is_empty()).then(|| Arc::from(unobtainable.join("; ")))
 }
 
 impl BankRun {
@@ -435,6 +441,66 @@ mod tests {
             session_shortage(&tiers, false, &stock(&snapshot, &session_empty)),
             None,
             "a worn legal tier covers the slot"
+        );
+    }
+
+    /// REVIEW-D4-WITHDRAW-SKIPS: Imp Catcher's `withdraw-beads` is one
+    /// `partial_ok` step over four bead colours. A Session bank holding two
+    /// of them takes those two; the step refuses only when no listed item is
+    /// obtainable at all.
+    #[test]
+    fn a_partial_multi_item_withdraw_takes_what_the_session_bank_holds() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let bead = |alias: &str| {
+            let item = data.item_by_alias(alias).expect("bead");
+            withdraw(item.id, alias, 1)
+        };
+        let beads = [
+            bead("red_bead"),
+            bead("yellow_bead"),
+            bead("black_bead"),
+            bead("white_bead"),
+        ];
+        let id = |alias: &str| data.item_by_alias(alias).unwrap().id;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
+        let stock = |memory: &BankMemory| {
+            session_shortage(
+                &beads,
+                true,
+                &SnapshotView::new(Some(&snapshot), stamp())
+                    .with_bank_memory(Some(memory))
+                    .stock(),
+            )
+        };
+
+        let two = BankMemory::seeded(
+            &[(id("red_bead"), 1), (id("white_bead"), 1)],
+            Origin::Session,
+        );
+        assert_eq!(stock(&two), None, "two banked colours are withdrawn");
+        assert_eq!(
+            session_shortage(
+                &beads,
+                false,
+                &SnapshotView::new(Some(&snapshot), stamp())
+                    .with_bank_memory(Some(&two))
+                    .stock(),
+            )
+            .as_deref(),
+            Some("need 1 yellow_bead; held 0, banked 0"),
+            "an exact multi-item withdraw still refuses its first shortage"
+        );
+        let none = BankMemory::seeded(&[], Origin::Session);
+        assert_eq!(
+            stock(&none).as_deref(),
+            Some(
+                "need 1 red_bead; held 0, banked 0; need 1 yellow_bead; held 0, banked 0; \
+                 need 1 black_bead; held 0, banked 0; need 1 white_bead; held 0, banked 0"
+            ),
+            "with nothing obtainable the partial step refuses, naming every item"
         );
     }
 }
