@@ -64,7 +64,7 @@
 //!   emits join the batch in emit order, after any JS rows already queued
 //!   or queued by its callbacks.
 //! - **Changed evidence**: [`snapshot_step`] drives opted-in families once
-//!   per distinct `(tick, input identity)` without recording another tick.
+//!   per distinct `(tick, evidence sequence)` without recording another tick.
 //!   It carries the tick's callback count through callback continuations;
 //!   families retain their existing interaction/batch dispatch guards.
 //!   This pass can settle an already-observed result and its await without
@@ -768,7 +768,7 @@ struct Row {
     hooks: Vec<Hook>,
     /// Callbacks run this tick, across both passes.
     calls: usize,
-    /// Last observation-only pass this row consumed.
+    /// Last `(tick, evidence sequence)` pass this row consumed.
     last_snapshot: Option<(u64, u64)>,
     /// The settled callback the next step reads.
     reply: Option<Reply>,
@@ -1133,14 +1133,8 @@ pub(crate) fn resume(js: &mut impl Js) {
 
 /// Recheck opted-in rows against one changed snapshot without starting a
 /// new tick's callback or per-family event budget.
-pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, input_identity: u64) {
-    pass(
-        js,
-        Pass::Snapshot {
-            tick,
-            input_identity,
-        },
-    );
+pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, evidence_sequence: u64) {
+    pass(js, Pass::Snapshot { tick, evidence_sequence });
 }
 
 /// Whether an outcome waits for its JS await.
@@ -1155,7 +1149,10 @@ enum Pass {
     /// Rows waiting on a promise; the budget carries over.
     Resume,
     /// Opted-in rows, once per distinct changed snapshot; carries the budget.
-    Snapshot { tick: u64, input_identity: u64 },
+    Snapshot {
+        tick: u64,
+        evidence_sequence: u64,
+    },
 }
 
 /// Rows are taken out of the host while they step, so a callback may
@@ -1194,12 +1191,12 @@ fn pass(js: &mut impl Js, pass: Pass) {
             Pass::Resume => {}
             Pass::Snapshot {
                 tick,
-                input_identity,
+                evidence_sequence,
             } => {
                 if !row.machine.snapshot_sensitive() || row.pending.is_some() {
                     return true;
                 }
-                let snapshot = (tick, input_identity);
+                let snapshot = (tick, evidence_sequence);
                 if row.last_snapshot == Some(snapshot) {
                     return true;
                 }
@@ -2374,23 +2371,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn snapshot_pass_deduplicates_the_same_tick_and_input_identity() {
+    fn snapshot_pass_deduplicates_the_same_tick_and_evidence_sequence() {
         let handle = running(begin("probe", json!({ "button": 10, "steps": 3 })));
         merge_ops(Vec::new());
         let mut js = Echo { calls: 0 };
-        snapshot_step(&mut js, 1, 7);
+        snapshot_step(&mut js, 1, 1);
         assert_eq!(
             merge_ops(Vec::new()),
             vec![InteractReq::IfButton { component_id: 11 }]
         );
-        snapshot_step(&mut js, 1, 7);
+        snapshot_step(&mut js, 1, 1);
         assert!(merge_ops(Vec::new()).is_empty());
-        snapshot_step(&mut js, 1, 8);
+        snapshot_step(&mut js, 1, 2);
         assert_eq!(
             merge_ops(Vec::new()),
             vec![InteractReq::IfButton { component_id: 12 }]
         );
-        snapshot_step(&mut js, 2, 8);
+        snapshot_step(&mut js, 2, 2);
         assert_eq!(
             merge_ops(Vec::new()),
             vec![InteractReq::IfButton { component_id: 13 }]
@@ -2404,8 +2401,8 @@ pub(crate) mod tests {
         let handle = running(begin("burst", json!({ "calls": total })));
         let mut js = Echo { calls: 0 };
         step(&mut js);
-        for identity in 1..=4 {
-            snapshot_step(&mut js, 1, identity);
+        for evidence_sequence in 1..=4 {
+            snapshot_step(&mut js, 1, evidence_sequence);
         }
         assert_eq!(js.calls, CALLS_PER_TICK);
         assert_eq!(take(handle), Take::Pending);
