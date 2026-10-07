@@ -497,6 +497,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         ),
         Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
         Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
+        Module::new("/rs2b0t/bot/geometry/Area.js", include_str!("area.js")),
         Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
         Module::new(
             "/rs2b0t/bot/api/execution/EventSignal.js",

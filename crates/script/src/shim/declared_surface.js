@@ -19,6 +19,7 @@ export { Quests } from '../../api/ui/questlog/Quests.js';
 export { Traversal } from '../../api/walking/Traversal.js';
 export { DirectNavigator } from '../../api/walking/DirectNavigator.js';
 export { default as Tile } from '../../geometry/Tile.js';
+export { Area } from '../../geometry/Area.js';
 export { Npc, Npcs } from '../../api/npcs/Npcs.js';
 export { Player, Players } from '../../api/players/Players.js';
 export { Loc, Locs } from '../../api/locs/Locs.js';
@@ -44,13 +45,6 @@ export class AcquireTask {
     constructor() {}
     execute() { throw notImpl('AcquireTask.execute'); }
     validate() { throw notImpl('AcquireTask.validate'); }
-}
-export class Area {
-    static circular() { throw notImpl('Area.circular'); }
-    contains() { throw notImpl('Area.contains'); }
-    getRandomTile() { throw notImpl('Area.getRandomTile'); }
-    static rectangular() { throw notImpl('Area.rectangular'); }
-    constructor() {}
 }
 export const BOB_VENDOR = notImplValue('BOB_VENDOR');
 export const BROKEN_AXE = notImplValue('BROKEN_AXE');

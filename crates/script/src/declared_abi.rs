@@ -509,6 +509,10 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { default as Tile } from '../../geometry/Tile.js';",
     },
     Reexport {
+        names: &["Area"],
+        line: "export { Area } from '../../geometry/Area.js';",
+    },
+    Reexport {
         names: &["Npc", "Npcs"],
         line: "export { Npc, Npcs } from '../../api/npcs/Npcs.js';",
     },

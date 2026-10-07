@@ -593,6 +593,7 @@ pub(super) fn wire_runtime(
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::scene_v8::install(runtime).map_err(|e| format!("scene v8: {e}"))?;
+    super::area::install(runtime).map_err(|e| format!("area: {e}"))?;
     super::distance::install(runtime).map_err(|e| format!("distance: {e}"))?;
     super::reach_query::install(runtime).map_err(|e| format!("reach query: {e}"))?;
     super::melee_weapons_v8::install(runtime).map_err(|e| format!("melee weapons v8: {e}"))?;

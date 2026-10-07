@@ -4682,6 +4682,7 @@ dependencies = [
  "libc",
  "nav",
  "parking_lot",
+ "rand",
  "rustyscript",
  "schemars",
  "script",
