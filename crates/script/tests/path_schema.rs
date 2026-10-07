@@ -1467,24 +1467,296 @@ fn fluffs_kitten_handoff_advances() {
     compile_value(value, &selected, &quests).expect("fluffs compiles");
 }
 
-/// PORT-S6-DRAFTS-FIX F5: the Brimhaven <-> Ardougne boat costs 30 coins each
-/// way in content (`customs_officer.rs2:80-82` out, `captain_barnaby.rs2:2`
-/// via `karamja_sailor_dialogue` back), so the non-`owns_inventory` Path must
-/// float at least the 60-coin round trip. Fails on `45aec8ec3` (`0`).
+/// PORT-S6-DRAFTS-R4 T1: a fresh run from the mainland bank pays three 30-coin
+/// boat crossings, not the two the F5 round trip assumed: mainland bank ->
+/// Kangai (`start`), Kangai -> crate (`take-label`), and mansion ->
+/// Kangai (`return-totem`). The coin float is a one-shot latch
+/// (`provision.rs:342-381`, never redrawn once held; native walks never use
+/// BankBudget per `walk_permissions.rs:185-186`), so it must cover all three
+/// up front. The crossing count is derived from the Path's own ordered
+/// anchors rather than a constant: consecutive waypoints on opposite sides of
+/// the sea each cost one 30-coin fare in content (`customs_officer.rs2:80-82`
+/// out, `captain_barnaby.rs2:2` via `karamja_sailor_dialogue` back).
+/// Fails on `e41903c64` (`coin_float` 60 for two crossings).
 #[test]
 fn totem_coin_float_covers_the_round_trip_fare() {
     let _home = script::IsolatedEnv::enter("path-schema-totem-fare");
     let (selected, quests) = selected_and_quests();
     let value = read_path(&paths_dir().join("totem.json"));
+    /// Brimhaven/Karamja anchors sit near x 2790; every mainland anchor sits
+    /// near x 2640-2680, so the sea falls between them.
+    fn karamja_side(tile: &[i64]) -> bool {
+        tile[0] >= 2750
+    }
+    fn anchor_of(step: &Value) -> Option<Vec<i64>> {
+        step.pointer("/args/anchor/tile")?.as_array().map(|tile| {
+            tile.iter()
+                .map(|coord| coord.as_i64().expect("anchor coord"))
+                .collect()
+        })
+    }
+    fn step_id(step: &Value) -> String {
+        step.pointer("/id")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    }
+    // Quest execution order: the mainland bank first, then every anchored
+    // stage step in order, then the `return-totem` prelude that fires once
+    // the totem is held. (The other prelude steps are intra-mainland
+    // recoveries, and the new descent steps are intra-mansion, so neither
+    // can add a sea crossing.)
+    let mut waypoints: Vec<(String, Vec<i64>)> = Vec::new();
+    let bank = value.pointer("/quest/bank/tile").expect("quest bank tile");
+    waypoints.push((
+        "bank".to_string(),
+        bank.as_array()
+            .expect("bank tile array")
+            .iter()
+            .map(|coord| coord.as_i64().expect("bank coord"))
+            .collect(),
+    ));
+    let role = value.pointer("/roles/0").expect("role 0");
+    for sequence in role
+        .pointer("/sequences")
+        .expect("sequences")
+        .as_array()
+        .expect("sequences array")
+    {
+        for step in sequence
+            .pointer("/steps")
+            .expect("steps")
+            .as_array()
+            .expect("steps array")
+        {
+            if let Some(tile) = anchor_of(step) {
+                waypoints.push((step_id(step), tile));
+            }
+        }
+    }
+    let prelude = role
+        .pointer("/prelude")
+        .expect("prelude")
+        .as_array()
+        .expect("prelude array");
+    let home = prelude
+        .iter()
+        .find(|step| step.pointer("/id").and_then(Value::as_str) == Some("return-totem"))
+        .expect("return-totem");
+    waypoints.push((
+        "return-totem".to_string(),
+        anchor_of(home).expect("return anchor"),
+    ));
+    let mut crossings: Vec<String> = Vec::new();
+    for pair in waypoints.windows(2) {
+        if karamja_side(&pair[1].1) != karamja_side(&pair[0].1) {
+            crossings.push(format!(
+                "{} {:?} -> {} {:?}",
+                pair[0].0, pair[0].1, pair[1].0, pair[1].1
+            ));
+        }
+    }
+    assert_eq!(
+        crossings.len(),
+        3,
+        "bank -> Kangai, Kangai -> crate and mansion -> Kangai must each cross the sea, found: {crossings:?}"
+    );
     let float = value
         .pointer("/quest/coin_float")
         .and_then(serde_json::Value::as_i64)
         .expect("quest.coin_float");
+    let need = crossings.len() as i64 * 30;
     assert!(
-        float >= 60,
-        "totem coin_float {float} must cover the 30+30 round trip"
+        float >= need,
+        "totem coin_float {float} must cover every boat crossing ({need} for {crossings:?})"
     );
     compile_value(value, &selected, &quests).expect("totem compiles");
+}
+
+/// PORT-S6-DRAFTS-R4 T2 (real pack): after `search-chest` the bot holds the
+/// totem on mansion level 1, from which `return-totem` cannot route. The
+/// prelude must step down the level-1 stairs and open the combination door
+/// from the stair-room side before `return-totem`. Content: the down stairs
+/// are `stairstop` 1723 at [2631,3322,1] (`C:maps/m41_51.jm2:8639`,
+/// `C:pack/loc.pack:1724`) landing at [2631,3325,0] via
+/// `C:scripts/ladders+stairs/scripts/stairs.rs2:54` (`case 1_41_51_7_58`
+/// lands `0_41_51_7_61`); the stair room sits west of `combodoor` 2705 at
+/// [2634,3323,0] (`C:maps/m41_51.jm2:6748`, `C:pack/loc.pack:2706`), which
+/// `C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90`
+/// (`[oploc1,combodoor]`) opens once the combination flag is set.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn totem_mansion_descent_reaches_the_return_boat() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions, Leg};
+    use nav::transport::TransportKind;
+    use nav::world::NavWorld;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-totem-descent-pack");
+    let (selected, quests) = selected_and_quests();
+    let value = read_path(&paths_dir().join("totem.json"));
+
+    // The step sequence reaches the landing: climb-down, then the stair-room
+    // door, then return-totem, in that prelude order.
+    let prelude = value
+        .pointer("/roles/0/prelude")
+        .expect("prelude")
+        .as_array()
+        .expect("prelude array")
+        .clone();
+    let pos = |id: &str| {
+        prelude
+            .iter()
+            .position(|step| step.pointer("/id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("prelude step {id}"))
+    };
+    let (down_at, door_at, home_at) = (
+        pos("climb-down-stairs"),
+        pos("open-combo-door-from-stair-room"),
+        pos("return-totem"),
+    );
+    assert!(
+        down_at < door_at && door_at < home_at,
+        "descent must run before return-totem: climb-down at {down_at}, combo door at {door_at}, return-totem at {home_at}"
+    );
+    let down = &prelude[down_at];
+    assert_eq!(
+        down.pointer("/args/target/loc").expect("down target"),
+        &json!("stairstop"),
+    );
+    assert_eq!(
+        down.pointer("/args/op").expect("down op"),
+        &json!("Climb-down"),
+    );
+    assert_eq!(
+        down.pointer("/args/anchor/tile").expect("down anchor"),
+        &json!([2631, 3322, 1]),
+    );
+    let down_skip = down.pointer("/skip_if").expect("down skip").to_string();
+    for needle in ["on_level", "mansion", "tribal_totem"] {
+        assert!(
+            down_skip.contains(needle),
+            "climb-down skips off level 1, outside the mansion and without the totem: {down_skip}"
+        );
+    }
+    assert_eq!(
+        down.pointer("/settle/Fact/args/level")
+            .expect("down settle"),
+        &json!(0),
+    );
+    let door = &prelude[door_at];
+    assert_eq!(
+        door.pointer("/args/target/loc").expect("door target"),
+        &json!("combodoor"),
+    );
+    assert_eq!(door.pointer("/args/op").expect("door op"), &json!("Open"),);
+    assert_eq!(
+        door.pointer("/args/anchor/tile").expect("door anchor"),
+        &json!([2631, 3325, 0]),
+        "the door step starts where climb-down lands"
+    );
+    let door_skip = door.pointer("/skip_if").expect("door skip").to_string();
+    for needle in ["on_level", "mansion", "tribal_totem"] {
+        assert!(
+            door_skip.contains(needle),
+            "combo door skips off the ground floor, outside the mansion and without the totem: {door_skip}"
+        );
+    }
+    compile_value(value, &selected, &quests).expect("totem compiles");
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let tile = |x, z, level| WorldTile { x, z, level };
+    let coined = |coins: i32| {
+        let mut state = WorldState::empty().with_map_members(true);
+        state.combat_level = Some(30);
+        state.inv.insert(995, coins);
+        state
+    };
+    // From a level-1 mansion tile the walk reaches the stair landing,
+    // crossing the modelled down-stairs edge.
+    let down_route = find_with(
+        &world.collision,
+        &world.graph,
+        tile(2637, 3323, 1),
+        tile(2631, 3325, 0),
+        FindOptions::default(),
+        &coined(30),
+    )
+    .unwrap_or_else(|error| panic!("level-1 chest room must reach the stair landing: {error:?}"));
+    assert!(
+        down_route.legs.iter().any(|leg| matches!(
+            leg,
+            Leg::Transport { edge } if edge.kind == TransportKind::Stairs
+                && edge.at.x == 2631
+                && edge.at.z == 3322
+                && edge.at.level == 1
+                && edge.to.x == 2631
+                && edge.to.z == 3325
+                && edge.to.level == 0
+        )),
+        "the landing must be reached over the down-stairs edge: {:?}",
+        down_route.legs
+    );
+    // The landing itself cannot route to Kangai: nav has no edge through
+    // the combination door (stair-room tiles x 2629-2633 are cut off from
+    // the hall even with zones exempt). The `open-combo-door-from-stair-room`
+    // step bridges that live; if nav ever gains the edge, this tripwire
+    // flips and the test must be updated to require the through route.
+    for coins in [0, 30] {
+        assert!(
+            find_with(
+                &world.collision,
+                &world.graph,
+                tile(2631, 3325, 0),
+                tile(2792, 3182, 0),
+                FindOptions::default(),
+                &coined(coins),
+            )
+            .is_err(),
+            "landing has no nav route to Kangai at {coins} coins (combo-door gap)"
+        );
+    }
+    // Past the door, the ground-floor hall routes home over the 30-coin boat,
+    // and the fare gate holds: refused carrying 0, routed carrying 30.
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            tile(2640, 3322, 0),
+            tile(2792, 3182, 0),
+            FindOptions::default(),
+            &coined(0),
+        )
+        .is_err(),
+        "hall must not route to Kangai without the fare"
+    );
+    let home_route = find_with(
+        &world.collision,
+        &world.graph,
+        tile(2640, 3322, 0),
+        tile(2792, 3182, 0),
+        FindOptions::default(),
+        &coined(30),
+    )
+    .unwrap_or_else(|error| panic!("hall must route to Kangai with 30 coins: {error:?}"));
+    assert!(
+        home_route
+            .legs
+            .iter()
+            .any(|leg| matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::Boat)),
+        "the hall leg must cross on the boat: {:?}",
+        home_route.legs
+    );
 }
 
 /// PORT-S6-DRAFTS-FIX F2 (real pack): the yard is enclosed and nav does not
