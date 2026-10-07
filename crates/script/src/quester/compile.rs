@@ -1707,6 +1707,11 @@ pub const CLOCK_TOWER_JSON: &str = include_str!("../../paths/289/cog.json");
 pub const MONKS_FRIEND_JSON: &str = include_str!("../../paths/289/drunkmonk.json");
 pub const HAZEEL_CULT_JSON: &str = include_str!("../../paths/289/hazeelcult.json");
 pub const PLAGUE_CITY_JSON: &str = include_str!("../../paths/289/elena.json");
+pub const DRUID_JSON: &str = include_str!("../../paths/289/druid.json");
+pub const FLUFFS_JSON: &str = include_str!("../../paths/289/fluffs.json");
+pub const JUNGLE_POTION_JSON: &str = include_str!("../../paths/289/junglepotion.json");
+pub const SEA_SLUG_JSON: &str = include_str!("../../paths/289/seaslug.json");
+pub const TRIBAL_TOTEM_JSON: &str = include_str!("../../paths/289/totem.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -1731,6 +1736,11 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "drunkmonk" => Some(MONKS_FRIEND_JSON.as_bytes()),
         "hazeelcult" => Some(HAZEEL_CULT_JSON.as_bytes()),
         "elena" => Some(PLAGUE_CITY_JSON.as_bytes()),
+        "druid" => Some(DRUID_JSON.as_bytes()),
+        "fluffs" => Some(FLUFFS_JSON.as_bytes()),
+        "junglepotion" => Some(JUNGLE_POTION_JSON.as_bytes()),
+        "seaslug" => Some(SEA_SLUG_JSON.as_bytes()),
+        "totem" => Some(TRIBAL_TOTEM_JSON.as_bytes()),
         _ => None,
     }
 }
