@@ -1,4 +1,4 @@
-use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, CONTINUE_TICKS};
+use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, PAGE_SETTLE_TICKS};
 use super::tests::with_tick;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
@@ -69,6 +69,15 @@ fn args(target: DialogueTarget) -> DialogueArgs {
 
 fn continuation_args() -> DialogueArgs {
     args(DialogueTarget::Continuation)
+}
+fn continuation_args_with_gap(gap_ticks: u16) -> DialogueArgs {
+    DialogueArgs {
+        target: DialogueTarget::Continuation,
+        options: DialogueOptions {
+            gap_ticks: Some(gap_ticks),
+            ..Default::default()
+        },
+    }
 }
 
 fn npc_args() -> DialogueArgs {
@@ -264,7 +273,7 @@ fn continuation_closes_scroll_and_waits_for_observed_disappearance() {
     })
     .is_pending());
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 3 + CONTINUE_TICKS, |tick| {
+        with_tick(&snapshot, &mut ledger, 3 + PAGE_SETTLE_TICKS, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))
@@ -487,16 +496,12 @@ fn the_owned_first_chat_page_is_not_exposed_after_continue_is_emitted() {
 }
 
 #[test]
-fn grandtree_foreman_cutscene_rearms_the_shorter_closed_chat_gap() {
+fn grandtree_foreman_cutscene_rearms_the_authored_closed_chat_gap() {
     // Sourced from content (quests/quest_grandtree/scripts/foreman.rs2:12-38):
     // `if_close` at T, `p_walk` at T+3, `p_teleport` at T+6, `forcewalk` at
     // T+8, and the next chat page at T+9. The player walks the first leg
-    // from an adjacent tile, so every leg re-arms the gap on position
-    // change with the same finite budget. This replaces the unsourced
-    // `server_teleport_and_forcewalk_rearm_the_same_finite_closed_chat_gap`
-    // fixture, whose 10/15/17/22 timings match no content case and only
-    // passed with the eight-tick gap. The sourced T+3/T+6/T+8/T+9 legs fit
-    // the four-tick gap, so this passes with both gap sizes.
+    // from an adjacent tile, so each leg re-arms this authored four-tick gap.
+    // This replaces the unsourced fixture whose timings matched no content.
     let mut snapshot = snapshot();
     snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 2955,
@@ -508,7 +513,7 @@ fn grandtree_foreman_cutscene_rearms_the_shorter_closed_chat_gap() {
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
-            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .begin::<Dialogue>(continuation_args_with_gap(4), &mut tick.cx)
             .unwrap()
     });
     assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
@@ -629,14 +634,12 @@ fn level_up_page_after_owned_scroll_close_is_drained_as_continuation() {
     ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in [4, 5, 6, 7, 8] {
-        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
-    }
+    assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 9, |tick| {
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))
@@ -697,16 +700,14 @@ fn unchanged_position_does_not_extend_closed_chat_completion() {
     .is_pending());
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    // The gap starts at tick 4, so a quiet close completes at tick 8 with
-    // the four-tick gap (tick 12 with the old eight-tick gap).
-    for game_tick in 3..8 {
-        assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
-    }
+    // The closed chat is first observed at tick 3; unchanged position does
+    // not re-arm it, so the one-tick gap completes at tick 4.
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 8, |tick| {
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))

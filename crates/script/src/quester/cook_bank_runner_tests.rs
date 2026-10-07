@@ -293,6 +293,9 @@ impl CookFixture {
                             self.observe_bank(tick);
                         }
                         InteractReq::SetNoteMode { on: false } => {}
+                        // The root step is polled on its begin tick (TICK-FIX
+                        // #4); these tests stop at that begin.
+                        InteractReq::Npc { ref action, .. } if action == "Talk-to" => {}
                         InteractReq::WithdrawX {
                             bank_item_id,
                             count,
@@ -978,6 +981,37 @@ fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
             );
         }
     }
+}
+
+/// TICK-FIX #4/#7/#11 (bank.md §1.4, D3-D5): the scan receipt re-plans on its
+/// own tick, the withdraw trip reuses the open bank and its machine is polled
+/// when begun, and a session the kernel opened needs no Item press, so the
+/// first withdraw click goes out on the tick the scan settles.
+#[test]
+fn real_cook_provisioning_withdraws_on_the_scan_receipt_tick() {
+    let mut fixture = CookFixture::new(false, true);
+    fixture.seed_in_progress();
+    let scanned = "quester cook: provision bank scan settled";
+    let mut scan_tick = None;
+    let mut withdraw_tick = None;
+    for tick in 1..=100 {
+        fixture.drive(tick);
+        if scan_tick.is_none() && fixture.output.logs.iter().any(|line| line == scanned) {
+            scan_tick = Some(tick);
+        }
+        if withdraw_tick.is_none() && fixture.withdrawals > 0 {
+            withdraw_tick = Some(tick);
+        }
+        if fixture.script.step.is_some() {
+            break;
+        }
+    }
+    assert!(scan_tick.is_some(), "{:?}", fixture.output.logs);
+    assert_eq!(
+        withdraw_tick, scan_tick,
+        "the first withdraw goes out on the scan receipt tick: {:?}",
+        fixture.output.logs
+    );
 }
 
 #[test]

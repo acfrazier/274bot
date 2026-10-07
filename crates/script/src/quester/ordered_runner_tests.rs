@@ -140,6 +140,37 @@ impl StepRun for ScriptedRead {
     fn cancel(&mut self, _: &mut NativeActions) {}
 }
 
+/// A step that completes on the poll after its begin, so one step boundary
+/// passes per tick and these cursor tests can act between steps. A step that
+/// completes on its first poll hands over within its tick (TICK-FIX #5); the
+/// runner tests cover that chaining.
+struct OneTick;
+
+impl StepPlan for OneTick {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(OneTickRun { pending: true }))
+    }
+}
+
+struct OneTickRun {
+    pending: bool,
+}
+
+impl StepRun for OneTickRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if std::mem::take(&mut self.pending) {
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
 #[derive(Default)]
 struct Logs(Vec<String>);
 
@@ -153,14 +184,15 @@ impl NativeOutput for Logs {
 }
 
 /// Drives the runner tick by tick and records every step that begins, in
-/// order, by watching the settle window open for it.
+/// order, from the runner's own begin record. A completed step may settle
+/// and hand over to the next one within its tick (TICK-FIX #5), so the settle
+/// window is no longer visible between ticks.
 struct Harness {
     script: Quester,
     snapshot: GameSnapshot,
     ledger: Option<Box<Ledger>>,
     logs: Logs,
     tick: u64,
-    was_settling: bool,
     begun: Vec<String>,
 }
 
@@ -170,13 +202,20 @@ impl Harness {
         // Production starts with a progress read; the first adoption is the
         // fresh one that places the cursor at the top.
         script.needs_read = true;
+        let path = Arc::get_mut(&mut script.path).expect("unshared path");
+        for step in path
+            .sequences
+            .iter_mut()
+            .flat_map(|sequence| sequence.steps.iter_mut())
+        {
+            step.plan = Arc::new(OneTick);
+        }
         Self {
             script,
             snapshot,
             ledger: None,
             logs: Logs::default(),
             tick: 0,
-            was_settling: false,
             begun: Vec::new(),
         }
     }
@@ -280,16 +319,16 @@ impl Harness {
                 self.script.tick(t).unwrap();
             },
         );
-        if self.script.settling && !self.was_settling {
-            let step = self.script.current_step().expect("settling step");
-            self.begun.push(step.id.0.to_string());
-        }
-        self.was_settling = self.script.settling;
+        self.begun = self.script.begun.iter().map(|id| id.to_string()).collect();
     }
 
     fn run_until_begun(&mut self, count: usize) {
         while self.begun.len() < count {
-            assert!(!self.script.parked, "parked before {count} steps began");
+            assert!(
+                !self.script.parked,
+                "parked before {count} steps began: {:#?}",
+                self.logs.0
+            );
             self.step();
         }
     }
@@ -491,19 +530,23 @@ fn random_event_replays_an_ordered_sequence_unless_paired_work_is_pending() {
         ["step-1", "step-2", "step-1", "step-2"],
         "an ordinary random event drops progress, so the sequence replays from step 1"
     );
-    // Let step 2 settle so the cursor sits past it, then model partner
-    // admission in flight, which is pending paired work.
-    while harness.script.settling {
+    // Let step 2 complete and settle so the cursor sits past it (step 3 is
+    // selected on that same tick), then model partner admission in flight,
+    // which is pending paired work.
+    while harness.script.cursor < 2 {
         harness.step();
     }
+    assert_eq!(harness.begun.len(), 5);
     assert_eq!(harness.script.cursor, 2);
     harness.script.pair_admission_since = Some(harness.active_now());
     assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
     assert!(harness.script.progress.is_some());
     assert_eq!(harness.script.cursor, 2);
-    harness.run_until_begun(5);
+    // Step 3 stays in flight through the event and the sequence carries on
+    // from the kept cursor: the next begin is step 4, not a replay.
+    harness.run_until_begun(6);
     assert_eq!(
-        harness.begun[4], "step-3",
+        harness.begun[5], "step-4",
         "while paired work is pending a random event keeps the cursor: replaying mid-pairing would desync the partners"
     );
 }

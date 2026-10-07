@@ -1946,12 +1946,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
     }
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
-    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(
-        effect,
-        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
-    ));
-    accept_trip_operation(&mut slot, &authority, request_id, now);
+    // The trip's own open started this session in Item mode (`bank.rs2:18-19`
+    // resets `%bankcert`), so the first withdraw needs no Item press
+    // (TICK-FIX #11).
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     assert!(matches!(
         effect,
@@ -2047,12 +2044,8 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     .unwrap();
     slot.configure_compiled(pending, slot.native_run().unwrap());
     slot.resume();
-    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(
-        effect,
-        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
-    ));
-    accept_trip_operation(&mut slot, &authority, request_id, now);
+    // The resumed trip is still in the session its own open started, which
+    // nothing switched to Note, so it presses no Item (TICK-FIX #11).
     // The latched stock-limited plan must finish after this one-cast edit.
     for rune in spell.runes.iter().skip(1) {
         let expected_withdrawal = rune.count
@@ -2615,8 +2608,12 @@ fn death_return_and_recreation_resume_retained_live_steps() {
     );
     let mut returned = lifecycle_frame_copy(&death);
     trip_position(&mut returned, return_target);
-    now += 1;
-    tick(&mut slot, &returned, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &returned, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
 
     // Proving is retained too; the old death line cannot start another run.
@@ -2733,8 +2730,12 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
         now,
         script::native::WalkEnd::Arrived,
     );
-    now += 1;
-    tick(&mut slot, &first_death, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &first_death, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
 
     let mut product_and_xp = lifecycle_frame_copy(&first_death);
@@ -2994,8 +2995,12 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
         now,
         script::native::WalkEnd::Arrived,
     );
-    now += 1;
-    tick(&mut slot, &death, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &death, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
     recreate_gatherer(&mut slot);
     let second = lifecycle_death_frame(&death, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);

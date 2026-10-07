@@ -592,6 +592,7 @@ fn compile_finish(
         choose: args.choose,
         line_rules: args.line_rules,
         strict: args.strict,
+        gap_ticks: None,
     })?;
     Ok(FinishConfig {
         npc_type,
@@ -1757,6 +1758,12 @@ impl CombatRun {
             Ok(handle) => {
                 self.phase = Phase::FinishDialogue;
                 self.action = Some(Action::Dialogue(handle));
+                // The finish page is already up: drive it now (TICK-FIX #14,
+                // C-DIALOGUE-ADOPT). The reentry is in FinishDialogue, so it
+                // polls the Dialogue and cannot begin another.
+                if cx.tick.cx.may_continue_this_tick() {
+                    return self.poll(cx);
+                }
                 Poll::Pending
             }
             Err(error) => Poll::Ready(Err(error)),
