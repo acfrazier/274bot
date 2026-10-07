@@ -40,6 +40,12 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
+//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
+//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
+//! Engine Q, never on shared Engine A or the builder. The shared runner waits
+//! for a fresh exact system-chat confirmation and restores `::speed 600` on
+//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
+//! defaulting on when `QUESTER_TICK_MS` is set.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -342,7 +348,7 @@ fn selected_profile(
     let cache_dir = temp.join("cache");
     copy_dir(&source_cache, &cache_dir)?;
     let options = ProfileOptions {
-        profile: Some("local-289".into()),
+        profile: Some(std::env::var("BOT_SERVER_PROFILE").unwrap_or_else(|_| "local-289".into())),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
@@ -947,14 +953,18 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
     Ok(line["status"].clone())
 }
 
-/// Run one live cell. Returns the final receipt on PASS.
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None)
+    run_inner(cell, None, None, None, false)
+}
+
+/// Run the generic Path live cell with shared world-wide tick-speed controls.
+pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
+    run_inner(cell, None, None, None, true)
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None)
+    run_inner(cell, Some(start), Some(observe), None, false)
 }
 
 /// Run the Path with a cell-specific success oracle and polling observations.
@@ -963,7 +973,7 @@ pub fn run_observed(
     observe: ObserveFamily,
     observe_tick: ObserveTick,
 ) -> Result<Value, String> {
-    run_inner(cell, None, Some(observe), Some(observe_tick))
+    run_inner(cell, None, Some(observe), Some(observe_tick), false)
 }
 
 fn run_inner(
@@ -971,6 +981,7 @@ fn run_inner(
     start_family: Option<StartFamily>,
     observe_family: Option<ObserveFamily>,
     observe_tick: Option<ObserveTick>,
+    quester_path: bool,
 ) -> Result<Value, String> {
     let Cell {
         quest,
@@ -994,6 +1005,7 @@ fn run_inner(
         start_family,
         observe_family,
         observe_tick,
+        quester_path,
     )
 }
 
@@ -1024,7 +1036,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None, None)
+    run_cells(cells, RunPlan::Pair(mode), None, None, None, false)
 }
 
 fn run_cells(
@@ -1033,6 +1045,7 @@ fn run_cells(
     mut start_family: Option<StartFamily>,
     mut observe_family: Option<ObserveFamily>,
     mut observe_tick: Option<ObserveTick>,
+    quester_path: bool,
 ) -> Result<Value, String> {
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
         return Err("Quester live run has the wrong number of roles".into());
@@ -1054,6 +1067,17 @@ fn run_cells(
                 cell.label
             ));
         }
+    }
+    let fast_settings = if quester_path {
+        scenario::quester::QuesterFastSettings::from_env()?
+    } else {
+        scenario::quester::QuesterFastSettings {
+            tick_ms: None,
+            sustain_run: false,
+        }
+    };
+    if quester_path && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
     }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
@@ -1089,6 +1113,9 @@ fn run_cells(
 
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
+    }
+    if quester_path {
+        scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
     let scenario_deadline = cells
         .iter()
@@ -1157,6 +1184,7 @@ fn run_cells(
     let mut actors = Vec::with_capacity(cells.len());
     for (index, cell) in cells.into_iter().enumerate() {
         let mut runner = ScenarioRunner::with_world(cell.scenario, template.world());
+        runner.set_tick_speed_endpoint(profile.client().game_host(), profile.client().game_port());
         runner.set_map_members(profile.map_members());
         runner.set_live_names(&[names[index].clone()]);
         runner.set_shot_sink(Box::new(|_, _| {}));

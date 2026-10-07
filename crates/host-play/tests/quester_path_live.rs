@@ -7,18 +7,26 @@
 //! runs under a fixed deadline; expected stage settling or terminal completion
 //! passes after Start.
 //!
-//! Run from the repository root against Engine A (the parent prepares the
-//! owned writable APFS cache clone first), with a throwaway HOME:
+//! Run from the repository root against an explicitly selected local 289
+//! engine, with a throwaway HOME containing the `local-289q` profile:
 //!
 //! ```text
-//! env HOME="$(mktemp -d)" LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh BOT_NAV_BUILD=skip \
-//!   WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=<274bot.navpack> \
-//!   WORLD_ENGINE_DIR=<engine-A-dir> RS2B0T=<catalog-root> \
-//!   BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> LIVE_EVIDENCE_DIR=<evidence-root> \
-//!   QUESTER_PATH=cook QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
-//!   cargo test -p host-play --test quester_path_live --features "live-harness test-support" \
-//!     live_quester_path_smoke -- --ignored --nocapture --test-threads=1
+//! env ISOHOME_DIR=<throwaway-home> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qh \
+//!   BOT_NAV_BUILD=skip BOT_SERVER_PROFILE=local-289q \
+//!   WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 QUESTER_LIVE_KEEP_HOME=1 \
+//!   WORLD_NAV_PACK=<274bot.navpack> WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289-q/engine \
+//!   RS2B0T=<catalog-root> BOT_CACHE_DIR=<owned-writable-APFS-cache-clone> \
+//!   LIVE_EVIDENCE_DIR=<evidence-root> QUESTER_PATH=cook \
+//!   QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 QUESTER_SEEDS=<evidence-root>/seeds/cook.json \
+//!   /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome cargo test \
+//!     -p host-play --features "live-harness test-support" \
+//!     --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
 //! ```
+//! `QUESTER_TICK_MS` changes world-wide tick speed; use it only on isolated
+//! Engine Q, never on shared Engine A or the builder. Run without it to keep
+//! the world's current tick rate.
+//! For a custom local profile, omit `members` so Engine Q's `world.json`
+//! remains the source of world membership.
 //!
 //! Seeds file shape (`seeds/cook.json`):
 //!
@@ -109,7 +117,7 @@ fn smoke_cell(
 }
 
 #[test]
-#[ignore = "requires LIVE=1 and the shared local 289 engine; see common/quester_live.rs"]
+#[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
 fn live_quester_path_smoke() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let quest = std::env::var("QUESTER_PATH").expect("QUESTER_PATH names the Path");
@@ -128,7 +136,7 @@ fn live_quester_path_smoke() {
     let seed_vars = seeds.seed_var_refs();
     let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
         .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
-    let result = quester_live::run(cell);
+    let result = quester_live::run_quester_path(cell);
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
     result.unwrap();
