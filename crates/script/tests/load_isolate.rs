@@ -2988,6 +2988,7 @@ export default class T extends LoopingBot {
 
     snap.bank_open = true;
     snap.bank_loaded = true;
+    snap.bank_generation = 1;
     post_snapshot_input(&iso, &snap);
     iso.on_snapshot_change_at(1, 0);
 
@@ -8921,6 +8922,7 @@ export default class T extends LoopingBot {
     snap.shop_stock = &stock;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    iso.probe("true").unwrap();
     assert!(matches!(
         iso.drain_interacts().as_slice(),
         [script::shim::InteractReq::ShopButton {
@@ -8974,6 +8976,7 @@ export default class T extends LoopingBot {
     snap.shop_stock = &stock;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    iso.probe("true").unwrap();
     assert_eq!(
         iso.drain_interacts()
             .into_iter()
@@ -9005,6 +9008,7 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
+    iso.probe("true").unwrap();
     assert_eq!(
         iso.drain_interacts()
             .into_iter()
