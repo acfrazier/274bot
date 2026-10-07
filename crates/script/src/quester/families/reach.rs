@@ -458,9 +458,12 @@ impl Reach {
             return self.walk_to_target(cx);
         }
         let snapshot = cx.snapshot();
-        if let Some(here) = snapshot.here() {
+        if let Some(here) = snapshot
+            .local_player()
+            .map(|player| player.value.player.network)
+        {
             let reach = snapshot.reach().map(|observed| observed.value);
-            if door_wall_reachable(here.value, door, reach) {
+            if door_wall_reachable(here, door, reach) {
                 return self.open_door(door.id, door.tile, cx);
             }
         }
@@ -488,12 +491,13 @@ impl Reach {
             return self.walk_to_target(cx);
         }
         let here = snapshot
-            .here()
+            .local_player()
+            .map(|player| player.value.player.network)
             .ok_or_else(|| ActionError::Failed(Arc::from("no player tile")))?;
         let reach = snapshot.reach().map(|observed| observed.value);
         let unavailable = api::query::ReachQueryView::unavailable();
-        if !api::query::is_arrived(here.value, tile, 1, || reach.unwrap_or(&unavailable))
-            && !door_wall_reachable(here.value, door, reach)
+        if !api::query::is_arrived(here, tile, 1, || reach.unwrap_or(&unavailable))
+            && !door_wall_reachable(here, door, reach)
         {
             return Err(ActionError::Failed(Arc::from(
                 "door approach not reachable",

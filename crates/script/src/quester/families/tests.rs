@@ -686,7 +686,10 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
 #[test]
 fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
     let mut s = ready();
-    s.seed_local_player(local_player(tile(5, 5)));
+    let mut player = local_player(tile(5, 5));
+    player.player.actor.tile = tile(4, 5);
+    player.player.actor.moving = true;
+    s.seed_local_player(player);
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
     wheel.tile = tile(8, 5);
     let mut door = loc(1530, "Door", "Open");
@@ -741,6 +744,134 @@ fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
         HostEffect::Interaction(InteractReq::Loc { action, .. })
             if action.eq_ignore_ascii_case("close")
     )));
+}
+
+#[test]
+fn door_recovery_opens_after_network_arrival_while_render_trails() {
+    for rendered_x in [5, 4, 0] {
+        let mut s = ready();
+        let mut player = local_player(tile(5, 5));
+        player.player.actor.tile = tile(rendered_x, 5);
+        player.player.actor.moving = rendered_x != 5;
+        s.seed_local_player(player);
+        let mut wheel = loc(2644, "Spinning wheel", "Spin");
+        wheel.tile = tile(8, 5);
+        let mut door = loc(1530, "Door", "Open");
+        door.tile = tile(6, 5);
+        door.distance = 1;
+        door.layer = LocLayer::Wall;
+        door.shape = 9;
+        door.angle = 0;
+        s.seed_locs(vec![wheel.clone(), door.clone()]);
+        let mut args = reach_args(
+            reach::ReachKind::Loc {
+                id: Some(2644),
+                name: None,
+            },
+            false,
+        );
+        args.op = Arc::from("Spin");
+        args.anchor = Some(wheel.tile);
+        // The host flood and native arrival use the network tile (5, 5).
+        let mut reach = wall_door_reach_view();
+        reach.reachable[0] = (1 << 4) | (1 << 7);
+        reach.reachable_adj = vec![(1 << 4) | (1 << 7)];
+        reach.exact_rank[7] = 1;
+        reach.adjacent_rank[7] = 1;
+        let mut ledger = None;
+        let handle = with_tick_reach(&s, &reach, &mut ledger, 1, |t| {
+            t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+        });
+        s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+            sequence: 1,
+            text: "I can't reach that!".into(),
+            type_: 0,
+            username: None,
+        }]);
+        assert!(with_tick_reach(&s, &reach, &mut ledger, 2, |t| t
+            .actions
+            .poll(&handle, &mut t.cx))
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Walk(request) if request.target == door.tile && request.radius == 1
+        ));
+        let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        });
+        assert!(result.is_pending(), "rendered x={rendered_x}: {result:?}");
+        assert!(
+            ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+                &entry.effect,
+                HostEffect::Interaction(InteractReq::Loc { action, .. })
+                    if action.eq_ignore_ascii_case("open")
+            )),
+            "network arrival must send Open even at rendered x={rendered_x}"
+        );
+    }
+}
+
+#[test]
+fn talk_and_interact_near_checks_use_network_position() {
+    let mut snapshot = ready();
+    let target = tile(5, 5);
+    let mut player = local_player(target);
+    player.player.actor.tile = tile(0, 5);
+    player.player.actor.moving = true;
+    snapshot.seed_local_player(player);
+    let mut ledger = None;
+    let mut talk = TalkRun {
+        target: dialogue::DialogueTarget::Npc {
+            id: 42,
+            name: Arc::from("test npc"),
+        },
+        tile: Some(target),
+        leash: 1,
+        options: dialogue::DialogueOptions::default(),
+        expect_combat: None,
+        walk: None,
+        dialogue: None,
+        started: false,
+    };
+    assert!(with_tick(&snapshot, &mut ledger, 1, |t| {
+        with_step(t, |cx| talk.poll(cx))
+    })
+    .is_pending());
+    assert!(talk.walk.is_none());
+    assert!(talk.started);
+    assert!(talk.dialogue.is_some());
+
+    let mut ledger = None;
+    let plan = InteractPlan {
+        kind: egg(true).kind,
+        op: Arc::from("Take"),
+        tile: Some(target),
+        radius: 2,
+        wait_if_missing: true,
+        settle_ms: Some(20_000),
+        ambiguous: false,
+        default_dialogue: true,
+        dialogue_options: None,
+        until: None,
+        target_tile: None,
+        reachable_only: false,
+    };
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |t| {
+        with_step(t, |cx| plan.begin(cx).unwrap())
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |t| {
+        with_step(t, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(
+        !ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| { matches!(entry.effect, HostEffect::Walk(_)) }),
+        "an absent interaction target must not rewalk from a lagging render"
+    );
 }
 
 #[test]

@@ -2025,13 +2025,40 @@ mod tests {
             .status_data(None)
             .target
             .contains("observation stand:"));
-        let stand = gatherer.target.as_ref().expect("return target").tile;
         with_tick(&snapshot, &mut ledger, 2, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                tick,
+            );
+        });
+        assert_eq!(
+            gatherer.trips, 0,
+            "bank membership is not resource observation"
+        );
+        assert_eq!(
+            gatherer.failure.as_ref().unwrap().code.as_ref(),
+            "return-failed"
+        );
+
+        let stand = gatherer.target.as_ref().expect("return target").tile;
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
             assert!(
                 !gatherer.resource_return_arrived(tick),
                 "bank location is not the resource observation stand"
             );
         });
+
+        // Reset the terminal failure for the independent successful-arrival case.
+        gatherer.failure = None;
 
         // The path head is at the stand while the rendered actor still
         // trails at the bank tile.
@@ -2041,7 +2068,7 @@ mod tests {
         snapshot.seed_local_player(player);
         assert_eq!(snapshot.local_player().unwrap().player.actor.tile, rendered);
         assert_eq!(snapshot.local_player().unwrap().player.network, stand);
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
             gatherer.handle_walk(
                 WalkReceipt {
                     request_id: 1,
