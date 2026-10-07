@@ -282,7 +282,7 @@ pub fn permits(
         zones,
         &tables.combat,
         admission.allow,
-        admission.grants,
+        risk::Grants::request(admission.grants, &world.graph.wilderness),
     )
     .unwrap_or(false)
 }

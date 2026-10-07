@@ -2,7 +2,7 @@ use super::{CrossingGeom, RiskInput, RiskTables, RoutePlan, UnknownWhy, ZoneInte
 use api::WorldTile;
 use nav::router::{Leg, Route};
 use nav::transport::{TransportKind, WildernessRules};
-use nav::zones::{ZoneClass, ZoneTable, NO_SHAPE};
+use nav::zones::{Zone, ZoneClass, ZoneTable, NO_SHAPE};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoutePoint {
@@ -339,6 +339,27 @@ pub fn build_plan(
         crossings: crossings.into_boxed_slice(),
     })
 }
+/// The router's activity predicate at one tile, against the assessed combat
+/// level (unknown activates every level-rule zone, as the router does).
+fn active(zone: &Zone, input: &RiskInput, wilderness: &WildernessRules, tile: WorldTile) -> bool {
+    zone.class == ZoneClass::Always
+        || input
+            .combat
+            .is_none_or(|combat| u16::from(combat) <= zone.cap)
+        || wilderness.contains(tile)
+}
+/// Whether a zone is engaged at `tile`: inside its acquisition area and
+/// active there.
+pub(super) fn engaged_at(
+    zones: &ZoneTable,
+    index: u16,
+    input: &RiskInput,
+    wilderness: &WildernessRules,
+    tile: WorldTile,
+) -> bool {
+    zones.at(tile).any(|candidate| candidate == index)
+        && active(&zones.zones()[usize::from(index)], input, wilderness, tile)
+}
 /// An 8-KiB worker-stack bitset replaces a heap scratch allocation. We visit
 /// the table's indexed bucket candidates, never every world zone per tile.
 fn acquired(
@@ -354,15 +375,11 @@ fn acquired(
         let i = i as u16;
         let tile = path.point(i).ok_or(UnknownWhy::Overflow)?.tile;
         for index in zones.at(tile) {
-            let zone = &zones.zones()[usize::from(index)];
-            let active = zone.class == ZoneClass::Always
-                || input
-                    .combat
-                    .is_none_or(|combat| u16::from(combat) <= zone.cap)
-                || wilderness.contains(tile);
             let word = usize::from(index) / 64;
             let bit = 1u64 << (index % 64);
-            if active && seen[word] & bit == 0 {
+            if active(&zones.zones()[usize::from(index)], input, wilderness, tile)
+                && seen[word] & bit == 0
+            {
                 seen[word] |= bit;
                 // `i` is the first acquisition index. It is 0 only when the
                 // origin is engaged (inside A_z and active), the router's own
@@ -380,13 +397,7 @@ fn acquired(
                     for candidate in usize::from(row.b) + 1..path.len() {
                         let candidate = candidate as u16;
                         let tile = path.point(candidate).ok_or(UnknownWhy::Overflow)?.tile;
-                        if zones.at(tile).any(|zone| zone == index)
-                            && (zone.class == ZoneClass::Always
-                                || input
-                                    .combat
-                                    .is_none_or(|combat| u16::from(combat) <= zone.cap)
-                                || wilderness.contains(tile))
-                        {
+                        if engaged_at(zones, index, input, wilderness, tile) {
                             reentry = Some(candidate);
                             break;
                         }
