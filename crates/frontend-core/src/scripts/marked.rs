@@ -25,10 +25,7 @@ impl Scripts {
                 if *source == script::ScriptSource::Catalog {
                     self.fill_catalog_once(catalog_root);
                 }
-                let card = self.js.get(*source, lookup).ok_or_else(|| match source {
-                    script::ScriptSource::File => format!("missing file: {lookup}"),
-                    _ => format!("unavailable: {lookup}"),
-                })?;
+                let card = self.startable_card(*source, lookup)?;
                 match &card.unloadable {
                     Some(reason) => Err(format!("unloadable import: {reason}")),
                     None => Ok(card.assignment()),

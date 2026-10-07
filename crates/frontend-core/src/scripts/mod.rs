@@ -881,6 +881,24 @@ impl Scripts {
             .map_err(|error| error.to_string())
     }
 
+    /// The loaded card `(source, lookup)` names, if it can start. A file
+    /// card whose file is gone is refused as missing, the same on every
+    /// platform: Start never runs a deleted script from the copy loaded
+    /// earlier, whether or not the card's stored path still resolves.
+    pub(crate) fn startable_card(
+        &self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Result<&script::JsCard, String> {
+        self.js
+            .get(source, lookup)
+            .filter(|card| source != script::ScriptSource::File || card.path.is_file())
+            .ok_or_else(|| match source {
+                script::ScriptSource::File => format!("missing file: {lookup}"),
+                _ => format!("unavailable: {lookup}"),
+            })
+    }
+
     fn start_sel<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -945,12 +963,9 @@ impl Scripts {
                 if *source == script::ScriptSource::Catalog {
                     self.fill_catalog_once(catalog_root);
                 }
-                let card = self.js.get(*source, lookup).ok_or_else(|| {
-                    script::StartLoadError::Refused(match source {
-                        script::ScriptSource::File => format!("missing file: {lookup}"),
-                        _ => format!("unavailable: {lookup}"),
-                    })
-                })?;
+                let card = self
+                    .startable_card(*source, lookup)
+                    .map_err(script::StartLoadError::Refused)?;
                 if let Some(reason) = &card.unloadable {
                     return Err(script::StartLoadError::Refused(format!(
                         "unloadable import: {reason}"
