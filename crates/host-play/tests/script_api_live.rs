@@ -192,6 +192,12 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                         Some(scenario::tutorial::PostRelogTutorial::new(baseline));
                 }
                 cheat(client, "setvar tutorial 1000")?;
+                if journal {
+                    cheat(client, "setvar rjquest 30")?;
+                } else {
+                    cheat(client, "setstat woodcutting 1")?;
+                }
+                state.phase = 5;
             }
             5 if journal => {
                 cheat(client, "getvar rjquest")?;
