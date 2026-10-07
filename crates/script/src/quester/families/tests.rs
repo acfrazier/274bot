@@ -6502,6 +6502,17 @@ impl crate::native::Script for AcquisitionScript {
     }
 }
 
+fn test_script_slot(script: Box<dyn crate::native::Script>) -> crate::slot::SlotScript {
+    let mut slot = crate::slot::SlotScript::new();
+    slot.bind_incarnation(91);
+    slot.start_test_script(
+        script,
+        Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
+    )
+    .unwrap();
+    slot
+}
+
 /// The shipped Cook `acquire:flour` recipe from `walk-mill-base` on.
 fn mill_descent_slot() -> crate::slot::SlotScript {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -6516,21 +6527,14 @@ fn mill_descent_slot() -> crate::slot::SlotScript {
         .position(|step| step.id.0.as_ref() == "walk-mill-base")
         .unwrap();
     assert_eq!(recipe.steps[from + 1].id.0.as_ref(), "empty-bin");
-    let mut slot = crate::slot::SlotScript::new();
-    slot.bind_incarnation(91);
-    slot.start_test_script(
-        Box::new(AcquisitionScript {
-            plan: Arc::new(AcquirePlan {
-                recipe: Arc::from("acquire:flour"),
-                steps: Arc::from(&recipe.steps[from..from + 2]),
-                ..AcquirePlan::default()
-            }),
-            run: None,
+    test_script_slot(Box::new(AcquisitionScript {
+        plan: Arc::new(AcquirePlan {
+            recipe: Arc::from("acquire:flour"),
+            steps: Arc::from(&recipe.steps[from..from + 2]),
+            ..AcquirePlan::default()
         }),
-        Some(data),
-    )
-    .unwrap();
-    slot
+        run: None,
+    }))
 }
 
 /// A frame with the player at `here` and the flour bin showing loc `bin`
@@ -6654,4 +6658,64 @@ fn same_level_arrival_hands_over_to_the_bin_on_its_arrival_tick() {
     arrive_slot_walk(&mut slot, &walk, 13);
     slot_tick(&mut slot, &mill_frame(tile(3167, 3306), 1782), 13);
     assert_eq!(slot_loc_ops(&mut slot), vec![Some(1782)]);
+}
+
+/// Begins one walk to the bin's tile and reports the tick its arrival is
+/// read, as any owner (a step, an interact's approach, a reach's door
+/// recovery) reads it before its next click.
+struct WalkArrivalScript {
+    began: bool,
+    walk: Option<ActionHandle<Walk>>,
+    arrived: std::sync::mpsc::Sender<u64>,
+}
+
+impl crate::native::Script for WalkArrivalScript {
+    fn tick(
+        &mut self,
+        t: &mut NativeTick<'_>,
+    ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
+        if !self.began {
+            self.began = true;
+            let request = reach::walk_request(tile(3166, 3306), 2, None, t.cx.evidence());
+            self.walk = Some(t.actions.begin::<Walk>(request, &mut t.cx).unwrap());
+        } else if let Some(walk) = &self.walk {
+            if let Poll::Ready(receipt) = t.actions.poll(walk, &mut t.cx) {
+                assert_eq!(receipt.unwrap().end, WalkEnd::Arrived);
+                self.arrived.send(t.cx.evidence().tick).unwrap();
+                self.walk = None;
+            }
+        }
+        Ok(crate::native::ScriptFlow::Continue)
+    }
+}
+
+/// Inside one step the same holds: a walk that arrives down the ladder is
+/// read on the next tick, so whatever the owner clicks next is chosen from
+/// current locs. A walk on one level is read on its arrival tick.
+#[test]
+fn walk_arrival_in_a_new_scene_is_read_on_the_next_tick() {
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    let below = WorldTile { level: 0, ..ladder };
+    for (from, read_at) in [(ladder, 12), (tile(3173, 3306), 11)] {
+        let (arrived, reads) = std::sync::mpsc::channel();
+        let mut slot = test_script_slot(Box::new(WalkArrivalScript {
+            began: false,
+            walk: None,
+            arrived,
+        }));
+        slot_tick(&mut slot, &mill_frame(from, 1781), 10);
+        let walk = take_slot_walk(&mut slot);
+        arrive_slot_walk(&mut slot, &walk, 11);
+        slot_tick(&mut slot, &mill_frame(below, 1781), 11);
+        slot_tick(&mut slot, &mill_frame(below, 1782), 12);
+        assert_eq!(
+            reads.try_iter().collect::<Vec<_>>(),
+            vec![read_at],
+            "walk from {from:?}"
+        );
+    }
 }
