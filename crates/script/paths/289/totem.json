@@ -23,7 +23,7 @@
     ],
     "acquire": {},
     "bank": { "tile": [2655, 3283, 0], "source": "A defs/tribaltotem.ts:67" },
-    "coin_float": 60,
+    "coin_float": 90,
     "loadouts": {},
     "areas": {
       "mansion": {
@@ -67,6 +67,48 @@
         "monotonic": false
       },
       "prelude": [
+        {
+          "id": "climb-down-stairs",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "stairstop" },
+            "op": "Climb-down",
+            "anchor": { "tile": [2631, 3322, 1], "source": "C:maps/m41_51.jm2:8639 (stairstop 1723 at [2631,3322,1]); C:pack/loc.pack:1724 (stairstop, op Climb-down); C:scripts/ladders+stairs/scripts/stairs.rs2:54 (case 1_41_51_7_58 lands 0_41_51_7_61 = [2631,3325,0])" },
+            "radius": 8
+          },
+          "comment": "After search-chest the bot holds the totem on mansion level 1, where return-totem cannot route from. Step down first; the content telejump lands at [2631,3325,0]. Skipped without the totem so the stage-4 ascent (climb-stairs, open-chest, search-chest) is undisturbed.",
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } }
+        },
+        {
+          "id": "open-combo-door-from-stair-room",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "combodoor" },
+            "op": "Open",
+            "anchor": { "tile": [2631, 3325, 0], "source": "C:maps/m41_51.jm2:6748 (combodoor 2705 at [2634,3323,0], stair-room side of the landing); C:pack/loc.pack:2706 (combodoor, op Open); C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90 ([oploc1,combodoor] opens once the combination flag is set by solve-combination)" },
+            "radius": 8
+          },
+          "comment": "The stair landing sits west of the combination door, which nav does not model as an edge, so the return walk cannot leave the stair room until the door is opened from this side. Skipped without the totem and off the ground floor.",
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
         {
           "id": "return-totem",
           "kind": "talk",
