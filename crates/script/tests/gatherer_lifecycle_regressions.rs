@@ -2601,8 +2601,12 @@ fn death_return_and_recreation_resume_retained_live_steps() {
     );
     let mut returned = lifecycle_frame_copy(&death);
     trip_position(&mut returned, return_target);
-    now += 1;
-    tick(&mut slot, &returned, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &returned, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
 
     // Proving is retained too; the old death line cannot start another run.
@@ -2719,8 +2723,12 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
         now,
         script::native::WalkEnd::Arrived,
     );
-    now += 1;
-    tick(&mut slot, &first_death, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &first_death, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
 
     let mut product_and_xp = lifecycle_frame_copy(&first_death);
@@ -2980,8 +2988,12 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
         now,
         script::native::WalkEnd::Arrived,
     );
-    now += 1;
-    tick(&mut slot, &death, now);
+    // The return arrives in a rebuilt build area: its arrival is read on the
+    // next tick, once that area's loc changes have landed.
+    for _ in 0..2 {
+        now += 1;
+        tick(&mut slot, &death, now);
+    }
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
     recreate_gatherer(&mut slot);
     let second = lifecycle_death_frame(&death, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);

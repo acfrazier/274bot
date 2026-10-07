@@ -496,6 +496,9 @@ fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
     rig.set_position(endpoint);
     rig.pump(endpoint);
     rig.observe(2, endpoint);
+    // The arrival frame is the rebuilt area's first: the native walk reads
+    // the arrival on the next tick, once that area's loc changes have landed.
+    rig.observe(3, endpoint);
     assert!(
         matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
         "an observed empty scene is target-gone evidence, not an off-scene estimate"
