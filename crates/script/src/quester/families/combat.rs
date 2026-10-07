@@ -1814,7 +1814,6 @@ impl CombatRun {
             required_after: cx.required_after,
             chat_since,
             outcome: self.last_outcome.as_ref(),
-            bank: cx.bank,
         };
         predicate.evaluate(&context)
     }

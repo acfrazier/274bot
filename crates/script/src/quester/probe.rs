@@ -1,13 +1,12 @@
 //! Path authoring probes for tests: shadowed journal rules and the step
 //! `select` would start for a stage. Compiled for unit tests and for the
 //! `test-hooks` self dev-dependency that integration tests use.
-use super::bank_memo::BankMemo;
 use super::compile::{CompiledPath, PredicateContext};
 use super::progress::ShadowedRule;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use crate::native::ledger::TickBudget;
 use crate::native::{ActionContext, RetainedMemory};
-use crate::native_bank::BankReceipt;
+use api::bank_memory::{BankMemory, Origin};
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
@@ -67,7 +66,8 @@ pub struct Probe<'a> {
     pub quests: &'a QuestCatalog,
     /// Resolved journal evidence, usually one [`progress_for_stage`] value.
     pub progress: &'a [QuestProgress],
-    pub bank: &'a BankMemo,
+    /// The host bank memory the runner's snapshot view carries (S3).
+    pub bank: &'a BankMemory,
 }
 
 impl Probe<'_> {
@@ -87,7 +87,7 @@ impl Probe<'_> {
         let cx = ActionContext {
             evidence,
             pin: &pin,
-            snapshot: SnapshotView::new(Some(snapshot), evidence),
+            snapshot: SnapshotView::new(Some(snapshot), evidence).with_bank_memory(Some(self.bank)),
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(evidence.tick * 600),
@@ -105,7 +105,6 @@ impl Probe<'_> {
             chat_since: 0,
             outcome: None,
             pairs: None,
-            bank: self.bank,
         };
         match select(self.path, sequence, cursor, &pred) {
             SelectionDecision::Selected(selection) => Choice::Step(selection.step.id.clone()),
@@ -151,15 +150,10 @@ pub fn progress_for_stage(
     }
 }
 
-/// A bank memo that has seen one complete, empty receipt, so `bank_has`
-/// facts are proven false instead of unknown.
-pub fn known_empty_bank() -> BankMemo {
-    let mut bank = BankMemo::default();
-    bank.update(&BankReceipt {
-        counts: Vec::new(),
-        complete: true,
-    });
-    bank
+/// A `Session` bank memory with no rows, so `bank_has` facts are proven
+/// false instead of unknown.
+pub fn known_empty_bank() -> BankMemory {
+    BankMemory::seeded(&[], Origin::Session)
 }
 
 fn probe_stamp() -> EvidenceStamp {

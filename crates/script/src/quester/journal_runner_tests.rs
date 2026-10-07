@@ -3,7 +3,9 @@ use crate::native::{
     ActionContext, ActionError, HostEffect, InteractionReceipt, NativeActions, NativeMachine,
     NativeOutput, ScriptStatus,
 };
-use crate::quester::families::tests::{with_tick, with_tick_output};
+use crate::quester::families::tests::{
+    with_tick, with_tick_bank, with_tick_output, with_tick_output_bank,
+};
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
 use api::selected::Truth;
 use api::snapshot::{GameSnapshot, QuestStatusView, VarpView};
@@ -455,7 +457,6 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
                 quests: &script.quests,
                 progress: &[],
                 required_after,
-                bank: &script.bank,
                 banks: &script.banks,
                 choices: &script.choices,
             };
@@ -1553,21 +1554,27 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
 
     let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-semantic-outcome");
     let mut fixture = nested_bank_fixture(false);
-    let mut cleared_before_acquire = false;
+    let mut injected_tick = None;
     let mut semantic_evidence = None;
+    let mut post_injection_statuses = Vec::new();
     for tick in 1..=64 {
         let mut output = StatusCapture::default();
         fixture.drive_with_output(tick, &mut output);
-        if !cleared_before_acquire
+        if injected_tick.is_none()
             && fixture.script.provisioner.status().phase
                 == super::super::provision::ProvisionPhase::Acquiring
         {
             assert!(
-                fixture.script.bank.known(),
-                "the real provisioning scan must establish an empty-bank memo first"
+                fixture.bank.known(),
+                "the real provisioning scan must establish Session bank memory first"
             );
-            fixture.script.bank.clear();
-            cleared_before_acquire = true;
+            assert_eq!(
+                fixture.bank.origin(),
+                api::bank_memory::Origin::Session,
+                "the fixture bank is really opened, not hinted"
+            );
+            assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
+            injected_tick = Some(tick);
             let evidence = EvidenceStamp {
                 run: fixture.script.run,
                 tick: 0,
@@ -1607,11 +1614,12 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                 })),
             });
             semantic_evidence = Some(evidence);
+            continue;
         }
 
-        if let Some(receipt_tick) = fixture.provisioner_bank_receipt_tick() {
+        if let Some(injected) = injected_tick {
             let semantic_evidence =
-                semantic_evidence.expect("the semantic outcome must precede the receipt");
+                semantic_evidence.expect("the semantic outcome must precede the acquisition");
             assert_eq!(
                 fixture
                     .script
@@ -1619,26 +1627,39 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                     .as_ref()
                     .map(|outcome| outcome.evidence),
                 Some(semantic_evidence),
-                "a Provisioner Pending receipt must not replace the semantic outcome"
+                "acquisition events (scan receipt, Acquired) must not replace the semantic outcome"
             );
-            assert!(fixture.script.bank.known());
-            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-            let status = output
-                .0
-                .last()
-                .expect("the receipt change publishes status");
             assert!(
-                status.fields.iter().any(|field| {
-                    field.key == "combat_end"
-                        && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
-                }),
-                "Provisioner receipt publication must retain the prior semantic status"
+                fixture.bank.known(),
+                "the acquisition run must leave Session bank memory alone"
             );
-            assert_ne!(semantic_evidence.tick, receipt_tick);
-            return;
+            assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
+            post_injection_statuses.extend(output.0);
+            if tick >= injected + 6 {
+                assert_eq!(
+                    fixture.visits, 1,
+                    "the known bank must not trigger a second scan trip"
+                );
+                assert!(
+                    !fixture.script.parked,
+                    "the acquisition cycles must not park: {:?}",
+                    fixture.script.last_error
+                );
+                let status = post_injection_statuses
+                    .last()
+                    .expect("the acquisition cycle publishes status");
+                assert!(
+                    status.fields.iter().any(|field| {
+                        field.key == "combat_end"
+                        && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+                    }),
+                    "acquisition-cycle publication must retain the prior semantic status"
+                );
+                return;
+            }
         }
     }
-    panic!("the native Provisioner scan must expose a cached BankReceipt");
+    panic!("the acquisition must run long enough to observe the preserved outcome");
 }
 
 #[test]
@@ -1702,11 +1723,14 @@ struct NestedBankFixture {
     script: Quester,
     snapshot: GameSnapshot,
     ledger: Ledger,
-    bank: api::named_banks::NamedBank,
+    /// The account's bank memory, filled the way the host fills it.
+    bank: api::bank_memory::BankMemory,
+    bank_fixture: api::named_banks::NamedBank,
     bank_tile: api::snapshot::WorldTile,
     egg_id: i32,
     selected_bank: bool,
     opened_bank: bool,
+    visits: usize,
 }
 
 impl NestedBankFixture {
@@ -1716,9 +1740,16 @@ impl NestedBankFixture {
     }
 
     fn drive_with_output(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
-        let flow = with_tick_output(&self.snapshot, &mut self.ledger, tick, output, |t| {
-            self.script.tick(t).unwrap()
-        });
+        // The host's per-frame observe (design-bank-snapshot §1.3).
+        self.bank.track(&self.snapshot, tick);
+        let flow = with_tick_output_bank(
+            &self.snapshot,
+            Some(&self.bank),
+            &mut self.ledger,
+            tick,
+            output,
+            |t| self.script.tick(t).unwrap(),
+        );
         let bank_pick_pending = self.ledger.as_ref().is_some_and(|ledger| {
             ledger
                 .outbox
@@ -1750,7 +1781,7 @@ impl NestedBankFixture {
                         access_tile: self.bank_tile,
                         kind: crate::bank::PickKind::Reachable,
                         access: Some(Arc::new(crate::bank::BankStandAccess {
-                            bank: self.bank,
+                            bank: self.bank_fixture,
                             stand_tile: self.bank_tile,
                             kind: crate::bank::AccessKind::Booth,
                             stand_op: 1,
@@ -1769,6 +1800,7 @@ impl NestedBankFixture {
             self.snapshot
                 .seed_bank_observation(1, tick, Some(vec![]), vec![]);
             self.opened_bank = true;
+            self.visits += 1;
         } else if self
             .ledger
             .as_ref()
@@ -1778,33 +1810,6 @@ impl NestedBankFixture {
         }
         flow
     }
-
-    fn path_bank_receipt_tick(&self) -> Option<u64> {
-        bank_receipt_tick(
-            self.script
-                .step
-                .as_ref()
-                .and_then(|step| step.in_flight_outcome()),
-        )
-    }
-
-    fn provisioner_bank_receipt_tick(&self) -> Option<u64> {
-        bank_receipt_tick(self.script.provisioner.in_flight_outcome())
-    }
-}
-
-fn bank_receipt_tick(outcome: Option<&crate::quester::compile::StepOutcome>) -> Option<u64> {
-    outcome.and_then(|outcome| {
-        outcome
-            .receipt
-            .as_deref()
-            .and_then(|receipt| {
-                receipt
-                    .as_any()
-                    .downcast_ref::<crate::native_bank::BankReceipt>()
-            })
-            .map(|_| outcome.evidence.tick)
-    })
 }
 
 fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
@@ -1970,11 +1975,13 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
         script,
         snapshot,
         ledger: None,
-        bank,
+        bank: api::bank_memory::BankMemory::default(),
+        bank_fixture: bank,
         bank_tile,
         egg_id,
         selected_bank: false,
         opened_bank: false,
+        visits: 0,
     }
 }
 
@@ -2003,8 +2010,9 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
         ScriptFlow::Complete,
         "the nested outer acquire must settle instead of timing out on unknown bank evidence"
     );
-    assert!(fixture.script.bank.known());
-    assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
+    assert!(fixture.bank.known());
+    assert_eq!(fixture.bank.origin(), api::bank_memory::Origin::Session);
+    assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
     assert!(!fixture.script.parked);
     assert!(fixture
         .script
@@ -2015,8 +2023,12 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
     let dependent =
         &fixture.script.path.provisioning.recipes["acquire:egg-bank-scan"].steps[1].skip_if;
     let outer_settle = &fixture.script.path.sequences[1].steps[0].settle;
-    let (dependent_truth, settle_truth) =
-        with_tick(&fixture.snapshot, &mut fixture.ledger, 49, |tick| {
+    let (dependent_truth, settle_truth) = with_tick_bank(
+        &fixture.snapshot,
+        Some(&fixture.bank),
+        &mut fixture.ledger,
+        49,
+        |tick| {
             let cx = PredicateContext {
                 cx: &tick.cx,
                 pairs: tick.pairs,
@@ -2025,52 +2037,59 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
                 required_after: tick.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &fixture.script.bank,
             };
             (dependent.evaluate(&cx), outer_settle.evaluate(&cx))
-        });
+        },
+    );
     assert_eq!(dependent_truth, Truth::True);
     assert_eq!(settle_truth, Truth::True);
 }
 
 #[test]
-fn provisioner_pending_publishes_nested_receipt_before_skip_and_preserves_on_completion() {
+fn provisioner_acquire_run_keeps_session_bank_memory_without_second_trip() {
     let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt");
     let mut fixture = nested_bank_fixture(false);
-    let mut completed = false;
-    let mut published = false;
-    let mut cleared_before_acquire = false;
+    let mut acquiring_seen = false;
     for tick in 1..=64 {
         fixture.drive(tick);
-        if !cleared_before_acquire
+        if !acquiring_seen
             && fixture.script.provisioner.status().phase
                 == super::super::provision::ProvisionPhase::Acquiring
         {
             assert!(
-                fixture.script.bank.known(),
-                "the real provisioning scan must first establish the observed empty bank"
+                fixture.bank.known(),
+                "the real provisioning scan must first establish Session bank memory"
             );
-            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-            fixture.script.bank.clear();
-            cleared_before_acquire = true;
+            assert_eq!(
+                fixture.bank.origin(),
+                api::bank_memory::Origin::Session,
+                "the fixture bank is really opened, not hinted"
+            );
+            assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
+            acquiring_seen = true;
+            continue;
         }
 
-        if cleared_before_acquire {
-            if fixture.provisioner_bank_receipt_tick().is_some() {
-                assert!(
-                    fixture.script.bank.known(),
-                    "Provisioner Pending must publish its nested native BankReceipt"
-                );
-                assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-                published = true;
-            } else if published {
-                assert!(fixture.script.bank.known());
-                completed = true;
-                break;
-            }
+        if acquiring_seen {
+            // Receipts carry no bank rows now; the acquisition run must leave
+            // the Session memory exactly as the scan observed it.
+            assert!(
+                fixture.bank.known(),
+                "the acquisition run must not erase Session bank memory"
+            );
+            assert_eq!(
+                fixture.bank.origin(),
+                api::bank_memory::Origin::Session,
+                "Acquired must not touch the memory origin"
+            );
+            assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
         }
     }
 
+    assert!(
+        acquiring_seen,
+        "the nested AcquireRun must start from the scanned bank"
+    );
     assert!(
         fixture.selected_bank,
         "provisioning must select the real bank"
@@ -2079,130 +2098,21 @@ fn provisioner_pending_publishes_nested_receipt_before_skip_and_preserves_on_com
         fixture.opened_bank,
         "provisioning must open the selected bank"
     );
-    assert!(
-        published,
-        "the nested AcquireRun must expose its in-flight scan receipt"
+    assert_eq!(
+        fixture.visits, 1,
+        "the known bank must not trigger a second scan trip"
     );
-    assert!(cleared_before_acquire);
     assert!(
-        completed,
+        fixture.bank.known(),
         "completed acquisition must retain the last observed bank stock; only inventory changed"
     );
+    assert_eq!(fixture.bank.count(fixture.egg_id), Some(0));
     assert!(!fixture.script.parked);
     assert!(fixture
         .script
         .last_error
         .as_ref()
         .is_none_or(|error| !error.contains("settle timeout")));
-}
-
-#[test]
-fn path_cached_bank_receipt_is_not_republished_and_session_end_drops_it() {
-    let _isolated = crate::IsolatedEnv::enter("quester-path-bank-receipt-lifecycle");
-    let mut fixture = nested_bank_fixture(true);
-    for tick in 1..=48 {
-        fixture.drive(tick);
-        let Some(receipt_tick) = fixture.path_bank_receipt_tick() else {
-            continue;
-        };
-        assert!(fixture.script.bank.known());
-        assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-        assert_eq!(
-            fixture
-                .script
-                .last_outcome
-                .as_ref()
-                .map(|outcome| outcome.evidence.tick),
-            Some(receipt_tick)
-        );
-
-        fixture.script.bank.clear();
-        fixture.drive(tick + 1);
-        assert_eq!(fixture.path_bank_receipt_tick(), Some(receipt_tick));
-        assert!(
-            !fixture.script.bank.known(),
-            "the cached Path child receipt must not be published twice"
-        );
-
-        fixture
-            .script
-            .interrupt(crate::native::Interrupt::SessionEnded);
-        assert!(fixture.script.step.is_none());
-        assert!(fixture.script.last_outcome.is_none());
-        assert_eq!(fixture.path_bank_receipt_tick(), None);
-        fixture.drive(tick + 2);
-        assert!(
-            !fixture.script.bank.known(),
-            "a later Path poll must not republish a cancelled cached receipt"
-        );
-        assert!(fixture.selected_bank);
-        assert!(fixture.opened_bank);
-        return;
-    }
-    panic!("the native Path scan must expose a cached BankReceipt");
-}
-
-#[test]
-fn provisioner_cached_bank_receipt_is_not_republished_and_stop_drops_it() {
-    let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt-lifecycle");
-    let mut fixture = nested_bank_fixture(false);
-    let mut cleared_before_acquire = false;
-    for tick in 1..=64 {
-        let semantic_outcome_before = fixture
-            .script
-            .last_outcome
-            .as_ref()
-            .map(|outcome| outcome.evidence);
-        fixture.drive(tick);
-        if !cleared_before_acquire
-            && fixture.script.provisioner.status().phase
-                == super::super::provision::ProvisionPhase::Acquiring
-        {
-            assert!(
-                fixture.script.bank.known(),
-                "the real provisioning scan must establish an empty-bank memo first"
-            );
-            assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-            fixture.script.bank.clear();
-            cleared_before_acquire = true;
-        }
-        let Some(receipt_tick) = fixture.provisioner_bank_receipt_tick() else {
-            continue;
-        };
-        assert!(cleared_before_acquire);
-        assert!(fixture.script.bank.known());
-        assert_eq!(fixture.script.bank.count(fixture.egg_id), Some(0));
-        assert_eq!(
-            fixture
-                .script
-                .last_outcome
-                .as_ref()
-                .map(|outcome| outcome.evidence),
-            semantic_outcome_before,
-            "a Provisioner receipt must not replace the semantic outcome"
-        );
-
-        fixture.script.bank.clear();
-        fixture.drive(tick + 1);
-        assert_eq!(fixture.provisioner_bank_receipt_tick(), Some(receipt_tick));
-        assert!(
-            !fixture.script.bank.known(),
-            "the cached Provisioner child receipt must not be published twice"
-        );
-
-        fixture.script.on_stop(crate::native::StopReason::Operator);
-        assert_eq!(fixture.provisioner_bank_receipt_tick(), None);
-        assert!(fixture.script.last_outcome.is_none());
-        fixture.drive(tick + 2);
-        assert!(
-            !fixture.script.bank.known(),
-            "a later poll after Stop must not republish the dropped cached receipt"
-        );
-        assert!(fixture.selected_bank);
-        assert!(fixture.opened_bank);
-        return;
-    }
-    panic!("the native Provisioner scan must expose a cached BankReceipt");
 }
 
 #[derive(Clone, Copy, Debug)]

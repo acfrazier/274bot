@@ -1,5 +1,5 @@
 //! Typed Path, compiler, colour-only runner, and the Quester card.
-pub mod bank_memo;
+mod bank_run;
 pub mod card;
 pub mod choices;
 pub mod compile;

@@ -40,6 +40,11 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
+//!
+//! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
+//! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
+//! and `QUESTER_LIVE_KEEP_HOME=1` (the process `HOME` stays `~/.274bot`, so
+//! what the host saved for the account in an earlier process is found again).
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -225,6 +230,27 @@ fn epoch_nanos() -> Result<u128, String> {
 
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required for Quester live cells"))
+}
+
+/// The fixed account a persistence cell logs in as, when the caller set
+/// both `QUESTER_LIVE_ACCOUNT` and `QUESTER_LIVE_PASSWORD`; one without the
+/// other is a harness mistake.
+fn fixed_live_account() -> Result<Option<(String, String)>, String> {
+    let account = std::env::var("QUESTER_LIVE_ACCOUNT").ok();
+    let password = std::env::var("QUESTER_LIVE_PASSWORD").ok();
+    match (account, password) {
+        (None, None) => Ok(None),
+        (Some(account), Some(password)) => {
+            if account.is_empty() || account.len() > 12 || password.is_empty() {
+                return Err(
+                    "QUESTER_LIVE_ACCOUNT must be 1-12 bytes and QUESTER_LIVE_PASSWORD non-empty"
+                        .into(),
+                );
+            }
+            Ok(Some((account, password)))
+        }
+        _ => Err("QUESTER_LIVE_ACCOUNT and QUESTER_LIVE_PASSWORD must be set together".into()),
+    }
 }
 
 fn set_pair_name_prefixes(
@@ -1025,12 +1051,24 @@ fn run_cells(
     } else {
         cells[0].label.clone()
     };
-    let isolated = script::IsolatedEnv::enter(&run_label);
+    // `QUESTER_LIVE_KEEP_HOME=1` keeps the process `HOME` (an isohome
+    // throwaway the caller owns across runs) as `~/.274bot`, so per-account
+    // state the host persists there outlives this process; the default is
+    // a fresh isolated home for this run alone.
+    let keep_home = std::env::var("QUESTER_LIVE_KEEP_HOME").as_deref() == Ok("1");
+    let isolated = (!keep_home).then(|| script::IsolatedEnv::enter(&run_label));
+    let home = match &isolated {
+        Some(isolated) => isolated.home.clone(),
+        None => PathBuf::from(required("HOME")?),
+    };
     let evidence_root = required_path("LIVE_EVIDENCE_DIR")?;
-    if evidence_root.starts_with(&isolated.home) {
+    if evidence_root.starts_with(&home) {
         return Err("LIVE_EVIDENCE_DIR must be outside the throwaway HOME".into());
     }
-    isolated.set_rs2b0t(&required_path("RS2B0T")?);
+    let catalog_root = required_path("RS2B0T")?;
+    if let Some(isolated) = &isolated {
+        isolated.set_rs2b0t(&catalog_root);
+    }
     api::hostlog::set_debug(true);
 
     for cell in &mut cells {
@@ -1044,7 +1082,18 @@ fn run_cells(
     let deadline = Instant::now() + scenario_deadline + DEADLINE_GRACE;
     let temp = TempRoot::new(&run_label)?;
     let (profile, template) = selected_profile(&temp.0)?;
-    let mut names = host_play::mint_live_names(cells.len());
+    // A persistence cell (`QUESTER_LIVE_ACCOUNT` + `QUESTER_LIVE_PASSWORD`)
+    // logs one fixed account in across processes so what the host saved
+    // for it under `HOME` — the bank hint — is found again; everything else
+    // mints a fresh account per run.
+    let fixed_account = fixed_live_account()?;
+    if fixed_account.is_some() && mode.is_pair() {
+        return Err("QUESTER_LIVE_ACCOUNT applies to single-account cells only".into());
+    }
+    let mut names = match &fixed_account {
+        Some((account, _)) => vec![account.clone()],
+        None => host_play::mint_live_names(cells.len()),
+    };
     if names.len() != cells.len() {
         return Err("could not mint every Quester live account".into());
     }
@@ -1055,7 +1104,10 @@ fn run_cells(
             &required("BOT_LIVE_PARTNER_NAME_PREFIX")?,
         )?;
     }
-    let entries = host_play::mint_live_entries(&names);
+    let entries = match fixed_account {
+        Some((account, password)) => vec![(account, password)],
+        None => host_play::mint_live_entries(&names),
+    };
     if entries.len() != names.len() {
         return Err("could not mint every Quester live credential".into());
     }
