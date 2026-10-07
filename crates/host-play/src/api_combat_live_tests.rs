@@ -397,6 +397,56 @@ impl Cell {
         (outcome, phases, before, after)
     }
 
+    /// Start the consumer, wait until `trigger` holds while the session is
+    /// still live, run `act` once, then wait for the settled outcome.
+    /// Returns `(outcome, phases, act evidence, at act, after)`.
+    fn fight_and_interrupt(
+        &mut self,
+        request: &str,
+        trigger: impl Fn(&Observed, &Play, &str) -> bool,
+        act: impl FnOnce(&Play, &str, &Observed) -> serde_json::Value,
+    ) -> (
+        serde_json::Value,
+        serde_json::Value,
+        serde_json::Value,
+        Observed,
+        Observed,
+    ) {
+        self.play
+            .script_start_load(
+                &self.account,
+                consumer(request),
+                script::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .expect("start the api.combat Load consumer");
+        let deadline = Instant::now() + FIGHT_DEADLINE;
+        wait_until("Load Running", deadline, || {
+            self.play.script_state(&self.account) == script::RunState::Running
+        });
+        wait_until("interruption trigger", deadline, || {
+            let outcome = probe(&self.play, &self.account, "globalThis.__outcome || null");
+            assert!(
+                outcome.is_null(),
+                "the fight settled before the interruption: {outcome}"
+            );
+            let state = self.observed.lock().expect("observed lock").clone();
+            trigger(&state, &self.play, &self.account)
+        });
+        let at = self.observed.lock().expect("observed lock").clone();
+        let evidence = act(&self.play, &self.account, &at);
+        wait_until("api.combat outcome", deadline, || {
+            !probe(&self.play, &self.account, "globalThis.__outcome || null").is_null()
+        });
+        let settle = Instant::now() + Duration::from_secs(3);
+        wait_until("post-fight frames", deadline, || Instant::now() >= settle);
+        let outcome = probe(&self.play, &self.account, "globalThis.__outcome");
+        let phases = probe(&self.play, &self.account, "globalThis.__phases || []");
+        let after = self.observed.lock().expect("observed lock").clone();
+        (outcome, phases, evidence, at, after)
+    }
+
     fn receipt(&self, name: &str, receipt: serde_json::Value) {
         let path = self.evidence.join(name);
         std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
@@ -414,6 +464,200 @@ fn xp(observed: &Observed, index: i32) -> i32 {
         .iter()
         .find(|(stat, _)| *stat == index)
         .map_or(0, |(_, xp)| *xp)
+}
+
+fn latest_varp(observed: &Observed, index: i32) -> i32 {
+    observed
+        .prayers
+        .iter()
+        .find(|(row, _)| *row == index)
+        .map_or(-1, |(_, value)| *value)
+}
+
+/// A long fight a cow keeps fighting back in: low offence, Prayer for
+/// Protect from Melee, the user's own Thick Skin on before Start.
+fn interruptible_cell(label: &str, uid: i32, protect: i32) -> Cell {
+    start_cell(
+        label,
+        uid,
+        vec![
+            "setstat prayer 43".into(),
+            "setstat hitpoints 20".into(),
+            "setvar prayer0 1".into(),
+        ],
+        vec![protect, THICK_SKIN_VARP],
+        |snapshot| {
+            snapshot
+                .stats()
+                .iter()
+                .any(|stat| stat.index == 5 && stat.base >= 43)
+                && snapshot
+                    .stats()
+                    .iter()
+                    .any(|stat| stat.index == 3 && stat.base >= 20)
+                && varp(snapshot, THICK_SKIN_VARP) == 1
+        },
+    )
+}
+
+fn protect_from_melee() -> i32 {
+    api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .prayer_by_name("Protect from Melee")
+        .expect("Protect from Melee")
+        .varp
+}
+
+/// Operator Pause mid-fight, once the bot's own protection is on: the fight
+/// is cancelled, and after Resume the bot clears only its raise and the
+/// session settles `interrupted` / `pause`.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_api_combat_pause_mid_fight_settles_interrupted_and_clears_only_the_bot_prayer() {
+    let protect = protect_from_melee();
+    let mut cell = interruptible_cell("pause", 274_279_216, protect);
+    let (outcome, phases, evidence, at, after) = cell.fight_and_interrupt(
+        &format!("{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, budgetTicks: 600 }}"),
+        |state, _, _| state.seen_on.contains(&protect) && latest_varp(state, protect) == 1,
+        |play, account, _| {
+            play.script_pause(account);
+            let paused = play.script_state(account);
+            // Four game ticks paused: a Pause settles only after Resume.
+            thread::sleep(Duration::from_millis(2_400));
+            let while_paused = probe(play, account, "globalThis.__outcome || null");
+            play.script_resume(account);
+            serde_json::json!({
+                "state_after_pause": format!("{paused:?}"),
+                "outcome_while_paused": while_paused,
+            })
+        },
+    );
+    cell.receipt(
+        "api-combat-pause-receipt.json",
+        serde_json::json!({
+            "cell": "live_api_combat_pause_mid_fight_settles_interrupted_and_clears_only_the_bot_prayer",
+            "account": cell.account,
+            "protect_from_melee_varp": protect,
+            "thick_skin_varp": THICK_SKIN_VARP,
+            "outcome": outcome,
+            "phases": phases,
+            "pause": evidence,
+            "prayers_at_pause": at.prayers,
+            "after_prayers": after.prayers,
+        }),
+    );
+    assert_eq!(evidence["state_after_pause"], "Paused", "{evidence}");
+    assert!(evidence["outcome_while_paused"].is_null(), "{evidence}");
+    assert_eq!(
+        latest_varp(&at, protect),
+        1,
+        "the bot's raise was on at Pause"
+    );
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["end"], "interrupted", "{outcome}");
+    assert_eq!(outcome["value"]["cause"], "pause", "{outcome}");
+    assert_eq!(
+        latest_varp(&after, protect),
+        0,
+        "the bot's raise is cleared"
+    );
+    assert_eq!(
+        latest_varp(&after, THICK_SKIN_VARP),
+        1,
+        "the user's prayer stays on"
+    );
+}
+
+/// Manual movement mid-fight with no walk in flight, with “Pause script on
+/// manual movement” off so nothing but the movement can end the fight: one
+/// TUI Manual step (the real host intent path) cancels it, the bot clears
+/// only its raise and the session settles `interrupted` / `user-input`.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_api_combat_manual_movement_mid_fight_settles_interrupted_user_input() {
+    let protect = protect_from_melee();
+    let mut cell = interruptible_cell("manual", 274_279_217, protect);
+    cell.play.set_pause_script_on_manual_walk_abort(false);
+    let walking = |play: &Play, account: &str| {
+        let slot = script_slot(&play.scripts, account)
+            .expect("live script slot")
+            .lock()
+            .expect("live script slot lock")
+            .live_walking_operation();
+        let host = play.navs.lock().unwrap().get(account).is_some_and(|bot| {
+            bot.route.is_some()
+                || bot.pending_route.is_some()
+                || bot.native_walk.as_ref().is_some_and(|owner| owner.live())
+        });
+        (slot, host)
+    };
+    let intent = |play: &Play, account: &str| {
+        play.navs
+            .lock()
+            .unwrap()
+            .get(account)
+            .map_or(0, |bot| bot.user_move_intent_seq)
+    };
+    let (outcome, phases, evidence, at, after) = cell.fight_and_interrupt(
+        &format!("{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, budgetTicks: 600 }}"),
+        |state, play, account| {
+            state.seen_on.contains(&protect)
+                && latest_varp(state, protect) == 1
+                && walking(play, account) == (false, false)
+        },
+        |play, account, at| {
+            let (x, z, level) = at.tile.expect("tile at the manual step");
+            let before = intent(play, account);
+            play.queue_wire(account, WireCmd::Walk { x: x + 1, z, level });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            wait_until("manual intent", deadline, || intent(play, account) > before);
+            serde_json::json!({
+                "step_to": [x + 1, z, level],
+                "walking_at_step": { "slot": false, "host": false },
+                "intent_seq": { "before": before, "after": intent(play, account) },
+                "state_after_step": format!("{:?}", play.script_state(account)),
+            })
+        },
+    );
+    let state = cell.play.script_state(&cell.account);
+    cell.receipt(
+        "api-combat-manual-receipt.json",
+        serde_json::json!({
+            "cell": "live_api_combat_manual_movement_mid_fight_settles_interrupted_user_input",
+            "account": cell.account,
+            "protect_from_melee_varp": protect,
+            "thick_skin_varp": THICK_SKIN_VARP,
+            "outcome": outcome,
+            "phases": phases,
+            "manual": evidence,
+            "prayers_at_step": at.prayers,
+            "after_prayers": after.prayers,
+            "script_state_after": format!("{state:?}"),
+        }),
+    );
+    assert_eq!(
+        latest_varp(&at, protect),
+        1,
+        "the bot's raise was on at the step"
+    );
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["end"], "interrupted", "{outcome}");
+    assert_eq!(outcome["value"]["cause"], "user-input", "{outcome}");
+    assert_eq!(
+        state,
+        script::RunState::Running,
+        "with the preference off the script is not paused"
+    );
+    assert_eq!(
+        latest_varp(&after, protect),
+        0,
+        "the bot's raise is cleared"
+    );
+    assert_eq!(
+        latest_varp(&after, THICK_SKIN_VARP),
+        1,
+        "the user's prayer stays on"
+    );
 }
 
 #[test]

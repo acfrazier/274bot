@@ -1094,7 +1094,7 @@ export interface CombatRequest {
   spells?: string[];
   /** magic only: after the order is exhausted, fall back to the strongest castable spell; default false */
   fallbackSpells?: boolean;
-  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. Prayers the user turned on are never turned off. */
+  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. The bot turns off only prayers it raised. The game allows one protection prayer at a time, so raising one switches off a different protection prayer the user had on; the bot does not turn it back on. */
   prayer?: boolean;
   /** eat carried food by the shared HP policy; default true */
   food?: boolean;

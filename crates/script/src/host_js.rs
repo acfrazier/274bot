@@ -1009,7 +1009,7 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  spells?: string[];\n");
     out.push_str("  /** magic only: after the order is exhausted, fall back to the strongest castable spell; default false */\n");
     out.push_str("  fallbackSpells?: boolean;\n");
-    out.push_str("  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. Prayers the user turned on are never turned off. */\n");
+    out.push_str("  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. The bot turns off only prayers it raised. The game allows one protection prayer at a time, so raising one switches off a different protection prayer the user had on; the bot does not turn it back on. */\n");
     out.push_str("  prayer?: boolean;\n");
     out.push_str("  /** eat carried food by the shared HP policy; default true */\n");
     out.push_str("  food?: boolean;\n");

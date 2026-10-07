@@ -5,9 +5,34 @@
 //! stopped, reset or torn down — it first hands the card's remaining
 //! accepted Combat raises to the host's off-click pump, before any revoke,
 //! as operator Stop does for a compiled card.
+//!
+//! Pause, reconnect and manual movement cancel an admitted session at any
+//! lifecycle point: a preparing session records the cause and settles
+//! `interrupted` on its next eligible tick without installing its card; an
+//! installed card cancels its fight, begun or not, and settles after its
+//! scoped prayer clear.
 use super::*;
+use crate::api_combat::InterruptCause;
 use crate::combat::CombatTables;
 use crate::native::{PreparedConfig, Script};
+
+/// A lifecycle event that cancels an admitted session.
+#[derive(Clone, Copy)]
+pub(super) enum Cancel {
+    Pause,
+    Reconnect,
+    UserInput,
+}
+
+impl Cancel {
+    fn cause(self) -> InterruptCause {
+        match self {
+            Self::Pause => InterruptCause::Pause,
+            Self::Reconnect => InterruptCause::Reconnect,
+            Self::UserInput => InterruptCause::UserInput,
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) enum CombatSeat {
@@ -17,6 +42,8 @@ pub(super) enum CombatSeat {
         token: u64,
         job: Preparation,
         cell: SettleCell,
+        /// The first cancellation seen before install.
+        cancelled: Option<InterruptCause>,
     },
     Running {
         token: u64,
@@ -128,7 +155,12 @@ impl SlotScript {
                     phase: GatherPhase::Preparing,
                     status: None,
                 }));
-                seat.combat = CombatSeat::Preparing { token, job, cell };
+                seat.combat = CombatSeat::Preparing {
+                    token,
+                    job,
+                    cell,
+                    cancelled: None,
+                };
             }
             Err(error) => refuse(seat, &refusal(error)),
         }
@@ -167,8 +199,25 @@ impl SlotScript {
     }
 
     pub(super) fn tick_api_combat(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
+        if let CombatSeat::Preparing {
+            cancelled: Some(cause),
+            ..
+        } = &seat.combat
+        {
+            let cause = *cause;
+            let CombatSeat::Preparing { token, job, .. } = std::mem::take(&mut seat.combat) else {
+                unreachable!()
+            };
+            // Never installed: nothing ran, so nothing is owed.
+            seat.retiring.push(job);
+            seat.combat_page = None;
+            seat.combat_terminal = Some(CombatEnd::Interrupted { token, cause });
+            return;
+        }
         if matches!(&seat.combat, CombatSeat::Preparing { job, .. } if job.is_finished()) {
-            let CombatSeat::Preparing { token, job, cell } = std::mem::take(&mut seat.combat)
+            let CombatSeat::Preparing {
+                token, job, cell, ..
+            } = std::mem::take(&mut seat.combat)
             else {
                 unreachable!()
             };
@@ -255,14 +304,30 @@ impl SlotScript {
     }
 
     pub(super) fn interrupt_api_combat(&mut self, event: Interrupt) {
+        if event == Interrupt::Pause {
+            self.cancel_api_combat(Cancel::Pause);
+        }
+    }
+
+    /// Cancel the admitted session wherever it is in its lifecycle.
+    pub(super) fn cancel_api_combat(&mut self, cancel: Cancel) {
         let Some(seat) = self.api.as_mut() else {
             return;
         };
-        let CombatSeat::Running { run, token, .. } = &mut seat.combat else {
-            return;
+        let (token, run) = match &mut seat.combat {
+            CombatSeat::Idle => return,
+            CombatSeat::Preparing { cancelled, .. } => {
+                cancelled.get_or_insert(cancel.cause());
+                return;
+            }
+            CombatSeat::Running { token, run, .. } => (*token, run),
         };
-        let token = *token;
-        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| run.script.interrupt(event))) {
+        let signal = || match cancel {
+            Cancel::Pause => run.script.interrupt(Interrupt::Pause),
+            Cancel::Reconnect => run.script.interrupt(Interrupt::SessionEnded),
+            Cancel::UserInput => run.script.user_input(),
+        };
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(signal)) {
             let CombatSeat::Running { run, .. } = std::mem::take(&mut seat.combat) else {
                 unreachable!()
             };
@@ -275,8 +340,9 @@ impl SlotScript {
         }
     }
 
-    /// A reconnect keeps the session (the card settles `interrupted` once
-    /// its fight goes stale); a reset ends it with no terminal.
+    /// A reconnect keeps the session but cancels its fight: the card settles
+    /// `interrupted` / `reconnect` in the new session after its scoped
+    /// clear. A reset ends it with no terminal.
     pub(super) fn combat_session_boundary(&mut self, reconnect: bool) {
         let Some(seat) = self.api.as_mut() else {
             return;
@@ -285,6 +351,7 @@ impl SlotScript {
             if let CombatSeat::Running { run, .. } = &mut seat.combat {
                 run.rekey_session(self.work_epoch);
             }
+            self.cancel_api_combat(Cancel::Reconnect);
             return;
         }
         seat.combat_page = None;
