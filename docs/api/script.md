@@ -1022,10 +1022,13 @@ unchanged.
 - Load's rs2b0t compatibility v1 surface exposes `Area` from `@rs2b0t/api`
   and `geometry/Area.js`. Rectangles include both x/z bounds and use the first
   tile's level; circles include tiles whose squared x/z distance is at most
-  the radius squared, on the center's level. `contains` checks those bounds.
-  Rectangular random tiles are sampled uniformly from the inclusive bounds;
-  circles reject outside candidates for up to 64 tries, then use the center.
-  `getRandomTile` returns a `Tile`.
+  the radius squared, on the center's level. `contains` checks those bounds
+  and returns false when `tile.level` is missing or not a number. Circular
+  areas retain the supplied center object, so later changes to its coordinates
+  or level affect membership and random tile generation. Rectangular random
+  tiles are sampled uniformly from the inclusive bounds; circles reject outside
+  candidates for up to 64 tries, then use the center. `getRandomTile` returns a
+  `Tile`.
 - Isolate scripts cannot use browser timer APIs (`setTimeout`, `setInterval`,
   `clearTimeout`, or `clearInterval`); calls throw a catchable error. Use
   `Execution.delayTicks` for game-time waits.
