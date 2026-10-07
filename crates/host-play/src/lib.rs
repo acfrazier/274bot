@@ -536,6 +536,8 @@ mod walk_guard_live_tests;
 mod tests;
 
 #[cfg(test)]
+mod api_combat_live_tests;
+#[cfg(test)]
 mod api_gather_live_tests;
 #[cfg(test)]
 mod api_gather_tests;

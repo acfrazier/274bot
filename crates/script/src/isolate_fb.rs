@@ -32,11 +32,12 @@ use std::sync::Arc;
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
-    ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand, Booth, Carry,
-    ChatLine, ChatOption, Collision, CombatProjectile, CombatStyle, InspectHop, Interact,
-    InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow,
-    PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface,
-    Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
+    Booth, Carry, ChatLine, ChatOption, Collision, CombatFight, CombatProjectile, CombatStyle,
+    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth,
+    NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity,
+    SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason,
+    WidgetText,
 };
 pub(crate) const LOCAL_PLAYER_MOTION_UNKNOWN: u8 = 0;
 pub(crate) const LOCAL_PLAYER_MOTION_STATIONARY: u8 = 1;
@@ -478,6 +479,11 @@ pub struct NativeFactsInput<'a> {
     pub api_gather: Option<&'a crate::api_gather::GatherPage>,
     /// The retained terminal result. Absence means retain any prior outcome.
     pub api_gather_outcome: Option<&'a crate::api_gather::GatherEnd>,
+    /// The host's live combat session (gather page shape). `None` clears a
+    /// previously posted page, exactly like `api_gather`.
+    pub api_combat: Option<&'a crate::api_combat::CombatPage>,
+    /// The retained combat terminal. Absence means retain any prior outcome.
+    pub api_combat_outcome: Option<&'a crate::api_combat::CombatEnd>,
     /// The most recently published progress acknowledgment or terminal.
     /// Absence omits the page and retains the isolate's prior value.
     pub api_progress: Option<&'a crate::api_progress::ProgressPage>,
@@ -811,6 +817,8 @@ impl<'a> Snapshot<'a> {
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
         has_api_gather => VT_API_GATHER,
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
+        has_api_combat => VT_API_COMBAT,
+        has_api_combat_outcome => VT_API_COMBAT_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
         has_side_modal_id => VT_SIDE_MODAL_ID,
@@ -1269,6 +1277,10 @@ pub struct SnapshotFingerprint {
     /// The most recent terminal token; terminals are retained, never cleared
     /// by a delta.
     pub api_gather_outcome: Option<u64>,
+    /// The live combat page identity, as for `api_gather`.
+    pub api_combat: Option<ApiGatherFp>,
+    /// The most recent combat terminal token; retained like gather's.
+    pub api_combat_outcome: Option<u64>,
     /// The current page identity; only a new `(token, kind)` is posted.
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
@@ -1568,6 +1580,8 @@ impl SnapshotFingerprint {
             bank_snapshot_generation: native.bank_snapshot_generation,
             api_gather: native.api_gather.map(ApiGatherFp::from),
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
+            api_combat: native.api_combat.map(ApiGatherFp::from),
+            api_combat_outcome: native.api_combat_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
             side_modal_id: native.side_modal_id,
@@ -1730,6 +1744,9 @@ pub struct DeltaMask {
     pub api_gather: bool,
     /// The retained terminal is only replaced, never cleared by a delta.
     pub api_gather_outcome: bool,
+    /// The live combat page and its retained terminal, as for gather.
+    pub api_combat: bool,
+    pub api_combat_outcome: bool,
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
     pub chat_page_fingerprint: bool,
@@ -1831,6 +1848,8 @@ impl DeltaMask {
             bank_snapshot_generation: true,
             api_gather: true,
             api_gather_outcome: true,
+            api_combat: true,
+            api_combat_outcome: true,
             api_progress: true,
             chat_page_fingerprint: true,
             side_modal_id: true,
@@ -1956,6 +1975,9 @@ impl DeltaMask {
             api_gather: next.api_gather != last.api_gather,
             api_gather_outcome: next.api_gather_outcome.is_some()
                 && next.api_gather_outcome != last.api_gather_outcome,
+            api_combat: next.api_combat != last.api_combat,
+            api_combat_outcome: next.api_combat_outcome.is_some()
+                && next.api_combat_outcome != last.api_combat_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
             side_modal_id: next.side_modal_id != last.side_modal_id,
@@ -2534,6 +2556,16 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let api_combat_slot = mask
+        .api_combat
+        .then(|| api_gather_off(b, native.api_combat));
+    let api_combat_outcome_slot = if mask.api_combat_outcome {
+        native
+            .api_combat_outcome
+            .map(|outcome| api_combat_outcome_off(b, outcome))
+    } else {
+        None
+    };
     // A progress page is present only when supplied and changed. Unlike the
     // live Gatherer page, there is no request-id-zero clear table.
     let api_progress_slot = if mask.api_progress {
@@ -2904,6 +2936,12 @@ fn encode_snapshot_masked_into(
     }
     if let Some(off) = api_gather_outcome_slot {
         table.add_api_gather_outcome(off);
+    }
+    if let Some(off) = api_combat_slot {
+        table.add_api_combat(off);
+    }
+    if let Some(off) = api_combat_outcome_slot {
+        table.add_api_combat_outcome(off);
     }
     if let Some(off) = api_progress_slot {
         table.add_api_progress(off);
@@ -3341,6 +3379,230 @@ fn api_gather_outcome_off<'b>(
     table.add_deposited(counts.deposited);
     table.add_trips(counts.trips);
     table.add_xp(counts.xp);
+    table.finish()
+}
+
+fn combat_fight_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    request: &crate::api_combat::CombatSessionRequest,
+) -> WIPOffset<CombatFight<'b>> {
+    use crate::api_combat::TargetSpec;
+    use crate::combat::{MeleeMode, Pick, RangedMode, Style};
+    let names = match &request.target {
+        TargetSpec::Names(names) => {
+            let offs: Vec<_> = names.iter().map(|name| b.create_string(name)).collect();
+            Some(b.create_vector(&offs))
+        }
+        _ => None,
+    };
+    let ids = match &request.target {
+        TargetSpec::Ids(ids) => Some(b.create_vector(ids)),
+        _ => None,
+    };
+    let area = (!request.area.is_empty()).then(|| {
+        let offs: Vec<_> = request
+            .area
+            .iter()
+            .map(|&[min_x, min_z, max_x, max_z, level]| {
+                avoid_rect_off(b, min_x, max_x, min_z, max_z, Some(level))
+            })
+            .collect();
+        b.create_vector(&offs)
+    });
+    let spells = request.spells.as_ref().map(|spells| {
+        let offs: Vec<_> = spells.iter().map(|name| b.create_string(name)).collect();
+        b.create_vector(&offs)
+    });
+    let mut table = CombatFightBuilder::new(b);
+    match &request.target {
+        TargetSpec::Names(_) => table.add_target(1),
+        TargetSpec::Ids(_) => table.add_target(2),
+        TargetSpec::Attackers { npcs, players } => {
+            table.add_target(3);
+            table.add_attackers(u8::from(*npcs) | (u8::from(*players) << 1));
+        }
+    }
+    if let Some(names) = names {
+        table.add_npc_names(names);
+    }
+    if let Some(ids) = ids {
+        table.add_npc_ids(ids);
+    }
+    table.add_pick(match request.pick {
+        Pick::Nearest => 1,
+        Pick::Random => 2,
+        Pick::LowestHealth => 3,
+    });
+    table.add_not_targeting_others(request.not_targeting_others);
+    if let Some(area) = area {
+        table.add_area(area);
+    }
+    table.add_radius(request.radius);
+    table.add_lost_radius(request.lost_radius);
+    table.add_style(match request.style {
+        Style::Melee => 1,
+        Style::Ranged => 2,
+        Style::Mage => 3,
+    });
+    table.add_melee_mode(match request.melee_mode {
+        None => 0,
+        Some(MeleeMode::Accurate) => 1,
+        Some(MeleeMode::Aggressive) => 2,
+        Some(MeleeMode::Defensive) => 3,
+        Some(MeleeMode::Controlled) => 4,
+    });
+    table.add_ranged_mode(match request.ranged_mode {
+        RangedMode::Accurate => 1,
+        RangedMode::Rapid => 2,
+        RangedMode::LongRange => 3,
+    });
+    if let Some(spells) = spells {
+        table.add_spells(spells);
+        table.add_has_spells(true);
+    }
+    table.add_fallback_spells(request.fallback_spells);
+    table.add_prayer(request.prayer);
+    table.add_food(request.food);
+    table.add_potions(request.potions);
+    table.add_retaliate(request.retaliate);
+    table.add_budget_ticks(request.budget_ticks);
+    table.finish()
+}
+
+/// Fail-closed host decode: every enum code must be known and the decoded
+/// request must pass the same invariants the isolate admitted.
+fn decode_combat_fight(
+    fight: CombatFight<'_>,
+) -> Result<crate::api_combat::CombatSessionRequest, String> {
+    use crate::api_combat::{CombatSessionRequest, TargetSpec};
+    use crate::combat::{MeleeMode, Pick, RangedMode, Style};
+    let bad = |what: &str| format!("combat-fight has an invalid {what}");
+    let names = |list: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<&str>>>| {
+        list.map(|list| list.iter().map(Arc::from).collect::<Box<[Arc<str>]>>())
+    };
+    let target = match fight.target() {
+        1 => TargetSpec::Names(names(fight.npc_names()).ok_or_else(|| bad("target"))?),
+        2 => TargetSpec::Ids(
+            fight
+                .npc_ids()
+                .ok_or_else(|| bad("target"))?
+                .iter()
+                .collect(),
+        ),
+        3 => match fight.attackers() {
+            1 => TargetSpec::Attackers {
+                npcs: true,
+                players: false,
+            },
+            2 => TargetSpec::Attackers {
+                npcs: false,
+                players: true,
+            },
+            3 => TargetSpec::Attackers {
+                npcs: true,
+                players: true,
+            },
+            _ => return Err(bad("target")),
+        },
+        _ => return Err(bad("target")),
+    };
+    let request = CombatSessionRequest {
+        target,
+        pick: match fight.pick() {
+            1 => Pick::Nearest,
+            2 => Pick::Random,
+            3 => Pick::LowestHealth,
+            _ => return Err(bad("pick")),
+        },
+        not_targeting_others: fight.not_targeting_others(),
+        area: fight
+            .area()
+            .map(|area| {
+                area.iter()
+                    .map(|rect| {
+                        [
+                            rect.min_x(),
+                            rect.min_z(),
+                            rect.max_x(),
+                            rect.max_z(),
+                            rect.level(),
+                        ]
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        radius: fight.radius(),
+        lost_radius: fight.lost_radius(),
+        style: match fight.style() {
+            1 => Style::Melee,
+            2 => Style::Ranged,
+            3 => Style::Mage,
+            _ => return Err(bad("style")),
+        },
+        melee_mode: match fight.melee_mode() {
+            0 => None,
+            1 => Some(MeleeMode::Accurate),
+            2 => Some(MeleeMode::Aggressive),
+            3 => Some(MeleeMode::Defensive),
+            4 => Some(MeleeMode::Controlled),
+            _ => return Err(bad("melee mode")),
+        },
+        ranged_mode: match fight.ranged_mode() {
+            1 => RangedMode::Accurate,
+            2 => RangedMode::Rapid,
+            3 => RangedMode::LongRange,
+            _ => return Err(bad("ranged mode")),
+        },
+        spells: if fight.has_spells() {
+            Some(names(fight.spells()).ok_or_else(|| bad("spell order"))?)
+        } else {
+            None
+        },
+        fallback_spells: fight.fallback_spells(),
+        prayer: fight.prayer(),
+        food: fight.food(),
+        potions: fight.potions(),
+        retaliate: fight.retaliate(),
+        budget_ticks: fight.budget_ticks(),
+    };
+    request
+        .check()
+        .map_err(|reason| format!("combat-fight: {reason}"))?;
+    Ok(request)
+}
+
+fn api_combat_outcome_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    outcome: &crate::api_combat::CombatEnd,
+) -> WIPOffset<ApiCombatOutcome<'b>> {
+    use crate::api_combat::CombatEnd;
+    let (end, reason, report) = match outcome {
+        CombatEnd::Fought { report, .. } => (1, report.reason.as_deref(), Some(report)),
+        CombatEnd::Stopped { .. } => (2, None, None),
+        CombatEnd::Interrupted { cause, .. } => (3, Some(cause.as_str()), None),
+        CombatEnd::Refused { reason, .. } => (4, Some(reason.as_ref()), None),
+        CombatEnd::Failed { reason, .. } => (5, Some(reason.as_ref()), None),
+    };
+    let reason = reason.map(|value| b.create_string(value));
+    let mut table = ApiCombatOutcomeBuilder::new(b);
+    table.add_request_id(outcome.token());
+    table.add_end(end);
+    if let Some(reason) = reason {
+        table.add_reason(reason);
+    }
+    if let Some(report) = report {
+        table.add_report_end(report.end.code());
+        table.add_npc_type(report.npc_type);
+        table.add_ticks(report.ticks);
+        table.add_swings(report.swings);
+        table.add_casts(report.casts);
+        table.add_damage_taken(report.damage_taken);
+        table.add_food(report.food);
+        table.add_prayer_doses(report.prayer_doses);
+        table.add_boost_doses(report.boost_doses);
+        table.add_antifire_doses(report.antifire_doses);
+        table.add_protect_switches(report.protect_switches);
+    }
     table.finish()
 }
 pub(crate) const MAX_PROGRESS_FLAG_COUNT: u32 = 999_999_999;
@@ -4075,6 +4337,26 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 }
                 out.push(crate::shim::InteractReq::GatherStop { request_id });
             }
+            "combat-fight" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("combat-fight has no request_id".into());
+                }
+                let fight = row
+                    .combat()
+                    .ok_or_else(|| "combat-fight has no request".to_string())?;
+                out.push(crate::shim::InteractReq::CombatFight {
+                    request_id,
+                    request: Arc::new(decode_combat_fight(fight)?),
+                });
+            }
+            "combat-stop" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("combat-stop has no request_id".into());
+                }
+                out.push(crate::shim::InteractReq::CombatStop { request_id });
+            }
             "progress-read" => {
                 let request_id = row.request_id();
                 if request_id == 0 {
@@ -4463,6 +4745,8 @@ fn interact_off<'b>(
         InteractReq::SelectBank { .. } => "select-bank",
         InteractReq::GatherRun { .. } => "gather-run",
         InteractReq::GatherStop { .. } => "gather-stop",
+        InteractReq::CombatFight { .. } => "combat-fight",
+        InteractReq::CombatStop { .. } => "combat-stop",
         InteractReq::ProgressRead { .. } => "progress-read",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
@@ -4632,6 +4916,10 @@ fn interact_off<'b>(
         }
         _ => None,
     };
+    let combat_off = match req {
+        InteractReq::CombatFight { request, .. } => Some(combat_fight_off(b, request)),
+        _ => None,
+    };
     let mut table = InteractBuilder::new(b);
     table.add_op(op_off);
     match req {
@@ -4639,8 +4927,12 @@ fn interact_off<'b>(
             table.add_request_id(*request_id);
             table.add_settings(settings_off.expect("gather-run settings encoded"));
         }
-        InteractReq::GatherStop { request_id } => {
+        InteractReq::GatherStop { request_id } | InteractReq::CombatStop { request_id } => {
             table.add_request_id(*request_id);
+        }
+        InteractReq::CombatFight { request_id, .. } => {
+            table.add_request_id(*request_id);
+            table.add_combat(combat_off.expect("combat-fight request encoded"));
         }
         InteractReq::ProgressRead { request_id, .. } => {
             table.add_request_id(*request_id);

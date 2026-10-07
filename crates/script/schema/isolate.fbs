@@ -245,7 +245,8 @@ table NpcBox {
   index: int = -1;
   points: [int];
 }
-// One typed field from the Gatherer card's published status.
+// One typed field from a native API session card's published status
+// (the Gatherer card, or the combat session card).
 table StatusField {
   key: string;
   kind: ubyte; // 1 text, 2 integer, 3 tile, 4 truth.
@@ -255,7 +256,8 @@ table StatusField {
   truth: ubyte;
 }
 
-// The host's live native gathering session (Snapshot VT 270).
+// The host's live native API session page: gathering (Snapshot VT 270) and
+// combat (Snapshot VT 288) share this shape.
 table ApiGather {
   request_id: ulong;
   phase: ubyte; // 1 preparing, 2 running.
@@ -275,6 +277,25 @@ table ApiGatherOutcome {
   deposited: uint;
   trips: uint;
   xp: int;
+}
+
+// Retained terminal result for the most recently completed combat session (Snapshot VT 290).
+// reason: the refused/failed reason, the interrupted cause, or a fought report's abort reason.
+table ApiCombatOutcome {
+  request_id: ulong;
+  end: ubyte; // 1 fought, 2 stopped, 3 interrupted, 4 refused, 5 failed.
+  reason: string;
+  report_end: ubyte; // fought only: 1 killed, 2 target-gone, 3 no-target, 4 budget, 5 died, 6 aborted.
+  npc_type: int = -1;
+  ticks: ushort;
+  swings: ushort;
+  casts: ushort;
+  damage_taken: ushort;
+  food: ubyte;
+  prayer_doses: ubyte;
+  boost_doses: ubyte;
+  antifire_doses: ubyte;
+  protect_switches: ubyte;
 }
 
 // One progress page for the most recent quest-progress request (Snapshot VT 274).
@@ -562,6 +583,11 @@ table Snapshot {
   // buffers), 1 is stationary, and 2 is moving. Omitted deltas keep the last
   // reported state.
   local_player_motion: ubyte = 0;
+  // Slot 288: the host's live combat session page (same shape as api_gather).
+  // Absent in a delta keeps the last page; request_id 0 clears it.
+  api_combat: ApiGather;
+  // Slot 290: retained terminal of the most recent combat session.
+  api_combat_outcome: ApiCombatOutcome;
 }
 
 table Collision {
@@ -601,6 +627,32 @@ table AvoidRect {
   // Additive FlatBuffer catalog reference; absent/empty retain rectangle form.
   // Empty is reserved as the invalid-zone sentinel (never a real catalog id).
   catalog_id: string;
+}
+
+// One validated `api.combat.fight` request (Interact op "combat-fight").
+// Names are resolved against the slot's selected game data on the host.
+table CombatFight {
+  target: ubyte; // 1 npc config names, 2 npc type ids, 3 attackers.
+  npc_names: [string];
+  npc_ids: [int];
+  attackers: ubyte; // 1 npcs, 2 players, 3 any.
+  pick: ubyte; // 1 nearest, 2 random, 3 lowest health.
+  not_targeting_others: bool = true;
+  // Search boxes on one level each (catalog_id unused).
+  area: [AvoidRect];
+  radius: ubyte = 12;
+  lost_radius: ubyte = 20;
+  style: ubyte; // 1 melee, 2 ranged, 3 magic.
+  melee_mode: ubyte; // 0 any, 1 accurate, 2 aggressive, 3 defensive, 4 controlled.
+  ranged_mode: ubyte; // 1 accurate, 2 rapid, 3 long range.
+  spells: [string];
+  has_spells: bool = false;
+  fallback_spells: bool = false;
+  prayer: bool = true;
+  food: bool = true;
+  potions: bool = true;
+  retaliate: bool = true;
+  budget_ticks: ushort = 1500;
 }
 
 // One shim interact request, tagged by `op`:
@@ -674,6 +726,8 @@ table Interact {
   // Per-request named zone exemptions for world walks and inspect-route. The
   // compat JSON surface has no wire field.
   cross: [string];
+  // Present only for combat-fight.
+  combat: CombatFight;
 }
 
 // The tick's shim interact queue, forwarded to the host.

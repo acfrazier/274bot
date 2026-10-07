@@ -1424,6 +1424,14 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_combat = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_page.as_deref());
+        native.api_combat_outcome = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_terminal.as_ref());
         native.api_progress = self
             .api
             .as_ref()
@@ -1449,6 +1457,14 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_combat = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_page.as_deref());
+        native.api_combat_outcome = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_terminal.as_ref());
         native.api_progress = self
             .api
             .as_ref()
@@ -1731,6 +1747,8 @@ impl SlotScript {
             }
             crate::shim::InteractReq::GatherRun { .. }
             | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatFight { .. }
+            | crate::shim::InteractReq::CombatStop { .. }
             | crate::shim::InteractReq::ProgressRead { .. } => {
                 self.consume_api_control(&queued.req);
                 owned |= self.api_owns_foreground();

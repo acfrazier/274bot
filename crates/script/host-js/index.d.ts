@@ -429,6 +429,8 @@ export interface NativeSnapshot {
   self_target_index: number;
   /** Live API gather session; null when none. */
   gather: GatherSession | null;
+  /** Live API combat session; null when none. */
+  combat: CombatSession | null;
 }
 
 /** Typed settings access over the per-identity host bag. */
@@ -789,6 +791,13 @@ export interface NativeApi {
     /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */
     stop(): HelperResult<null>;
   };
+  /** Native combat: one fight of the shared Combat machine (the one Quester and Sherlock use), driven by this script. One session per slot, and `busy` while a gather session, progress read or Hunt run is live. While a session is live the host owns the slot's foreground: this script's game ops are dropped, not deferred. */
+  combat: {
+    /** One awaited fight. Settles once, at its terminal (`value.end`). Refused `busy` until the previous session's promise has settled. */
+    fight(request: CombatRequest): Promise<CombatOutcome>;
+    /** Ends the live session; its `fight` resolves `stopped` and the host clears only the prayers the bot raised. Idempotent. Refused `no-session`. */
+    stop(): HelperResult<null>;
+  };
   /** Sync read of the release Path index. Not a Promise and not a request op. */
   questPaths(): HelperResult<{ rows: QuestPathRow[] }>;
   /** One awaited owned progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */
@@ -1053,6 +1062,94 @@ export type GatherEnd =
 
 export type GatherOutcome =
   | { kind: 'done'; value: GatherEnd }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
+
+/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. */
+export type CombatTarget =
+  | { npc: string | string[] }
+  | { npcId: number | number[] }
+  | { attackers: 'npcs' | 'players' | 'any' };
+
+/** One `api.combat.fight` request, mapped onto the native Combat request. Every key but `target` is optional. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>`. */
+export interface CombatRequest {
+  target: CombatTarget;
+  /** npc targets only; default 'nearest' */
+  pick?: 'nearest' | 'random' | 'lowestHealth';
+  /** npc targets only: skip npcs already fighting another player; default true */
+  notTargetingOthers?: boolean;
+  /** search boxes (1..16) a target must stand in; omitted searches around the bot */
+  area?: SceneRegionInput | SceneRegionInput[];
+  /** engage radius in tiles, 1..255; default 12 */
+  radius?: number;
+  /** tiles before an engaged target counts as lost, 1..255; default 20 */
+  lostRadius?: number;
+  /** default 'melee' */
+  style?: 'melee' | 'ranged' | 'magic';
+  /** melee only: the attack style to fight in; omitted keeps the current one */
+  meleeMode?: 'accurate' | 'aggressive' | 'defensive' | 'controlled';
+  /** ranged only; default 'rapid' */
+  rangedMode?: 'accurate' | 'rapid' | 'longRange';
+  /** magic only: selected spell aliases cast manually in this order; omitted casts the strongest castable spell */
+  spells?: string[];
+  /** magic only: after the order is exhausted, fall back to the strongest castable spell; default false */
+  fallbackSpells?: boolean;
+  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. Prayers the user turned on are never turned off. */
+  prayer?: boolean;
+  /** eat carried food by the shared HP policy; default true */
+  food?: boolean;
+  /** drink carried boost, prayer and antifire potions; default true */
+  potions?: boolean;
+  /** the game's auto-retaliate setting the bot keeps during the fight; default true */
+  retaliate?: boolean;
+  /** fight budget in game ticks, 1..65535; default 1500 (settles `budget`) */
+  budgetTicks?: number;
+}
+
+/** The live combat card's status. `engaged_index` is -1 when nothing is engaged. */
+export interface CombatStatus {
+  stage: 'starting' | 'fighting' | 'clearing-prayers';
+  engaged_kind: 'npc' | 'player' | 'none';
+  engaged_index: number;
+}
+
+/** The slot's live combat session; `null` when none. Host-owned, read only. */
+export interface CombatSession {
+  token: number;
+  /** 'preparing' while the host resolves the request off-pump; 'running' once installed */
+  phase: 'preparing' | 'running';
+  /** `null` until the card publishes its first status */
+  status: CombatStatus | null;
+}
+
+/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'unresponsive'. */
+export interface CombatReport {
+  end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';
+  reason: string | null;
+  /** the engaged npc type, -1 when none */
+  npcType: number;
+  ticks: number;
+  swings: number;
+  casts: number;
+  damageTaken: number;
+  food: number;
+  prayerDoses: number;
+  boostDoses: number;
+  antifireDoses: number;
+  protectSwitches: number;
+}
+
+/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: the fight ended before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. */
+export type CombatEnd =
+  | { end: 'fought'; token: number; report: CombatReport }
+  | { end: 'stopped'; token: number }
+  | { end: 'interrupted'; token: number; cause: 'pause' | 'user-input' | 'died' | 'reconnect' }
+  | { end: 'refused'; token: number; reason: string }
+  | { end: 'failed'; token: number; reason: string };
+
+/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. */
+export type CombatOutcome =
+  | { kind: 'done'; value: CombatEnd }
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
 

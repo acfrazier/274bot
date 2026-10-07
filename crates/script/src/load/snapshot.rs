@@ -907,9 +907,17 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "gather", none)?;
     }
+    if let Some(combat) = snap.api_combat() {
+        let combat = api_gather_object(&mut scope, combat)?;
+        set(&mut scope, obj, "combat", combat)?;
+    } else if !had {
+        set(&mut scope, obj, "combat", none)?;
+    }
     let snapshot = obj.into();
     set(&mut scope, host, "snapshot", snapshot)
 }
+/// `{ token, phase, status }` of a live API session page (gather or combat),
+/// or `null` once the host clears it.
 fn api_gather_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     gather: crate::isolate_fb::ApiGather<'_>,
