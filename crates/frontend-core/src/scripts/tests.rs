@@ -2919,6 +2919,28 @@ fn start_all_twice_keeps_every_outcome_of_the_first_click() {
     }
 }
 
+/// A file card whose file was deleted is refused as missing even when its
+/// stored path still names it exactly (a canonical directory, as Linux temp
+/// dirs are): Start never runs the copy loaded before the delete.
+#[test]
+fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
+    let mut f = fixture("deleted-canonical", &["alice"]);
+    let path = f.dir.canonicalize().unwrap().join("gone-later.ts");
+    std::fs::write(&path, LOOPING).unwrap();
+    let card = f.scripts.js.load(&path).unwrap();
+    assert_eq!(card.path, path, "the stored path is the canonical one");
+    f.assign("alice", &card);
+    std::fs::remove_file(&path).unwrap();
+
+    let error = f
+        .scripts
+        .start_profile(&mut f.core, "alice", None)
+        .unwrap_err();
+    assert!(error.starts_with("missing file: "), "{error}");
+    assert_eq!(start_accepted(&f, "alice"), 0);
+    assert_ne!(f.state("alice"), script::RunState::Running);
+}
+
 /// A bot logged out while it still waits after a second Start all is
 /// named on the running report and in its own log, and never starts.
 #[test]
