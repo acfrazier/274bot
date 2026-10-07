@@ -9640,19 +9640,57 @@ export default class T extends LoopingBot {
         const circle = InternalArea.circular(new Tile(40, 50, 2), 5);
         const rectangleRandom = rectangle.getRandomTile();
         const circleRandom = circle.getRandomTile();
+        const center = new Tile(40, 50, 2);
+        const liveCircle = PublicArea.circular(center, 0);
+        center.x = 41;
+        center.z = 51;
+        center.level = 3;
+        const liveCircleRandom = liveCircle.getRandomTile();
+
+        class CustomArea extends PublicArea {
+            contains(tile) { return tile.x === 7; }
+            getRandomTile() { return new Tile(8, 9, 1); }
+        }
+        const custom = new CustomArea();
+        const customRandom = custom.getRandomTile();
+
+        let handlelessError = null;
+        try {
+            new PublicArea().contains({ x: 10, z: 18, level: 1 });
+        } catch (error) {
+            handlelessError = error;
+        }
+
         globalThis.__area_probe = {
             sameClass: PublicArea === InternalArea,
+            rectangleIsArea: rectangle instanceof PublicArea,
+            circleIsArea: circle instanceof PublicArea,
             rectangleMinEdge: rectangle.contains({ x: 10, z: 18, level: 1 }),
             rectangleMaxEdge: rectangle.contains({ x: 12, z: 20, level: 1 }),
             rectangleOutside: rectangle.contains({ x: 13, z: 20, level: 1 }),
             rectangleUsesAPlane: !rectangle.contains({ x: 10, z: 18, level: 9 }),
+            rectangleMissingLevel: !rectangle.contains({ x: 10, z: 18 }),
+            rectangleNonNumberLevel: !rectangle.contains({ x: 10, z: 18, level: '1' }),
             rectangleRandomIsTile: rectangleRandom instanceof Tile,
             rectangleRandomInside: rectangle.contains(rectangleRandom),
             circleBoundary: circle.contains({ x: 43, z: 54, level: 2 }),
             circleOutside: !circle.contains({ x: 43, z: 55, level: 2 }),
             circleOtherPlane: !circle.contains({ x: 40, z: 50, level: 1 }),
+            circleMissingLevel: !circle.contains({ x: 40, z: 50 }),
+            circleNonNumberLevel: !circle.contains({ x: 40, z: 50, level: '2' }),
             circleRandomIsTile: circleRandom instanceof Tile,
             circleRandomInside: circle.contains(circleRandom),
+            liveCircleMovesOnMutation:
+                liveCircle.contains({ x: 41, z: 51, level: 3 }) &&
+                !liveCircle.contains({ x: 40, z: 50, level: 2 }),
+            liveCircleRandomUsesMutation: liveCircleRandom.equals(center),
+            customIsArea: custom instanceof PublicArea,
+            customContainsOverride: custom.contains({ x: 7 }),
+            customRandomOverride:
+                customRandom instanceof Tile && customRandom.equals(new Tile(8, 9, 1)),
+            handlelessError:
+                handlelessError instanceof Error &&
+                handlelessError.message === 'invalid area: expected an Area value',
         };
     }
 }
@@ -9669,17 +9707,29 @@ export default class T extends LoopingBot {
         probe,
         serde_json::json!({
             "sameClass": true,
+            "rectangleIsArea": true,
+            "circleIsArea": true,
             "rectangleMinEdge": true,
             "rectangleMaxEdge": true,
             "rectangleOutside": false,
             "rectangleUsesAPlane": true,
+            "rectangleMissingLevel": true,
+            "rectangleNonNumberLevel": true,
             "rectangleRandomIsTile": true,
             "rectangleRandomInside": true,
             "circleBoundary": true,
             "circleOutside": true,
             "circleOtherPlane": true,
+            "circleMissingLevel": true,
+            "circleNonNumberLevel": true,
             "circleRandomIsTile": true,
             "circleRandomInside": true,
+            "liveCircleMovesOnMutation": true,
+            "liveCircleRandomUsesMutation": true,
+            "customIsArea": true,
+            "customContainsOverride": true,
+            "customRandomOverride": true,
+            "handlelessError": true,
         })
     );
     iso.join();
