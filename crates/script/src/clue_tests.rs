@@ -7447,17 +7447,37 @@ fn owns() -> bool {
     dispatch(None, &json!({ "op": "ownsEquipment" }))["owns"] == true
 }
 
-/// The posted booth the bank trip opens, as the wrapper marshals
-/// `nearest_booth`: the tile the player stands on beside it.
+/// The posted booth for a compatibility page, without the native-only
+/// operability projection.
 fn booth_page() -> Value {
-    json!({
-        "x": 2810,
-        "z": 3350,
-        "level": 0,
+    booth_page_at((2810, 3350, 0), None)
+}
+
+fn booth_page_at(tile: (i32, i32, i32), approach: Option<Value>) -> Value {
+    let mut booth = json!({
+        "x": tile.0,
+        "z": tile.1,
+        "level": tile.2,
         "id": 2213,
         "name": "Bank booth",
         "op": "Use-quickly",
-    })
+    });
+    if let Some(approach) = approach {
+        booth["approach"] = approach;
+    }
+    booth
+}
+
+fn booth_page_with_approach(
+    tile: (i32, i32, i32),
+    can_operate: bool,
+    dest: Option<(i32, i32, i32)>,
+) -> Value {
+    let mut approach = json!({ "can_operate": can_operate });
+    if let Some((x, z, level)) = dest {
+        approach["dest"] = here(x, z, level);
+    }
+    booth_page_at(tile, Some(approach))
 }
 
 /// The completion kinds no step of a strip or a reclaim may carry: the
@@ -7754,11 +7774,11 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     on_reset();
 }
 
-/// The strip's deposit pass: the listed names the posted pack holds are
-/// deposited at the posted booth — the walk, the booth's own open, one
-/// deposit per name, the close — and only then does the row's own arm walk.
+/// The strip's deposit pass approaches the real Draynor diagonal booth through
+/// its exact stand, waits on unchanged geometry, opens once, then deposits the
+/// listed names.
 #[test]
-fn the_strip_deposits_the_listed_names_at_the_posted_booth() {
+fn the_strip_approaches_the_diagonal_booth_before_depositing() {
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -7771,27 +7791,40 @@ fn the_strip_deposits_the_listed_names_at_the_posted_booth() {
     );
     assert_eq!(helm["kind"], "unequip", "{helm}");
     assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
-    // The unequip landed: the worn page is empty and the pack holds it.
     let pack = json!([inv(HELM, "Rune full helm", 1)]);
+    let diagonal = booth_page_with_approach((3091, 3242, 0), false, Some((3092, 3242, 0)));
     let banked = json!({
         "equipment": json!([]),
         "inv": pack,
-        "here": here(2810, 3350, 0),
-        "nearest_booth": booth_page(),
+        "here": here(3092, 3243, 0),
+        "nearest_booth": diagonal,
     });
-    let walked = call(&data, token, page.clone(), banked.clone());
-    assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
-    assert_eq!(walked["token"], token, "{walked}");
-    assert_no_completion(&walked);
-    let opened = call(&data, token, page.clone(), banked.clone());
-    assert_eq!(opened["kind"], "open-booth", "{opened}");
-    assert_eq!(opened["x"], 2810, "{opened}");
-    assert_eq!(opened["z"], 3350, "{opened}");
-    assert_eq!(opened["id"], 2213, "{opened}");
-    assert_eq!(opened["name"], "Bank booth", "{opened}");
-    assert_eq!(opened["action"], "Use-quickly", "{opened}");
-    // The interface is up: the deposit goes out by the name the strip put
-    // in the pack.
+    let approach = call(&data, token, page.clone(), banked.clone());
+    assert_eq!(approach["kind"], "walk", "{approach}");
+    assert_eq!(approach["x"], 3092, "{approach}");
+    assert_eq!(approach["z"], 3242, "{approach}");
+    assert_eq!(approach["level"], 0, "{approach}");
+    assert_eq!(approach["token"], token, "{approach}");
+    assert_no_completion(&approach);
+    let unchanged = call(&data, token, page.clone(), banked);
+    assert_eq!(unchanged["kind"], "wait", "{unchanged}");
+    let arrived = json!({
+        "equipment": json!([]),
+        "inv": pack,
+        "here": here(3092, 3242, 0),
+        "nearest_booth": booth_page_with_approach(
+            (3091, 3242, 0),
+            true,
+            Some((3092, 3242, 0)),
+        ),
+    });
+    let opened_booth = call(&data, token, page.clone(), arrived);
+    assert_eq!(opened_booth["kind"], "open-booth", "{opened_booth}");
+    assert_eq!(opened_booth["x"], 3091, "{opened_booth}");
+    assert_eq!(opened_booth["z"], 3242, "{opened_booth}");
+    assert_eq!(opened_booth["id"], 2213, "{opened_booth}");
+    assert_eq!(opened_booth["name"], "Bank booth", "{opened_booth}");
+    assert_eq!(opened_booth["action"], "Use-quickly", "{opened_booth}");
     let deposited = call(
         &data,
         token,
@@ -7800,8 +7833,6 @@ fn the_strip_deposits_the_listed_names_at_the_posted_booth() {
     );
     assert_eq!(deposited["kind"], "deposit", "{deposited}");
     assert_eq!(deposited["name"], "Rune full helm", "{deposited}");
-    // It landed: the interface closes, and the call after that settles the
-    // strip and runs the row's own search arm — the name stays listed.
     let closed = call(
         &data,
         token,
@@ -7822,6 +7853,116 @@ fn the_strip_deposits_the_listed_names_at_the_posted_booth() {
     assert_eq!(walked_on["kind"], "wait", "{walked_on}");
     assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
     assert!(owns());
+    on_reset();
+}
+
+/// A refused open has no changing page evidence: it waits after the one open
+/// and ends the shared attempt at the existing bank-ready bound.
+#[test]
+fn a_refused_strip_booth_open_waits_once_then_fails_finitely() {
+    on_reset();
+    let data = selected();
+    let page = json!([[ENTRANA, 1]]);
+    let token = steady(&data, ENTRANA);
+    let helm = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+    );
+    assert_eq!(helm["kind"], "unequip", "{helm}");
+    let pack = json!([inv(HELM, "Rune full helm", 1)]);
+    let diagonal = booth_page_with_approach((3091, 3242, 0), false, Some((3092, 3242, 0)));
+    let banked = json!({
+        "equipment": json!([]),
+        "inv": pack,
+        "here": here(3092, 3243, 0),
+        "nearest_booth": diagonal,
+    });
+    let approach = call(&data, token, page.clone(), banked.clone());
+    assert_eq!(approach["kind"], "walk", "{approach}");
+    assert_eq!(approach["x"], json!(3092));
+    assert_eq!(approach["z"], json!(3242));
+    assert_eq!(approach["level"], json!(0));
+    assert_eq!(approach["token"], token);
+    assert_no_completion(&approach);
+    let waiting_for_approach = call(&data, token, page.clone(), banked);
+    assert_eq!(
+        waiting_for_approach["kind"], "wait",
+        "{waiting_for_approach}"
+    );
+    let arrived = json!({
+        "equipment": json!([]),
+        "inv": pack,
+        "here": here(3092, 3242, 0),
+        "nearest_booth": booth_page_with_approach(
+            (3091, 3242, 0),
+            true,
+            Some((3092, 3242, 0)),
+        ),
+    });
+    let opened = call(&data, token, page.clone(), arrived.clone());
+    assert_eq!(opened["kind"], "open-booth", "{opened}");
+    let waiting = call(&data, token, page.clone(), arrived.clone());
+    assert_eq!(waiting["kind"], "wait", "{waiting}");
+    let waiting_again = call(&data, token, page.clone(), arrived.clone());
+    assert_eq!(waiting_again["kind"], "wait", "{waiting_again}");
+    force_bound();
+    let failed = call(&data, token, page, arrived);
+    assert_eq!(failed["kind"], "aborted", "{failed}");
+    assert_eq!(failed["reason"], crate::clue::BANK_APPROACH_FAILED);
+    assert_no_completion(&failed);
+    assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+    on_reset();
+}
+
+/// Legacy pages use one nearest-bank route, wait while it is in flight, then
+/// open the booth once arrival is posted under the same bounded attempt.
+#[test]
+fn a_legacy_strip_routes_once_then_opens_under_the_same_bound() {
+    on_reset();
+    let data = selected();
+    let page = json!([[ENTRANA, 1]]);
+    let token = steady(&data, ENTRANA);
+    let helm = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+    );
+    assert_eq!(helm["kind"], "unequip", "{helm}");
+    let pack = json!([inv(HELM, "Rune full helm", 1)]);
+    let far = json!({
+        "equipment": json!([]),
+        "inv": pack,
+        "here": here(3092, 3243, 0),
+        "nearest_booth": booth_page_at((3095, 3243, 0), None),
+    });
+    let route = call(&data, token, page.clone(), far.clone());
+    assert_eq!(route["kind"], "walk-nearest-bank", "{route}");
+    assert_eq!(route["token"], token, "{route}");
+    assert_no_completion(&route);
+    let in_flight = call(&data, token, page.clone(), far);
+    assert_eq!(in_flight["kind"], "wait", "{in_flight}");
+    assert_no_completion(&in_flight);
+    let arrived = json!({
+        "equipment": json!([]),
+        "inv": pack,
+        "here": here(3094, 3243, 0),
+        "nearest_booth": booth_page_at((3095, 3243, 0), None),
+    });
+    let opened = call(&data, token, page.clone(), arrived.clone());
+    assert_eq!(opened["kind"], "open-booth", "{opened}");
+    assert_eq!(opened["id"], 2213, "{opened}");
+    let waiting = call(&data, token, page.clone(), arrived.clone());
+    assert_eq!(waiting["kind"], "wait", "{waiting}");
+    assert_no_completion(&waiting);
+    force_bound();
+    let failed = call(&data, token, page, arrived);
+    assert_eq!(failed["kind"], "aborted", "{failed}");
+    assert_eq!(failed["reason"], crate::clue::BANK_APPROACH_FAILED);
+    assert_no_completion(&failed);
+    assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
     on_reset();
 }
 
@@ -7889,19 +8030,29 @@ fn the_restore_runs_before_the_whole_three_step_latch() {
 /// the posted stand for, opened, claimed one `Withdraw-1` at a time, and the
 /// interface closed before anything is worn back on.
 #[test]
-fn the_restore_claims_a_missing_name_at_the_bank() {
+fn the_restore_reopens_for_each_missing_name_at_the_bank() {
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
     let token = steady(&data, ENTRANA);
-    let helm = call(
-        &data,
-        token,
-        page,
-        json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
-    );
+    let gear = json!([
+        worn(HELM, "Rune full helm", 0),
+        worn(1181, "Rune platebody", 4),
+    ]);
+    let helm = call(&data, token, page.clone(), json!({ "equipment": gear }));
     assert_eq!(helm["kind"], "unequip", "{helm}");
     assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+    let plate = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "equipment": json!([worn(1181, "Rune platebody", 4)]) }),
+    );
+    assert_eq!(plate["kind"], "unequip", "{plate}");
+    assert_eq!(
+        stripped(),
+        vec!["Rune full helm".to_string(), "Rune platebody".to_string()]
+    );
     // The collect ends with nothing in the pack: the walk to the stand.
     let casket = casket_of(&data, CLUE);
     let token = opened(&data, casket);
@@ -7928,7 +8079,11 @@ fn the_restore_claims_a_missing_name_at_the_bank() {
         "inv_size": 28,
         "main_modal_id": -1,
         "equipment": json!([]),
-        "nearest_booth": booth_page(),
+        "nearest_booth": booth_page_with_approach(
+            (2810, 3350, 0),
+            true,
+            Some((2810, 3350, 0)),
+        ),
     });
     let opened_booth = call(&data, token, json!([]), arrived.clone());
     assert_eq!(opened_booth["kind"], "open-booth", "{opened_booth}");
@@ -7975,16 +8130,76 @@ fn the_restore_claims_a_missing_name_at_the_bank() {
     assert_eq!(wear_back["kind"], "wear", "{wear_back}");
     assert_eq!(wear_back["name"], "Rune full helm", "{wear_back}");
     assert_no_completion(&wear_back);
-    // Worn again: the list empties and the exact status goes out.
-    let back_on = json!({
+    // The first name is back on; the remaining claim starts a fresh bank
+    // cycle after the successful open and its interface close.
+    let helm_back = json!({
         "here": here(2810, 3350, 0),
         "ground": json!([]),
         "inv": json!([]),
         "inv_size": 28,
         "main_modal_id": -1,
         "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        "nearest_booth": booth_page_with_approach(
+            (2810, 3350, 0),
+            true,
+            Some((2810, 3350, 0)),
+        ),
     });
-    let solved = call(&data, token, json!([]), back_on);
+    let reopened = call(&data, token, json!([]), helm_back);
+    assert_eq!(reopened["kind"], "open-booth", "{reopened}");
+    let open_again = json!({
+        "here": here(2810, 3350, 0),
+        "ground": json!([]),
+        "inv": json!([]),
+        "inv_size": 28,
+        "main_modal_id": -1,
+        "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        "nearest_booth": booth_page_with_approach(
+            (2810, 3350, 0),
+            true,
+            Some((2810, 3350, 0)),
+        ),
+        "bank_open": true,
+    });
+    let claimed_again = call(&data, token, json!([]), open_again);
+    assert_eq!(claimed_again["kind"], "withdraw", "{claimed_again}");
+    assert_eq!(claimed_again["name"], "Rune platebody", "{claimed_again}");
+    assert_eq!(claimed_again["action"], "Withdraw-1", "{claimed_again}");
+    let plate_claimed = json!({
+        "here": here(2810, 3350, 0),
+        "ground": json!([]),
+        "inv": json!([inv(1181, "Rune platebody", 1)]),
+        "inv_size": 28,
+        "main_modal_id": -1,
+        "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        "bank_open": true,
+    });
+    let closed_again = call(&data, token, json!([]), plate_claimed);
+    assert_eq!(closed_again["kind"], "close", "{closed_again}");
+    let plate_claimed_closed = json!({
+        "here": here(2810, 3350, 0),
+        "ground": json!([]),
+        "inv": json!([inv(1181, "Rune platebody", 1)]),
+        "inv_size": 28,
+        "main_modal_id": -1,
+        "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        "bank_open": false,
+    });
+    let wear_plate = call(&data, token, json!([]), plate_claimed_closed);
+    assert_eq!(wear_plate["kind"], "wear", "{wear_plate}");
+    assert_eq!(wear_plate["name"], "Rune platebody", "{wear_plate}");
+    let all_back = json!({
+        "here": here(2810, 3350, 0),
+        "ground": json!([]),
+        "inv": json!([]),
+        "inv_size": 28,
+        "main_modal_id": -1,
+        "equipment": json!([
+            worn(HELM, "Rune full helm", 0),
+            worn(1181, "Rune platebody", 4),
+        ]),
+    });
+    let solved = call(&data, token, json!([]), all_back);
     assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
     assert_eq!(solved["message"], "clue solved", "{solved}");
     assert!(stripped().is_empty());
@@ -8012,33 +8227,34 @@ fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
     let scene = pages(json!([]), json!([]), json!(28), json!(-1));
     let _ = call(&data, token, json!([]), scene.clone());
     force_bound();
-    // The restore attempt: nothing in the pack, no booth posted at all, so
-    // the walk goes out and the window is what ends the attempt.
-    let bare = json!({
+    // The restore attempt reaches the booth after its packed nearest-bank
+    // walk, then issues the booth's own open using the native approach facts.
+    let banked = json!({
         "here": loot_tile(),
         "ground": json!([]),
         "inv": json!([]),
         "inv_size": 28,
         "main_modal_id": -1,
         "equipment": json!([]),
+        "nearest_booth": booth_page(),
     });
-    let walked = call(&data, token, json!([]), bare.clone());
+    let walked = call(&data, token, json!([]), banked);
     assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
-    force_bound();
-    let failed = call(&data, token, json!([]), bare.clone());
-    assert_eq!(failed["kind"], "callback.log", "{failed}");
-    let message = failed["message"].as_str().unwrap_or("");
-    assert!(
-        message.contains("restore-walk-failed"),
-        "the named bank failure: {failed}"
-    );
-    assert_no_completion(&failed);
-    assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
-    // The next call starts a fresh attempt, and the list is still what the
-    // adapter reads: nothing posts the status while it is non-empty.
-    let again = call(&data, token, json!([]), bare.clone());
-    assert_eq!(again["kind"], "walk-nearest-bank", "{again}");
-    assert!(owns());
+    let arrived = json!({
+        "here": here(2810, 3350, 0),
+        "ground": json!([]),
+        "inv": json!([]),
+        "inv_size": 28,
+        "main_modal_id": -1,
+        "equipment": json!([]),
+        "nearest_booth": booth_page_with_approach(
+            (2810, 3350, 0),
+            true,
+            Some((2810, 3350, 0)),
+        ),
+    });
+    let opened_booth = call(&data, token, json!([]), arrived);
+    assert_eq!(opened_booth["kind"], "open-booth", "{opened_booth}");
     // A claim the posted bank never lands: the attempt gives up on the
     // name, the interface closes, and what is still missing is the named
     // `restore-incomplete` — the list keeps it and the latch stays blocked.
