@@ -1233,6 +1233,13 @@ Cancellation still revokes the fight's action authority; the retirement
 off-clicks belong to the host, not that revoked owner. A completed fight does
 not trigger another clear merely because user prayers remain on. Explicit
 `Prayer.clear` retains its broad all-prayers meaning.
+A Load script's `api.combat` session follows the same rules, protection
+exception included: it turns off only prayers it raised, and a protection it
+raised may already have switched off a user's protection, which it does not
+restore. It clears its own raises before settling a fight cancelled by Pause,
+reconnect or manual movement — at any point after admission, including before
+Combat begins — retires them on death, and hands them to the host on any Stop
+([js-api-v2.md](js-api-v2.md) "Combat sessions").
 
 ## Nav vs scripts
 
@@ -1401,6 +1408,14 @@ notice before that snapshot, a new walking operation keeps the tick's observed
 baseline and settles false during admission or its next machine step, rather than
 waiting on a request the host's dispatch fence rejected. Stop/Start clears the prior
 run's cancellation outcome and delivery guard.
+
+A Load script's live `api.gather` or `api.combat` session is owned work even
+with no walk in flight (`SlotScript::manual_input_owner`): manual movement
+reaches the session through `note_manual_walk_takeover`, and the owner-pause
+preference below applies. A Gatherer gathering in place blocks
+`manual-movement`; Combat settles `interrupted` / `user-input` after its
+scoped prayer clear. Browse-started native cards keep the walk-scoped rule
+above.
 
 The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” and defaults to ON. It gates

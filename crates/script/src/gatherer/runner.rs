@@ -1817,6 +1817,14 @@ impl Script for Gatherer {
         }
     }
 
+    fn user_input(&mut self) {
+        // The same end as a walk cancelled by user input.
+        self.cancel_active();
+        if self.failure.is_none() {
+            self.fail("manual-movement", "cancelled by user input");
+        }
+    }
+
     fn on_stop(&mut self, _reason: StopReason) {
         self.cancel_active();
         self.pending = None;
