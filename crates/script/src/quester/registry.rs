@@ -4,7 +4,7 @@
 use super::compile::CompiledPath;
 use super::compile::{self, CompileError};
 use super::path::PathDocument;
-use super::queue::{ReleaseIndex, ReleasePath};
+use super::queue::{ReleaseIndex, ReleasePath, ReleasePathStatus};
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FamilyPreparation};
@@ -47,6 +47,8 @@ pub struct PathRow {
     pub label: String,
     pub unavailable: Option<String>,
     pub source: PathSource,
+    /// Release-roster status, independent of an optional folder override.
+    pub status: Option<ReleasePathStatus>,
 }
 
 #[derive(Clone, Debug)]
@@ -165,14 +167,19 @@ fn bundled_rows() -> &'static [PathRow] {
                     .expect("bundled Path document");
                     document.display_name
                 });
+                let mut label = entry
+                    .unavailable
+                    .as_ref()
+                    .map_or_else(|| display.clone(), |reason| format!("{display} — {reason}"));
+                if entry.status == Some(ReleasePathStatus::Draft) {
+                    label.push_str(" [draft]");
+                }
                 PathRow {
                     id: entry.id.clone(),
-                    label: entry
-                        .unavailable
-                        .as_ref()
-                        .map_or_else(|| display.clone(), |reason| format!("{display} — {reason}")),
+                    label,
                     unavailable: entry.unavailable.clone(),
                     source: PathSource::Bundled,
+                    status: entry.status,
                 }
             })
             .collect()
@@ -495,6 +502,7 @@ impl PathRegistry {
                 file: Some(format!("{id}.json")),
                 name: None,
                 unavailable: None,
+                status: authored.and_then(|row| row.status),
             };
             if omitted_indexed.contains(&id) {
                 if bundled.is_none() {
@@ -566,11 +574,15 @@ impl PathRegistry {
             if let Some(reason) = &entry.unavailable {
                 label.push_str(&format!(" — {reason}"));
             }
+            if entry.status == Some(ReleasePathStatus::Draft) && source != PathSource::Draft {
+                label.push_str(" [draft]");
+            }
             let row = PathRow {
                 id: entry.id.clone(),
                 label,
                 unavailable: entry.unavailable.clone(),
                 source,
+                status: entry.status,
             };
             if let Some(position) = rows.iter().position(|row| row.id == entry.id) {
                 rows[position] = row;
