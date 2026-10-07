@@ -19489,7 +19489,7 @@ fn tick_fix_stat_and_chat_are_evidence_wake_families() {
 fn tick_fix_host_completions_publish_and_wake_without_player_info() {
     for inspect in [true, false] {
         let condition = if inspect {
-            "globalThis.__rs2b0t_host.snapshot.route_inspect_seq === 7"
+            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
         } else {
             "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
         };
@@ -19514,11 +19514,7 @@ export default class T extends LoopingBot {{
             let mut navs = rig.navs.lock().unwrap();
             let bot = navs.entry("alice".into()).or_default();
             if inspect {
-                bot.inspect.latest = Some(route_inspect::InspectTerminal {
-                    seq: 7, generation: 1, request_id: 23, ok: true,
-                    reason: String::new(), bank_planned: false, ticks: 0.0,
-                    hops: Vec::new(),
-                });
+                bot.inspect.refused[0] = 23;
             } else {
                 bot.bank_pick.posted = script::isolate_fb::BankSelectionInput {
                     generation: 1, request_id: 42, bank_index: 0, kind: 1,
