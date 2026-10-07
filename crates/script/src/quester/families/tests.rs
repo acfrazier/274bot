@@ -312,6 +312,7 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
             plan: Arc::new(WaitPlan {
                 until: Arc::new(AllPlan { items: vec![] }),
                 max_ticks: 2,
+                park_on_timeout: false,
             }),
         }]),
         goal: None,
@@ -1470,6 +1471,7 @@ fn interact_false_is_failure_not_success() {
         round_before: None,
         round_deadline: None,
         round_accepted: false,
+        wait_until: None,
     };
     assert!(matches!(
         with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))),
@@ -1493,6 +1495,7 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -1524,6 +1527,7 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     let mut run = with_tick(&s, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
@@ -2093,6 +2097,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
             plan: Arc::new(WaitPlan {
                 until: Arc::new(AllPlan { items: vec![] }),
                 max_ticks: 2,
+                park_on_timeout: false,
             }),
         }]),
         ..AcquirePlan::default()
@@ -2424,6 +2429,114 @@ fn unequip_all_keeps_shared_protected_equipment() {
         emitted(&ledger),
         InteractReq::Unequip { name } if name == "Other"
     ));
+}
+
+#[test]
+fn npc_near_uses_observed_tiles_and_preserves_unknown() {
+    compile_context_test(|cx| {
+        let id = resolve_npc(cx, "sir_vyvin").unwrap();
+        let plan = compile_npc_near(
+            test_args(serde_json::json!({"npc":"sir_vyvin","radius":1})),
+            cx,
+        )
+        .unwrap();
+        for (position, observed, expected) in [
+            (
+                Some(WorldTile {
+                    x: 2984,
+                    z: 3336,
+                    level: 2,
+                }),
+                true,
+                Truth::True,
+            ),
+            (
+                Some(WorldTile {
+                    x: 2983,
+                    z: 3335,
+                    level: 2,
+                }),
+                true,
+                Truth::False,
+            ),
+            (
+                Some(WorldTile {
+                    x: 2985,
+                    z: 3335,
+                    level: 1,
+                }),
+                true,
+                Truth::False,
+            ),
+            (None, true, Truth::False),
+            (None, false, Truth::Unknown),
+        ] {
+            let mut snapshot = ready();
+            if !observed {
+                snapshot.seed_ingame(1);
+            }
+            snapshot.seed_local_player(local_player(WorldTile {
+                x: 2985,
+                z: 3335,
+                level: 2,
+            }));
+            if observed {
+                snapshot.seed_npcs(
+                    position
+                        .into_iter()
+                        .map(|tile| api::snapshot::NpcView {
+                            index: 42,
+                            r#type: Some(id as usize),
+                            name: Some("Sir Vyvin".into()),
+                            actions: vec![],
+                            tile,
+                            distance: 0,
+                            animation: -1,
+                            animation_frame: 0,
+                            pose_animation: -1,
+                            orientation: 0,
+                            target_orientation: 0,
+                            overhead_text: None,
+                            spot_animation: -1,
+                            spot_animation_stamp: -1,
+                            health: 1,
+                            total_health: 1,
+                            face_entity: -1,
+                            target: None,
+                            moving: false,
+                            running: false,
+                            in_combat: false,
+                            level: 1,
+                            size: 1,
+                            network: tile,
+                            x: 0,
+                            z: 0,
+                            yaw: 0,
+                        })
+                        .collect(),
+                );
+            }
+            with_tick(&snapshot, &mut None, 1, |tick| {
+                assert_eq!(
+                    plan.evaluate(&PredicateContext {
+                        cx: &tick.cx,
+                        pairs: tick.pairs,
+                        quests: cx.quests,
+                        progress: &[],
+                        required_after: tick.cx.evidence(),
+                        chat_since: 0,
+                        outcome: None,
+                    }),
+                    expected
+                );
+            });
+        }
+        assert!(compile_npc_near(
+            test_args(serde_json::json!({"npc":"sir_vyvin","radius":-1})),
+            cx
+        )
+        .is_err());
+    });
 }
 
 #[test]
@@ -5992,6 +6105,7 @@ fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
             until: None,
             target_tile: Some(origin),
             reachable_only: false,
+            wait_until: None,
         };
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -6135,6 +6249,7 @@ fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
             until: None,
             target_tile: None,
             reachable_only: false,
+            wait_until: None,
         };
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -6211,6 +6326,7 @@ fn anchored_interact_wall_gate_approaches_from_the_players_side() {
                 until: None,
                 target_tile: None,
                 reachable_only: false,
+                wait_until: None,
             };
             let mut ledger = None;
             let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -6269,6 +6385,7 @@ fn temple_door_exit_prewalks_to_the_inside_stand_and_opens_once() {
             until: None,
             target_tile: None,
             reachable_only: false,
+            wait_until: None,
         };
         let opens = |ledger: &Option<Box<ledger::Ledger>>| {
             ledger

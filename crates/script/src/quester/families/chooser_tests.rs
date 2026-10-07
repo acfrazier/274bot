@@ -353,6 +353,7 @@ fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     // Approaching from the gate, only the anchor wheat is observed yet.
     let start = tile(3170, 3290);
