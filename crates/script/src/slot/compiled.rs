@@ -393,6 +393,7 @@ impl CompiledRun {
                     compiled: crate::CompiledTick {
                         selected: Some(&self.selected),
                         reach: ctx.compiled.reach,
+                        reach_flood: ctx.compiled.reach_flood,
                         bank_memory: ctx.compiled.bank_memory,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
