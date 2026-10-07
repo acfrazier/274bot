@@ -463,6 +463,7 @@ impl Family for BankOpen {
     /// ([`crate::bank_access`]) share this group. The frozen surface has no
     /// guard.
     const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
     type Args = BankOpenArgs;
     type Output = bool;
 

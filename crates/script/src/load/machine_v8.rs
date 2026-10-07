@@ -42,11 +42,7 @@ pub(super) fn snapshot_step(
     input_identity: u64,
     claimed: &dyn Fn() -> bool,
 ) {
-    machine::snapshot_step(
-        &mut RuntimeJs { runtime, claimed },
-        tick,
-        input_identity,
-    );
+    machine::snapshot_step(&mut RuntimeJs { runtime, claimed }, tick, input_identity);
 }
 
 /// After the tick's pump, resume rows whose callback promise settled.

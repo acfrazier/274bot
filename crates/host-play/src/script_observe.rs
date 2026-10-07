@@ -441,10 +441,13 @@ pub(crate) fn script_observe_cached_with_channels(
         );
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
+        let mut host_results_dirty = false;
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            let bank_selection = bot.bank_pick.poll(std::time::Instant::now());
+            host_results_dirty |= host_completion_changed(&slot, bot, bank_selection);
             deliver_native_walk_end(&mut slot, bot, tick);
-            deliver_native_advice(&mut slot, bot);
-            slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
+            host_results_dirty |= deliver_native_advice(&mut slot, bot);
+            host_results_dirty |= slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -632,18 +635,19 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             }
         }
-        // Post the snapshot only while the slot script is Running.
-        // While the guardian holds: still dispatch the isolate tick so
-        // `onPaint` runs (loop/pump stay frozen inside the isolate);
-        // compiled scripts stay fully frozen (0.1.2). The blob still
-        // posts while held so EventSignal reads the freeze.
-        // Do not gate this on the watchdog's last forwarded wait facts:
-        // the tick that parked may still be completing when a packet arrives.
-        // Queueing behind it lets the wait see the change without losing the
-        // dirty edge. Clean frames do no extra work.
+        host_results_dirty |= slot.last_snapshot_fingerprint().is_some_and(|last| {
+            last.withdraw_x_result_seq != slot.withdraw_x_result().0
+                || last.withdraw_load_result_seq != slot.withdraw_load_result().0
+                || last.bank_op_result_seq != slot.bank_op_result().0
+        });
+        // Evidence wakes use the latest observed PLAYER_INFO tick. They poll
+        // compiled/API/compat machines, never dispatch another JS game tick.
+        // Held runs remain frozen, and frames before the first tick cannot
+        // obtain an interaction budget.
         let wake_waits = !tick_edge
-            && wait_families_dirty
-            && slot.load_active()
+            && tick != 0
+            && (wait_families_dirty || host_results_dirty)
+            && !prayer_cleanup_hold
             && !hold
             && !slot.watchdog().holds_script_actions();
         if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
@@ -810,10 +814,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 post_script_snapshot(&mut slot, navs, name, walk_seq, bytes);
                 slot.store_last_world_id(world_id);
             }
-            if wake_waits {
-                slot.on_snapshot_change(tick);
-                wrote = true;
-            } else if isolate_hold {
+            if isolate_hold {
                 // Isolate: tick for onPaint only (hold gate inside V8 via
                 // snapshot.hold). Recovery hold is distinct from guardian
                 // hold: nav follow of the owned recovery route continues,
@@ -853,7 +854,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // (design-bank-snapshot §1.2): the guard ends with this
                 // block, before effect dispatch, logging and queued cheats.
                 let bank_memory = bank_memory.map(parking_lot::RwLock::read);
-                slot.on_game_tick(&mut ScriptCtx {
+                let mut ctx = ScriptCtx {
                     driver,
                     tick,
                     here,
@@ -871,7 +872,12 @@ pub(crate) fn script_observe_cached_with_channels(
                         world_members,
                         ..Default::default()
                     },
-                });
+                };
+                if wake_waits {
+                    slot.on_snapshot_change(&mut ctx);
+                } else {
+                    slot.on_game_tick(&mut ctx);
+                }
                 wrote = true;
             }
         }
@@ -1813,14 +1819,46 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     bot.walk_outcome_detail = None;
 }
 
-fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) {
+fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> bool {
+    let mut completed = false;
     if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
         slot.complete_native_bank_pick(&authority, receipt);
+        completed = true;
     }
     if let Some(result) = bot.assess_result.take() {
         let (authority, receipt) = *result;
         slot.complete_native_assess_walk(&authority, receipt);
+        completed = true;
     }
+    completed
+}
+
+/// Compare only completion identities against the snapshot already retained
+/// by the slot. Route progress does not allocate a posted route on clean frames.
+fn host_completion_changed(
+    slot: &script::SlotScript,
+    bot: &NavBot,
+    bank_selection: script::isolate_fb::BankSelectionInput,
+) -> bool {
+    slot.last_snapshot_fingerprint().is_some_and(|last| {
+        let inspect = &bot.inspect;
+        let old = &last.route_inspect;
+        last.bank_selection != bank_selection
+            || last.walk_outcome_seq != bot.walk_outcome_seq
+            || (old.latest.seq, old.latest.generation, old.latest.request_id)
+                != inspect
+                    .latest
+                    .as_ref()
+                    .map_or((0, 0, 0), |end| (end.seq, end.generation, end.request_id))
+            || (old.prev.seq, old.prev.generation, old.prev.request_id)
+                != inspect
+                    .prev
+                    .as_ref()
+                    .map_or((0, 0, 0), |end| (end.seq, end.generation, end.request_id))
+            || old.replaced_id != inspect.replaced_id
+            || old.replaced_prev_id != inspect.replaced_prev_id
+            || [old.refused_id, old.refused_id_2, old.refused_id_3] != inspect.refused
+    })
 }
 
 pub(crate) fn deliver_channel_events(

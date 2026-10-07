@@ -2621,7 +2621,11 @@ fn park_wakes_for_websocket_leftover_with_quiet_fd() {
         let _ = ws.read(); // No later traffic: wait until the client closes.
     });
     let mut c = prepare_client(
-        cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new(),
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
     );
     let mut stream = connect_ws_plain("127.0.0.1", address.port()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -2639,8 +2643,16 @@ fn park_wakes_for_websocket_leftover_with_quiet_fd() {
     let suppressed = park(&mut c, None, false, Duration::from_millis(10));
     c.stream.as_mut().unwrap().close();
     server.join().unwrap();
-    assert_eq!(wake, ParkWake::Socket, "already-received WS bytes must wake without another server packet");
-    assert_eq!(suppressed, ParkWake::Timeout, "partial-packet stall suppression must still win");
+    assert_eq!(
+        wake,
+        ParkWake::Socket,
+        "already-received WS bytes must wake without another server packet"
+    );
+    assert_eq!(
+        suppressed,
+        ParkWake::Timeout,
+        "partial-packet stall suppression must still win"
+    );
 }
 
 #[test]
@@ -2674,7 +2686,7 @@ fn park_prefers_socket_when_control_and_socket_both_ready() {
     }
     wake.wake();
     assert_eq!(
-        park(&c, Some(&park_end), true, Duration::from_millis(1000)),
+        park(&mut c, Some(&park_end), true, Duration::from_millis(1000)),
         ParkWake::Socket,
         "socket must win when both control and socket are ready"
     );
@@ -2713,13 +2725,13 @@ fn park_suppresses_socket_when_poll_socket_false() {
     // is waited. Without a kick, park must time out instead of busy-spinning.
     let start = Instant::now();
     assert_eq!(
-        park(&c, Some(&park_end), false, Duration::from_millis(50)),
+        park(&mut c, Some(&park_end), false, Duration::from_millis(50)),
         ParkWake::Timeout
     );
     assert!(start.elapsed() >= Duration::from_millis(30));
     wake.wake();
     assert_eq!(
-        park(&c, Some(&park_end), false, Duration::from_millis(1000)),
+        park(&mut c, Some(&park_end), false, Duration::from_millis(1000)),
         ParkWake::Control,
         "with socket suppressed, a control kick must still wake as Control"
     );
@@ -2727,7 +2739,7 @@ fn park_suppresses_socket_when_poll_socket_false() {
 
 #[test]
 fn park_no_fds_sleeps_timeout() {
-    let c = prepare_client(
+    let mut c = prepare_client(
         cfg(),
         1,
         Arc::new(Cache::default()),
@@ -2736,7 +2748,7 @@ fn park_no_fds_sleeps_timeout() {
     );
     let start = Instant::now();
     assert_eq!(
-        park(&c, None, true, Duration::from_millis(60)),
+        park(&mut c, None, true, Duration::from_millis(60)),
         ParkWake::Timeout
     );
     assert!(start.elapsed() >= Duration::from_millis(40));
