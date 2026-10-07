@@ -2978,7 +2978,10 @@ export default class T extends LoopingBot {
         iso.drain_interacts().as_slice(),
         [script::shim::InteractReq::OpenBooth { id: 2213, .. }]
     ));
-    assert_eq!(iso.probe("globalThis.__opened ?? null").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
     let loops = iso.probe("globalThis.__loops").unwrap();
     let paints = iso.probe("globalThis.__paints ?? 0").unwrap();
     let listeners = iso.probe("globalThis.__listeners").unwrap();

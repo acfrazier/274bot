@@ -260,6 +260,7 @@ impl SelectBank {
 impl Family for SelectBank {
     const NAME: &'static str = "bank_select";
     const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
     type Args = SelectArgs;
     type Output = Value;
 

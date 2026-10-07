@@ -348,6 +348,7 @@ impl Family for BankingOpen {
     const NAME: &'static str = "banking_open";
     const EXCLUSIVE: bool = true;
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
+    const SNAPSHOT_SENSITIVE: bool = true;
     const CALLBACKS: &'static [&'static str] = &["log"];
     const SYNC_HOOKS: &'static [usize] = &[0];
     const KICK_ON_START: bool = true;

@@ -371,9 +371,7 @@ impl Family for Shop {
         }
         match self.kind {
             Kind::Open if probe.shop_open => self.open_step(&probe, cx),
-            Kind::Open if self.attempts_left <= 1 && cx.clock().bound_reached() => {
-                self.done(false)
-            }
+            Kind::Open if self.attempts_left <= 1 && cx.clock().bound_reached() => self.done(false),
             // A snapshot may confirm the page, but retrying Trade remains
             // owned by a real tick and cannot reuse that event budget.
             Kind::Open => Step::Wait,
@@ -974,7 +972,10 @@ mod tests {
         let after = [row("Vial", 80, 1)];
         let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
         assert!(out.is_none());
-        assert!(ops.is_empty(), "same-tick snapshot cannot dispatch batch 41");
+        assert!(
+            ops.is_empty(),
+            "same-tick snapshot cannot dispatch batch 41"
+        );
         observed::post(2, |_| {});
         let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
         assert_eq!(out, Some(json!(20)));
@@ -1108,7 +1109,10 @@ mod tests {
             shop_open: false,
             ..probe(&stock, None, &inv)
         };
-        assert_eq!(step(&mut rt, &mut clock, &closed), (Some(json!(10)), vec![]));
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed),
+            (Some(json!(10)), vec![])
+        );
     }
 
     #[test]

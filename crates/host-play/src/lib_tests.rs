@@ -19476,13 +19476,22 @@ fn tick_fix_stat_and_chat_are_evidence_wake_families() {
     let mut dirty = host::DirtyFamilies::default();
     assert!(!crate::play_slots::script_evidence_dirty(dirty));
     dirty.stat = true;
-    assert!(crate::play_slots::script_evidence_dirty(dirty), "UPDATE_STAT must wake machines");
+    assert!(
+        crate::play_slots::script_evidence_dirty(dirty),
+        "UPDATE_STAT must wake machines"
+    );
     dirty.stat = false;
     dirty.chat = true;
-    assert!(crate::play_slots::script_evidence_dirty(dirty), "chat packets must wake machines");
+    assert!(
+        crate::play_slots::script_evidence_dirty(dirty),
+        "chat packets must wake machines"
+    );
     dirty.chat = false;
     dirty.camera = true;
-    assert!(!crate::play_slots::script_evidence_dirty(dirty), "screen-only frames do not pump scripts");
+    assert!(
+        !crate::play_slots::script_evidence_dirty(dirty),
+        "screen-only frames do not pump scripts"
+    );
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -19495,15 +19504,18 @@ enum TickFixEvidence {
 
 fn assert_tick_fix_evidence_wake(evidence: TickFixEvidence) {
     let condition = match evidence {
-        TickFixEvidence::RouteInspect =>
-            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23",
-        TickFixEvidence::BankSelection =>
-            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42",
+        TickFixEvidence::RouteInspect => {
+            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
+        }
+        TickFixEvidence::BankSelection => {
+            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
+        }
         TickFixEvidence::Stat => "Skills.xp('attack') === 100",
         TickFixEvidence::Chat => "GameMessages.sawSince(0, /tickfix chat/)",
     };
     let mut rig = ReconnectRig::with_source(
-        format!(r#"
+        format!(
+            r#"
 import {{ Execution }} from '../../api/execution/Execution.js';
 import {{ Skills }} from '../../api/skills/Skills.js';
 import {{ GameMessages }} from '../../api/chatbox/gameMessages.js';
@@ -19516,7 +19528,8 @@ export default class T extends LoopingBot {{
         globalThis.__later = true;
     }}
 }}
-"#),
+"#
+        ),
         open_world(64, 64),
         (3, 3, 0),
     );
@@ -19531,7 +19544,10 @@ export default class T extends LoopingBot {{
             let mut navs = rig.navs.lock().unwrap();
             navs.entry("alice".into()).or_default().bank_pick.posted =
                 script::isolate_fb::BankSelectionInput {
-                    generation: 1, request_id: 42, bank_index: 0, kind: 1,
+                    generation: 1,
+                    request_id: 42,
+                    bank_index: 0,
+                    kind: 1,
                     ..Default::default()
                 };
         }
@@ -19550,13 +19566,25 @@ export default class T extends LoopingBot {{
     }
     rig.frame_dirty(1, false, crate::play_slots::script_evidence_dirty(dirty));
     assert_eq!(
-        rig.slot().lock().unwrap()
-            .probe("[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]").unwrap(),
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe(
+                "[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]"
+            )
+            .unwrap(),
         serde_json::json!([1, false, 1]),
         "{evidence:?} evidence must publish and settle within the existing tick",
     );
     rig.frame(2, true);
-    assert_eq!(rig.slot().lock().unwrap().probe("globalThis.__later ?? false").unwrap(), true);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__later ?? false")
+            .unwrap(),
+        true
+    );
     rig.slot().lock().unwrap().stop();
 }
 
@@ -19599,9 +19627,15 @@ impl script::native::NativeMachine for SnapshotPumpMachine {
         &mut self,
         cx: &mut script::native::ActionContext<'_>,
     ) -> std::task::Poll<Result<(), script::native::ActionError>> {
-        let open = cx.snapshot().bank_session().is_some_and(|bank| bank.value.open);
+        let open = cx
+            .snapshot()
+            .bank_session()
+            .is_some_and(|bank| bank.value.open);
         let emitted = cx.emit(script::shim::InteractReq::CloseModal);
-        self.0.lock().unwrap().push((cx.evidence().tick, open, emitted));
+        self.0
+            .lock()
+            .unwrap()
+            .push((cx.evidence().tick, open, emitted));
         std::task::Poll::Pending
     }
 
@@ -19625,7 +19659,9 @@ impl script::native::Script for SnapshotPumpScript {
                     .unwrap(),
             );
         }
-        let _ = tick.actions.poll(self.handle.as_ref().unwrap(), &mut tick.cx);
+        let _ = tick
+            .actions
+            .poll(self.handle.as_ref().unwrap(), &mut tick.cx);
         Ok(script::native::ScriptFlow::Continue)
     }
 }
@@ -19657,11 +19693,33 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
     // Compiled runs have no isolate to probe; drive the real observer directly.
     let observe = |rig: &mut ReconnectRig, tick_edge, dirty, tick| {
         script_observe_cached_with_channels(
-            &mut rig.client, "alice", true, tick_edge, dirty, tick,
-            Some(rig.here), None, None, Some(&rig.snap), None, None, None,
-            &rig.scripts, &rig.cheats, &rig.navs, &rig.world,
-            false, false, None, None, None, None, None,
-            script_channels::BrokerWorld::Local, None, None,
+            &mut rig.client,
+            "alice",
+            true,
+            tick_edge,
+            dirty,
+            tick,
+            Some(rig.here),
+            None,
+            None,
+            Some(&rig.snap),
+            None,
+            None,
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            script_channels::BrokerWorld::Local,
+            None,
+            None,
         );
     };
     observe(&mut rig, true, false, 1);
@@ -19672,15 +19730,28 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
     observe(&mut rig, false, true, 1);
     observe(&mut rig, true, false, 2);
     let frames = frames.lock().unwrap();
-    assert_eq!(frames.len(), 4, "fresh non-PI evidence must poll the compiled machine");
+    assert_eq!(
+        frames.len(),
+        4,
+        "fresh non-PI evidence must poll the compiled machine"
+    );
     assert!(!frames[0].1);
     assert!(frames[1].1 && frames[2].1);
     assert_eq!(frames[0].0, frames[1].0);
     assert!(frames[0].2.is_ok());
-    assert_eq!(frames[1].2, Err(script::native::ActionError::BudgetExhausted));
-    assert_eq!(frames[2].2, Err(script::native::ActionError::BudgetExhausted));
+    assert_eq!(
+        frames[1].2,
+        Err(script::native::ActionError::BudgetExhausted)
+    );
+    assert_eq!(
+        frames[2].2,
+        Err(script::native::ActionError::BudgetExhausted)
+    );
     assert_eq!(frames[3].0, 2);
-    assert!(frames[3].2.is_ok(), "only the next PI replenishes the ledger");
+    assert!(
+        frames[3].2.is_ok(),
+        "only the next PI replenishes the ledger"
+    );
 }
 
 /// A Load script walking on a 64×64 open world, driven through

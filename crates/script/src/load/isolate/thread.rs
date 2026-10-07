@@ -1375,17 +1375,11 @@ fn tick_loop(
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
                         if wait_only {
-                            super::machine_v8::snapshot_step(
-                                runtime,
-                                n,
-                                input_identity,
-                                &|| machines_halted(&teardown),
-                            );
+                            super::machine_v8::snapshot_step(runtime, n, input_identity, &|| {
+                                machines_halted(&teardown)
+                            });
                         } else {
-                            super::machine_v8::step(
-                                runtime,
-                                &|| machines_halted(&teardown),
-                            );
+                            super::machine_v8::step(runtime, &|| machines_halted(&teardown));
                         }
                         Ok::<(), rustyscript::Error>(())
                     });

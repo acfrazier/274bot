@@ -1464,6 +1464,13 @@ impl SlotScript {
         bytes
     }
 
+    /// Last accepted snapshot identities, used to detect host completions
+    /// without retaining another per-slot generation table.
+    #[cfg(feature = "load")]
+    pub fn last_snapshot_fingerprint(&self) -> Option<&SnapshotFingerprint> {
+        self.last_snapshot.as_ref()
+    }
+
     /// The `NavWorld` identity the packed banks were posted against
     /// (`None` before the first post / after a Start). A world rebuild
     /// changes the identity, forcing the banks table onto the next post.
@@ -1570,8 +1577,10 @@ impl SlotScript {
     }
 
     /// Only observations update this; queued work keeps its original stamp.
-    pub fn observe_walk_outcome_seq(&mut self, seq: u64) {
+    pub fn observe_walk_outcome_seq(&mut self, seq: u64) -> bool {
+        let changed = self.native_runtime.observed_walk_outcome_seq != seq;
         self.native_runtime.observed_walk_outcome_seq = seq;
+        changed
     }
 
     /// Queued native work the host may dispatch now. Work queued before a
@@ -2107,18 +2116,25 @@ impl SlotScript {
             .map_or((0, false), LoadIsolate::execution_sequence)
     }
 
-    /// Recheck a Load script's parked waits without generating a game tick.
-    pub fn on_snapshot_change(&mut self, tick: u64) {
+    /// Poll evidence-ready machines at the latest observed tick. This does
+    /// not dispatch a JS game tick, advance real-tick waits or renew the native
+    /// event budget. Held runs remain frozen.
+    pub fn on_snapshot_change(&mut self, ctx: &mut ScriptCtx<'_>) {
         self.observe_lifecycle();
-        if self.state != RunState::Running || !self.want_run {
+        if self.state != RunState::Running || !self.want_run || ctx.compiled.hold {
             return;
         }
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
-            isolate.on_snapshot_change_at(tick, self.native_input.lock().identity());
+            if let Some(failure) = trapped_failure(ctx) {
+                self.stop_blocked(failure, ctx.tick);
+                return;
+            }
+            isolate.on_snapshot_change_at(ctx.tick, self.native_input.lock().identity());
+            self.tick_api(ctx);
+            return;
         }
-        #[cfg(not(feature = "load"))]
-        let _ = tick;
+        self.poll_compiled_frame(ctx);
     }
 
     /// Call only on observed server tick. Dispatches the JS isolate's
@@ -2149,6 +2165,17 @@ impl SlotScript {
             self.tick_api(ctx);
             return;
         }
+        if self.compiled.is_none() {
+            return;
+        }
+        self.ticks += 1;
+        self.poll_compiled_frame(ctx);
+    }
+
+    /// Both real ticks and evidence wakes use the same compiled frame path.
+    /// `Runtime::frame_context` observes the tick idempotently, so a wake can
+    /// consume evidence but cannot replenish an already-spent event budget.
+    fn poll_compiled_frame(&mut self, ctx: &mut ScriptCtx<'_>) {
         let Some(run) = self.compiled.as_mut() else {
             return;
         };
@@ -2159,7 +2186,6 @@ impl SlotScript {
         {
             ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
         }
-        self.ticks += 1;
         let result = match trapped_failure(ctx) {
             Some(failure) => Ok(ScriptFlow::Blocked(failure)),
             None => {
