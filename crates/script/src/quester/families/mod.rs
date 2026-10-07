@@ -133,6 +133,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             compile_npc_present
         ),
         super::compile::fact!(
+            "npc_near",
+            1,
+            super::compile::ProgressRead::None,
+            NpcNearArg,
+            compile_npc_near
+        ),
+        super::compile::fact!(
             "loc_present",
             1,
             super::compile::ProgressRead::None,
@@ -652,6 +659,30 @@ struct NpcArg {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
+struct NpcNearArg {
+    /// Symbolic NPC config name.
+    npc: String,
+    /// Inclusive Chebyshev radius from the player, on the same level.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 0)))]
+    radius: i32,
+}
+
+fn compile_npc_near(
+    arg: NpcNearArg,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    if arg.radius < 0 {
+        return Err(CompileError::code("invalid-args"));
+    }
+    Ok(Arc::new(NpcPresent {
+        id: resolve_npc(cx, &arg.npc)?,
+        radius: Some(arg.radius),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 struct LocArg {
     /// Symbolic location config name.
     loc: String,
@@ -677,20 +708,31 @@ fn compile_npc_present(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     Ok(Arc::new(NpcPresent {
         id: resolve_npc(cx, &arg.npc)?,
+        radius: None,
     }))
 }
 struct NpcPresent {
     id: i32,
+    radius: Option<i32>,
 }
 impl PredicatePlan for NpcPresent {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let here = match self.radius {
+            Some(_) => match cx.cx.snapshot().here() {
+                Some(here) => Some(here.value),
+                None => return Truth::Unknown,
+            },
+            None => None,
+        };
         match cx.cx.snapshot().npcs() {
             None => Truth::Unknown,
-            Some(npcs) => truth(
-                npcs.value
-                    .iter()
-                    .any(|npc| npc.r#type == Some(self.id as usize)),
-            ),
+            Some(npcs) => truth(npcs.value.iter().any(|npc| {
+                npc.r#type == Some(self.id as usize)
+                    && match (here, self.radius) {
+                        (Some(here), Some(radius)) => reach::within(here, npc.tile, radius),
+                        _ => true,
+                    }
+            })),
         }
     }
 }
@@ -702,6 +744,7 @@ fn compile_npc_absent(
     Ok(Arc::new(NotPlan {
         inner: Arc::new(NpcPresent {
             id: resolve_npc(cx, &arg.npc)?,
+            radius: None,
         }),
     }))
 }
@@ -1635,6 +1678,10 @@ pub(crate) struct InteractArgs {
     /// Repeat this operation until the observed inventory reaches the required count.
     #[serde(default)]
     pub(crate) until: Option<UseOnUntil>,
+    /// Before each operation round, wait for this predicate to be true.
+    /// Unknown evidence also waits. The fixed settle deadline bounds this wait.
+    #[serde(default)]
+    pub(crate) wait_until: Option<PredicateDocument>,
     /// Only choose a loc candidate the live reach view proves reachable.
     #[serde(default)]
     pub(crate) reachable_only: bool,
@@ -1746,6 +1793,11 @@ pub(crate) fn compile_interact(
         default_dialogue: arg.dialogue.is_none(),
         dialogue_options: compile_dialogue(arg.dialogue)?,
         until: compile_until(arg.until, cx)?,
+        wait_until: arg
+            .wait_until
+            .as_ref()
+            .map(|predicate| compile_predicate(predicate, cx))
+            .transpose()?,
         target_tile,
         reachable_only: arg.reachable_only,
     }))
@@ -1762,6 +1814,7 @@ struct InteractPlan {
     default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
     until: Option<(i32, s2::QuantityPlan)>,
+    wait_until: Option<Arc<dyn PredicatePlan>>,
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 }
@@ -1793,6 +1846,7 @@ impl StepPlan for InteractPlan {
             scene_activity_observed: false,
             scene_in_range_at_acceptance: false,
             until: begin_until(self.until.as_ref(), cx)?,
+            wait_until: self.wait_until.clone(),
             target_tile: self.target_tile,
             reachable_only: self.reachable_only,
             round_pick: None,
@@ -1836,6 +1890,7 @@ struct InteractRun {
     /// click was chosen or when its receipt was read.
     scene_in_range_at_acceptance: bool,
     until: Option<(i32, i32)>,
+    wait_until: Option<Arc<dyn PredicatePlan>>,
     /// Authored exact loc tile; `None` makes the target fungible.
     target_tile: Option<WorldTile>,
     reachable_only: bool,
@@ -2131,6 +2186,24 @@ impl StepRun for InteractRun {
                 Poll::Ready(Ok(receipt)) => {
                     walk_step_evidence(receipt)?;
                     self.walk = None;
+                }
+            }
+        }
+        if !self.started {
+            if let Some(predicate) = &self.wait_until {
+                let deadline = *self.deadline.get_or_insert(now + self.settle_duration);
+                self.dialogue_cap.get_or_insert(deadline);
+                let pred = PredicateContext {
+                    cx: &cx.tick.cx,
+                    pairs: cx.tick.pairs,
+                    quests: cx.quests,
+                    progress: cx.progress,
+                    required_after: cx.required_after,
+                    chat_since: 0,
+                    outcome: None,
+                };
+                if predicate.evaluate(&pred) != Truth::True {
+                    return Poll::Pending;
                 }
             }
         }
@@ -3813,6 +3886,9 @@ struct WaitArgs {
     /// Maximum ticks to wait; must be at least 1.
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     max_ticks: u64,
+    /// Park immediately on expiry instead of retrying the step.
+    #[serde(default)]
+    park_on_timeout: bool,
 }
 
 fn compile_wait(arg: WaitArgs, cx: &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError> {
@@ -3822,12 +3898,14 @@ fn compile_wait(arg: WaitArgs, cx: &CompileContext<'_>) -> Result<Arc<dyn StepPl
     Ok(Arc::new(WaitPlan {
         until: compile_predicate(&arg.until, cx)?,
         max_ticks: arg.max_ticks,
+        park_on_timeout: arg.park_on_timeout,
     }))
 }
 
 struct WaitPlan {
     until: Arc<dyn PredicatePlan>,
     max_ticks: u64,
+    park_on_timeout: bool,
 }
 impl StepPlan for WaitPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
@@ -3835,6 +3913,7 @@ impl StepPlan for WaitPlan {
             until: Arc::clone(&self.until),
             deadline_tick: cx.tick.cx.evidence().tick.saturating_add(self.max_ticks),
             chat_since: reach::last_chat_seq(&cx.tick.cx),
+            park_on_timeout: self.park_on_timeout,
         }))
     }
 }
@@ -3843,11 +3922,17 @@ struct WaitRun {
     until: Arc<dyn PredicatePlan>,
     deadline_tick: u64,
     chat_since: i32,
+    park_on_timeout: bool,
 }
 impl StepRun for WaitRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if cx.tick.cx.evidence().tick >= self.deadline_tick {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from("wait exhausted"))));
+            let message = Arc::from("wait exhausted");
+            return Poll::Ready(Err(if self.park_on_timeout {
+                ActionError::Blocked(message)
+            } else {
+                ActionError::Failed(message)
+            }));
         }
         let pred = PredicateContext {
             cx: &cx.tick.cx,

@@ -187,6 +187,8 @@ pub type ObserveFamily = Box<
         ) -> Result<Option<Value>, String>
         + Send,
 >;
+/// A receipt emitted by a cell-specific observer during live polling.
+pub type ObserveTick = Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Option<Value> + Send>;
 
 /// One live cell.
 pub struct Cell {
@@ -570,6 +572,8 @@ struct ActorShared {
     start_family: Option<StartFamily>,
     observe_start: Option<ObserveStart>,
     start_receipt: Option<Value>,
+    observe_tick: Option<ObserveTick>,
+    tick_observations: Vec<Value>,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -945,18 +949,28 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
 
 /// Run one live cell. Returns the final receipt on PASS.
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None)
+    run_inner(cell, None, None, None)
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe))
+    run_inner(cell, Some(start), Some(observe), None)
+}
+
+/// Run the Path with a cell-specific success oracle and polling observations.
+pub fn run_observed(
+    cell: Cell,
+    observe: ObserveFamily,
+    observe_tick: ObserveTick,
+) -> Result<Value, String> {
+    run_inner(cell, None, Some(observe), Some(observe_tick))
 }
 
 fn run_inner(
     cell: Cell,
     start_family: Option<StartFamily>,
     observe_family: Option<ObserveFamily>,
+    observe_tick: Option<ObserveTick>,
 ) -> Result<Value, String> {
     let Cell {
         quest,
@@ -979,6 +993,7 @@ fn run_inner(
         RunPlan::Single(mode),
         start_family,
         observe_family,
+        observe_tick,
     )
 }
 
@@ -1009,7 +1024,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None)
+    run_cells(cells, RunPlan::Pair(mode), None, None, None)
 }
 
 fn run_cells(
@@ -1017,6 +1032,7 @@ fn run_cells(
     mode: RunPlan,
     mut start_family: Option<StartFamily>,
     mut observe_family: Option<ObserveFamily>,
+    mut observe_tick: Option<ObserveTick>,
 ) -> Result<Value, String> {
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
         return Err("Quester live run has the wrong number of roles".into());
@@ -1161,6 +1177,8 @@ fn run_cells(
             start_family: start_family.take(),
             observe_start: cell.observe_start,
             start_receipt: None,
+            observe_tick: observe_tick.take(),
+            tick_observations: Vec::new(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1629,6 +1647,11 @@ fn run_cells(
                                 "inventory": inventory_receipt(&actor.snapshot),
                             }));
                         }
+                    }
+                }
+                if let Some(observe) = actor.observe_tick.as_mut() {
+                    if let Some(receipt) = observe(&actor.snapshot, observation.status.as_deref()) {
+                        actor.tick_observations.push(receipt);
                     }
                 }
                 observation.runner_status = actor.runner.status();
@@ -2634,6 +2657,7 @@ fn run_cells(
                     "death_message_sequences": death_messages,
                     "pair_cancelled": actor.pair_cancelled,
                     "step_observations": actor.step_observations,
+                    "tick_observations": actor.tick_observations,
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2688,6 +2712,7 @@ fn run_cells(
             "stops": actor["stops"],
             "transitions": actor["transitions"],
             "stages_seen": actor["stages_seen"],
+            "tick_observations": actor["tick_observations"],
             "deaths": actor["deaths"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],

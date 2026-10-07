@@ -6324,3 +6324,7 @@ mod ordered_tests;
 #[cfg(test)]
 #[path = "squire_bank_runner_tests.rs"]
 mod squire_bank_tests;
+
+#[cfg(test)]
+#[path = "squire_portrait_runner_tests.rs"]
+mod squire_portrait_tests;
