@@ -1299,6 +1299,66 @@ fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
 }
 
 #[test]
+fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    rig.expect_running_page(token);
+    assert!(
+        !rig.slot().lock().unwrap().live_walking_operation(),
+        "the Gatherer works in place: no walking operation"
+    );
+    assert!(
+        rig.navs
+            .lock()
+            .unwrap()
+            .get(SLOT)
+            .is_none_or(|bot| bot.route.is_none()
+                && bot.pending_route.is_none()
+                && !bot.native_walk.as_ref().is_some_and(|owner| owner.live())),
+        "no host walk is in flight"
+    );
+    let manual = crate::SlotFrameInput {
+        manual_move_intent: Some(crate::ManualMoveIntent::Minimap),
+        ..Default::default()
+    };
+    assert!(
+        crate::script_runtime::take_manual_walk_ownership(
+            &rig.scripts,
+            &rig.navs,
+            SLOT,
+            manual,
+            true,
+            rig.tick,
+            true,
+        ),
+        "manual movement takes over the session's foreground"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Paused,
+        "Pause script on manual movement applies"
+    );
+    rig.slot().lock().unwrap().resume();
+    for _ in 0..32 {
+        rig.frame();
+        if rig.probe("globalThis.__settleCount") == 1 {
+            break;
+        }
+    }
+    let result = rig.probe("globalThis.__runResult");
+    assert_eq!(result["kind"], "done", "{result}");
+    assert_eq!(result["value"]["end"], "blocked", "{result}");
+    assert_eq!(result["value"]["token"], token, "{result}");
+    assert_eq!(
+        result["value"]["failure"]["code"], "manual-movement",
+        "{result}"
+    );
+}
+
+#[test]
 fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_un_drained();

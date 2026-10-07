@@ -149,8 +149,10 @@ observe `'user-input'` and choose what to do. Already-paused or reconnect-carrie
 work is not cancelled merely because movement happens during that hold. After
 an explicit Resume, a native script may make a fresh decision, but the old
 cancelled request, host carry, queued work, and watchdog recovery are never
-automatically replayed. See [Nav](nav.md) for the accepted intent bounds and
-known detector residue.
+automatically replayed. A live `api.gather` or `api.combat` session is owned
+work too, with or without a walk in flight: manual movement ends it (see
+"Gather sessions" and "Combat sessions") and the preference pauses its script.
+See [Nav](nav.md) for the accepted intent bounds and known detector residue.
 
 User-owned world/minimap clicks and TUI Manual steps are classified as intent;
 script-generated input is not. This is not evidence that the player moved.
@@ -347,7 +349,9 @@ settled. The terminal is the nested `value` of the unchanged `done` envelope:
 anchor/counters like operator Stop; `blocked` (with the card's `failure` and
 counts) keeps them so the next `run` resumes; `refused` carries the host
 preparation/admission reason and never ran; `failed` carries the card panic
-reason with counts.
+reason with counts. Manual movement while the session is live — walking, or
+gathering in place, or still being prepared — ends it `blocked` with
+`failure.code: 'manual-movement'`.
 
 While a session is live the host owns the slot's foreground: the script's
 game rows are dropped, not deferred (see [script.md](script.md) "Two
@@ -414,14 +418,14 @@ the host; an unknown name is `done{end:'refused', reason:
 `invalid-setting:spells:unknown-spell`.
 
 **Prayer.** Combat waits for one complete observation of all prayer rows,
-and any prayer already on then is the user's: it is kept on through the
-fight and afterwards, and a user's offensive tier is never replaced with a
-stronger one. The bot raises a protection prayer for the style the live
-attackers use (from incoming projectiles first, else from the threats'
-content attack styles) when the account's base Prayer meets that prayer's
-level and points remain; the game allows one protection at a time, so a
-protection the bot needs replaces a different one the user had on, which the
-bot does not restore. In melee fights against targets worth boosting (a
+and any prayer already on then is the user's: the bot never clicks it off,
+and a user's offensive tier is never replaced with a stronger one. The bot
+raises a protection prayer for the style the live attackers use (from
+incoming projectiles first, else from the threats' content attack styles)
+when the account's base Prayer meets that prayer's level and points remain.
+The game allows one protection prayer at a time, so raising one switches off
+a different protection prayer the user had on; the bot does not turn the
+user's back on. In melee fights against targets worth boosting (a
 player, or an npc with at least 40 hitpoints), it also raises the strongest
 Strength and Attack prayers it can afford. It drinks a prayer potion when a
 prayer is wanted or on and points fall to `base − (7 + base/4)` (at least 3).
@@ -476,9 +480,9 @@ The terminal is the nested `value` of the `done` envelope:
   `protectSwitches`).
 - `stopped`: `api.combat.stop()` ended it.
 - `interrupted` with `cause`: `pause` (operator Pause; the session settles
-  after Resume), `user-input` (the player moved the bot), `died` (the host
-  saw the death before Combat did; a death Combat sees first is `fought` with
-  `report.end: 'died'`) or `reconnect`.
+  after Resume), `user-input` (manual movement, whether or not the bot was
+  walking), `died` (the host saw the death before Combat did; a death Combat
+  sees first is `fought` with `report.end: 'died'`) or `reconnect`.
 - `refused`: the host refused the admitted request before any fight — a name
   it could not resolve, `busy`, `unavailable:<why>` (for example missing
   selected game data), or Combat refusing to begin.
@@ -495,20 +499,28 @@ are `aborted`.
 The session follows the native combat prayer ownership rules
 ([script.md](script.md) "Native combat prayer ownership"):
 
+- The bot turns off only prayers it raised itself (accepted clicks,
+  observed on). The game allows one protection prayer at a time, so when the
+  bot raises a protection prayer, the game switches off a different protection
+  prayer the user had on; the bot does not turn that one back on. Other user
+  prayers stay on.
 - A fight Combat settles clears the prayers it raised in its own wind-down
   before `fought` resolves.
-- Pause and user input cancel the fight; on the next eligible tick the bot
-  turns off only the prayers it raised (accepted clicks, observed on), then
-  the session settles `interrupted`. User prayers stay on.
+- Pause, manual movement and a reconnect cancel the session at any point
+  after admission: while the host prepares it, once it is installed but before
+  Combat begins, or mid-fight. Manual movement counts whether or not the bot is
+  walking; with “Pause script on manual movement” on, the script is also
+  paused. On the next eligible tick (after Resume for a Pause, in the new
+  session for a reconnect) the bot turns off the prayers it raised, then the
+  session settles `interrupted` with that cause. A session cancelled before
+  Combat began raised nothing, so nothing is clicked.
 - Death retires the obligation (the game cleared every prayer), so nothing is
   clicked afterwards, even if the user turns a prayer on after respawning.
 - `api.combat.stop()`, operator Stop and any script stop end the session at
   once and hand the bot's accepted raises to the host, whose ordinary pump
   turns exactly those off; the next session waits for that cleanup instead
   of taking the raised prayers as the user's.
-- A reconnect keeps the session; its fight goes stale and the session
-  settles `interrupted` with `cause: 'reconnect'` after the scoped cleanup.
-  A session reset (logout) ends it with no terminal; the await is `aborted:
+- A session reset (logout) ends it with no terminal; the await is `aborted:
   reset`.
 
 While a session is live the host owns the slot's foreground exactly as for

@@ -354,9 +354,17 @@ impl Script for CombatSessionCard {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
-        if matches!(event, Interrupt::Pause) {
-            self.cancel(InterruptCause::Pause);
+        match event {
+            Interrupt::Pause => self.cancel(InterruptCause::Pause),
+            // The seat signals a reconnect: a fight not yet begun has no
+            // native handle that could go stale.
+            Interrupt::SessionEnded => self.cancel(InterruptCause::Reconnect),
+            Interrupt::Resume | Interrupt::Hold(_) | Interrupt::SessionReady => {}
         }
+    }
+
+    fn user_input(&mut self) {
+        self.cancel(InterruptCause::UserInput);
     }
 
     fn prayer_cleanup(&self) -> RaisedPrayers {

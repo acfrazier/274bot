@@ -1,5 +1,7 @@
 //! Load-slot lifecycle of the `api.combat` seat: admission, busy, install,
-//! Stop, reset, teardown and the Stop prayer handoff to the host.
+//! Stop, reset, teardown, the Stop prayer handoff to the host, and
+//! cancellation by Pause, reconnect and manual movement at every
+//! lifecycle point.
 use super::*;
 use crate::api_combat::{CombatSessionRequest, InterruptCause, TargetSpec};
 use crate::combat_session::tests::World;
@@ -112,6 +114,47 @@ fn prepared_terminal(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapsh
         }
         assert!(Instant::now() < deadline, "combat preparation stalled");
         std::thread::yield_now();
+    }
+}
+
+/// A target absent from the scene: a fight that wrongly begins settles
+/// `fought` / `no-target` instead of running on, so a lost cancellation
+/// shows as a wrong terminal.
+fn absent_cow() -> Arc<CombatSessionRequest> {
+    request(TargetSpec::Names(Box::new([Arc::from("cow")])))
+}
+
+/// Poll, accepting every click, until the seat publishes a terminal.
+fn settle(slot: &mut SlotScript, world: &World, mut tick: u64) -> CombatEnd {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        poll(slot, &world.snapshot, tick);
+        accept_outbox(slot, tick);
+        if let Some(end) = seat(slot).combat_terminal.clone() {
+            return end;
+        }
+        assert!(Instant::now() < deadline, "the session never settled");
+        tick += 1;
+        std::thread::yield_now();
+    }
+}
+
+/// Run an attacked fight until Combat's protection raise is accepted and
+/// observed on. Returns the next tick.
+fn until_raised(slot: &mut SlotScript, world: &mut World, raised: i32, varp: i32) -> u64 {
+    let mut tick = 2;
+    loop {
+        assert!(tick < 30, "Combat never raised its protection");
+        poll(slot, &world.snapshot, tick);
+        let clicked = accept_outbox(slot, tick);
+        tick += 1;
+        if clicked.contains(&raised) {
+            world.set_prayer(varp, true);
+            world.attack();
+            poll(slot, &world.snapshot, tick);
+            accept_outbox(slot, tick);
+            return tick + 1;
+        }
     }
 }
 
@@ -419,4 +462,157 @@ fn operator_stop_mid_fight_hands_the_bot_raise_to_the_host() {
     let owed = slot.take_stop_prayer_cleanup();
     assert!(owed.contains(raised.varp));
     assert!(!owed.contains(skin.varp));
+}
+
+#[test]
+fn pause_while_preparing_settles_interrupted_without_installing() {
+    let world = World::new("imp");
+    let mut slot = load_slot(316, true);
+    fight(&mut slot, 316, absent_cow());
+    assert!(matches!(seat(&slot).combat, CombatSeat::Preparing { .. }));
+    slot.pause();
+    slot.resume();
+    assert_eq!(
+        settle(&mut slot, &world, 1),
+        CombatEnd::Interrupted {
+            token: 316,
+            cause: InterruptCause::Pause
+        }
+    );
+    assert!(!slot.api_owns_foreground());
+    assert!(slot.take_stop_prayer_cleanup().is_empty());
+    slot.stop();
+}
+
+#[test]
+fn reconnect_while_preparing_settles_interrupted_without_installing() {
+    let world = World::new("imp");
+    let mut slot = load_slot(317, true);
+    fight(&mut slot, 317, absent_cow());
+    assert!(matches!(seat(&slot).combat, CombatSeat::Preparing { .. }));
+    slot.reconnect_session_work();
+    assert!(slot.api_owns_foreground(), "a reconnect keeps the session");
+    slot.on_is_up(true);
+    assert_eq!(
+        settle(&mut slot, &world, 1),
+        CombatEnd::Interrupted {
+            token: 317,
+            cause: InterruptCause::Reconnect
+        }
+    );
+    assert!(slot.take_stop_prayer_cleanup().is_empty());
+    slot.stop();
+}
+
+#[test]
+fn reconnect_after_install_before_begin_settles_interrupted() {
+    let world = World::new("imp");
+    let mut slot = load_slot(318, true);
+    fight(&mut slot, 318, absent_cow());
+    installed(&mut slot, &world.snapshot);
+    // The install page is published before the card's first tick: no
+    // native action began, so no stale handle can carry the cancellation.
+    assert!(seat(&slot).combat_page.as_ref().unwrap().status.is_none());
+    assert!(!slot.has_native_actions());
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    assert_eq!(
+        settle(&mut slot, &world, 2),
+        CombatEnd::Interrupted {
+            token: 318,
+            cause: InterruptCause::Reconnect
+        }
+    );
+    assert!(slot.take_stop_prayer_cleanup().is_empty());
+    slot.stop();
+}
+
+#[test]
+fn pause_after_install_before_begin_settles_interrupted() {
+    let world = World::new("imp");
+    let mut slot = load_slot(319, true);
+    fight(&mut slot, 319, absent_cow());
+    installed(&mut slot, &world.snapshot);
+    assert!(seat(&slot).combat_page.as_ref().unwrap().status.is_none());
+    slot.pause();
+    slot.resume();
+    assert_eq!(
+        settle(&mut slot, &world, 2),
+        CombatEnd::Interrupted {
+            token: 319,
+            cause: InterruptCause::Pause
+        }
+    );
+    slot.stop();
+}
+
+#[test]
+fn manual_movement_while_preparing_settles_interrupted_user_input() {
+    let world = World::new("imp");
+    let mut slot = load_slot(320, true);
+    fight(&mut slot, 320, absent_cow());
+    slot.note_manual_walk_takeover(1, 1);
+    assert_eq!(
+        settle(&mut slot, &world, 1),
+        CombatEnd::Interrupted {
+            token: 320,
+            cause: InterruptCause::UserInput
+        }
+    );
+    slot.stop();
+}
+
+#[test]
+fn manual_movement_without_a_walk_clears_the_bot_raise_and_settles_user_input() {
+    let mut world = World::new("imp");
+    let skin = world.prayer("Thick Skin");
+    let raised = world.prayer("Protect from Missiles");
+    world.set_prayer(skin.varp, true);
+    world.attack();
+    let mut slot = load_slot(321, true);
+    fight(&mut slot, 321, imp());
+    installed(&mut slot, &world.snapshot);
+    let mut tick = until_raised(&mut slot, &mut world, raised.button_com, raised.varp);
+    assert!(
+        !slot.live_walking_operation(),
+        "an in-range fight has no walk in flight"
+    );
+    slot.note_manual_walk_takeover(1, tick);
+    let mut cleared = Vec::new();
+    while seat(&slot).combat_terminal.is_none() {
+        assert!(tick < 60, "manual movement never settled the fight");
+        poll(&mut slot, &world.snapshot, tick);
+        let clicked = accept_outbox(&mut slot, tick);
+        if clicked.contains(&raised.button_com) {
+            world.set_prayer(raised.varp, false);
+        }
+        cleared.extend(clicked);
+        tick += 1;
+    }
+    assert_eq!(cleared, vec![raised.button_com], "only the bot's raise");
+    assert_eq!(
+        seat(&slot).combat_terminal,
+        Some(CombatEnd::Interrupted {
+            token: 321,
+            cause: InterruptCause::UserInput
+        })
+    );
+    assert!(world.prayer_is_on(skin.varp));
+    assert!(slot.take_stop_prayer_cleanup().is_empty());
+    slot.stop();
+}
+
+#[test]
+fn a_live_session_owns_manual_input_with_no_walk() {
+    let world = World::new("imp");
+    let mut slot = load_slot(322, true);
+    assert!(!slot.manual_input_owner());
+    fight(&mut slot, 322, absent_cow());
+    assert!(slot.manual_input_owner(), "preparing");
+    installed(&mut slot, &world.snapshot);
+    assert!(!slot.live_walking_operation());
+    assert!(slot.manual_input_owner(), "installed");
+    stop(&mut slot, 322);
+    assert!(!slot.manual_input_owner(), "settled");
+    slot.stop();
 }

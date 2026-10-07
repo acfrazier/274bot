@@ -1546,6 +1546,16 @@ impl SlotScript {
         false
     }
 
+    /// Live work a manual movement takes over: a walking operation, or a
+    /// Gather or Combat API session with or without a walk in flight.
+    pub fn manual_input_owner(&self) -> bool {
+        #[cfg(feature = "load")]
+        if self.api_session_takes_manual_input() {
+            return true;
+        }
+        self.live_walking_operation()
+    }
+
     pub fn note_manual_walk_takeover(&mut self, intent_seq: u64, tick: u64) {
         // A deliberate takeover is gameplay progress, even if the human
         // clicked an unwalkable tile and no player-info movement follows.
@@ -1554,6 +1564,8 @@ impl SlotScript {
         if let Some(isolate) = &self.load {
             isolate.note_manual_walk_takeover(intent_seq);
         }
+        #[cfg(feature = "load")]
+        self.api_user_input();
         #[cfg(not(feature = "load"))]
         let _ = intent_seq;
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
