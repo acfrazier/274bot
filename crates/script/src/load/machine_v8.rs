@@ -34,6 +34,20 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
 pub(super) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
     machine::step(&mut RuntimeJs { runtime, claimed });
 }
+/// Re-evaluate opted-in machines against a changed snapshot without advancing
+/// the tick or resetting their callback budget.
+pub(super) fn snapshot_step(
+    runtime: &mut Runtime,
+    tick: u64,
+    input_identity: u64,
+    claimed: &dyn Fn() -> bool,
+) {
+    machine::snapshot_step(
+        &mut RuntimeJs { runtime, claimed },
+        tick,
+        input_identity,
+    );
+}
 
 /// After the tick's pump, resume rows whose callback promise settled.
 /// Kept separate from [`settle_waits`] because callbacks are not the script

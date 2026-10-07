@@ -1370,13 +1370,23 @@ fn tick_loop(
                     .unwrap_or(false)
                 };
                 crate::event_signal::set(script_interrupt);
-                // Step machines read the scene the Snapshot command just
-                // applied; they run before the tick's other JS, and a
-                // completion settles in this tick's pump. Join's claim is
-                // re-checked between callbacks: one may absorb its terminate.
-                if !wait_only {
+                // Normal ticks step every machine; snapshot-only dispatch
+                // rechecks opted-in rows without advancing tick-owned waits.
+                if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        super::machine_v8::step(runtime, &|| machines_halted(&teardown));
+                        if wait_only {
+                            super::machine_v8::snapshot_step(
+                                runtime,
+                                n,
+                                input_identity,
+                                &|| machines_halted(&teardown),
+                            );
+                        } else {
+                            super::machine_v8::step(
+                                runtime,
+                                &|| machines_halted(&teardown),
+                            );
+                        }
                         Ok::<(), rustyscript::Error>(())
                     });
                 }
