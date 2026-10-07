@@ -1281,7 +1281,13 @@ walk-local Allow is Proceed, Forbid is Avoid, and Inherit uses script/global
 grants or the gated global level. Hard teleport/wilderness/avoid/quest
 authority is never broadened. Named `cross` grants bless only their zones:
 known granted damage still affects later crossings; a granted Unknown kind
-does not make an overlapping ungranted crossing safe.
+does not make an overlapping ungranted crossing safe. A walk that names
+grants also has the zones engaged at its route's endpoint granted, because
+the router's endpoint completion takes it into the zone it ends in. A
+`cross` walk is enforcing even while activation is held, so with Unknown
+poison this is what admits the destination zone. Any other zone crossed on
+the way is still judged, and a walk without named grants still has its
+endpoint crossing judged.
 
 `WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed
 `refusal`, and optional passive `escape` data. `Refused` and `Aborted` map to

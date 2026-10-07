@@ -13,6 +13,7 @@ use api::snapshot::{
 };
 use nav::router::Route;
 use nav::transport::WildernessRules;
+use nav::zones::ZoneExempt;
 use std::fmt::{self, Write};
 
 #[derive(Clone, Copy)]
@@ -670,13 +671,12 @@ fn bounded_hp(hp: i32) -> Result<u8, UnknownWhy> {
 /// The retained assessment stays complete and the all-known path stays borrowed.
 fn omit_granted_unknowns(
     plan: &RoutePlan,
-    zones: &ZoneTable,
-    grants: nav::zones::ZoneExempt,
+    zone_granted: &impl Fn(u16) -> bool,
 ) -> Result<Option<RoutePlan>, UnknownWhy> {
     let granted = |crossing: &CrossingGeom| {
         rows(plan, crossing)
             .iter()
-            .all(|row| grants.contains_zone(row.zone, zones))
+            .all(|row| zone_granted(row.zone))
     };
     let has_granted_unknown = plan.crossings.iter().any(|crossing| {
         let rows = rows(plan, crossing);
@@ -715,6 +715,34 @@ fn omit_granted_unknowns(
     }))
 }
 
+/// The zones enforcing admission treats as granted for one found route.
+#[derive(Clone, Copy)]
+pub struct Grants<'a> {
+    /// The request's router exemptions: named `cross` keys, or `all()`.
+    pub named: ZoneExempt,
+    /// When set, zones engaged at the route's endpoint are granted as well.
+    pub endpoint: Option<&'a WildernessRules>,
+}
+impl<'a> Grants<'a> {
+    /// Only the request's exemptions; an endpoint crossing is judged.
+    pub const fn named(named: ZoneExempt) -> Self {
+        Self {
+            named,
+            endpoint: None,
+        }
+    }
+    /// A walk that names grants (Path `cross`) relies on the router's
+    /// endpoint completion for the zone it ends in: its destination zones
+    /// are admitted with its named ones. Without named grants, endpoint
+    /// crossings stay judged; transit through any unnamed zone always is.
+    pub fn request(named: ZoneExempt, wilderness: &'a WildernessRules) -> Self {
+        Self {
+            named,
+            endpoint: (named != ZoneExempt::NONE).then_some(wilderness),
+        }
+    }
+}
+
 /// Admission checks the complete plan, not the eight display rows. A fully
 /// granted crossing is exempt from refusal; unknown physics in a mixed
 /// crossing is not. Known granted damage remains in every subsequent floor.
@@ -726,7 +754,7 @@ pub fn admission_passes(
     zones: &ZoneTable,
     tables: &CombatTables,
     allow: WalkAllow,
-    grants: nav::zones::ZoneExempt,
+    grants: Grants<'_>,
 ) -> Result<bool, UnknownWhy> {
     let plan = &assessment.plan;
     if !plan.complete {
@@ -735,11 +763,13 @@ pub fn admission_passes(
             _ => UnknownWhy::MissingFacts,
         });
     }
-    let granted = |c: &CrossingGeom| {
-        rows(plan, c)
-            .iter()
-            .all(|row| grants.contains_zone(row.zone, zones))
+    let zone_granted = |zone: u16| {
+        grants.named.contains_zone(zone, zones)
+            || grants.endpoint.is_some_and(|wilderness| {
+                super::geometry::engaged_at(zones, zone, &assessment.input, wilderness, route.dest)
+            })
     };
+    let granted = |c: &CrossingGeom| rows(plan, c).iter().all(|row| zone_granted(row.zone));
     if plan.crossings.is_empty() || plan.crossings.iter().all(granted) {
         return Ok(true);
     }
@@ -757,7 +787,7 @@ pub fn admission_passes(
             return Ok(false);
         }
     }
-    let projected = omit_granted_unknowns(plan, zones, grants)?;
+    let projected = omit_granted_unknowns(plan, &zone_granted)?;
     let replay_plan = projected.as_ref().unwrap_or(plan);
     replay_with_admission(
         RoutePath::new(route)?,

@@ -1,4 +1,4 @@
-use super::replay::{admission_passes, candidate_cost, Estimate};
+use super::replay::{admission_passes, candidate_cost, Estimate, Grants};
 use super::*;
 use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
@@ -315,7 +315,7 @@ fn u2_admission_omits_fully_granted_unknown_physics_and_preserves_assessment() {
             &zones,
             &tables,
             WalkAllow::default(),
-            grants
+            Grants::named(grants)
         ),
         Ok(true)
     );
@@ -353,7 +353,7 @@ fn u2_admission_rejects_a_mixed_granted_unknown_crossing() {
             &zones,
             &tables,
             WalkAllow::default(),
-            grants
+            Grants::named(grants)
         ),
         Err(UnknownWhy::Kind(0))
     );
@@ -380,7 +380,7 @@ fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
             &zones,
             &tables,
             WalkAllow::default(),
-            ZoneExempt::NONE,
+            Grants::named(ZoneExempt::NONE),
         ),
         Ok(true),
         "the later known crossing is survivable without prior damage"
@@ -408,7 +408,7 @@ fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
             &zones,
             &tables,
             WalkAllow::default(),
-            grants
+            Grants::named(grants)
         ),
         Ok(false),
         "the granted first crossing's landed hit remains in the later floor"
@@ -462,7 +462,7 @@ fn u2_admission_checks_ninth_crossing_beyond_display_bound() {
             &zones,
             &tables,
             WalkAllow::default(),
-            grants
+            Grants::named(grants)
         ),
         Ok(false),
         "the ninth ungranted crossing still participates in complete-plan replay"
@@ -499,7 +499,7 @@ fn u2_admission_grants_a_fully_granted_no_way_out_crossing() {
             &zones,
             &tables,
             WalkAllow::default(),
-            grants
+            Grants::named(grants)
         ),
         Ok(true)
     );
@@ -534,7 +534,7 @@ fn u2_admission_scopes_unknown_poison_and_exempts_safe_only_walks() {
             &zones,
             &tables,
             WalkAllow::default(),
-            first_granted,
+            Grants::named(first_granted),
         ),
         Err(UnknownWhy::Poison)
     );
@@ -545,7 +545,7 @@ fn u2_admission_scopes_unknown_poison_and_exempts_safe_only_walks() {
             &zones,
             &tables,
             WalkAllow::default(),
-            ZoneExempt::all(),
+            Grants::named(ZoneExempt::all()),
         ),
         Ok(true)
     );
@@ -559,9 +559,88 @@ fn u2_admission_scopes_unknown_poison_and_exempts_safe_only_walks() {
             &zones,
             &tables,
             WalkAllow::default(),
-            ZoneExempt::NONE,
+            Grants::named(ZoneExempt::NONE),
         ),
         Ok(true)
+    );
+}
+
+/// SURVIVABLE-DEST-GRANTS: a named-grant request also grants the zones
+/// engaged at its route's endpoint. Without names, past the endpoint, or for
+/// a zone inactive at the assessed combat level, the crossing is judged.
+#[test]
+fn u2_named_request_grants_zones_engaged_at_the_route_endpoint() {
+    let tables = tables();
+    let known_id = known_kind(&tables).npc_id;
+    let wilderness = WildernessRules::default();
+    // The ice warrior's level rule caps at 2 × 57 = 114.
+    let zones = zone_table(
+        vec![
+            Zone::npc(tile(10), 1, ZoneClass::Always, u16::MAX, 0),
+            Zone::npc(tile(30), 1, ZoneClass::LevelRule, 114, 0),
+        ],
+        vec![known_kind(&tables)],
+        vec![],
+        vec![],
+        &wilderness,
+    );
+    let assessment = |combat| {
+        let mut value = input(90, 90, 0, &tables);
+        value.poison = PoisonState::Unknown { since: 0 };
+        value.combat = Some(combat);
+        synthetic_assessment(
+            value,
+            vec![
+                synthetic_interval(0, known_id, tile(10), (10, 10), 6, 4, false),
+                synthetic_interval(1, known_id, tile(30), (30, 30), 6, 4, false),
+            ],
+            vec![
+                synthetic_crossing(10, 10, (0, 1), true),
+                synthetic_crossing(30, 30, (1, 2), true),
+            ],
+            2,
+            Verdict::Unknown(UnknownWhy::Poison),
+        )
+    };
+    let named = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+    let passes = |combat, walk: &Route, grants| {
+        admission_passes(
+            walk,
+            &assessment(combat),
+            &zones,
+            &tables,
+            WalkAllow::default(),
+            grants,
+        )
+    };
+    let ends_inside = route(0, 30);
+    assert_eq!(
+        passes(40, &ends_inside, Grants::request(named, &wilderness)),
+        Ok(true)
+    );
+    assert_eq!(
+        passes(40, &ends_inside, Grants::named(named)),
+        Err(UnknownWhy::Poison),
+        "without the endpoint grant the destination crossing is judged"
+    );
+    assert_eq!(
+        passes(
+            40,
+            &ends_inside,
+            Grants::request(ZoneExempt::NONE, &wilderness)
+        ),
+        Err(UnknownWhy::Poison),
+        "a request without named grants keeps its endpoint crossing judged"
+    );
+    assert_eq!(
+        passes(40, &route(0, 40), Grants::request(named, &wilderness)),
+        Err(UnknownWhy::Poison),
+        "a zone crossed on the way, not at the endpoint, is judged"
+    );
+    assert_eq!(
+        passes(120, &ends_inside, Grants::request(named, &wilderness)),
+        Err(UnknownWhy::Poison),
+        "a zone inactive at the endpoint for the assessed level is not granted"
     );
 }
 
@@ -1212,7 +1291,7 @@ fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
             &zones,
             &tables,
             WalkAllow::default(),
-            ZoneExempt::NONE
+            Grants::named(ZoneExempt::NONE)
         )
         .unwrap(),
         "the physical damage estimate is honest, but a no-crossing flight is never refused",
@@ -2697,7 +2776,7 @@ fn r3_engaged_origin_outside_its_envelope_fails_closed() {
         &zones,
         &tables,
         WalkAllow::default(),
-        ZoneExempt::NONE
+        Grants::named(ZoneExempt::NONE)
     )
     .is_err());
 }
@@ -2745,7 +2824,7 @@ fn r3_admission_never_passes_an_incomplete_plan() {
                 &zones,
                 &tables,
                 WalkAllow::default(),
-                grants
+                Grants::named(grants)
             ),
             Err(UnknownWhy::Overflow)
         );
