@@ -319,6 +319,17 @@ fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
     Ok(())
 }
 
+/// The account a name logs in as, by the client's own decoder:
+/// `JString.toRawUsername(JString.toUserhash(name))`. `None` when the hash
+/// spells no account at all (it is zero: no letter or digit). The bank hint
+/// file is keyed by this identity (`script::bank_hints::account_component`);
+/// it lives here because `api` is the crate that maps onto `client`, so
+/// `script` stays client-free.
+pub fn login_identity(name: &str) -> Option<String> {
+    let hash = client::util::JString::to_userhash(name);
+    (hash != 0).then(|| client::util::JString::to_raw_username(hash as i64))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
