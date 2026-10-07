@@ -20,6 +20,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// Host-worker ranking has a wall-time bound, not an observed-tick budget.
+// Per-frame polls may publish its fallback without PLAYER_INFO; they never
+// shorten this window or turn the selected candidate into arrival evidence.
 const BANK_SELECTION_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1428,9 +1428,8 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
-        let (bytes, fp, evidence_changed) = self
-            .ipc
-            .encode_snapshot_delta_with_native_and_evidence(
+        let (bytes, fp, evidence_changed) =
+            self.ipc.encode_snapshot_delta_with_native_and_evidence(
                 self.last_snapshot.as_ref(),
                 input,
                 native,
@@ -1458,15 +1457,13 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
-        let (bytes, fp, evidence_changed) = self
-            .ipc
-            .encode_snapshot_wake_with_native_and_evidence(
-                self.last_snapshot.as_mut(),
-                input,
-                native,
-                force_banks,
-                preserve_inv,
-            );
+        let (bytes, fp, evidence_changed) = self.ipc.encode_snapshot_wake_with_native_and_evidence(
+            self.last_snapshot.as_mut(),
+            input,
+            native,
+            force_banks,
+            preserve_inv,
+        );
         self.last_snapshot = Some(fp);
         if let Some(isolate) = self.load.as_ref() {
             isolate.record_snapshot_evidence_change(evidence_changed);

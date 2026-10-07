@@ -1134,7 +1134,13 @@ pub(crate) fn resume(js: &mut impl Js) {
 /// Recheck opted-in rows against one changed snapshot without starting a
 /// new tick's callback or per-family event budget.
 pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, evidence_sequence: u64) {
-    pass(js, Pass::Snapshot { tick, evidence_sequence });
+    pass(
+        js,
+        Pass::Snapshot {
+            tick,
+            evidence_sequence,
+        },
+    );
 }
 
 /// Whether an outcome waits for its JS await.
@@ -1149,10 +1155,7 @@ enum Pass {
     /// Rows waiting on a promise; the budget carries over.
     Resume,
     /// Opted-in rows, once per distinct changed snapshot; carries the budget.
-    Snapshot {
-        tick: u64,
-        evidence_sequence: u64,
-    },
+    Snapshot { tick: u64, evidence_sequence: u64 },
 }
 
 /// Rows are taken out of the host while they step, so a callback may

@@ -11,8 +11,6 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-const REACH_MODAL_WAIT_TICKS: u8 = 1;
-
 #[derive(Clone)]
 pub(crate) struct Target {
     pub id: i32,
@@ -39,7 +37,6 @@ pub(crate) struct Thieve {
     reach_request_id: Option<u64>,
     reach_target: Option<(i32, &'static str)>,
     modal: Option<OneOp>,
-    modal_reach_ticks: u8,
     pending_action: Option<&'static str>,
     pending_target_id: Option<i32>,
 }
@@ -91,7 +88,6 @@ impl NativeMachine for Thieve {
             reach_request_id: None,
             reach_target: None,
             modal: None,
-            modal_reach_ticks: 0,
             pending_action: None,
             pending_target_id: None,
         })
@@ -141,20 +137,9 @@ impl NativeMachine for Thieve {
                 }
             }
             if self.reach.is_some() {
-                self.modal_reach_ticks = self.modal_reach_ticks.saturating_add(1);
-                let receipt_absent = self
-                    .reach_request_id
-                    .is_none_or(|request_id| cx.interaction_receipt(request_id).is_none());
-                if receipt_absent || self.modal_reach_ticks >= REACH_MODAL_WAIT_TICKS {
-                    // Reach::WaitWalk can click again on arrival. Never poll Reach
-                    // while a modal is pending; abandon it within one modal tick.
-                    self.discard_reach();
-                    self.modal_reach_ticks = 0;
-                } else {
-                    return Poll::Pending;
-                }
-            } else {
-                self.modal_reach_ticks = 0;
+                // Reach::WaitWalk can click again on arrival. Discard it
+                // immediately rather than polling it while a modal is pending.
+                self.discard_reach();
             }
             self.modal = match OneOp::begin(args, cx) {
                 Ok(modal) => Some(modal),
@@ -162,7 +147,6 @@ impl NativeMachine for Thieve {
             };
             return Poll::Pending;
         }
-        self.modal_reach_ticks = 0;
 
         let (chat_dialog_open, chat_dialog_fingerprint) = chat_dialog(snapshot);
         if chat_dialog_open {
