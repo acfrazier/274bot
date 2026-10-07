@@ -126,6 +126,9 @@ pub(crate) fn with_tick_output_bank<R>(
     )
 }
 
+// The world type (members-world) and the bank memory (bank S3/S4) both reach
+// the view through this one builder; the arg count is allowed.
+#[allow(clippy::too_many_arguments)]
 fn with_tick_output_reach<R>(
     snapshot: &GameSnapshot,
     reach: Option<&api::query::ReachQueryView>,
