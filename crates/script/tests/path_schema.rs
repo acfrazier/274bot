@@ -85,7 +85,11 @@ fn path_schema_matches_generator() {
 
 /// Redberries come from the respawning Varrock ground spawns rather than
 /// Wydin's one-stock shop: bank withdraw, then the patch walk, then Take.
-fn assert_redberries_from_ground_spawns(steps: &[Value], qty: i64) {
+/// The bank withdrawal stays a single top-up even where Takes batch for
+/// retries, so the withdraw quantity is pinned here; the Take batch itself is
+/// pinned behaviourally by `squire_pie_retry_with_spares_skips_the_varrock_legs`,
+/// not by restating its target.
+fn assert_redberries_from_ground_spawns(steps: &[Value], withdraw_qty: i64) {
     let bank_withdraw = steps
         .iter()
         .position(|step| {
@@ -94,7 +98,10 @@ fn assert_redberries_from_ground_spawns(steps: &[Value], qty: i64) {
                 && step["args"]["items"][0]["obj"] == "redberries"
         })
         .expect("bank withdrawal before gathering");
-    assert_eq!(steps[bank_withdraw]["args"]["items"][0]["qty"], json!(qty));
+    assert_eq!(
+        steps[bank_withdraw]["args"]["items"][0]["qty"],
+        json!(withdraw_qty)
+    );
 
     let patch_tile = json!([3271, 3366, 0]);
     let patch_walk = steps
@@ -115,10 +122,6 @@ fn assert_redberries_from_ground_spawns(steps: &[Value], qty: i64) {
     assert_eq!(steps[collect]["args"]["anchor"]["tile"], patch_tile);
     assert_eq!(steps[collect]["args"]["radius"], 12);
     assert_eq!(steps[collect]["args"]["wait_if_missing"], true);
-    assert_eq!(
-        steps[collect]["args"]["until"],
-        json!({ "obj": "redberries", "qty": qty })
-    );
     assert_eq!(steps[collect]["args"]["settle_ms"], 300000);
     assert!(
         steps
@@ -140,7 +143,8 @@ fn gobdip_redberries_recipe_collects_three_ground_spawns() {
 
 /// Redberry pie burns about half the time at Cooking 10 and the pie acquire
 /// restarts its recipe after a burn (8 times by default), so its berries need
-/// the respawning source too.
+/// the respawning source too, batched three per pass so retries run on held
+/// spares (the bank withdraw stays one).
 #[test]
 fn squire_pie_recipe_takes_redberries_from_ground_spawns() {
     let value = read_path(&paths_dir().join("squire.json"));
@@ -206,6 +210,81 @@ fn squire_pie_pass_empties_a_burnt_pie_then_prefers_a_banked_one() {
     assert_eq!(
         unbanked.recipe_choice("acquire:pie", &rimmington(&[("redberry_pie", 1)])),
         Choice::Exhausted
+    );
+}
+
+/// SQUIRE-PIE-BATCH: at `squire:2`, a burnt pie must retry from the
+/// Rimmington kitchen, not from Varrock SE. Redberry pie burns about half
+/// the time at Cooking 10 (`cooking_generic.dbrow:201-212` successchance
+/// 98,452; the `cooking.rs2:150` roll lands 131/256), and each attempt
+/// consumes one set (1 flour + 1 water per `dough.rs2` mix, 1 berry + 1
+/// shell per `pies.rs2` fill), so the recipe batches three of each. A retry
+/// holding the two leftover sets with the emptied dish must select the local
+/// fill/mix/cook cluster, while a partial batch still within take range tops
+/// up instead of walking away from the spawns. The Rimmington choice pins the
+/// spare-skipping (it passes on the old one-per-pass Path too); the patch
+/// choice below is the batch pin and fails there. Flour gets no such probe:
+/// `buy-flour` is a one-shot purchase with no resumable progress, and a
+/// count-based flour skip would send every spare-holding retry back to the
+/// shop instead of the range.
+#[test]
+fn squire_pie_retry_with_spares_skips_the_varrock_legs() {
+    use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-squire-pie-retry");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("squire.json")))
+            .expect("squire decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("squire compiles");
+    let bank = known_empty_bank();
+    let progress = [progress_for_stage(&compiled, &selected, "squire:2", &[])];
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    // Post-burn retry at the Rimmington range: the burnt pie already emptied
+    // back to its dish, the water spent, two spare sets left from a batch of
+    // three. The bucket fill, mix, and cook all run from this kitchen.
+    let retry = snapshot_with_items(
+        2969,
+        3210,
+        &selected,
+        &[
+            ("piedish", 1),
+            ("redberries", 2),
+            ("pot_flour", 2),
+            ("bucket_empty", 1),
+        ],
+    );
+    assert_eq!(
+        probe.recipe_choice("acquire:pie", &retry),
+        Choice::Step(FactKey::new("fill-bucket-rimmington")),
+        "spare berries and flour retry locally instead of walking to Varrock SE"
+    );
+    // One set (a single berry plus the flour for the attempt) at the Varrock
+    // SE patch with the batch incomplete: the take stays selected and tops up
+    // from the spawns. The old one-per-pass Path skipped the take on any held
+    // berry and moved on to the bucket instead.
+    let top_up = snapshot_with_items(
+        3271,
+        3366,
+        &selected,
+        &[("piedish", 1), ("redberries", 1), ("pot_flour", 1)],
+    );
+    assert_eq!(
+        probe.recipe_choice("acquire:pie", &top_up),
+        Choice::Step(FactKey::new("take-redberries-from-patch")),
+        "partial batch at the patch tops up instead of leaving the spawns"
     );
 }
 
