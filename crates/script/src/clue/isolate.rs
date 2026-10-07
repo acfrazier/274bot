@@ -652,6 +652,10 @@ struct Puzzle {
     /// Landed moves and consecutive refusals, the frozen loop's own counters.
     moved: u32,
     stall: u32,
+    /// Last native observed tick that spent a stall allowance. The same board
+    /// may be processed again on a same-tick evidence wake without spending it
+    /// again.
+    last_stall_tick: Option<u64>,
 }
 
 impl Puzzle {
@@ -666,6 +670,7 @@ impl Puzzle {
             want: None,
             moved: 0,
             stall: 0,
+            last_stall_tick: None,
         }
     }
 }
@@ -1138,6 +1143,7 @@ impl ClueRuntime {
         selected: Option<&SelectedGameData>,
         input: &Value,
         death: DeathObservation,
+        observed_tick: Option<u64>,
     ) -> Value {
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted(STALE);
@@ -1290,7 +1296,7 @@ impl ClueRuntime {
                         // board: it takes the `Steady` arms below, which is where
                         // the nine puzzle riddles' talk step lives.
                         Some((id, name)) if self.puzzle_arm(id, input) => {
-                            self.puzzle(id, name, input, selected)
+                            self.puzzle(id, name, input, selected, observed_tick)
                         }
                         _ => self.steady(row, input, selected),
                     },
@@ -2009,8 +2015,12 @@ pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Va
         "next" => {
             let input = hydrate(input);
             RUNTIME.with(|rt| {
-                rt.borrow_mut()
-                    .next(selected, &input, DeathObservation::Compatibility)
+                rt.borrow_mut().next(
+                    selected,
+                    &input,
+                    DeathObservation::Compatibility,
+                    None,
+                )
             })
         }
         // The machine-state seats. None is a step over a page and none takes a
@@ -2050,17 +2060,22 @@ pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Va
     }
 }
 
-/// Rust-native next-page adapter. Death authority is a typed host argument,
-/// never an optional JSON key accepted from compatibility callers.
+/// Rust-native next-page adapter. Death authority and observed tick are typed
+/// host arguments, never optional JSON keys accepted from callers.
 pub(crate) fn next_native(
     selected: Option<&SelectedGameData>,
     input: &Value,
     death_observed: bool,
+    observed_tick: u64,
 ) -> Value {
     let input = hydrate(input);
     RUNTIME.with(|rt| {
-        rt.borrow_mut()
-            .next(selected, &input, DeathObservation::Native(death_observed))
+        rt.borrow_mut().next(
+            selected,
+            &input,
+            DeathObservation::Native(death_observed),
+            Some(observed_tick),
+        )
     })
 }
 
