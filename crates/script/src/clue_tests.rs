@@ -7425,14 +7425,20 @@ fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
 const ENTRANA: i32 = 3579;
 const ENTRANA_X: i32 = 2818;
 const ENTRANA_Z: i32 = 3351;
-/// The two hard-trail dagger ids the strip unequips but never lists.
-const DDS_POISONED: i32 = 1231;
-/// A refused name the frozen vectors bind, and its item id.
+/// A hard-trail dagger, now covered by its selected weapon category.
+const DAGGER: i32 = 1231;
+/// `silver_sickle` is `weapon_slash` in `content/scripts/skill_crafting/configs/jewellery/silver.obj:29-44`.
+const SILVER_SICKLE: i32 = 2961;
+/// `unstrung_longbow` is `unstrung_bow` in `content/scripts/skill_fletching/configs/stringing/bows.obj:1-15`.
+const UNSTRUNG_LONGBOW: i32 = 48;
+/// `twpart1` is a `cannon_parts` inventory-only restriction at
+/// `content/scripts/quests/quest_mcannon/configs/quest_mcannon.obj:80-93`.
+const CANNON_BASE: i32 = 6;
+/// A selected `armour_helmet` item.
 const HELM: i32 = 1163;
 
-/// One wrapper-marshalled worn row: the raw `host().snapshot.equipment`
-/// shape, with the name the matcher folds and the id the DDS exclusion
-/// joins.
+/// One wrapper-marshalled worn row: the selected item id supplies its
+/// category, while the display name is retained for the host action.
 fn worn(id: i32, name: &str, slot: i32) -> Value {
     json!({ "id": id, "name": name, "count": 1, "slot": slot })
 }
@@ -7469,121 +7475,67 @@ fn assert_no_completion(step: &Value) {
     }
 }
 
-/// The frozen matcher's own vectors, ported whole: the twelve names the
-/// frozen `entranaGear.test.ts` binds refused and its ten let through, plus
-/// the same frozen regex' edges — the `\b` on a longer word, the
-/// `two.handed` wildcard, the `gauntlets?` optional `s` and the
-/// `body(?!\s+rune\b)` lookahead beside `Body runes`. Every expectation is
-/// the frozen regex' own answer.
+/// The old name matcher missed the silver sickle but matched the unstrung
+/// longbow. The monk source lists `weapon_slash` at
+/// `content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:35-37`;
+/// the item's categories are `weapon_slash` at
+/// `content/scripts/skill_crafting/configs/jewellery/silver.obj:29-44` and
+/// `unstrung_bow` at
+/// `content/scripts/skill_fletching/configs/stringing/bows.obj:1-15`.
 #[test]
-fn the_frozen_entrana_matcher_folds_the_names_it_was_bound_to() {
-    for name in [
-        "Dragonhide body",
-        "Dragonhide chaps",
-        "Dragon vambraces",
-        "Coif",
-        "Dragonfire shield",
-        "Legends cape",
-        "Leather gloves",
-        "Studded body",
-        "Wizard hat",
-        "Dragon dagger(p)",
-        "Magic shortbow",
-        "Maple longbow",
-        "Rune full helm",
-        "Two-handed sword",
-        "Two handed",
-        "Rune platebody",
-        "Body runes",
-        "Dragon battleaxe",
-        "Rune kiteshield",
-        "Cape of legends",
-        "2h sword",
-        "Battlestaff",
-        "Staff of fire",
-        "Rune plateskirt",
-        "Skirt of silk",
-        "Dragon sq shield",
-        "Dragon square shield",
-        "Snakeskin chaps",
-        "snelm",
-        "Cowl",
-        "Hood",
-        "Dragon gloves",
-        "Rune claws",
-        "Granite maul",
-        "Rune cannon",
-        "Med helm",
-        "Full helm",
-        "Rune chainbody",
-        "Rune platelegs",
-        "Rune defender",
-        "Obsidian cape",
-        "Fire cape",
-        "God cape",
-        "Rune cloak",
-        "Air battlestaff",
-        "Magic longbow",
-        "Rune crossbow",
-        "Rune javelin",
-        "Rune dart",
-        "Rune thrownaxe",
-        "Rune knife",
-        "Rune warhammer",
-        "Rune spear",
-        "Rune hasta",
-        "Rune halberd",
-        "Rune mace",
-        "Rune scimitar",
-        "Rune longsword",
-        "Rune axe",
-        "Rune pickaxe",
-        "Dragon whip",
-        "Bronze dagger",
-        "Rune gloves",
-        "Leather vambraces",
-        "Anti-dragon shield",
-        "Cape",
-        "somebody body",
-    ] {
-        assert!(entrana_restricted_gear(name), "{name}");
-    }
-    for name in [
-        "Amulet of glory",
-        "Leather boots",
-        "Rune arrow",
-        "Body rune",
-        "Shark",
-        "Clue scroll",
-        "Spade",
-        "Sextant",
-        "Superantipoison(4)",
-        "Coins",
-        "twohanded",
-        "Somebody",
-        "Shielded",
-        "Swordfish",
-        "Rune skirt",
-        "Cannonball",
-        "Brown apron",
-        "Amulet of fury",
-        "Zamorak monk top",
-        "Priest gown",
-        "Desert shirt",
-        "Boots of lightness",
-        "Rune boots",
-        "Climbing boots",
-        "Dragonstone",
-        "Rune arrowtips",
-        "Arrow shaft",
-        "Coifed",
-        "Hatchet",
-        "Sharktooth",
-        "Hooded",
-        "Bodyguard",
-    ] {
-        assert!(!entrana_restricted_gear(name), "{name}");
-    }
+fn entrana_uses_selected_item_categories_for_worn_and_inventory_rows() {
+    let data = selected();
+    let sickle = data
+        .item_by_id(SILVER_SICKLE)
+        .expect("selected silver sickle");
+    assert_eq!(sickle.alias.as_deref(), Some("silver_sickle"));
+    assert_eq!(sickle.category.as_deref(), Some("weapon_slash"));
+    let bow = data
+        .item_by_id(UNSTRUNG_LONGBOW)
+        .expect("selected unstrung longbow");
+    assert_eq!(bow.alias.as_deref(), Some("unstrung_longbow"));
+    assert_eq!(bow.category.as_deref(), Some("unstrung_bow"));
+
+    let pack = json!({
+        "inv": [
+            inv(UNSTRUNG_LONGBOW, "Longbow", 1),
+            inv(SILVER_SICKLE, "Silver sickle", 1),
+        ],
+    });
+    assert_eq!(
+        pick_pack_restricted(Some(data.as_ref()), &pack).as_deref(),
+        Some("Silver sickle")
+    );
+    assert!(pick_pack_restricted(
+        Some(data.as_ref()),
+        &json!({ "inv": [inv(UNSTRUNG_LONGBOW, "Longbow", 1)] })
+    )
+    .is_none());
+
+    let cannon = data.item_by_id(CANNON_BASE).expect("selected cannon base");
+    assert_eq!(cannon.alias.as_deref(), Some("twpart1"));
+    assert_eq!(cannon.category.as_deref(), Some("cannon_parts"));
+    assert_eq!(
+        pick_pack_restricted(
+            Some(data.as_ref()),
+            &json!({ "inv": [inv(CANNON_BASE, "Cannon base", 1)] })
+        )
+        .as_deref(),
+        Some("Cannon base")
+    );
+    assert!(pick_worn(
+        Some(data.as_ref()),
+        &json!({ "equipment": [worn(CANNON_BASE, "Cannon base", 1)] })
+    )
+    .is_none());
+
+    let equipment = json!({
+        "equipment": [worn(SILVER_SICKLE, "Silver sickle", 3)],
+    });
+    assert_eq!(
+        pick_worn(Some(data.as_ref()), &equipment).map(|row| row.name),
+        Some("Silver sickle")
+    );
 }
 
 /// The strip's membership is the row's own selected decode and never a
@@ -7615,22 +7567,17 @@ fn the_entrana_membership_is_the_rows_own_decoded_coord() {
     assert!(!entrana_coord(&casket), "a casket never arms the strip");
 }
 
-/// The strip's unequip pass: the posted worn rows the frozen matcher folds
-/// go out as the landed `unequip` verb — the worn row's own `Remove`, which
-/// the host's `wear` cannot do — one per call, the two hard-trail dagger
-/// ids are unequipped but never listed, and the rows the matcher lets
-/// through are never a verb at all. The deposit pass that follows takes
-/// every regex-matching pack row, listed or not.
+/// The strip unequips worn items in restricted selected categories, lists
+/// their display names for reclaim, and deposits every matching pack row,
+/// including restricted gear carried from the start.
 #[test]
-fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
+fn the_strip_uses_selected_categories_for_worn_and_inventory_items() {
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
     let token = steady(&data, ENTRANA);
-    // The dagger is first in posted order, then the helm, then the two the
-    // monks let through.
     let posted = json!([
-        worn(DDS_POISONED, "Dragon dagger(p)", 3),
+        worn(DAGGER, "Dragon dagger(p)", 3),
         worn(HELM, "Rune full helm", 0),
         worn(1704, "Amulet of glory", 2),
         worn(3791, "Leather boots", 10),
@@ -7638,15 +7585,9 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     let dagger = call(&data, token, page.clone(), json!({ "equipment": posted }));
     assert_eq!(dagger["kind"], "unequip", "{dagger}");
     assert_eq!(dagger["name"], "Dragon dagger(p)", "{dagger}");
-    assert_eq!(dagger["token"], token, "{dagger}");
-    assert!(
-        stripped().is_empty(),
-        "a hard-trail dagger id is never listed: {:?}",
-        stripped()
-    );
+    assert_eq!(stripped(), vec!["Dragon dagger(p)".to_string()]);
     assert_no_completion(&dagger);
-    // It left the page: the helm is next, and the two non-matches are never
-    // dispatched at.
+
     let left = json!([
         worn(HELM, "Rune full helm", 0),
         worn(1704, "Amulet of glory", 2),
@@ -7655,17 +7596,17 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     let helm = call(&data, token, page.clone(), json!({ "equipment": left }));
     assert_eq!(helm["kind"], "unequip", "{helm}");
     assert_eq!(helm["name"], "Rune full helm", "{helm}");
-    assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
-    // Both landed in the pack. The deposit pass is the matcher over the
-    // posted pack page and never the listed names: the dagger id that was
-    // never listed is first, because it is first in posted order — and it
-    // is still not listed after it is deposited.
+    assert_eq!(
+        stripped(),
+        vec!["Dragon dagger(p)".to_string(), "Rune full helm".to_string()]
+    );
+
     let worn_free = json!([
         worn(1704, "Amulet of glory", 2),
         worn(3791, "Leather boots", 10),
     ]);
     let both = json!([
-        inv(DDS_POISONED, "Dragon dagger(p)", 1),
+        inv(DAGGER, "Dragon dagger(p)", 1),
         inv(HELM, "Rune full helm", 1),
     ]);
     let bank_ready = json!({
@@ -7676,25 +7617,25 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     });
     let walked = call(&data, token, page.clone(), bank_ready.clone());
     assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
-    let opened = call(&data, token, page.clone(), bank_ready.clone());
+    let opened = call(&data, token, page.clone(), bank_ready);
     assert_eq!(opened["kind"], "open-booth", "{opened}");
     let banked = call(
         &data,
         token,
         page.clone(),
-        json!({ "equipment": worn_free, "inv": both, "bank_open": true }),
+        json!({
+            "equipment": worn_free,
+            "inv": both,
+            "bank_open": true,
+        }),
     );
     assert_eq!(banked["kind"], "deposit", "{banked}");
-    assert_eq!(
-        banked["name"], "Dragon dagger(p)",
-        "the pack's own regex match is the candidate, listed or not: {banked}"
-    );
+    assert_eq!(banked["name"], "Dragon dagger(p)", "{banked}");
     assert_eq!(
         stripped(),
-        vec!["Rune full helm".to_string()],
-        "and the dagger stays off the list"
+        vec!["Dragon dagger(p)".to_string(), "Rune full helm".to_string()],
+        "the formerly exempt dagger is listed for reclaim"
     );
-    // The helm's own deposit follows in posted order.
     let helm_pack = json!([inv(HELM, "Rune full helm", 1)]);
     let banked = call(
         &data,
@@ -7704,10 +7645,7 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     );
     assert_eq!(banked["kind"], "deposit", "{banked}");
     assert_eq!(banked["name"], "Rune full helm", "{banked}");
-    // A restricted name the player carried and never wore is the same
-    // candidate: the predicate is the matcher over the pack page, so a
-    // spare weapon that was never on the worn page is banked too — and it
-    // is not listed either, because the list is the worn rows'.
+
     let carried = json!([inv(1181, "Rune platebody", 1)]);
     let banked = call(
         &data,
@@ -7717,14 +7655,6 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     );
     assert_eq!(banked["kind"], "deposit", "{banked}");
     assert_eq!(banked["name"], "Rune platebody", "{banked}");
-    assert_eq!(
-        stripped(),
-        vec!["Rune full helm".to_string()],
-        "a carried name is deposited but never listed"
-    );
-    assert!(owns());
-    // Nothing restricted left in the pack: the interface closes and the
-    // row's own search arm waits on the decoded tile with no locs posted.
     let settled = call(
         &data,
         token,
@@ -7739,7 +7669,7 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     let settled = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({
             "equipment": worn_free,
             "here": here(ENTRANA_X, ENTRANA_Z, 0),
@@ -7748,9 +7678,9 @@ fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
     assert_eq!(settled["kind"], "wait", "{settled}");
     assert!(
         !settled.to_string().contains("Amulet"),
-        "a name the frozen matcher lets through is never dispatched at: {settled}"
+        "an item outside the restricted categories is never dispatched at: {settled}"
     );
-    assert!(owns(), "the helm is listed, so the adapter reads true");
+    assert!(owns());
     on_reset();
 }
 
