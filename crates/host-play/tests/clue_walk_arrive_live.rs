@@ -121,8 +121,8 @@ fn entrana_fixture() -> scenario::Scenario {
     fixture
 }
 
-fn entrana_proved(stripped: bool, boarded: bool, east_stand: bool, replaced: bool) -> bool {
-    stripped && boarded && east_stand && replaced
+fn entrana_proved(stripped: bool, boarded: bool, north_search: bool, replaced: bool) -> bool {
+    stripped && boarded && north_search && replaced
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn live_sherlock_entrana_walk_arrive() {
     assert!(std::env::var_os("QUESTER_TICK_MS").is_none());
     let mut stripped = false;
     let mut boarded = false;
-    let mut east_stand = false;
+    let mut north_search = false;
     quester_live::run_family(
         Cell {
             quest: "clue-walk-arrive", display: "Sherlock Entrana search", label: "entrana".into(),
@@ -157,14 +157,15 @@ fn live_sherlock_entrana_walk_arrive() {
         Box::new(move |snapshot, _, _| {
             stripped |= snapshot.tile().is_some_and(|(x, z, level)| (3088..=3095).contains(&x) && (3240..=3245).contains(&z) && level == 0) && held(snapshot, SWORD) == 0 && held(snapshot, ENTRANA_CLUE) == 1;
             boarded |= snapshot.tile().is_some_and(|(x, z, level)| (2802..=2878).contains(&x) && (3329..=3393).contains(&z) && (0..=1).contains(&level));
-            east_stand |= snapshot.tile() == Some((2819, 3351, 0));
+            // drawers2's east-only approach rotates north at placement angle 3.
             let replaced = clue_replaced(snapshot, ENTRANA_CLUE);
-            if entrana_proved(stripped, boarded, east_stand, replaced) {
-                return Ok(Some(json!({"stripped_at_draynor": stripped, "real_boat_arrival": boarded, "drawers_east_stand": east_stand, "clue_replaced": replaced, "tile": snapshot.tile()})));
+            north_search |= replaced && snapshot.tile() == Some((2818, 3352, 0));
+            if entrana_proved(stripped, boarded, north_search, replaced) {
+                return Ok(Some(json!({"stripped_at_draynor": stripped, "real_boat_arrival": boarded, "drawers_north_search": north_search, "clue_replaced": replaced, "tile": snapshot.tile()})));
             }
             Ok(None)
         }),
-    ).expect("Sherlock must strip, take the real boat, operate the east-side drawers and replace the clue within the fixed deadline");
+    ).expect("Sherlock must strip, take the real boat, search the drawers from the north stand and replace the clue within the fixed deadline");
 }
 
 #[test]
@@ -173,6 +174,22 @@ fn live_sherlock_ordinary_search_walk_arrive() {
     assert!(std::env::var_os("QUESTER_TICK_MS").is_none());
     let mut fixture = scenario::get("sherlock_search").unwrap();
     reseed_after_relog(&mut fixture);
+    let stand = fixture
+        .steps
+        .iter_mut()
+        .find(|step| step.name == "teleport next to the first clue step")
+        .unwrap();
+    stand.kind = StepKind::Perform {
+        send: Box::new(|client, _| {
+            api::interact::seed_at(client, 0, 3256, 3236);
+            true
+        }),
+    };
+    stand.wait.arm = Proof::Arrived {
+        x: 3256,
+        z: 3236,
+        level: 0,
+    };
     quester_live::run_family(
         Cell {
             quest: "clue-walk-arrive",
@@ -182,9 +199,9 @@ fn live_sherlock_ordinary_search_walk_arrive() {
             start_settings: Default::default(),
             mode: Mode::Clean,
             observe_start: Some(Box::new(|snapshot| {
-                if held(snapshot, SEARCH_CLUE) != 1 || snapshot.tile() != Some((3248, 3246, 0)) {
+                if held(snapshot, SEARCH_CLUE) != 1 || snapshot.tile() != Some((3256, 3236, 0)) {
                     return Err(
-                        "Start requires the ordinary search clue at its mainland fixture origin"
+                        "Start requires the ordinary search clue ten tiles from the mainland target"
                             .into(),
                     );
                 }

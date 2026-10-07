@@ -1298,16 +1298,16 @@ fn clue_walk_receipt_failure(
     receipt: crate::native::WalkReceipt,
     timed_out: bool,
 ) -> ScriptFailure {
-    if timed_out {
-        return ScriptFailure {
-            code: Arc::from("clue-walk-timeout"),
-            message: Arc::from("clue walk timed out"),
-        };
-    }
     if receipt.end == crate::native::WalkEnd::UserInput {
         return ScriptFailure {
             code: Arc::from("manual-movement"),
             message: Arc::from("manual movement"),
+        };
+    }
+    if timed_out {
+        return ScriptFailure {
+            code: Arc::from("clue-walk-timeout"),
+            message: Arc::from("clue walk timed out"),
         };
     }
     ScriptFailure {
@@ -1797,8 +1797,8 @@ mod tests {
         }
     }
 
-    /// An Entrana search loc with south disallowed by its approach mask. The
-    /// scene spans both the player's south stand and the loc's east stand.
+    /// Entrana drawers2: forceapproach=east (mask 13), shape 10, angle 3
+    /// in m44_52.jm2. Only the north stand is operable after rotation.
     fn entrana_clue_frame(here: WorldTile) -> Frame {
         let mut frame = wounded(&[(3579, 1)], 10);
         frame.here = Some((here.x, here.z, here.level));
@@ -1815,7 +1815,7 @@ mod tests {
         });
         frame.snapshot.seed_locs(vec![api::snapshot::LocView {
             typecode: 0,
-            info: 10,
+            info: 10 | (3 << 6),
             id: 350,
             name: Some("drawers2".into()),
             description: None,
@@ -1826,9 +1826,9 @@ mod tests {
                 level: 0,
             },
             distance: 1,
-            layer: api::snapshot::LocLayer::Wall,
+            layer: api::snapshot::LocLayer::Ground,
             shape: 10,
-            angle: 0,
+            angle: 3,
             width: 1,
             length: 1,
             footprint_width: 1,
@@ -1839,7 +1839,7 @@ mod tests {
             animation: -1,
             map_function: -1,
             map_scene: -1,
-            force_approach: 4,
+            force_approach: 13,
         }]);
         frame
     }
@@ -2255,6 +2255,35 @@ mod tests {
     }
 
     #[test]
+    fn manual_clue_movement_keeps_its_reason_after_the_deadline() {
+        for timed_out in [false, true] {
+            let failure = clue_walk_receipt_failure(
+                crate::native::WalkReceipt {
+                    request_id: 1,
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: RunKey {
+                            slot: 1,
+                            run: 1,
+                            session: 1,
+                        },
+                        tick: 1002,
+                        sequence: 1002,
+                    },
+                    end: crate::native::WalkEnd::UserInput,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                timed_out,
+            );
+            assert_eq!(failure.code.as_ref(), "manual-movement");
+            assert_eq!(failure.message.as_ref(), "manual movement");
+        }
+    }
+
+    #[test]
     fn native_entrana_search_uses_the_posted_loc_approach() {
         let data = selected();
         let south = WorldTile {
@@ -2281,8 +2310,23 @@ mod tests {
             next_payload(&ctx, 1, None)
         };
         assert_eq!(
-            east_page["locs"][0]["can_operate_here"], true,
+            east_page["locs"][0]["can_operate_here"], false,
             "{east_page}"
+        );
+
+        let mut north = entrana_clue_frame(WorldTile {
+            x: 2818,
+            z: 3352,
+            level: 0,
+        });
+        let north_page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = north.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, 1, None)
+        };
+        assert_eq!(
+            north_page["locs"][0]["can_operate_here"], true,
+            "{north_page}"
         );
 
         let mut distant = entrana_clue_frame(WorldTile {

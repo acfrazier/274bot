@@ -7,7 +7,7 @@ use nav::WorldState;
 
 #[test]
 #[ignore = "requires explicit WORLD_NAV_PACK for revision 289"]
-fn entrana_drawers_east_stand_routes_via_real_boat_and_house_door() {
+fn entrana_drawers_north_stand_routes_via_real_boat_and_house_door() {
     let pack = std::env::var_os("WORLD_NAV_PACK").expect("explicit pack path");
     let world = NavWorld::load_pack(std::path::Path::new(&pack)).expect("load selected pack");
     let from = WorldTile {
@@ -20,11 +20,11 @@ fn entrana_drawers_east_stand_routes_via_real_boat_and_house_door() {
         z: 3351,
         level: 0,
     };
-    // drawers2 is placed at angle 3; native operable-stand regressions prove
-    // this east-side stand from its forceapproach and scene wall geometry.
+    // drawers2 has forceapproach=east (mask 13), placed at angle 3 in
+    // m44_52.jm2. Rotation leaves only the north side operable.
     let stand = WorldTile {
-        x: 2819,
-        z: 3351,
+        x: 2818,
+        z: 3352,
         level: 0,
     };
     let mut state = WorldState::empty().with_map_members(true);
@@ -51,7 +51,7 @@ fn entrana_drawers_east_stand_routes_via_real_boat_and_house_door() {
         FindOptions::default(),
         &state,
     )
-    .expect("east operable stand must route");
+    .expect("north operable stand must route");
     assert_eq!(route.dest, stand);
     assert_eq!(
         (stand.x - drawers.x).abs().max((stand.z - drawers.z).abs()),
