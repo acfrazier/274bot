@@ -3,7 +3,7 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, GameSnapshot, LocView, WorldTile};
+use api::snapshot::{ActorKind, ChatLineView, GameSnapshot, LocView, WorldTile};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -133,6 +133,8 @@ pub enum Proof {
     StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
+    /// The newest exact system-chat confirmation from `::speed`.
+    WorldSpeedChanged { ms: u32 },
     /// Skill `id`'s XP rose by at least `min` since StartScript, or since
     /// its first XP watch when the scenario has no script-start boundary.
     StatXpGain { id: i32, min: i32 },
@@ -203,6 +205,39 @@ pub enum Proof {
     },
 }
 
+/// Parse one exact system-chat speed confirmation.
+fn world_speed_from_line(line: &ChatLineView) -> Option<u32> {
+    if line.type_ != 0 || line.username.is_some() {
+        return None;
+    }
+    line.text
+        .strip_prefix("World speed was changed to ")?
+        .strip_suffix("ms")?
+        .parse::<u32>()
+        .ok()
+}
+
+/// Latest exact engine speed confirmation in the system-chat ring.
+///
+/// Chat snapshots are newest-first. Player messages and every non-exact line
+/// are ignored so only the engine's confirmation can satisfy this predicate.
+pub(crate) fn latest_world_speed_confirmation(snap: &GameSnapshot) -> Option<(u32, i32)> {
+    snap.chat_lines()
+        .iter()
+        .find_map(|line| world_speed_from_line(line).map(|ms| (ms, line.sequence)))
+}
+
+/// Newest speed confirmation newer than a command's chat-sequence baseline.
+pub(crate) fn world_speed_confirmation_after(
+    snap: &GameSnapshot,
+    baseline: i32,
+) -> Option<(u32, i32)> {
+    snap.chat_lines()
+        .iter()
+        .filter(|line| line.sequence > baseline)
+        .find_map(|line| world_speed_from_line(line).map(|ms| (ms, line.sequence)))
+}
+
 impl Proof {
     /// The predicate's evidence name (also the JSON `predicate` field).
     pub fn name(&self) -> String {
@@ -263,6 +298,7 @@ impl Proof {
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
+            Proof::WorldSpeedChanged { ms } => format!("world_speed_changed({ms}ms)"),
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::FreshStatXpGain { id, min } => {
                 format!("fresh_stat_xp_gain({id})>={min}")
@@ -554,6 +590,9 @@ impl Proof {
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
+            Proof::WorldSpeedChanged { ms } => {
+                latest_world_speed_confirmation(snap).is_some_and(|(actual, _)| actual == *ms)
+            }
             Proof::StatXpGain { id, min } => {
                 let Some(baselines) = xp_baselines else {
                     return false;
@@ -2091,6 +2130,51 @@ mod tests {
         let s = snap(&mut seeded());
         assert!(Proof::Chat { needle: "Welcome" }.check(&s, None));
         assert!(!Proof::Chat { needle: "arrived" }.check(&s, None));
+    }
+
+    #[test]
+    fn world_speed_confirmation_requires_the_latest_exact_system_line() {
+        use api::snapshot::ChatLineView;
+
+        let line = |text: &str, sequence| ChatLineView {
+            type_: 0,
+            username: None,
+            text: text.into(),
+            sequence,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_chat_lines(vec![
+            line("World speed was changed to 300ms", 12),
+            line("World speed was changed to 600ms", 11),
+        ]);
+        assert!(Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+        assert_eq!(
+            world_speed_confirmation_after(&snapshot, 11),
+            Some((300, 12))
+        );
+
+        snapshot.seed_chat_lines(vec![
+            line("World speed was changed to 600ms", 13),
+            line("World speed was changed to 300ms", 12),
+        ]);
+        assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+        assert_eq!(world_speed_confirmation_after(&snapshot, 13), None);
+
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 2,
+            username: None,
+            text: "World speed was changed to 300ms".into(),
+            sequence: 14,
+        }]);
+        assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: Some("player".into()),
+            text: "World speed was changed to 300ms".into(),
+            sequence: 15,
+        }]);
+        assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
     }
 
     #[test]

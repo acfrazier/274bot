@@ -177,6 +177,14 @@ impl LiveBoot {
                     scenario::try_get(scenario_name)?
                         .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
                 };
+                if scenario.settings.nav.engine_speed_ms.is_some() {
+                    let options = session.play_options();
+                    host_play::quest_fast::validate_tick_speed_target(&options.host, options.port)?;
+                    eprintln!(
+                        "world tick speed guarded to Engine Q at {}:{}",
+                        options.host, options.port
+                    );
+                }
                 let scenario_deadline = scenario.settings.deadline;
                 session.live_prepare_script(scenario)?;
                 arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
