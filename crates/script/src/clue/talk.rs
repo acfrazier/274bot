@@ -133,7 +133,7 @@ impl ClueRuntime {
                 };
                 match arrival(tile, input) {
                     Arrival::Unknown => self.emit("wait"),
-                    Arrival::Walking => self.walk(tile),
+                    Arrival::Walking => self.walk(tile, None),
                     Arrival::Arrived => {
                         let npc = NpcIdentity::Talk {
                             id: talk.npc.id,
@@ -166,7 +166,7 @@ impl ClueRuntime {
                     // tile and re-pick from the arrival. A row that posted no
                     // tile is unmeasured, so this tick waits.
                     Some(pick) => match pick.tile {
-                        Some(tile) => self.walk(tile),
+                        Some(tile) => self.walk(tile, None),
                         None => self.emit("wait"),
                     },
                     None => self.emit("wait"),
