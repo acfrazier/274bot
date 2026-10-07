@@ -35,6 +35,13 @@
           [2630, 3318, 2640, 3325, 1]
         ],
         "source": "A defs/tribaltotem.ts:70-84"
+      },
+      "mansion_stair_room": {
+        "boxes": [
+          [2627, 3322, 2633, 3325, 0],
+          [2629, 3320, 2633, 3321, 0]
+        ],
+        "source": "C:maps/m41_51.jm2:6748 (combodoor 2705 at [2634,3323,0], the wall between the stair room and the hall); C:scripts/ladders+stairs/scripts/stairs.rs2:54 (case 1_41_51_7_58 lands 0_41_51_7_61 = [2631,3325,0]); C:scripts/areas/area_ardougne_east/scripts/wizard_cromperty.rs2:74-78 (rpdt_teleport lands 0_41_51_14_57 = [2638,3321,0], hall side of the door). West-of-door floor verified on the real 289 nav pack: every walkable tile x <= 2633 routes to the landing and every tile x >= 2634 routes to the hall, with no cross route (PORT-S6-DRAFTS-R5 grid probe)"
       }
     },
     "tools": ["obj:tribal_totem_label", "obj:tribal_totem"],
@@ -99,15 +106,39 @@
             "anchor": { "tile": [2631, 3325, 0], "source": "C:maps/m41_51.jm2:6748 (combodoor 2705 at [2634,3323,0], stair-room side of the landing); C:pack/loc.pack:2706 (combodoor, op Open); C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90 ([oploc1,combodoor] opens once the combination flag is set by solve-combination)" },
             "radius": 8
           },
-          "comment": "The stair landing sits west of the combination door, which nav does not model as an edge, so the return walk cannot leave the stair room until the door is opened from this side. Skipped without the totem and off the ground floor.",
+          "comment": "The stair landing sits west of the combination door, which nav does not model as an edge, so the return walk cannot leave the stair room until the door is opened from this side. Skipped without the totem, off the ground floor, and outside the stair room (PORT-S6-DRAFTS-R5 D1: the old mansion-wide skip re-selected this step from every hall tile and oscillated through the door). Settles once the bot leaves the stair room, handing over to return-totem.",
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } } },
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion_stair_room" } } } },
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } } }
+            ]
+          },
+          "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion_stair_room" } } } }
+        },
+        {
+          "id": "open-combo-door-from-hall",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "combodoor" },
+            "op": "Open",
+            "anchor": { "tile": [2635, 3323, 0], "source": "C:maps/m41_51.jm2:6748 (combodoor 2705 at [2634,3323,0], hall side of the landing); C:pack/loc.pack:2706 (combodoor, op Open); C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90 ([oploc1,combodoor] opens once the combination flag is set by solve-combination); C:scripts/areas/area_ardougne_east/scripts/wizard_cromperty.rs2:74-78 (rpdt_teleport lands 0_41_51_14_57 = [2638,3321,0], hall side of the door)" },
+            "radius": 8
+          },
+          "comment": "Inbound mirror of open-combo-door-from-stair-room (PORT-S6-DRAFTS-R5 D1): after solve-combination the bot stands east of the combination door (Cromperty teleports to [2638,3321,0]) while disarm-trap and climb-stairs anchor west of it at [2631,3325,0], and nav has no edge through the door, so the ascent stalls without a hall-side open. Gated on the combination flag so it never blocks solve-combination, and skipped once the totem is held so the outbound door step owns the return crossing.",
           "skip_if": {
             "Any": [
               { "Not": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 0 } } } },
               { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion" } } } },
-              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } } }
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion_stair_room" } } },
+              { "Not": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "totem", "any": ["totem:4"] } } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } },
+              { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "totem", "flag": "combo", "is": true } } } }
             ]
           },
-          "settle": { "All": [] }
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion_stair_room" } } }
         },
         {
           "id": "return-totem",
