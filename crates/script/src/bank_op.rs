@@ -119,6 +119,9 @@ pub(crate) struct Awaiting {
     generation: u64,
     /// `withdrawX*`: the whole request this click serves.
     withdraw: Option<WithdrawGoal>,
+    /// A receipt wake may finish immediately, but cannot send the next
+    /// withdraw click twice in one observed tick.
+    sent_tick: u64,
 }
 
 impl Awaiting {
@@ -132,6 +135,7 @@ impl Awaiting {
             },
             generation: view.generation,
             withdraw: None,
+            sent_tick: observed::with(|scene| scene.tick().unwrap_or(0)),
         }
     }
 
@@ -154,8 +158,13 @@ impl Awaiting {
         match observed::with(|scene| next_withdraw(scene, view, goal)) {
             Ok(done) => Some(done),
             Err(next) => {
+                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
+                if tick == self.sent_tick {
+                    return None;
+                }
                 cx.emit(next);
                 self.seq = view.x_seq;
+                self.sent_tick = tick;
                 None
             }
         }
@@ -624,6 +633,7 @@ pub(crate) struct BankClose(Closing);
 
 impl Family for BankClose {
     const NAME: &'static str = "bank_close";
+    const SNAPSHOT_SENSITIVE: bool = true;
     type Args = CloseArgs;
     type Output = bool;
 
@@ -671,6 +681,7 @@ pub(crate) enum BankWithdrawLoad {
 
 impl Family for BankWithdrawLoad {
     const NAME: &'static str = "bank_withdraw_load";
+    const SNAPSHOT_SENSITIVE: bool = true;
     type Args = LoadArgs;
     type Output = bool;
 
@@ -771,6 +782,7 @@ pub(crate) struct BankOp {
 
 impl Family for BankOp {
     const NAME: &'static str = "bank_op";
+    const SNAPSHOT_SENSITIVE: bool = true;
     type Args = Op;
     type Output = bool;
 
@@ -1005,6 +1017,43 @@ mod tests {
             }] => (action.clone(), *count, *lands_as_id),
             other => panic!("expected one withdraw-x, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn snapshot_receipts_finish_but_do_not_repeat_withdraw_dispatch_in_one_tick() {
+        reset();
+        let fixed = ["Withdraw-1", "Withdraw-5", "Withdraw-10"];
+        let bank = |stock| vec![row("Feather", 314, stock, &fixed)];
+        post_x(bank(50), vec![held(314, 2)], 3, 1, false);
+        let Started::Running(handle) =
+            start(json!({ "kind": "withdraw-x", "name": "Feather", "count": 7 }))
+        else {
+            panic!("expected a running withdraw");
+        };
+        assert_eq!(x_click(), ("Withdraw-5".into(), 5, 314));
+        post_x(bank(45), vec![held(314, 7)], 3, 2, true);
+        observed::post(1, |_| {});
+        machine::snapshot_step(&mut NoJs, 1, 1);
+        assert!(
+            drain().is_empty(),
+            "a receipt cannot refresh this tick's dispatch quota"
+        );
+        post_x(bank(44), vec![held(314, 8)], 3, 3, true);
+        observed::post(1, |_| {});
+        machine::snapshot_step(&mut NoJs, 1, 2);
+        assert!(drain().is_empty());
+        assert_eq!(machine::take(handle), Take::Pending);
+        observed::post(2, |_| {});
+        machine::step(&mut NoJs);
+        assert_eq!(x_click(), ("Withdraw-1".into(), 1, 314));
+        post_x(bank(43), vec![held(314, 9)], 3, 4, true);
+        observed::post(2, |_| {});
+        machine::snapshot_step(&mut NoJs, 2, 3);
+        assert!(drain().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(true)))
+        );
     }
 
     /// P-ladder (compat): one landed click is not the request. A fixed-only

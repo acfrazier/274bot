@@ -519,9 +519,11 @@ impl NativeMachine for Combat {
                             && self.flags & LEASH_WALKED == 0
                         {
                             if let Some(destination) = self.leash_cancel_tile(&frame) {
-                                if let Err(error) = self.walk(destination, tick, cx) {
-                                    return Poll::Ready(Err(error));
-                                }
+                                std::task::ready!(crate::native::defer_budget(self.walk(
+                                    destination,
+                                    tick,
+                                    cx
+                                )))?;
                                 self.flags |= LEASH_WALKED;
                                 return Poll::Pending;
                             }
@@ -537,7 +539,7 @@ impl NativeMachine for Combat {
                     Err(error) => Poll::Ready(Err(error)),
                 }
             }
-            Err(error) => Poll::Ready(Err(error)),
+            Err(error) => crate::native::defer_budget(Err(error)),
         }
     }
     fn cancel(&mut self) {

@@ -54,6 +54,7 @@ pub(crate) enum MakeXStep {
 
 /// Shared Make-X selection, count-dialog latch and make-menu close sequence.
 /// Runtime adapters supply their row view, count semantics and clock.
+#[derive(Clone, Copy)]
 pub(crate) struct MakeXCore {
     phase: MakeXPhase,
     count: i32,

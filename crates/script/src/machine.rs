@@ -63,6 +63,12 @@
 //!   row started during tick N is first stepped on tick N+1. Ops a step
 //!   emits join the batch in emit order, after any JS rows already queued
 //!   or queued by its callbacks.
+//! - **Changed evidence**: [`snapshot_step`] drives opted-in families once
+//!   per distinct `(tick, evidence sequence)` without recording another tick.
+//!   It carries the tick's callback count through callback continuations;
+//!   families retain their existing interaction/batch dispatch guards.
+//!   This pass can settle an already-observed result and its await without
+//!   running `loop`, tick listeners, or explicit tick delays.
 //! - **Callbacks**: a [`Step::Call`] invokes the held script function
 //!   through the one callback path (`load/callback_v8.rs`), in a fresh
 //!   handle scope per call. On a tick step a microtask checkpoint
@@ -79,7 +85,7 @@
 //!   or rejection is [`Reply::Threw`] carrying the thrown value itself; a
 //!   family that fails with it ([`Step::Fail`]) rejects the script's
 //!   `runMachine` await with that same value. At most [`CALLS_PER_TICK`]
-//!   callbacks run per row per tick, across both passes; the rest
+//!   callbacks run per row per tick, across all passes; the rest
 //!   continue next tick. A row whose callback superseded it stops at once.
 //!   A callback ended by termination (join's or the watchdog's) is never
 //!   shown to the family: the row is aborted `terminated` and no further
@@ -169,6 +175,10 @@ pub(crate) trait Family: Sized + 'static {
     /// first step (teleport clicks in begin). Clue's first next is a
     /// callback, so it opts in.
     const KICK_ON_START: bool = false;
+    /// Whether changed evidence may drive this family without a game tick.
+    /// Opt in only when `snapshot_step` preserves the family's per-tick
+    /// interaction/batch quota and any server-required tick gates.
+    const SNAPSHOT_SENSITIVE: bool = false;
     /// This family owns a walking operation while its row is live.
     const WALKING_OPERATION: bool = false;
     /// [`Family::CALLBACKS`] indexes called synchronously (frozen calls
@@ -183,6 +193,14 @@ pub(crate) trait Family: Sized + 'static {
     fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self>;
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output>;
+    /// Drive a changed-evidence pass when opted in above.
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        if Self::SNAPSHOT_SENSITIVE {
+            self.step(cx)
+        } else {
+            Step::Wait
+        }
+    }
 
     fn abort(&mut self, _why: AbortReason) {}
 
@@ -671,6 +689,8 @@ pub(crate) fn walking_live() -> bool {
 /// The type-erased row the host steps.
 trait Machine {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
+    fn snapshot_sensitive(&self) -> bool;
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
     fn abort(&mut self, why: AbortReason);
     fn release(&self) -> Option<InteractReq>;
     fn walking_operation(&self) -> bool;
@@ -679,6 +699,19 @@ trait Machine {
 impl<F: Family> Machine for F {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
         match Family::step(self, cx) {
+            Step::Wait => Step::Wait,
+            Step::Call(call) => Step::Call(call),
+            Step::Done(out) => Step::Done(out.into()),
+            Step::Fail(reason) => Step::Fail(reason),
+        }
+    }
+
+    fn snapshot_sensitive(&self) -> bool {
+        F::SNAPSHOT_SENSITIVE
+    }
+
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        match Family::snapshot_step(self, cx) {
             Step::Wait => Step::Wait,
             Step::Call(call) => Step::Call(call),
             Step::Done(out) => Step::Done(out.into()),
@@ -735,6 +768,8 @@ struct Row {
     hooks: Vec<Hook>,
     /// Callbacks run this tick, across both passes.
     calls: usize,
+    /// Last `(tick, evidence sequence)` pass this row consumed.
+    last_snapshot: Option<(u64, u64)>,
     /// The settled callback the next step reads.
     reply: Option<Reply>,
     /// The callback promise the row waits on.
@@ -1013,6 +1048,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     clock,
                     hooks,
                     calls: 0,
+                    last_snapshot: None,
                     reply: None,
                     pending: None,
                     machine: Box::new(machine),
@@ -1095,6 +1131,18 @@ pub(crate) fn resume(js: &mut impl Js) {
     pass(js, Pass::Resume);
 }
 
+/// Recheck opted-in rows against one changed snapshot without starting a
+/// new tick's callback or per-family event budget.
+pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, evidence_sequence: u64) {
+    pass(
+        js,
+        Pass::Snapshot {
+            tick,
+            evidence_sequence,
+        },
+    );
+}
+
 /// Whether an outcome waits for its JS await.
 pub(crate) fn any_settled() -> bool {
     HOST.with(|host| !host.borrow().settled.is_empty())
@@ -1106,6 +1154,8 @@ enum Pass {
     Step,
     /// Rows waiting on a promise; the budget carries over.
     Resume,
+    /// Opted-in rows, once per distinct changed snapshot; carries the budget.
+    Snapshot { tick: u64, evidence_sequence: u64 },
 }
 
 /// Rows are taken out of the host while they step, so a callback may
@@ -1138,10 +1188,23 @@ fn pass(js: &mut impl Js, pass: Pass) {
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
     rows.retain_mut(|row| {
-        if pass == Pass::Step {
-            row.calls = 0;
-        } else if row.pending.is_none() {
-            return true;
+        match pass {
+            Pass::Step => row.calls = 0,
+            Pass::Resume if row.pending.is_none() => return true,
+            Pass::Resume => {}
+            Pass::Snapshot {
+                tick,
+                evidence_sequence,
+            } => {
+                if !row.machine.snapshot_sensitive() || row.pending.is_some() {
+                    return true;
+                }
+                let snapshot = (tick, evidence_sequence);
+                if row.last_snapshot == Some(snapshot) {
+                    return true;
+                }
+                row.last_snapshot = Some(snapshot);
+            }
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
             if let Some(op) = release_op(&*row.machine) {
@@ -1152,7 +1215,11 @@ fn pass(js: &mut impl Js, pass: Pass) {
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
             return false;
         }
-        match drive(row, js, &mut at) {
+        let outcome = match pass {
+            Pass::Snapshot { .. } => drive_snapshot(row, js, &mut at),
+            Pass::Step | Pass::Resume => drive(row, js, &mut at),
+        };
+        match outcome {
             Some(outcome) => {
                 HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
                 settle(row.handle, outcome);
@@ -1178,6 +1245,19 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// One row's steps for this pass; `Some` when it ended. Stops, leaving
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    drive_in_pass(row, js, at, false)
+}
+
+fn drive_snapshot(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    drive_in_pass(row, js, at, true)
+}
+
+fn drive_in_pass(
+    row: &mut Row,
+    js: &mut impl Js,
+    at: &mut usize,
+    snapshot: bool,
+) -> Option<Outcome> {
     if row.rebaseline_on_resume {
         // Pause and reconnect holds produce no runnable observations. Refresh
         // on the first eligible resumed step, after its Running snapshot.
@@ -1191,10 +1271,10 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         row.rebaseline_on_resume = false;
     }
     let baseline = row.carries_walk_baseline.then_some(row.intent_baseline);
-    with_walk_baseline(baseline, || drive_inner(row, js, at))
+    with_walk_baseline(baseline, || drive_inner(row, js, at, snapshot))
 }
 
-fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) -> Option<Outcome> {
     loop {
         if js.claimed() || TERMINATED.with(Cell::get) {
             return None;
@@ -1217,7 +1297,13 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcom
             intent_baseline: row.intent_baseline,
             ending: None,
         };
-        let step = row.machine.step(&mut cx);
+        // Callback continuations belong to the same pass: a snapshot-only
+        // pass must not fall back to the normal tick step after a JS call.
+        let step = if snapshot {
+            row.machine.snapshot_step(&mut cx)
+        } else {
+            row.machine.step(&mut cx)
+        };
         let asked = cx.asks > 0;
         // An ask that failed ends the row whatever the step returned; the
         // ops of that step are dropped with it.
@@ -1419,6 +1505,7 @@ pub(crate) mod tests {
 
     impl Family for Probe {
         const NAME: &'static str = "probe";
+        const SNAPSHOT_SENSITIVE: bool = true;
         type Args = ProbeArgs;
         type Output = Value;
 
@@ -1606,6 +1693,7 @@ pub(crate) mod tests {
 
     impl Family for Burst {
         const NAME: &'static str = "burst";
+        const SNAPSHOT_SENSITIVE: bool = true;
         const CALLBACKS: &'static [&'static str] = &["each"];
         type Args = BurstArgs;
         type Output = Value;
@@ -2283,6 +2371,47 @@ pub(crate) mod tests {
             panic!("the burst completes on the second tick");
         };
         assert_eq!(replies, (0..total).map(|i| json!(i)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn snapshot_pass_deduplicates_the_same_tick_and_evidence_sequence() {
+        let handle = running(begin("probe", json!({ "button": 10, "steps": 3 })));
+        merge_ops(Vec::new());
+        let mut js = Echo { calls: 0 };
+        snapshot_step(&mut js, 1, 1);
+        assert_eq!(
+            merge_ops(Vec::new()),
+            vec![InteractReq::IfButton { component_id: 11 }]
+        );
+        snapshot_step(&mut js, 1, 1);
+        assert!(merge_ops(Vec::new()).is_empty());
+        snapshot_step(&mut js, 1, 2);
+        assert_eq!(
+            merge_ops(Vec::new()),
+            vec![InteractReq::IfButton { component_id: 12 }]
+        );
+        snapshot_step(&mut js, 2, 2);
+        assert_eq!(
+            merge_ops(Vec::new()),
+            vec![InteractReq::IfButton { component_id: 13 }]
+        );
+        assert_eq!(take(handle), Take::Pending);
+    }
+
+    #[test]
+    fn snapshot_passes_do_not_replenish_the_callback_budget() {
+        let total = CALLS_PER_TICK + 8;
+        let handle = running(begin("burst", json!({ "calls": total })));
+        let mut js = Echo { calls: 0 };
+        step(&mut js);
+        for evidence_sequence in 1..=4 {
+            snapshot_step(&mut js, 1, evidence_sequence);
+        }
+        assert_eq!(js.calls, CALLS_PER_TICK);
+        assert_eq!(take(handle), Take::Pending);
+        step(&mut js);
+        assert_eq!(js.calls, total);
+        assert!(matches!(take(handle), Take::Settled(Outcome::Done(_))));
     }
 
     #[test]

@@ -60,12 +60,40 @@ operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
 The typed action-machine facility drives real machines: `NativeActions::begin`
-and `poll` admit and advance each family's operations, and Quester polls every
-family through them each tick. `ActionError::Unavailable` is a per-request
-refusal (for example a disposal that requires a slot-exact Drop). Sherlock
-retains its existing clue queue/dispatch behavior through one crate-private
-borrowed host frame (no raw driver). It remains `load`-gated for the existing
-clue implementation, but never creates a V8 isolate.
+and `poll` admit and advance each family's operations. A native or compiled
+machine can be polled again when evidence changes within the same observed
+tick. These polls consume new receipts and facts; they do not advance tick
+windows or renew the single interaction-event budget. Tick-based quiet,
+stall and settle counters must distinguish observed ticks from polls.
+`ActionError::BudgetExhausted` at a poll-time action admission waits for the
+next observed tick without counting a failed attempt or parking the script.
+Native callers use the shared `defer_budget` helper and commit request state,
+phases and deadlines only after admission. Dialogue gap rearms also spend
+their finite allowance at most once per observed tick, not once per drain.
+`ActionError::Unavailable` is a per-request refusal (for example a disposal
+that requires a slot-exact Drop). Sherlock retains its existing clue
+queue/dispatch behavior through one crate-private borrowed host frame (no raw
+driver). It remains `load`-gated for the existing clue implementation, but never
+creates a V8 isolate.
+
+Compat machines opt in to evidence-only snapshot passes individually. The
+dedupe key tracks changed snapshot evidence, not the native input lease's
+lifecycle identity. A later dirty drain in the same tick can therefore settle
+a bank/shop acknowledgement, while unchanged evidence gets no duplicate pass.
+These passes do not call `on_game_tick`, run `loop`, advance `delayTicks`, or
+replenish callback/action budgets.
+
+Host bank-selection ranking uses a five-second wall-time deadline. Per-frame
+polling can expire that ranking window without another PLAYER_INFO; repeated
+polls do not shorten it. Its air-order fallback is a candidate, not proof that
+movement or arrival succeeded.
+
+A followed-walk completion can be re-observed on the PLAYER_INFO frame before
+all of that tick's zone packets have drained. Its receipt is not a tick-end
+or a complete scene-update fence. A consumer that starts another interaction
+on that receipt must revalidate the selected scene identity and live reach
+against the evidence available at dispatch; PLAYER_INFO alone does not prove
+that a stale location still exists.
 
 Selected fact strings can be shared with a decode-local `api::selected::FactStrings`;
 drop the interner after preparation and let the family-held Arcs own their
@@ -81,7 +109,7 @@ value applies; omission is not proof of no requirement.
 | | Compiled (Browse our cards) | Load / catalog (operator file or `$RS2B0T`) |
 | --- | --- | --- |
 | When V8 exists | Never | Start of a **JS/TS** picker card only |
-| Wake | `host::should_emit_tick` (PLAYER_INFO) | same, posted to the isolate thread |
+| Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
 | House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the

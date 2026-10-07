@@ -677,6 +677,7 @@ impl Family for BankAccess {
     /// One bank open at a time, whichever surface started it: a newer
     /// open (this, `openNpcAccess`, `openBooth` …) supersedes this row.
     const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.
@@ -828,6 +829,7 @@ impl Family for NpcAccess {
     /// One bank open at a time, whichever surface started it: a newer
     /// open (this, `openNpcAccess`, `openBooth` …) supersedes this row.
     const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.

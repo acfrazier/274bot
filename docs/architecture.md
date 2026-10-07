@@ -86,6 +86,7 @@ claim that `e2e` owns those crates' production behavior.
 
 - **`api` → `client`** is intentional. `api` maps host types onto the
   vendored client. It is not a reverse `client` → `api` edge.
+- **`host` → `client`** also has a **dev-only** edge for the real WebSocket test connector used by the idle WSS park regression; client `test-support` is never enabled in the normal graph.
 - **`script` → `nav`** is a runtime edge: native machines read the packed
   world, routes and zones through typed `nav` values. `script` → `client` is
   `[dev-dependencies]` only; promoting it to a normal/optional/target

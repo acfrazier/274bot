@@ -1679,7 +1679,6 @@ impl CombatRun {
             return Ok(LootStart::Waiting);
         };
         while let Some(item) = self.loot.get(self.loot_index) {
-            self.loot_index += 1;
             let held = inventory
                 .value
                 .iter()
@@ -1687,6 +1686,7 @@ impl CombatRun {
                 .map(|row| i64::from(row.count))
                 .sum::<i64>();
             if held >= i64::from(item.qty) {
+                self.loot_index += 1;
                 continue;
             }
             let handle = cx.tick.actions.begin::<Reach>(
@@ -1704,6 +1704,7 @@ impl CombatRun {
                 },
                 &mut cx.tick.cx,
             )?;
+            self.loot_index += 1;
             self.action = Some(Action::Loot(handle));
             return Ok(LootStart::Started);
         }
@@ -1794,7 +1795,7 @@ impl CombatRun {
         &mut self,
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
-        match self.begin_loot(cx) {
+        match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
             Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
             Ok(LootStart::Complete) => {
                 if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
@@ -1880,7 +1881,7 @@ impl StepRun for CombatRun {
             return Poll::Pending;
         }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
-            match self.begin_loot(cx) {
+            match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
                 Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,
                 Ok(LootStart::Complete) => {
                     if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {

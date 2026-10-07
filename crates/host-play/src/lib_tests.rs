@@ -19495,6 +19495,288 @@ export default class T extends LoopingBot {
     rig.slot().lock().unwrap().stop();
 }
 
+#[test]
+fn tick_fix_stat_and_chat_are_evidence_wake_families() {
+    let mut dirty = host::DirtyFamilies::default();
+    assert!(!crate::play_slots::script_evidence_dirty(dirty));
+    dirty.stat = true;
+    assert!(
+        crate::play_slots::script_evidence_dirty(dirty),
+        "UPDATE_STAT must wake machines"
+    );
+    dirty.stat = false;
+    dirty.chat = true;
+    assert!(
+        crate::play_slots::script_evidence_dirty(dirty),
+        "chat packets must wake machines"
+    );
+    dirty.chat = false;
+    dirty.camera = true;
+    assert!(
+        !crate::play_slots::script_evidence_dirty(dirty),
+        "screen-only frames do not pump scripts"
+    );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TickFixEvidence {
+    RouteInspect,
+    BankSelection,
+    Stat,
+    Chat,
+}
+
+fn assert_tick_fix_evidence_wake(evidence: TickFixEvidence) {
+    let condition = match evidence {
+        TickFixEvidence::RouteInspect => {
+            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
+        }
+        TickFixEvidence::BankSelection => {
+            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
+        }
+        TickFixEvidence::Stat => "Skills.xp('attack') === 100",
+        TickFixEvidence::Chat => "GameMessages.sawSince(0, /tickfix chat/)",
+    };
+    let mut rig = ReconnectRig::with_source(
+        format!(
+            r#"
+import {{ Execution }} from '../../api/execution/Execution.js';
+import {{ Skills }} from '../../api/skills/Skills.js';
+import {{ GameMessages }} from '../../api/chatbox/gameMessages.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayUntil(() => {condition}, 60000);
+        globalThis.__settledTick = globalThis.__rs2b0t_host.snapshot.tick;
+        await Execution.delayTicks(1);
+        globalThis.__later = true;
+    }}
+}}
+"#
+        ),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    rig.frame(1, true);
+    let mut dirty = host::DirtyFamilies::default();
+    match evidence {
+        TickFixEvidence::RouteInspect => {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.entry("alice".into()).or_default().inspect.refused[0] = 23;
+        }
+        TickFixEvidence::BankSelection => {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.entry("alice".into()).or_default().bank_pick.posted =
+                script::isolate_fb::BankSelectionInput {
+                    generation: 1,
+                    request_id: 42,
+                    bank_index: 0,
+                    kind: 1,
+                };
+        }
+        TickFixEvidence::Stat => {
+            rig.client.stat_xp[0] = 100;
+            rig.client.gens.stat = rig.client.gens.stat.wrapping_add(1);
+            dirty.stat = true;
+            rig.snap.rebuild(&rig.client);
+        }
+        TickFixEvidence::Chat => {
+            rig.client.add_chat(0, "tickfix chat", "");
+            rig.client.gens.chat = rig.client.gens.chat.wrapping_add(1);
+            dirty.chat = true;
+            rig.snap.rebuild(&rig.client);
+        }
+    }
+    rig.frame_dirty(1, false, crate::play_slots::script_evidence_dirty(dirty));
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe(
+                "[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]"
+            )
+            .unwrap(),
+        serde_json::json!([1, false, 1]),
+        "{evidence:?} evidence must publish and settle within the existing tick",
+    );
+    rig.frame(2, true);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__later ?? false")
+            .unwrap(),
+        true
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
+fn tick_fix_route_inspect_completion_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::RouteInspect);
+}
+
+#[test]
+fn tick_fix_bank_selection_completion_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::BankSelection);
+}
+
+#[test]
+fn tick_fix_stat_snapshot_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::Stat);
+}
+
+#[test]
+fn tick_fix_chat_snapshot_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::Chat);
+}
+
+type SnapshotPumpFrames = Arc<Mutex<Vec<(u64, bool, Result<u64, script::native::ActionError>)>>>;
+
+struct SnapshotPumpMachine(SnapshotPumpFrames);
+
+impl script::native::NativeMachine for SnapshotPumpMachine {
+    type Args = SnapshotPumpFrames;
+    type Output = ();
+
+    fn begin(
+        frames: Self::Args,
+        _: &mut script::native::ActionContext<'_>,
+    ) -> Result<Self, script::native::ActionError> {
+        Ok(Self(frames))
+    }
+
+    fn poll(
+        &mut self,
+        cx: &mut script::native::ActionContext<'_>,
+    ) -> std::task::Poll<Result<(), script::native::ActionError>> {
+        let open = cx
+            .snapshot()
+            .bank_session()
+            .is_some_and(|bank| bank.value.open);
+        let emitted = cx.emit(script::shim::InteractReq::CloseModal);
+        self.0
+            .lock()
+            .unwrap()
+            .push((cx.evidence().tick, open, emitted));
+        std::task::Poll::Pending
+    }
+
+    fn cancel(&mut self) {}
+}
+
+struct SnapshotPumpScript {
+    frames: SnapshotPumpFrames,
+    handle: Option<script::native::ActionHandle<SnapshotPumpMachine>>,
+}
+
+impl script::native::Script for SnapshotPumpScript {
+    fn tick(
+        &mut self,
+        tick: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        if self.handle.is_none() {
+            self.handle = Some(
+                tick.actions
+                    .begin::<SnapshotPumpMachine>(Arc::clone(&self.frames), &mut tick.cx)
+                    .unwrap(),
+            );
+        }
+        let _ = tick
+            .actions
+            .poll(self.handle.as_ref().unwrap(), &mut tick.cx);
+        Ok(script::native::ScriptFlow::Continue)
+    }
+}
+
+#[test]
+fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
+    let mut rig = ReconnectRig::with_source(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    rig.slot().lock().unwrap().stop();
+    rig.scripts.lock().unwrap().clear();
+    script_slot_or_insert(&rig.scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(SnapshotPumpScript {
+                frames: Arc::clone(&frames),
+                handle: None,
+            }),
+            None,
+        )
+        .unwrap();
+    rig.client.main_modal_id = -1;
+    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
+    rig.snap.rebuild(&rig.client);
+    // Compiled runs have no isolate to probe; drive the real observer directly.
+    let observe = |rig: &mut ReconnectRig, tick_edge, dirty, tick| {
+        script_observe_cached_with_channels(
+            &mut rig.client,
+            "alice",
+            true,
+            tick_edge,
+            dirty,
+            tick,
+            Some(rig.here),
+            None,
+            None,
+            Some(&rig.snap),
+            None,
+            None,
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            script_channels::BrokerWorld::Local,
+            None,
+            None,
+        );
+    };
+    observe(&mut rig, true, false, 1);
+    rig.client.main_modal_id = 600;
+    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
+    rig.snap.rebuild(&rig.client);
+    observe(&mut rig, false, true, 1);
+    observe(&mut rig, false, true, 1);
+    observe(&mut rig, true, false, 2);
+    let frames = frames.lock().unwrap();
+    assert_eq!(
+        frames.len(),
+        4,
+        "fresh non-PI evidence must poll the compiled machine"
+    );
+    assert!(!frames[0].1);
+    assert!(frames[1].1 && frames[2].1);
+    assert_eq!(frames[0].0, frames[1].0);
+    assert!(frames[0].2.is_ok());
+    assert_eq!(
+        frames[1].2,
+        Err(script::native::ActionError::BudgetExhausted)
+    );
+    assert_eq!(
+        frames[2].2,
+        Err(script::native::ActionError::BudgetExhausted)
+    );
+    assert_eq!(frames[3].0, 2);
+    assert!(
+        frames[3].2.is_ok(),
+        "only the next PI replenishes the ledger"
+    );
+}
+
 /// A Load script walking on a 64×64 open world, driven through
 /// `script_observe` frame by frame, for the reconnect lifecycle.
 struct ReconnectRig {

@@ -3097,6 +3097,33 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
 }
 
 #[test]
+fn same_tick_combat_approach_defers_after_an_interaction_spends_budget() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    let mut harness = Harness::new(&scene, request);
+    harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+        cx.emit(InteractReq::CloseModal).unwrap();
+    });
+    assert!(harness.poll_stamp(&scene.snapshot, 1, 2).is_pending());
+    assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.runtime.ledger.as_ref().unwrap().outbox.len(), 1);
+    assert!(harness.poll_stamp(&scene.snapshot, 1, 3).is_pending());
+    assert!(harness.poll_stamp(&scene.snapshot, 2, 4).is_pending());
+    assert!(harness.machine.pending_walk.is_some());
+    assert!(matches!(
+        &harness.runtime.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(walk) if walk.target == stand
+    ));
+}
+
+#[test]
 fn user_input_ends_combat_retreat_without_relatching_failure_or_rewalking() {
     let mut scene = Scene::new("khazard_warlord");
     let here = scene.local.player.actor.tile;

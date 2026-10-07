@@ -1,5 +1,7 @@
-use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, PAGE_SETTLE_TICKS};
-use super::tests::with_tick;
+use super::dialogue::{
+    Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, CONTINUE_TICKS, PAGE_SETTLE_TICKS,
+};
+use super::tests::{with_tick, with_tick_snapshots};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
     ledger, ActionContext, ActionError, HostEffect, InteractionReceipt, NativeMachine,
@@ -922,4 +924,308 @@ fn a_main_modal_opened_by_our_accepted_advance_completes_the_dialogue() {
         );
         assert_eq!(snapshot.modals().main, ship_journey);
     }
+}
+
+fn spend_tick_interaction(tick: &mut crate::native::NativeTick<'_>) {
+    tick.cx
+        .emit(InteractReq::Npc {
+            name: "Earlier action".to_owned(),
+            action: "Talk-to".to_owned(),
+            index: None,
+        })
+        .unwrap();
+}
+
+fn dialogue_npc(distance: i32) -> api::snapshot::NpcView {
+    let tile = api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    };
+    api::snapshot::NpcView {
+        index: 7,
+        r#type: Some(0),
+        name: Some("Aubury".into()),
+        actions: vec![Some("Talk-to".into())],
+        tile,
+        distance,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 1,
+        total_health: 1,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+#[test]
+fn dialogue_continue_after_same_tick_talk_defers_and_retries() {
+    let mut before = snapshot();
+    before.seed_chat_modal(-1, vec![]);
+    before.seed_chat_options(vec![], -1);
+    let mut page = snapshot();
+    page.seed_chat_modal(100, vec!["Aubury has something to say.".into()]);
+    page.seed_chat_options(vec![], 101);
+    let mut ledger = None;
+    let (handle, same_tick) = with_tick_snapshots(&before, &page, &mut ledger, 1, |tick, page| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(page), tick.cx.evidence());
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(same_tick.is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+
+    assert!(with_tick(&page, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+}
+
+#[test]
+fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
+    let mut before = snapshot();
+    before.seed_chat_modal(-1, vec![]);
+    before.seed_chat_options(vec![], -1);
+    let mut page = snapshot();
+    page.seed_chat_modal(100, vec!["Would you like to buy a staff?".into()]);
+    page.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 101,
+            text: "Yes, please.".into(),
+        }],
+        -1,
+    );
+    let mut ledger = None;
+    let (handle, same_tick) = with_tick_snapshots(&before, &page, &mut ledger, 1, |tick, page| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(page), tick.cx.evidence());
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(same_tick.is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+
+    assert!(with_tick(&page, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Answer { option: 1 }
+    ));
+}
+
+#[test]
+fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc(5)]);
+    let mut after = snapshot();
+    after.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    after.seed_npcs(vec![dialogue_npc(1)]);
+    let mut ledger = None;
+    let (handle, same_tick) =
+        with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
+            let handle = tick
+                .actions
+                .begin::<Dialogue>(npc_args(), &mut tick.cx)
+                .unwrap();
+            tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(after), tick.cx.evidence());
+            let result = tick.actions.poll(&handle, &mut tick.cx);
+            (handle, result)
+        });
+    assert!(same_tick.is_pending());
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Npc { .. })
+        )
+    }));
+
+    assert!(with_tick(&after, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Npc { index: Some(7), .. }
+    ));
+}
+
+#[test]
+fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {
+    let ids = dialogue_ui();
+    for book in [false, true] {
+        let mut snapshot = snapshot();
+        if book {
+            snapshot.seed_main_modal(ids.book_root, book_page(ids, "Page one", true));
+        } else {
+            snapshot.seed_main_modal(ids.scroll_root, vec![]);
+        }
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+                .unwrap();
+            spend_tick_interaction(tick);
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        if book {
+            assert!(matches!(
+                last_interaction(&ledger),
+                InteractReq::IfButton { component_id } if *component_id == ids.book_forward
+            ));
+        } else {
+            assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+        }
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    }
+}
+
+#[test]
+fn dialogue_gap_rearms_share_one_per_tick_marker_across_evidence_and_animation() {
+    let mut snapshot = snapshot();
+    snapshot.seed_chat_modal(100, vec!["Still working.".into()]);
+    snapshot.seed_chat_options(vec![], -1);
+    let player_at = |x, z, animation| {
+        let mut player = super::tests::local_player(api::WorldTile { x, z, level: 0 });
+        player.player.actor.animation = animation;
+        player
+    };
+    snapshot.seed_local_player(player_at(5, 5, -1));
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    snapshot.seed_inventory(
+        vec![api::snapshot::ItemView {
+            def: super::tests::def(1, "Token"),
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_local_player(player_at(6, 5, -1));
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "The mechanism turns.".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_local_player(player_at(7, 5, -1));
+    assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    snapshot.seed_local_player(player_at(7, 5, 898));
+    assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_inventory(
+        vec![api::snapshot::ItemView {
+            def: super::tests::def(1, "Token"),
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot: 0,
+            count: 2,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&snapshot, &mut ledger, 15, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 19, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
 }
