@@ -241,66 +241,65 @@
           }
         },
         {
-          "id": "buy-redberries",
-          "kind": "buy",
+          "id": "withdraw-redberries-from-bank",
+          "kind": "bank",
           "version": 1,
-          "args": {
-            "shop": {
-              "npc": "wydin",
-              "anchor": {
-                "tile": [
-                  3015,
-                  3204,
-                  0
-                ],
-                "source": "C maps/m47_50.jm2:10005 (wydin spawn 3014,3204; shop floor tile east of him); areas/area_port_sarim/configs/port_sarim.inv:105-121 (wydinstore stock1 pot_flour, stock6 redberries); port_sarim.npc:155-185 (op3=Trade)"
-              }
-            },
-            "obj": "redberries",
-            "qty": 1,
-            "est_gp": 20
-          },
-          "comment": "Wydin stocks one redberries at a time (port_sarim.inv:118); on a burnt-pie retry the restock may need a short wait.",
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberries", "qty": 1 }], "partial_ok": true },
           "skip_if": {
             "Any": [
-              {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "redberries"
-                  }
-                }
-              },
-              {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "uncooked_redberry_pie"
-                  }
-                }
-              },
-              {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "redberry_pie"
-                  }
-                }
-              }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "redberries" } } } }
             ]
           },
-          "settle": {
-            "Fact": {
-              "kind": "has_item",
-              "version": 1,
-              "args": {
-                "obj": "redberries"
-              }
-            }
-          }
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
+        },
+        {
+          "id": "walk-to-redberry-patch",
+          "kind": "walk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "tile": [3271, 3366, 0],
+            "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164 (redberry spawn at [3271,3366,0])",
+            "radius": 3
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 3 } } }
+        },
+        {
+          "id": "take-redberries-from-patch",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "redberries" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3271, 3366, 0],
+              "source": "content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:71-73,162-164"
+            },
+            "radius": 12,
+            "wait_if_missing": true,
+            "until": { "obj": "redberries", "qty": 1 },
+            "settle_ms": 300000
+          },
+          "comment": "Gobdip's source: three static redberry spawns that respawn on the default 100-tick timer, so each burnt-pie retry (redberry pie burns about half the time at Cooking 10, cooking_generic.dbrow:201-208) costs time instead of draining Wydin's one-stock shop (port_sarim.inv:118), which failed at once with 'shop lacks requested item'. Sources: content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:160-175.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
         },
         {
           "id": "buy-bucket",
@@ -1876,7 +1875,7 @@
             ],
             "partial_ok": true
           },
-          "comment": "Flour, redberries and a bucket are bought (about 20 coins); the float also covers restocked purchases after a burnt pie.",
+          "comment": "Flour and a bucket are bought (about 20 coins; redberries come from the Varrock ground spawns); the float also covers restocked purchases after a burnt pie.",
           "skip_if": {
             "Any": [
               {

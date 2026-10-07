@@ -1,5 +1,4 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
-use super::bank_memo::BankMemo;
 use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
     StepOutcome, StepRun, StepTraceEvent,
@@ -43,28 +42,16 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
+const JOURNAL_RETRY_LIMIT_MODAL_TIMEOUT: &str =
+    "journal read retry limit reached (journal modal repeatedly timed out)";
 
-// Reports a newly published bank receipt. Unchanged stamps avoid receipt inspection.
-fn publish_in_flight_bank_receipt(
-    outcome: &StepOutcome,
-    bank: &mut BankMemo,
-    published_bank_receipt: &mut Option<EvidenceStamp>,
-    dirty: &mut bool,
-) -> bool {
-    if *published_bank_receipt == Some(outcome.evidence) {
-        return false;
-    }
-    let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
-        receipt
-            .as_any()
-            .downcast_ref::<crate::native_bank::BankReceipt>()
-    }) else {
-        return false;
-    };
-    bank.update(receipt);
-    *published_bank_receipt = Some(outcome.evidence);
-    *dirty = true;
-    true
+/// Whether the frame's bank memory is known (`Hint` or `Session`): the gate
+/// for a predicate scan — an `Unknown` bank is the only one a trip can teach.
+fn bank_known(tick: &NativeTick<'_>) -> bool {
+    tick.cx
+        .snapshot()
+        .bank_memory()
+        .is_some_and(api::bank_memory::BankMemory::known)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,22 +230,24 @@ pub struct Quester {
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
     custom_reader: Option<Box<dyn StepRun>>,
-    custom_read_after: Option<api::quest_progress::EvidenceStamp>,
+    custom_read_after: Option<EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
     pair_admission_since: Option<Duration>,
     pair_begin_since: Option<Duration>,
     pair_admitted: bool,
     gang_reader: super::gang::GangRead,
-    bank: BankMemo,
     last_read: Option<Arc<JournalRead>>,
     journal_text: Option<Arc<str>>,
     read_requested: bool,
     selection_since: Option<Duration>,
     seq_index: usize,
     step_index: usize,
+    /// Resume index for an `Ordered` sequence: past the last settled step,
+    /// held on a failed one, zero after a restart or a sequence change.
+    cursor: usize,
     step: Option<Box<dyn StepRun>>,
     /// Freshness boundary for the active step; overwritten at each successful begin.
-    step_after: api::quest_progress::EvidenceStamp,
+    step_after: EvidenceStamp,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
     trace: RunTrace,
     parked_step: Option<ParkedStep>,
@@ -266,7 +255,6 @@ pub struct Quester {
     prayer_cleanup_pending: bool,
     prayer_cleanup_owned: RaisedPrayers,
     last_outcome: Option<StepOutcome>,
-    published_bank_receipt: Option<EvidenceStamp>,
     /// Latest Combat family receipt, kept after later non-combat steps begin
     /// so Path `combat_end` skip_if can still select the caller walk-out
     /// (design-combat.md:664).
@@ -569,13 +557,13 @@ impl Quester {
             pair_begin_since: None,
             pair_admitted: false,
             gang_reader: super::gang::GangRead::default(),
-            bank: BankMemo::default(),
             last_read: None,
             journal_text: None,
             read_requested: false,
             selection_since: None,
             seq_index: 0,
             step_index: 0,
+            cursor: 0,
             step: None,
             step_after: api::quest_progress::EvidenceStamp {
                 run,
@@ -586,7 +574,6 @@ impl Quester {
             prayer_cleanup_pending: false,
             prayer_cleanup_owned: RaisedPrayers::empty(),
             last_outcome: None,
-            published_bank_receipt: None,
             last_combat: None,
             published_receipt: None,
             advances: false,
@@ -744,7 +731,6 @@ impl Quester {
                 .map(std::slice::from_ref)
                 .unwrap_or(&[]),
             required_after,
-            bank: &self.bank,
             banks: &self.banks,
             choices: &self.choices,
         };
@@ -784,14 +770,6 @@ impl Quester {
         self.dirty |= self.provisioner.status_revision() != revision;
         match result {
             Poll::Pending => {
-                if let Some(outcome) = self.provisioner.in_flight_outcome() {
-                    publish_in_flight_bank_receipt(
-                        outcome,
-                        &mut self.bank,
-                        &mut self.published_bank_receipt,
-                        &mut self.dirty,
-                    );
-                }
                 if self.provisioner.needs_progress_read() {
                     self.needs_read = true;
                     self.dirty = true;
@@ -799,8 +777,10 @@ impl Quester {
                 false
             }
             Poll::Ready(Ok(ProvisionEvent::Ready)) => true,
-            Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt))) => {
-                self.bank.update(&receipt);
+            Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {
+                // The open table reached the account's bank memory through the
+                // host's per-frame observe (design-bank-snapshot §1.3); the
+                // step only needs to know its scan is over.
                 if let Some(step) = self.step.as_mut() {
                     step.bank_scan_completed();
                 }
@@ -808,9 +788,7 @@ impl Quester {
                 false
             }
             Poll::Ready(Ok(ProvisionEvent::Acquired)) => {
-                self.published_bank_receipt = None;
                 // Inventory changes outside the bank do not change its stock.
-                // Recipe bank operations already publish their own receipts.
                 self.dirty = true;
                 false
             }
@@ -833,7 +811,6 @@ impl Quester {
                 // policy too; it must not turn one transient family refusal into
                 // an immediate parked quest.
                 self.provisioner.cancel();
-                self.published_bank_receipt = None;
                 self.record_step_failure(error, tick);
                 false
             }
@@ -852,7 +829,6 @@ impl Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]),
                 required_after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -868,7 +844,6 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
-        self.published_bank_receipt = None;
         self.trace.flush_repeats(tick.output);
         self.trace.terminal(
             tick.output,
@@ -1401,7 +1376,6 @@ impl Quester {
         self.provisioner.cancel();
         self.clear_prayers = None;
         self.last_outcome = None;
-        self.published_bank_receipt = None;
         self.journal = None;
         self.custom_reader = None;
         self.custom_read_after = None;
@@ -1428,6 +1402,23 @@ impl Quester {
                 .steps
                 .get(self.step_index)
         }
+    }
+
+    /// Re-targets the sequence after a settle outcome. The ordered cursor moves
+    /// past a settled sequence step, holds on a failed one, and starts over
+    /// when the stage now names another sequence.
+    fn retarget_after_settle(&mut self, settled: bool) {
+        let Some(stage) = self.stage.as_ref() else {
+            return;
+        };
+        let sequence = sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
+        if sequence != self.seq_index {
+            self.cursor = 0;
+        } else if settled && !self.in_prelude {
+            self.cursor = self.step_index + 1;
+        }
+        self.seq_index = sequence;
+        self.step_index = 0;
     }
 
     fn wait_for_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
@@ -1513,6 +1504,15 @@ impl Quester {
                                 tick,
                                 "journal ownership repeatedly lost",
                                 JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST,
+                            );
+                        }
+                        ActionError::Failed(reason)
+                            if reason.as_ref() == "journal modal timeout" =>
+                        {
+                            return self.retry_journal_read(
+                                tick,
+                                "journal modal repeatedly timed out",
+                                JOURNAL_RETRY_LIMIT_MODAL_TIMEOUT,
                             );
                         }
                         error => {
@@ -1629,6 +1629,15 @@ impl Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
+        if self.progress.is_none() {
+            // Progress is dropped on every restart (Start, Resume, session
+            // change, death, an unpaired random event), so the first adoption
+            // after a drop replays an ordered sequence from its first step.
+            // The reset precedes storing the read: an Unknown or Partial first
+            // read must not spend it, or the Known read that follows would
+            // resume at the stale cursor.
+            self.cursor = 0;
+        }
         self.progress = Some(progress);
         self.dirty = true;
         let sequence = stage
@@ -1661,6 +1670,11 @@ impl Quester {
             self.empty_reads = 0;
         }
         if retarget {
+            // A same-stage re-read keeps the cursor; another sequence starts
+            // at its top.
+            if self.seq_index != sequence {
+                self.cursor = 0;
+            }
             self.seq_index = sequence;
             self.step_index = 0;
             self.in_prelude = false;
@@ -1719,7 +1733,6 @@ impl Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -1753,7 +1766,6 @@ impl Quester {
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after: after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -1877,7 +1889,6 @@ impl Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after: after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -1900,7 +1911,6 @@ impl Quester {
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after: after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -1969,6 +1979,31 @@ impl Quester {
             WatchdogAction::Park
         ) {
             self.parked = true;
+            self.dirty = true;
+        }
+    }
+
+    /// An explicit read request, or a quest-list colour that contradicts the
+    /// held stage, rereads progress before the next selection.
+    fn request_contradicted_read(&mut self, tick: &NativeTick<'_>) {
+        let contradicted =
+            quest_colour(&self.path, &self.quests, tick.cx.snapshot()).is_some_and(|colour| {
+                match colour {
+                    QuestListStatus::Complete => {
+                        self.stage.as_ref() != Some(&self.path.colour_complete)
+                    }
+                    QuestListStatus::NotStarted => {
+                        self.stage.as_ref() != Some(&self.path.colour_not_started)
+                    }
+                    QuestListStatus::InProgress => self.stage.as_ref().is_some_and(|stage| {
+                        stage == &self.path.colour_not_started
+                            || stage == &self.path.colour_complete
+                    }),
+                    QuestListStatus::Unknown => false,
+                }
+            });
+        if self.read_requested || contradicted {
+            self.needs_read = true;
             self.dirty = true;
         }
     }
@@ -2129,24 +2164,7 @@ impl Script for Quester {
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if self.step.is_none() && !self.settling && !self.needs_read {
-            let contradicted = quest_colour(&self.path, &self.quests, tick.cx.snapshot())
-                .is_some_and(|colour| match colour {
-                    QuestListStatus::Complete => {
-                        self.stage.as_ref() != Some(&self.path.colour_complete)
-                    }
-                    QuestListStatus::NotStarted => {
-                        self.stage.as_ref() != Some(&self.path.colour_not_started)
-                    }
-                    QuestListStatus::InProgress => self.stage.as_ref().is_some_and(|stage| {
-                        stage == &self.path.colour_not_started
-                            || stage == &self.path.colour_complete
-                    }),
-                    QuestListStatus::Unknown => false,
-                });
-            if self.read_requested || contradicted {
-                self.needs_read = true;
-                self.dirty = true;
-            }
+            self.request_contradicted_read(tick);
         }
         if self.needs_read {
             let retarget =
@@ -2174,6 +2192,7 @@ impl Script for Quester {
             return Ok(ScriptFlow::Continue);
         }
         if self.settling {
+            let mut select_now = false;
             let truth = {
                 let pred = PredicateContext {
                     cx: &tick.cx,
@@ -2183,7 +2202,6 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
                     outcome: self.last_outcome.as_ref(),
-                    bank: &self.bank,
                 };
                 self.current_step()
                     .map(|step| step.settle.evaluate(&pred))
@@ -2216,12 +2234,19 @@ impl Script for Quester {
                 self.settling = false;
                 self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
-                if let Some(stage) = self.stage.as_ref() {
-                    self.seq_index =
-                        sequence_for_stage(&self.path, stage.0.as_ref()).unwrap_or(self.seq_index);
-                    self.step_index = 0;
-                }
+                self.retarget_after_settle(true);
                 self.on_step_boundary(tick);
+                // Select on the snapshot that proved the settle instead of a
+                // tick later. Anything the next tick's prologue would do first
+                // (park, prayer cleanup, a reread) keeps the old order, and a
+                // tick whose single interaction event is spent waits.
+                if !self.parked && !self.prayer_cleanup_pending {
+                    self.request_contradicted_read(tick);
+                }
+                select_now = !self.parked
+                    && !self.prayer_cleanup_pending
+                    && !self.needs_read
+                    && !tick.cx.interaction_event_spent();
             } else {
                 if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
@@ -2264,24 +2289,31 @@ impl Script for Quester {
                     if self.parked {
                         self.parked_step = failed_step;
                     }
-                    if let Some(stage) = self.stage.as_ref() {
-                        self.seq_index =
-                            sequence_for_stage(&self.path, &stage.0).unwrap_or(self.seq_index);
-                        self.step_index = 0;
-                    }
+                    self.retarget_after_settle(false);
                 }
             }
-            self.publish(tick.output);
-            return Ok(ScriptFlow::Continue);
+            if !select_now {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
+            if self
+                .path
+                .sequences
+                .get(self.seq_index)
+                .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
+            {
+                return Ok(self.finish_quest(tick));
+            }
         }
         if self.step.is_none() {
             if !self.poll_provision(tick) {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
-            let selected = {
+            let (selected, skipped_to) = {
                 let path = &self.path;
                 let seq_index = self.seq_index;
+                let cursor = self.cursor;
                 let quests = &self.quests;
                 let progress = self
                     .progress
@@ -2289,7 +2321,6 @@ impl Script for Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]);
                 let outcome = self.last_combat.as_ref().or(self.last_outcome.as_ref());
-                let bank = &self.bank;
                 let stage = self
                     .stage
                     .as_ref()
@@ -2304,9 +2335,8 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
                     outcome,
-                    bank,
                 };
-                match select_with_skips(path, seq_index, &pred, |step| {
+                match select_with_skips(path, seq_index, cursor, &pred, |step| {
                     trace.record(
                         output,
                         api::hostlog::Level::Info,
@@ -2316,19 +2346,34 @@ impl Script for Quester {
                         ),
                     );
                 }) {
-                    SelectionDecision::Selected(sel) => {
-                        Ok(Some((sel.index, sel.step.advances, sel.prelude)))
-                    }
-                    SelectionDecision::Exhausted => Ok(None),
-                    SelectionDecision::Unknown(sel) => Err((
-                        sel.index,
-                        sel.prelude,
-                        Arc::clone(&sel.step.id.0),
-                        Arc::clone(&sel.step.skip_if_summary),
-                        sel.step.skip_if.requires_bank(),
-                    )),
+                    SelectionDecision::Selected(sel) => (
+                        Ok(Some((sel.index, sel.step.advances, sel.prelude))),
+                        (!sel.prelude).then_some(sel.index),
+                    ),
+                    SelectionDecision::Exhausted => (
+                        Ok(None),
+                        path.sequences.get(seq_index).map(|seq| seq.steps.len()),
+                    ),
+                    SelectionDecision::Unknown(sel) => (
+                        Err((
+                            sel.index,
+                            sel.prelude,
+                            Arc::clone(&sel.step.id.0),
+                            Arc::clone(&sel.step.skip_if_summary),
+                            sel.step.skip_if.requires_bank(),
+                        )),
+                        (!sel.prelude).then_some(sel.index),
+                    ),
                 }
             };
+            // Every sequence step the selector passed over had a proven-true
+            // skip_if, so those skips commit to the ordered cursor whether the
+            // selection then started a step, blocked on Unknown evidence, or
+            // ran out of steps: a skipped prefix never re-runs without a
+            // reset. Prelude skips never move it.
+            if let Some(cursor) = skipped_to {
+                self.cursor = cursor;
+            }
             let selected = match selected {
                 Ok(selected) => selected,
                 Err((index, prelude, id, predicate, requires_bank)) => {
@@ -2344,7 +2389,7 @@ impl Script for Quester {
                             self.path.id.0
                         ),
                     );
-                    if requires_bank && !self.bank.known() {
+                    if requires_bank && !bank_known(tick) {
                         self.start_predicate_bank_scan(tick);
                         self.selection_since = None;
                         self.publish(tick.output);
@@ -2379,6 +2424,25 @@ impl Script for Quester {
                     .is_some_and(|seq| seq.terminal)
                 {
                     return Ok(self.finish_quest(tick));
+                }
+                if self
+                    .path
+                    .sequences
+                    .get(self.seq_index)
+                    .is_some_and(|seq| seq.order == super::path::SequenceOrder::Ordered)
+                {
+                    let stage = self
+                        .stage
+                        .as_ref()
+                        .map_or("unknown", |stage| stage.0.as_ref());
+                    self.trace.record(
+                        tick.output,
+                        api::hostlog::Level::Info,
+                        format_args!(
+                            "quester {}: stage {stage} ordered sequence has no step left at cursor {}; rereading progress",
+                            self.path.id.0, self.cursor
+                        ),
+                    );
                 }
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
@@ -2442,7 +2506,6 @@ impl Script for Quester {
                     quests: &self.quests,
                     progress: self.progress_slice(),
                     required_after,
-                    bank: &self.bank,
                     banks: &self.banks,
                     choices: &self.choices,
                 };
@@ -2495,8 +2558,9 @@ impl Script for Quester {
         let bank_scan_active = self.provisioner.bank_phase().is_some();
         let bank_scan_status =
             self.step.is_some() && self.provisioner.status().phase == ProvisionPhase::Scanning;
-        if (needs_bank_scan && !self.bank.known()) || bank_scan_active || bank_scan_status {
-            if needs_bank_scan && !self.bank.known() && !bank_scan_active {
+        let bank_known = bank_known(tick);
+        if (needs_bank_scan && !bank_known) || bank_scan_active || bank_scan_status {
+            if needs_bank_scan && !bank_known && !bank_scan_active {
                 self.start_predicate_bank_scan(tick);
             }
             if !self.poll_provision(tick) {
@@ -2515,7 +2579,6 @@ impl Script for Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]),
                 required_after,
-                bank: &self.bank,
                 banks: &self.banks,
                 choices: &self.choices,
             };
@@ -2533,22 +2596,6 @@ impl Script for Quester {
         }
         match poll {
             Poll::Pending => {
-                if let Some(outcome) = self.step.as_ref().and_then(|step| step.in_flight_outcome())
-                {
-                    let carries_bank_receipt = publish_in_flight_bank_receipt(
-                        outcome,
-                        &mut self.bank,
-                        &mut self.published_bank_receipt,
-                        &mut self.dirty,
-                    );
-                    if carries_bank_receipt {
-                        self.last_outcome = Some(StepOutcome {
-                            progress: outcome.progress.clone(),
-                            evidence: outcome.evidence,
-                            receipt: outcome.receipt.clone(),
-                        });
-                    }
-                }
                 if self
                     .step
                     .as_ref()
@@ -2572,13 +2619,8 @@ impl Script for Quester {
                 if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
                     self.active_loadout = Some(loadout);
                 }
-                if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
-                    receipt
-                        .as_any()
-                        .downcast_ref::<crate::native_bank::BankReceipt>()
-                }) {
-                    self.bank.update(receipt);
-                }
+                // The bank's rows are the host's to observe (design-bank-snapshot
+                // §1.3); a bank receipt carries nothing the memory lacks.
                 if outcome.receipt.as_ref().is_some_and(|receipt| {
                     receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
                 }) {
@@ -2722,7 +2764,6 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
-                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.settling = false;
@@ -2741,7 +2782,6 @@ impl Script for Quester {
                 self.step = None;
                 self.provisioner.cancel();
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
-                self.published_bank_receipt = None;
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
@@ -2762,6 +2802,11 @@ impl Script for Quester {
         self.custom_reader = None;
         self.custom_read_after = None;
         self.gang_reader.cancel();
+        // Dropping progress makes the next adoption fresh, which replays an
+        // ordered sequence from step 1. While paired work is pending (partner
+        // admission, a partner begin, or an active partner step) the
+        // progress, step and ordered cursor are kept instead: replaying a
+        // partnered sequence mid-pairing would desync the partners.
         if !preserve_pair_work {
             self.pair_admission = None;
             self.pair_admission_since = None;
@@ -2772,7 +2817,6 @@ impl Script for Quester {
             self.clear_prayers = None;
             self.journal = None;
             self.needs_read = true;
-            self.published_bank_receipt = None;
             self.last_outcome = None;
             self.last_combat = None;
             self.advances = false;
@@ -2807,7 +2851,6 @@ impl Script for Quester {
         self.waiting = None;
         self.clear_prayers = None;
         self.prayer_cleanup_pending = false;
-        self.published_bank_receipt = None;
         self.last_outcome = None;
         self.last_combat = None;
     }
@@ -3086,12 +3129,7 @@ impl QueuedQuester {
 
     fn activate(&mut self, tick: &mut NativeTick<'_>, path: Arc<CompiledPath>) {
         let index = self.active_index.expect("preparing queue row");
-        let result = super::eligibility::evaluate(
-            &path,
-            &tick.cx.snapshot(),
-            &self.quests,
-            &BankMemo::default(),
-        );
+        let result = super::eligibility::evaluate(&path, &tick.cx.snapshot(), &self.quests);
         self.gate_fields = skill_status_fields(&result.skill_gates);
         match result.state {
             super::eligibility::Eligibility::Done => self.queue.mark_done(index),
@@ -3530,14 +3568,14 @@ mod tests {
         );
     }
 
+    /// The Quester holds no bank table of its own (design-bank-snapshot D8):
+    /// the account's memory is the host's and reaches it as a borrow.
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        let bank_bytes = std::mem::size_of::<BankMemo>();
         assert!(std::mem::size_of::<QueuedQuester>() < 4096);
-        eprintln!("Quester size_of={bytes}; BankMemo size_of={bank_bytes}, heap=0");
+        eprintln!("Quester size_of={bytes}; bank memory borrowed, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
-        assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
     #[test]
     fn combat_report_is_exposed_in_quester_status() {
@@ -3797,7 +3835,6 @@ mod tests {
                     quests: &script.quests,
                     progress: &[],
                     required_after,
-                    bank: &script.bank,
                     banks: &script.banks,
                     choices: &script.choices,
                 };
@@ -3851,6 +3888,9 @@ mod tests {
             end: WalkEnd::Arrived,
             blocked: None,
             detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         });
         assert!(matches!(
             super::super::families::tests::with_tick_output(
@@ -3964,6 +4004,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn settled_step_selects_and_begins_the_next_step_on_the_same_tick() {
+        use super::super::families::tests::with_tick;
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "wait".into();
+        step.args = serde_json::json!({"until":{"All":[]},"max_ticks": 10});
+        step.advances = Some(false);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut s = GameSnapshot::new();
+        s.seed_ingame(2);
+        s.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut tick = 5000;
+        while !script.settling {
+            assert!(tick < 5010, "the wait step must complete");
+            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+            tick += 1;
+        }
+        assert!(script.step.is_none());
+        with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+        assert!(!script.settling, "the always-true settle passes");
+        assert!(
+            script.step.is_some(),
+            "selection and begin run on the settle tick, not one tick later"
+        );
+    }
+
     pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
@@ -3990,7 +4082,7 @@ mod tests {
             s,
         )
     }
-    fn status_fixture(
+    pub(super) fn status_fixture(
         mut document: super::super::path::PathDocument,
     ) -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5360,7 +5452,9 @@ mod tests {
         script: Quester,
         snapshot: api::snapshot::GameSnapshot,
         ledger: Option<Box<crate::native::ledger::Ledger>>,
-        bank: api::named_banks::NamedBank,
+        /// The account's bank memory, filled the way the host fills it.
+        bank: api::bank_memory::BankMemory,
+        bank_fixture: api::named_banks::NamedBank,
         bank_tile: api::snapshot::WorldTile,
         stock: Vec<api::snapshot::ItemView>,
         selected_bank: bool,
@@ -5369,8 +5463,11 @@ mod tests {
 
     impl BankSkipFixture {
         fn drive(&mut self, tick: u64, output: &mut dyn NativeOutput) -> ScriptFlow {
-            let flow = super::super::families::tests::with_tick_output(
+            // The host's per-frame observe (design-bank-snapshot §1.3).
+            self.bank.track(&self.snapshot, tick);
+            let flow = super::super::families::tests::with_tick_output_bank(
                 &self.snapshot,
+                Some(&self.bank),
                 &mut self.ledger,
                 tick,
                 output,
@@ -5408,7 +5505,7 @@ mod tests {
                             access_tile: self.bank_tile,
                             kind: crate::bank::PickKind::Reachable,
                             access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank,
+                                bank: self.bank_fixture,
                                 stand_tile: self.bank_tile,
                                 kind: crate::bank::AccessKind::Booth,
                                 stand_op: 1,
@@ -5556,7 +5653,8 @@ mod tests {
             script,
             snapshot,
             ledger: None,
-            bank,
+            bank: api::bank_memory::BankMemory::default(),
+            bank_fixture: bank,
             bank_tile,
             stock,
             selected_bank: false,
@@ -5572,7 +5670,7 @@ mod tests {
         ] {
             let mut fixture = bank_skip_fixture(bank_count, false);
             let mut output = StatusCapture::default();
-            assert!(!fixture.script.bank.known());
+            assert!(!fixture.bank.known());
 
             fixture.drive(1, &mut output);
             assert_eq!(
@@ -5588,7 +5686,7 @@ mod tests {
 
             for tick in 2..=64 {
                 fixture.drive(tick, &mut output);
-                if fixture.script.bank.known() && fixture.script.step.is_some() {
+                if fixture.bank.known() && fixture.script.step.is_some() {
                     break;
                 }
             }
@@ -5598,9 +5696,12 @@ mod tests {
                 fixture.opened_bank,
                 "the real scan opens the selected stand"
             );
-            assert!(fixture.script.bank.known(), "the scan publishes a receipt");
+            assert!(
+                fixture.bank.known(),
+                "the scan opens the bank and the host observes it"
+            );
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
-            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(fixture.bank.count(logs_id), Some(bank_count));
             assert_eq!(
                 fixture.script.current_step().map(|step| step.id.0.as_ref()),
                 Some(expected_step),
@@ -5635,9 +5736,7 @@ mod tests {
             for tick in 4..=64 {
                 fixture.drive(tick, &mut output);
                 let status = output.0.last().unwrap();
-                if fixture.script.bank.known()
-                    && status_text(status, "child_step_id") == expected_step
-                {
+                if fixture.bank.known() && status_text(status, "child_step_id") == expected_step {
                     break;
                 }
             }
@@ -5647,12 +5746,9 @@ mod tests {
                 fixture.opened_bank,
                 "the child scan opens the selected stand"
             );
-            assert!(
-                fixture.script.bank.known(),
-                "the child scan publishes a receipt"
-            );
+            assert!(fixture.bank.known(), "the child scan observes the bank");
             let logs_id = fixture.script.selected.item_by_alias("logs").unwrap().id;
-            assert_eq!(fixture.script.bank.count(logs_id), Some(bank_count));
+            assert_eq!(fixture.bank.count(logs_id), Some(bank_count));
             assert_eq!(
                 status_text(output.0.last().unwrap(), "child_step_id"),
                 expected_step,
@@ -5727,3 +5823,11 @@ mod cook_bank_tests;
 #[cfg(test)]
 #[path = "cook_dialogue_runner_tests.rs"]
 mod cook_dialogue_tests;
+
+#[cfg(test)]
+#[path = "ordered_runner_tests.rs"]
+mod ordered_tests;
+
+#[cfg(test)]
+#[path = "squire_bank_runner_tests.rs"]
+mod squire_bank_tests;

@@ -1001,6 +1001,7 @@ fn puzzle_move_refuses_closed_stale_and_forged_shapes() {
             &navs_for_test(),
             &None,
             None,
+            None,
             "alice",
             vec![req],
             Some(Arc::clone(&cache)),

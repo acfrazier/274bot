@@ -1453,7 +1453,12 @@ fn same_name_lifetime_resets_but_scene_change_and_guardian_hold_preserve_work() 
         &travellers,
         &latch
     ));
-    assert!(!WalkArm::may_follow(true));
+    assert!(!frontend_core::walk_permissions::manual_walk_may_follow(
+        true, false
+    ));
+    assert!(!frontend_core::walk_permissions::manual_walk_may_follow(
+        false, true
+    ));
     assert!(travellers.lock().unwrap().contains_key("alice"));
     assert!(latch.lock().unwrap().contains_key("alice"));
 
@@ -2596,6 +2601,18 @@ fn walk_status_is_dash_when_no_route() {
 #[test]
 fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     let mut session = Session::new();
+    assert_eq!(
+        session.ui.nav.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert_eq!(
+        session.ui.nav.walk_globals().effective_danger_level(),
+        frontend_core::DangerLevel::Never
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::danger_routing_label(session.ui.nav.danger_level()),
+        "When survivable (not available yet: acts as Never)"
+    );
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     session.route_through_zones = true;
     assert!(session.walk_find_options().zones.is_all());

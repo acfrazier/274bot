@@ -1651,7 +1651,7 @@
                   "thshantaydisc"
                 ]
               },
-              "comment": "Deposits anything the exclusive loadout pulled off the player, so stripped armour never rides into the camp. Skipped when the bank is still unknown (nothing was stripped yet).",
+              "comment": "Deposits anything the exclusive loadout pulled off the player, so stripped armour never rides into the camp. Skipped when the bank is still unknown (nothing was stripped yet) and once the pack holds only the keep list: selection restarts at step 0 after every settled boundary, so an unconditional sweep would rerun with nothing to deposit until the watchdog parks it.",
               "skip_if": {
                 "Any": [
                   {
@@ -1683,6 +1683,32 @@
                           "desertrescue:18",
                           "desertrescue:19",
                           "desertrescue:27"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "pack_only",
+                      "version": 1,
+                      "args": {
+                        "objs": [
+                          "coins",
+                          "shantay_pass",
+                          "desert_shirt",
+                          "desert_robe",
+                          "desert_boots",
+                          "water_skin4",
+                          "water_skin3",
+                          "water_skin2",
+                          "water_skin1",
+                          "water_skin0",
+                          "bronze_bar",
+                          "feather",
+                          "hammer",
+                          "rune_scimitar",
+                          "lobster",
+                          "thshantaydisc"
                         ]
                       }
                     }

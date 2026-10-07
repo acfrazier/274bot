@@ -2295,6 +2295,14 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None => kv_row(ui, "status", status),
         }
     }
+    if let Some(reason) = session
+        .core
+        .fleet_view()
+        .detail()
+        .and_then(|detail| detail.walk_risk.as_deref())
+    {
+        kv_row(ui, "Walk risk", reason);
+    }
 }
 
 fn category_key(cat: &str) -> [u8; 32] {
@@ -2988,17 +2996,30 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             );
             ui.same_line();
             ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
-            if ui.checkbox(
-                frontend_core::DANGER_THIS_WALK_LABEL,
-                &mut nav.allow_danger_zones,
-            ) {
+            let danger_level = nav.danger_level();
+            let danger_label = format!(
+                "{}: {}",
+                frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
+                frontend_core::walk_permissions::danger_routing_label(danger_level)
+            );
+            if ui.button(&danger_label) {
+                nav.set_danger_level(danger_level.next());
                 changed = true;
             }
-            ui.set_item_tooltip(
-                "Allows routes past monsters that may kill your bot. Routing permission is independent of protected walking.",
-            );
+            ui.set_item_tooltip(match danger_level {
+                frontend_core::DangerLevel::Never => {
+                    "Danger-zone routes are refused unless this walk or its script overrides."
+                }
+                frontend_core::DangerLevel::WhenSurvivable => {
+                    frontend_core::walk_permissions::survivable_routing_tooltip()
+                }
+                frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
+            });
             ui.same_line();
             ui.text_disabled(frontend_core::GLOBAL_PERMISSION_SCOPE);
+            if danger_level == frontend_core::DangerLevel::Always {
+                ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
+            }
             if !nav.script_scope_notice_ack {
                 ui.separator();
                 ui.text_wrapped(
@@ -3006,6 +3027,15 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 );
                 if ui.button("Dismiss walk permissions notice") {
                     nav.script_scope_notice_ack = true;
+                    changed = true;
+                }
+            }
+
+            if !nav.survivable_routing_notice_ack {
+                ui.separator();
+                ui.text_wrapped(frontend_core::walk_permissions::survivable_routing_notice());
+                if ui.button("Dismiss danger-routing notice") {
+                    nav.survivable_routing_notice_ack = true;
                     changed = true;
                 }
             }
@@ -3114,6 +3144,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 let after_permissions = frontend_core::WalkGlobalsView {
                     globals: session.ui.nav.walk_globals(),
                     script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
+                    survivable_routing_notice_ack: session.ui.nav.survivable_routing_notice_ack,
                 };
                 session.route_through_zones =
                     after_permissions.danger_this_walk(session.route_through_zones);
@@ -3889,6 +3920,9 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     }
     kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
     status_kv_row(ui, "walk", walk);
+    if let Some(reason) = d.manual_walk_risk.as_deref() {
+        status_kv_row(ui, "Walk risk", reason);
+    }
     let queue = d
         .row
         .queue

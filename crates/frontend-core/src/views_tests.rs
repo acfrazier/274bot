@@ -794,3 +794,105 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     );
     assert_eq!(script_status_label(RunState::Running, None), "running");
 }
+
+#[test]
+fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot() {
+    use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
+    let assessment = Arc::new(RouteAssessment {
+        verdict: Verdict::Unknown(UnknownWhy::Poison),
+        plan: Default::default(),
+        crossings: Box::new([]),
+        more: 0,
+        supplies: Box::new([]),
+        hp_after: 20,
+        volley: 0,
+        input: RiskInput::default(),
+        generation: 1,
+        reason: Arc::from("Route assessment unknown: Poison"),
+    });
+    let arm = Arc::new(Mutex::new(host_play::WalkArm {
+        assessment: Some(Arc::clone(&assessment)),
+        ..Default::default()
+    }));
+    let walks = Arc::new(Mutex::new(HashMap::from([(
+        "vr-alice".into(),
+        Arc::clone(&arm),
+    )])));
+    let mut session = fleet("walk-risk-retention", &["vr-alice", "vr-bob"], false);
+    session.set_walk_arms(walks);
+    session.select("vr-alice");
+    session.poll();
+    let generation = session.fleet_view().generation();
+    assert!(Arc::ptr_eq(
+        detail(&session).manual_walk_risk.as_ref().unwrap(),
+        &assessment.reason,
+    ));
+    {
+        let mut arm = arm.lock().unwrap();
+        arm.last_assessment = arm.assessment.take();
+        session.poll();
+        assert!(Arc::ptr_eq(
+            detail(&session).manual_walk_risk.as_ref().unwrap(),
+            &assessment.reason,
+        ));
+    }
+    session.poll();
+    assert_eq!(
+        session.fleet_view().generation(),
+        generation,
+        "retention reuses the same Arc"
+    );
+    let mut copy = SlotDetail::default();
+    copy.clone_from(detail(&session));
+    assert!(Arc::ptr_eq(
+        copy.manual_walk_risk.as_ref().unwrap(),
+        &assessment.reason
+    ));
+    session.select("vr-bob");
+    session.poll();
+    assert!(detail(&session).manual_walk_risk.is_none());
+    session.select("vr-alice");
+    session.poll();
+    assert_eq!(
+        detail(&session).manual_walk_risk.as_deref(),
+        Some(assessment.reason.as_ref())
+    );
+}
+
+#[test]
+fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
+    let reason: Arc<str> = Arc::from(
+        "NoRouteWithinBounds { tried: 0, last: None }; blocked by danger zones: Sentinel strip",
+    );
+    let walks = Arc::new(Mutex::new(HashMap::from([(
+        "vr-alice".into(),
+        Arc::new(Mutex::new(host_play::WalkArm {
+            refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
+                tried: 0,
+                last: None,
+            }),
+            refusal_detail: Some(Arc::clone(&reason)),
+            ..Default::default()
+        })),
+    )])));
+    let mut session = fleet("walk-refusal-retention", &["vr-alice", "vr-bob"], false);
+    session.set_walk_arms(walks);
+    session.select("vr-alice");
+    session.poll();
+    let generation = session.fleet_view().generation();
+    assert!(Arc::ptr_eq(
+        detail(&session).manual_walk_risk.as_ref().unwrap(),
+        &reason
+    ));
+    session.poll();
+    assert_eq!(session.fleet_view().generation(), generation);
+    session.select("vr-bob");
+    session.poll();
+    assert!(detail(&session).manual_walk_risk.is_none());
+    session.select("vr-alice");
+    session.poll();
+    assert_eq!(
+        detail(&session).manual_walk_risk.as_deref(),
+        Some(reason.as_ref())
+    );
+}

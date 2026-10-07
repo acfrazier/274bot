@@ -27,9 +27,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   strength is your choice. A first run of `tui-play` with no `--user` now
   stops with "vault has no profiles" instead of seeding a `test` profile;
   pass `--user NAME` to create the first one.
-- **Navigation packs.** The pack format is now v15; packs you baked yourself
-  with an earlier version, including earlier 0.2.0 builds, are refused with a
-  message to rebake them with `nav-pack`. The bundled pack is rebuilt for you.
+- **Navigation packs.** The pack format is now v16; packs you baked yourself
+  with 0.1.9.1 or earlier are refused with a message to rebake them with
+  `nav-pack`. The bundled pack is rebuilt for you.
 - **Local engines.** The bot no longer guesses where a local game engine is.
   Give it with `--engine`, the `ENGINE_DIR` environment variable, or the
   profile's `engine_dir` in `servers.json`; without one, a local profile stops
@@ -38,6 +38,92 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   Direct3D 12. On every platform the window now prefers the power-saving GPU.
   `WGPU_BACKEND` and `WGPU_POWER_PREF` override this (see FIRST-START);
   `WGPU_POWER_PREF=high` can make startup stall for minutes on some laptops.
+
+### Quester
+
+New in 0.2.0, for revision 289: a script that runs quests from built-in quest
+guides.
+
+- Built-in guides: Cook's Assistant, Sheep Shearer, Rune Mysteries,
+  Romeo & Juliet, Imp Catcher, Vampire Slayer, Doric's Quest, Goblin
+  Diplomacy, Witch's Potion, Prince Ali Rescue, Pirate's Treasure, Demon
+  Slayer, The Knight's Sword, Death Plateau, The Tourist Trap, Priest in
+  Peril and Clock Tower. A quest the server can't run (Haunted Mine) is
+  listed with the reason instead of being offered.
+- Pick quests, skips and priorities from lists. An empty list runs every
+  quest in the built-in order; priorities run first. Finished quests are
+  skipped, and a quest that can't run on this server stays visible with its
+  reason but can't be picked.
+- Before a quest starts, the Quester checks its requirements (members world,
+  quest points, levels, items and earlier quests) and names the one that
+  blocks it.
+- Missing supplies are fetched from the bank as part of the quest: it checks
+  what you carry first, keeps unrelated items and tools, and banks only what
+  it must to make room. Leftovers carry into the next quest.
+- Quests gather, make items, fight and pickpocket where the quest needs it,
+  using the same gathering, making and combat handling as the other scripts.
+- Progress is always read from the game's quest journal, so Stop and Start,
+  a dropped connection or a death pick up where the quest really is. After a
+  death the bot walks back where it can; how many deaths a run tolerates is a
+  setting (normally 2), counted across the whole queue.
+- The panel and the TUI say why a quest is waiting or stopped and what would
+  unblock it. A quest that stops making progress warns first, then stops
+  with the step it was on.
+- Per-account choices (for example the Family Crest gauntlet reward) stay
+  with each account. Each quest can also allow teleports, the Wilderness or
+  danger zones for its own walks when the global switches are off.
+- Custom quest guides can be loaded from a folder (Nav config), without
+  rebuilding. A guide that replaces a built-in one overrides it, new ones
+  appear as drafts, and a guide with a problem names the file, step and
+  reason. See `docs/quester-paths.md`.
+
+### Gatherer
+
+New in 0.2.0: woodcutting, mining and fishing as a native script.
+
+- Choose where to gather: a named place from the game map (for example
+  Catherby fishing or Varrock East mine), a start tile, a custom area, or
+  Auto, which searches outward for the nearest usable spots. Resources,
+  fishing methods (grouped by spot and tool) and food are picked from lists.
+- Bank mode banks the haul at the nearest bank it can walk to, keeping the
+  tools and food for the next trip, then walks back; you can also name a bank
+  to always use. Power mode drops the haul. Gems and other bonus finds are
+  banked or dropped with it.
+- If the bank is short on bait, food or runes, it takes what is there and
+  keeps working, and stops only when something essential is missing, saying
+  what.
+- When a rock, tree or fishing spot runs out it moves straight to the next
+  one, and waits for respawns when everything nearby is used up. It keeps
+  clear of hazards such as gas, ents and whirlpools.
+- A flown-off axe or pickaxe head is picked up and refitted; if it can't be
+  recovered, the bot fetches a replacement tool from the bank.
+- It recovers from deaths (normally up to two per run): it restocks, checks
+  its kit and walks back before carrying on. It also resumes cleanly after a
+  random event.
+
+### Combat
+
+- The Quester fights with melee, ranged weapons or magic. Magic picks the
+  strongest spell you can cast, or a fixed order you choose, and reuses an
+  autocast that is already set.
+- In native fights, prayers you turned on yourself stay on. When a fight ends
+  or you stop the script, only the prayers the bot switched on are turned off.
+  Protection prayers follow each attacker's actual attack style, and potion
+  sips and eating follow one shared rule.
+- Hunts run from compatible scripts use the same protection prayers, food and
+  potion rules as native fights, including dragonfire shields with a
+  confirmed antifire sip.
+- Loot that can't be reached is skipped instead of getting the bot stuck, and
+  a target that turns out not to be attackable makes the bot walk out and say
+  why.
+
+### Clues
+
+- Clue guardian and key-keeper fights use the full combat rules: protection
+  matched to the attacker, food and potion sips, and the kill confirmed
+  before moving on.
+- Dying mid-clue ends that attempt cleanly, and the death is remembered across
+  Stop and Start.
 
 ### Sessions
 
@@ -62,8 +148,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   which left the lamp unredeemed.
 - When a random event drops a bot into the Maze, it gives up after twice the
   event's own time limit instead of waiting there indefinitely. A script run
-  with random events turned off that finds itself trapped in the Maze stops
-  and says so, instead of standing there showing Working.
+  with random events turned off that finds itself trapped in the Maze or on
+  the Mime's stage stops and says so, instead of standing there showing
+  Working.
 
 ### Navigation
 
@@ -96,8 +183,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   ignored.
 - Walks now route around dangerous monsters and the Temple of Ikov lava
   bridge by default. When no safe route exists, the refusal names the
-  monsters in the way. WalkTo in the panel and the TUI has a "Route through
-  danger zones" option to cross them anyway for that walk.
+  monsters in the way. "Route through danger zones" in Nav config allows
+  crossing them on every walk; while it's off, WalkTo in the panel and the
+  TUI can allow it for a single walk, and each script can allow it for its
+  own walks.
 - Bots approach stairs, ladders, large trees and other big objects (for
   example the Lumbridge Castle staircase) from a side they can actually use,
   instead of trying through a wall.
@@ -128,6 +217,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - A walk whose destination is inside a monster area enters that area only to
   arrive, and a walk that starts inside one leaves it without coming back
   through it.
+- Walks can use doors that open only for a full disguise, and hidden
+  push-walls, such as the Black Knights' Fortress guard doors and secret wall.
+  The walk goes through only while the disguise is actually worn.
+- Walks follow climbs and other forced moves read from the game content, for
+  example the climbing rocks up to Death Plateau while climbing boots are
+  worn.
+- Boarding a boat steps on from the tile you're actually standing on, which
+  fixes walks that stalled at the dock, including the Entrana boats.
+- Bank fetch during a walk also works at banks you open by using an object,
+  such as the Shantay chest. If the bank never opens, the walk stops and says
+  so.
+- Doors are handled more patiently: re-opens are paced instead of repeated,
+  a swing door someone else closes mid-walk is reopened, and walks never step
+  into a walled-up doorway.
+- Baking a custom navigation pack fails with a reason (for example an
+  unrecognised door) instead of silently leaving content out, and the
+  command-line bake now matches the bundled pack exactly.
 
 ### Profiles and fleet
 
@@ -147,6 +253,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   written the panel also asks before you leave the form (switching profile,
   Cancel, Close, deleting that profile or turning MultiBox off) and brings
   the Profiles tab forward so the prompt is visible.
+- In the TUI, starting the marked bots runs the script currently picked in
+  Browse, and the confirmation names it.
 
 ### WalkTo map
 
@@ -159,6 +267,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   on/off toggle and edges that follow the navigation content tile-for-tile.
 - The TUI map's reach layer (`r`) now works. The panel and TUI load reach data
   only when the layer is first shown.
+- Opening WalkTo before the vault is unlocked says the map loads once the
+  vault is unlocked, instead of saying the navigation pack is missing.
 
 ### Panel
 
@@ -213,14 +323,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - A native script that can't continue (for example, out of a required supply
   or unable to walk back to its spot) now stops and keeps the reason, shown as
   "stopped (blocked)" in the panel and the TUI.
-- In native fights, prayers you turned on yourself stay on. When a fight ends
-  or you stop the script, only the prayers the bot switched on are turned off.
-  Protection prayers follow each attacker's actual attack style, and potion
-  sips and eating follow one shared rule.
-- Fixed several monsters being treated as switching attack style when you pray
-  against them (for example the Zamorak wizard).
-- Scripts using the classic dialogue helpers no longer press Continue twice on
-  the same page.
+- Catalog scripts in JavaScript or TypeScript get checked type declarations
+  for the rs2b0t script API, so editors and the compiler catch wrong
+  arguments.
+- Load scripts can start, watch and stop the Gatherer, and read quest
+  progress (which quests exist, their current stage and whether they're
+  done). A bundled example gathers and then checks progress.
+- Script gathering lookups page through long lists and report game data that
+  is incomplete, instead of returning partial results silently.
+- A script setting that names a saved loadout refuses an unknown or ambiguous
+  name with a clear error, instead of starting the script without the gear.
 
 ### Audio
 
@@ -239,22 +351,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   it already downloaded and checked, so later launches reach the game in
   seconds instead of downloading everything again.
 
-### In progress
+### Fixed during development
 
-These features are usable now and still growing; this list changes as they land.
+Fixes to problems that appeared and were fixed during 0.2.0 development.
+They are listed here for completeness and are left out of the release notes.
 
-- **Quester** (revision 289): runs quests from built-in quest guides, reading
-  progress from the quest journal and picking up again after Stop/Start. Pick
-  quests, skips and their order from lists. It recovers from up to two deaths
-  per run, like the Gatherer, returns to where it was working, and stops on a
-  third. More quests are being added through 0.2.0.
-- **Gatherer**: woodcutting, mining and fishing at a named place from the game
-  map (for example Catherby fishing or Varrock East mine), a start tile, a
-  custom area, or Auto, which searches outward for the nearest usable spots.
-  Resources, fishing methods (grouped by spot and tool) and food are picked
-  from lists. In Bank mode it banks everything except the tools for its next
-  trip at the nearest bank it can walk to, then walks back to the spot; in
-  Drop mode it drops them.
+- Combat: the per-attacker protection prayers treated several monsters as
+  switching attack style when you prayed against them (for example the
+  Zamorak wizard, which now counts as magic).
+- Dialogue: scripts using the classic dialogue helpers could press Continue
+  twice on the same page.
+- Navigation: a refusal that names the danger zones in the way could name
+  the wrong zones when only one destination was blocked.
+- Panel: the Debug tab's name pickers could spill outside their window, and
+  the tab marked some harmless commands as destructive.
+- Panel: a script-setting list with two options of the same name (for
+  example two fishing methods for one fish) selected the wrong one.
+- TUI: marks could follow a bot's name instead of the bot.
+- Panel: the Log tab could open once on its own after an upgrade between
+  development builds.
+- Gatherer: a saved site from an older setup could be picked even though it
+  no longer fit the game data; it now stays visible with its reason and
+  can't be started.
+- Combat: after a death had already cleared every prayer, the bot could try
+  to turn off prayers it had raised before the death.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 

@@ -875,6 +875,33 @@ fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
     })
 }
 
+/// Engine `MoveRestrict`, by its `.npc` config name (`NpcConfig.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MoveRestrict {
+    Normal,
+    Blocked,
+    BlockedNormal,
+    Indoors,
+    Outdoors,
+    Nomove,
+    Passthru,
+}
+
+impl MoveRestrict {
+    fn parse(name: &str) -> Option<Self> {
+        Some(match name.to_ascii_lowercase().as_str() {
+            "normal" => Self::Normal,
+            "blocked" => Self::Blocked,
+            "blocked+normal" => Self::BlockedNormal,
+            "indoors" => Self::Indoors,
+            "outdoors" => Self::Outdoors,
+            "nomove" => Self::Nomove,
+            "passthru" => Self::Passthru,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct HunterDefinition {
     pub npc_id: i32,
@@ -887,11 +914,18 @@ pub(crate) struct HunterDefinition {
     pub wanderrange: i32,
     pub maxrange: i32,
     pub attackrange: i32,
-    pub stationary: bool,
+    pub move_restrict: MoveRestrict,
     pub never_wanders: bool,
     pub check_nottoostrong: String,
     pub check_lineofsight: bool,
     pub find_newmode: String,
+}
+
+impl HunterDefinition {
+    /// `moverestrict=nomove`: the engine never walks this NPC.
+    pub fn stationary(&self) -> bool {
+        self.move_restrict == MoveRestrict::Nomove
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -916,6 +950,9 @@ pub(crate) struct HunterBakeInputs {
     pub definitions: Vec<HunterDefinition>,
     pub spawns: Vec<HunterSpawn>,
     pub openable_doors: Vec<OpenableDoor>,
+    /// Placements of the open state of a door config: a player can close
+    /// them, so their current walls are not permanent either.
+    pub opened_doors: Vec<OpenableDoor>,
     pub total_npc_spawns: usize,
 }
 
@@ -923,6 +960,7 @@ pub(crate) fn collect_hunter_inputs(
     content_root: &Path,
     npc_types: &[NpcType],
     door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
 ) -> Result<HunterBakeInputs, String> {
     let mut tree = load_script_tree(content_root)?;
     load_unpacked_zone_configs(content_root, &mut tree)?;
@@ -987,11 +1025,12 @@ pub(crate) fn collect_hunter_inputs(
         let maxrange =
             range("maxrange", config.maxrange.as_ref(), wanderrange + 2)?.max(wanderrange);
         let attackrange = range("attackrange", config.attackrange.as_ref(), 0)?;
-        let stationary = config
-            .moverestrict
-            .as_deref()
-            .is_some_and(|mode| mode.eq_ignore_ascii_case("nomove"));
-        let never_wanders = stationary
+        let move_restrict = match config.moverestrict.as_deref() {
+            None => MoveRestrict::Normal,
+            Some(name) => MoveRestrict::parse(name)
+                .ok_or_else(|| format!("hunter NPC {alias} has unsupported moverestrict={name}"))?,
+        };
+        let never_wanders = move_restrict == MoveRestrict::Nomove
             || config
                 .defaultmode
                 .as_deref()
@@ -1015,7 +1054,7 @@ pub(crate) fn collect_hunter_inputs(
             wanderrange,
             maxrange,
             attackrange,
-            stationary,
+            move_restrict,
             never_wanders,
             check_nottoostrong: mode
                 .check_nottoostrong
@@ -1030,8 +1069,9 @@ pub(crate) fn collect_hunter_inputs(
         hunter_ids.insert(npc_id);
     }
 
+    let scanned_locs: HashSet<i32> = door_ids.union(opened_door_ids).copied().collect();
     let (.., total_npc_spawns, npc_hits, loc_hits) =
-        scan_maps(content_root, &hunter_ids, door_ids)?;
+        scan_maps(content_root, &hunter_ids, &scanned_locs)?;
     let spawns = npc_hits
         .into_iter()
         .flat_map(|(npc_id, hits)| {
@@ -1044,23 +1084,30 @@ pub(crate) fn collect_hunter_inputs(
         })
         .collect();
     let mut openable_doors = Vec::new();
-    for hits in loc_hits.into_values() {
+    let mut opened_doors = Vec::new();
+    for (loc_id, hits) in loc_hits {
         for hit in hits {
             let level = crate::collision::game_plane(i32::from(hit.plane), hit.link_below)
-                .ok_or_else(|| "openable door placement has an invalid game plane".to_string())?;
-            openable_doors.push(OpenableDoor {
+                .ok_or_else(|| "door placement has an invalid game plane".to_string())?;
+            let door = OpenableDoor {
                 x: hit.x,
                 z: hit.z,
                 level,
                 shape: hit.shape,
                 rotation: hit.rotation,
-            });
+            };
+            if door_ids.contains(&loc_id) {
+                openable_doors.push(door);
+            } else {
+                opened_doors.push(door);
+            }
         }
     }
     Ok(HunterBakeInputs {
         definitions,
         spawns,
         openable_doors,
+        opened_doors,
         total_npc_spawns,
     })
 }

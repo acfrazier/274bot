@@ -43,6 +43,11 @@ impl ActionContext<'_> {
         self.eligible && self.budget.transition()
     }
 
+    /// This tick already spent its interaction or walk event allowance.
+    pub(crate) fn interaction_event_spent(&self) -> bool {
+        self.budget.events != 0
+    }
+
     /// Queue one game interaction. Walks go through [`Self::walk`], which owns
     /// their follow and terminal receipt; route, channel, mouse, run-policy
     /// and lifecycle requests are host-owned and never native interactions.
@@ -188,6 +193,68 @@ impl ActionContext<'_> {
         })
     }
 
+    /// Queue a compute-only walk assessment. It shares the owner's outbox but
+    /// neither spends a game-event allowance nor claims movement authority.
+    pub fn assess_walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
+        if !self.eligible {
+            return Err(ActionError::Held);
+        }
+        let run = self.run();
+        if request.required_after.run != run {
+            return Err(ActionError::Stale);
+        }
+        let ledger = self.ledger.get_or_insert_with(Default::default);
+        let owner = match ledger.assess_owner.as_ref() {
+            Some(owner) if owner.run == run && owner.live() => Arc::clone(owner),
+            _ => {
+                if let Some(owner) = ledger.assess_owner.take() {
+                    owner.revoke();
+                }
+                let owner = Owner::new(run, ledger.next_id()?);
+                ledger.assess_owner = Some(Arc::clone(&owner));
+                owner
+            }
+        };
+        let request_id = ledger.next_id()?;
+        owner.set_interaction(request_id);
+        ledger.assess_receipt = None;
+        ledger.assess_request = Some(request_id);
+        ledger
+            .outbox
+            .retain(|action| !matches!(&action.effect, HostEffect::AssessWalk(_)));
+        ledger.outbox.push(HostAction {
+            owner,
+            request_id,
+            batch: 0,
+            effect: HostEffect::AssessWalk(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+        });
+        Ok(request_id.get())
+    }
+
+    pub fn assess_receipt(&self, request_id: u64) -> Option<&AssessReceipt> {
+        let ledger = self.ledger.as_ref()?;
+        let owner = ledger.assess_owner.as_ref()?;
+        if owner.run != self.run() || !owner.live() {
+            return None;
+        }
+        ledger.assess_receipt.as_ref().filter(|receipt| {
+            ledger
+                .assess_request
+                .is_some_and(|id| id.get() == request_id)
+                && receipt.request_id == request_id
+                && receipt.evidence.run == self.run()
+        })
+    }
+
+    /// Consume the retained advisory and revoke its host continuation so a
+    /// duplicate or late publication cannot restore it.
+    pub fn take_assess_receipt(&mut self, request_id: u64) -> Option<AssessReceipt> {
+        let receipt = self.assess_receipt(request_id)?.clone();
+        self.cancel_request(request_id);
+        Some(receipt)
+    }
+
     pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
@@ -239,6 +306,20 @@ impl ActionContext<'_> {
         let Some(ledger) = self.ledger.as_mut() else {
             return;
         };
+        if let Some(request) = NonZeroU64::new(request_id) {
+            if ledger.assess_request == Some(request)
+                && ledger
+                    .assess_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.run == self.evidence.run)
+            {
+                if let Some(owner) = ledger.assess_owner.as_ref() {
+                    owner.cancel_interaction(request);
+                }
+                ledger.assess_request = None;
+                ledger.assess_receipt = None;
+            }
+        }
         let Some(owner) = ledger.owner.as_ref() else {
             return;
         };
@@ -255,6 +336,7 @@ impl ActionContext<'_> {
                 ledger.bank_pick_request = None;
                 ledger.bank_pick = None;
             }
+
             for receipt in &mut ledger.batch_receipts {
                 if receipt
                     .as_ref()
@@ -453,6 +535,11 @@ impl<M: NativeMachine> ActionHandle<M> {
             None => crate::combat::RaisedPrayers::empty(),
         }
     }
+
+    /// Read the live machine without polling it; `None` once it completed.
+    pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
+        self.machine.borrow().as_ref().map(read)
+    }
 }
 
 impl ActionHandle<crate::combat::Combat> {
@@ -489,7 +576,7 @@ impl NativeActions {
         if !cx.budget.transition() {
             return Err(ActionError::BudgetExhausted);
         }
-        ledger.revoke();
+        ledger.revoke_foreground();
         let owner = Owner::new(run, ledger.next_id()?);
         ledger.owner = Some(Arc::clone(&owner));
         cx.action_id = owner.id.get();
@@ -575,6 +662,31 @@ impl NativeActions {
             event.request_id == request.get() && event.evidence.run == handle.owner.run
         })?;
         Some(ledger.walk_events.remove(index))
+    }
+    /// Queue and observe advisory route work through the same frame authority
+    /// used by the native action context.
+    pub fn assess_walk(
+        &mut self,
+        request: WalkRequest,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<u64, ActionError> {
+        cx.assess_walk(request)
+    }
+
+    pub fn assess_receipt<'a>(
+        &self,
+        cx: &'a ActionContext<'_>,
+        request_id: u64,
+    ) -> Option<&'a AssessReceipt> {
+        cx.assess_receipt(request_id)
+    }
+
+    pub fn take_assess_receipt(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        request_id: u64,
+    ) -> Option<AssessReceipt> {
+        cx.take_assess_receipt(request_id)
     }
 
     pub fn cancel<M: NativeMachine>(&mut self, handle: ActionHandle<M>) {
@@ -1875,6 +1987,9 @@ mod tests {
                             end: WalkEnd::RouteEnded,
                             blocked: None,
                             detail: None,
+                            refusal: None,
+                            assessment: None,
+                            escape: None,
                         });
                         assert!(actions.poll(&handle, cx).is_pending(),
                         "radius {radius}: a still-moving final segment is not a stationary route end");
@@ -1905,5 +2020,195 @@ mod tests {
                 );
             }
         }
+    }
+    fn assessment_walk_request(evidence: EvidenceStamp) -> WalkRequest {
+        WalkRequest {
+            target: api::WorldTile {
+                x: 9,
+                z: 9,
+                level: 0,
+            },
+            loc_id: None,
+            radius: 0,
+            arrival: nav::arrival::ArrivalKind::Reach,
+            options: WalkOptions::default(),
+            required_after: evidence,
+            evidence: None,
+            cross: Vec::new().into_boxed_slice(),
+            protect: false,
+            food_guard: false,
+            allow: WalkAllow::default(),
+        }
+    }
+
+    fn advisory_failure(request_id: u64, evidence: EvidenceStamp) -> AssessReceipt {
+        AssessReceipt {
+            request_id,
+            evidence,
+            assessment: None,
+            refusal: Some(WalkRefusal::Unknown(
+                crate::combat::risk::UnknownWhy::MissingFacts,
+            )),
+            detail: Some(Arc::from("risk input unavailable")),
+            route_ticks: 0,
+        }
+    }
+
+    #[test]
+    fn advisory_has_its_own_run_owner_without_a_foreground_machine() {
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let evidence = cx.evidence();
+            let request = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            let ledger = cx.ledger.as_mut().unwrap();
+            assert!(ledger.owner.is_none());
+            let authority = ledger.outbox.last().unwrap().authority();
+            ledger.revoke_foreground();
+            assert!(
+                authority.live(),
+                "foreground replacement cannot cancel advice"
+            );
+            assert_eq!(ledger.outbox.len(), 1);
+            ledger.complete_assess_walk(&authority, advisory_failure(request, evidence));
+            assert!(actions.take_assess_receipt(cx, request).is_some());
+            assert!(!authority.live());
+        });
+    }
+
+    #[test]
+    fn assess_walk_is_compute_only_and_does_not_spend_event_budget_or_own_movement() {
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let evidence = cx.evidence();
+            let request = assessment_walk_request(evidence);
+            let request_id = actions.assess_walk(request, cx).unwrap();
+            let ledger = cx.ledger.as_ref().unwrap();
+            let action = ledger.outbox.last().expect("assessment is queued");
+            assert_eq!(action.request_id.get(), request_id);
+            assert!(matches!(&action.effect, HostEffect::AssessWalk(_)));
+            assert!(action.live());
+            assert_eq!(cx.budget.events, 0, "assessment spends no event budget");
+            assert_eq!(owner.active_walk(), None, "assessment owns no movement");
+            assert!(
+                ledger.walk.is_none(),
+                "assessment does not create a walk receipt"
+            );
+            assert!(ledger.assess_receipt.is_none());
+            let active_walk = NonZeroU64::new(request_id + 100).unwrap();
+            owner.set_walk(active_walk);
+            let newer = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            assert!(newer > request_id);
+            assert_eq!(owner.active_walk(), Some(active_walk));
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
+    }
+
+    #[test]
+    fn assess_receipts_replace_cancel_and_reject_stale_publications() {
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            install_owner(cx);
+            let evidence = cx.evidence();
+            let first = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            let old_authority = cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
+
+            let second = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            let current_authority = cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
+            assert!(second > first);
+            assert!(!old_authority.live());
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_assess_walk(&old_authority, advisory_failure(first, evidence));
+            assert!(cx.assess_receipt(second).is_none());
+
+            let receipt = advisory_failure(second, evidence);
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_assess_walk(&current_authority, receipt.clone());
+            assert_eq!(cx.assess_receipt(second).unwrap().request_id, second);
+            assert_eq!(
+                actions
+                    .take_assess_receipt(cx, second)
+                    .unwrap()
+                    .detail
+                    .as_deref(),
+                Some("risk input unavailable")
+            );
+            assert!(cx.assess_receipt(second).is_none());
+            assert!(!current_authority.live());
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_assess_walk(&current_authority, receipt);
+            assert!(cx.assess_receipt(second).is_none());
+
+            let cancelled = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            let cancelled_authority = cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
+            cx.cancel_request(cancelled);
+            assert!(cx.ledger.as_ref().unwrap().assess_receipt.is_none());
+            assert!(cx.ledger.as_ref().unwrap().assess_request.is_none());
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_assess_walk(&cancelled_authority, advisory_failure(cancelled, evidence));
+            assert!(cx.assess_receipt(cancelled).is_none());
+
+            let revoked = actions
+                .assess_walk(assessment_walk_request(evidence), cx)
+                .unwrap();
+            let revoked_authority = cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
+            cx.ledger.as_mut().unwrap().revoke();
+            assert!(cx.ledger.as_ref().unwrap().assess_receipt.is_none());
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_assess_walk(&revoked_authority, advisory_failure(revoked, evidence));
+            assert!(cx.assess_receipt(revoked).is_none());
+        });
     }
 }

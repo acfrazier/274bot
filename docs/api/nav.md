@@ -97,14 +97,38 @@ Ranged hunters with content `check_vis=lineofsight` retain their
 range-derived bounds, but the bake carves permanent occlusion only for `nomove`
 NPCs and NPCs with `wanderrange=0`. The engine checks LOS from the NPC's
 current tile; the bake uses the spawn tile for these static or zero-wander
-configurations. Positive-wander hunters retain their conservative rectangles.
-An already-engaged hunter can pursue the player, so this is not immunity from
-one that has moved into visible range. Areas containing openable doors also
-retain conservative rectangles. Curated group rectangles select and name spawn
-members; they are not additional exclusion surfaces. In particular, the Death
-Plateau scouting ridge is occluded from the throwers where it clips their
-eight-tile hunt boxes, and needs no `cross` grant. Rebake packs to obtain these
-carves; runtime routing does not require the raw flags sidecar.
+configurations. An already-engaged hunter can pursue the player, so this is
+not immunity from one that has moved into visible range. Areas containing
+openable doors also retain conservative rectangles. Curated group rectangles
+select and name spawn members; they are not additional exclusion surfaces. In
+particular, the Death Plateau scouting ridge is occluded from the throwers
+where it clips their eight-tile hunt boxes, and needs no `cross` grant.
+
+Every other moving hunter keeps its range-derived rectangle as bounds, and the
+bake carves every cell where it could never acquire a player. The NPC's south-west tile floods
+from its spawn by the engine's own steps: `StepValidator.canTravel` masks, with
+diagonal steps only for size-1 NPCs, as `PathingEntity.takeStep` does. Each step
+uses the NPC's own `moverestrict` strategy (`getCollisionStrategy`):
+`blocked+normal` steps under LINE_OF_SIGHT, so only projectile-blocking walls
+and scenery stop it. That lets the Mort Myre ghasts cross bog that a NORMAL
+walker cannot. `blocked` steps only onto blocked ground. `indoors` and
+`outdoors` flood as NORMAL, since the bake has no roof flag, so they reach a
+superset of the engine's tiles. An unknown `moverestrict` on a hunter fails the
+bake. The
+flood is bounded by the larger of `wanderrange` and the farthest a valid chase
+can carry it (`maxrange` plus the tether reach plus the NPC's size). A
+non-wandering NPC stays wherever a chase ended, so it uses the same bound. A
+cell stays a member when some flooded NPC tile is within `huntrange` of it and,
+for `lineofsight` hunt modes, the player-to-NPC ray is clear. A door in that
+envelope that a player can open or close keeps the whole rectangle. This counts
+closed doors and door configs' open states placed open in the map. Membership
+never grows, so White Wolf Mountain's back ridge leaves the wolf rows whose
+terrain cannot reach it. The mountain's pack wolves and sentries (`vislevel=25`,
+hunt mode `cowardly` with `check_nottoostrong=outside_wilderness`) still walk the
+ridge. Only a known combat level above 50 deactivates them, and only then is
+the land route around the back available; unknown or lower combat is refused
+there. Rebake packs to obtain these carves; runtime routing does not require
+the raw flags sidecar.
 
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
@@ -579,8 +603,9 @@ safe gaps. Poison alone never refuses a route without crossings: the replay
 and antipoison information remain, but walking adds no new poison risk.
 
 `RiskTables` is immutable and reused across assessments. Ordinary slot
-creation does not construct it, and no per-bot state is added by this
-compute-only API. Host admission and shared-world initialization are not wired yet.
+creation does not construct it. Host admission initializes combat/risk facts
+lazily once per bound `NavWorld`; its retained route assessments share `Arc`s
+rather than rebuilding facts for each bot.
 
 The estimate builds a compact `KindRisk` for each packed zone kind from the
 selected `NpcNameRow` and `CombatTables`; it does not change routing or pack
@@ -621,6 +646,75 @@ The poison spider remains unknown on members and uses its numeric hit/rate on
 F2P. Curated hazards are separate from NPC stats: the Ikov lava bridge has a
 known 20-damage acquisition event; hazards without curated damage remain
 unknown. The hazard's nonzero rate sentinel is not a repeat interval.
+
+### Shared host admission (`host_play::admission`)
+
+Native/v2 walks, manual WalkTo, bulk WalkTo and BankBudget sub-routes use
+one assessment/admission seam. It preserves the original route/prefix and
+teleport, wilderness, explicit avoid and quest authority across refreshes.
+No named grant or survivability retry relaxes a hard constraint.
+Proceed (including compat v1) uses the ordinary all-zone search and retains
+the honest assessment; compat publishes it only to hostlog. Avoid uses
+strict/endpoint routing. Effective Inherit may diagnose one witness and,
+only for at most eight known nonlethal keys, try one named re-search.
+It is bounded best effort, not a search over survivability. Actual kernel
+searches include endpoint/area/bank diagnosis paths and are counted in tests.
+One top-level all-zone call can still run the router's safe and granted
+stages; it is not a claim of one Dijkstra kernel. Refusal diagnosis repeats
+the strict call before its all-zone witness, and a named retry keeps the
+same staged routing. Both the top-level retry count and actual kernels are
+recorded, including reverse-proof shortcuts.
+
+Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
+`FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path
+does not invent an assessment. A found route carries an assessment even
+when refused. Manual success returns `WalkRoute { route, assessment }`,
+and the manual error retains the assessment/refusal and shared explanation
+for the outcome line. A route-less refusal retains any diagnosed zone names
+without another router probe. The current or last assessment/refusal reason
+survives an unarmed or completed walk.
+The focused risk projection never waits on a slot-held arm: it keeps its last
+shared answer until an available poll and clears it on a focus change.
+Missing scene facts remain `Unknown(MissingFacts)`, not invented overflow
+or unattributed damage.
+The poison recovery explanation is conditional: an override may admit an
+`Unknown(Poison)` assessment, while a refused crossing cannot provide its
+own recovery movement.
+
+Before following a worker result, publication compares the observed HP,
+food, prayer, position, live actor/due identity, poison and cleanup debt.
+Changed inputs are reassessed and may refuse entering crossings before movement;
+zero entering crossings always remain admitted, including missing facts or an
+unknown attacker. Leaving a zone the origin is engaged in (inside its active
+acquisition area, the router's origin rule) is escape exposure, not a crossing.
+An origin only inside a pursuit envelope is not engaged: walking into that
+zone's acquisition area is a crossing, as is re-entering after an escape.
+A failed assessment (for example `Unknown(Overflow)`) proves nothing about
+crossings, so every enforcing non-Proceed admission refuses it.
+Bank-bound and observed post-fetch routes use the same seam; bank completion
+keeps the precomputed final route and reassesses it without another search.
+Both frontends publish manual admission above their outer hold/mover gates;
+publication itself never sends movement. One slot ownership projection
+freezes manual/scenario movement during script Starting/Running/Paused/
+Stopping, native movement or an existing escape obligation.
+Advisory `assess_walk` never acquires that movement ownership.
+
+The stored default is **When survivable**, but S2b's single
+`NET_AVAILABLE=false` gate makes it effective Never for every preference
+source, including migration and explicit selection. While held, default and
+inherited walks keep exactly the pre-S2b router outcome and route, including
+origin-inside walks and destination-zone completion. Their assessments are
+informational, not new admission refusals; a held manual NoPath neither
+creates a walk arm nor stops the one already walking. Explicit script/per-walk
+overrides and named grants keep their S2b semantics. Panel and TUI display the
+held middle level as **When survivable (not available yet: acts as Never)**; the
+host emits one informational held-state note per slot session, not a warning on
+every walk.
+The live observer, ordinary-walk safety behavior and escape execution belong
+to integrated acceptance; no Clear poison state or preflight movement is invented.
+Only the integrated gate, with the required live cells, v17 cutover and
+full FLOOR, may flip availability; an S2c merge by itself does not enable
+the middle level.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
@@ -907,11 +1001,37 @@ if it never lands, and a send already in flight is not repeated. The
 script walk and the panel/TUI WalkTo share one step machine, one wait
 budget and one in-flight latch.
 
-**Closed bank:** the session is planned from the **open** bank's rows
-(`snap.bank()`). A closed bank contributes `[]`, so BankBudget cannot prove
-that a banked item exists and reports `NoPath`. That is intentional — there
-is no closed-bank inventory cache. Open the bank (or keep it open) before
-confirming a fetch walk if the needed item is only in the bank.
+**Closed bank:** the session is planned from the account's host bank
+memory (`nav::bank_fetch::BankRows`: `Play::bank_rows(name)` for WalkTo, the
+slot's memory for script walks and route inspects), not from the open
+bank, so a closed bank still plans a trip. While the bank is open the
+memory mirrors it. What a shortage means depends on where the rows came
+from (`nav::bank_fetch::planning_rows`, design-bank-snapshot §2.4):
+
+- `Session` (seen in an open bank since login): the rows as they are; a
+  missing item is `NoPath` in place.
+- `Unknown` (never seen, no hint file): no rows; `NoPath`, as before.
+- `Hint` (loaded from the persisted hint at login): each item the route
+  needs is assumed banked at the needed count, so the session makes one
+  verifying trip. If the open bank does not hold the item, the Withdraw
+  aborts the session (`the open bank does not hold the obj`), the memory is
+  then `Session`, and the next WalkTo is `NoPath`. A whole-stack Withdraw
+  that the live stack does not match goes through Withdraw-X for the
+  planned amount.
+
+  Radius walks to a solid tile and Area walks search a set of goals under
+  what a session could fetch. With a `Hint`, that set is first diagnosed
+  once (`nav::router::find_first_missing_item_reqs_with_avoid`, the strict
+  first-goal budgets) and the chosen goal's missing items are added to the
+  hint for the search, so a hint that lacks a toll or tool still plans the
+  one verifying trip instead of `NoPath`.
+
+The bank a closed-bank plan walks to can be far from where the walk was
+armed. When the session ends, a post-session route that does not start
+where the player stands is found again from the bank under the live state;
+if none exists, the walk ends with a logged reason.
+
+Compat `Bank.*` and `Inventory.count` reads still see only the open bank.
 
 ## WalkTo picker
 

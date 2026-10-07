@@ -8,6 +8,7 @@
 //! doors) still loads through [`NavWorld::from_grid`] as a fallback for
 //! old `.navpack` files.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
@@ -36,9 +37,20 @@ pub struct NavWorld {
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<HashMap<i32, String>>,
+    risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
 }
 
 impl NavWorld {
+    /// Cache the admission layer's immutable facts once per bound world.
+    /// The higher layer owns the concrete type, avoiding a nav → script dependency.
+    /// One admission implementation must use one concrete type for this world.
+    pub fn risk_facts<T: Any + Send + Sync>(&self, build: impl FnOnce() -> T) -> &T {
+        self.risk_facts
+            .get_or_init(|| Box::new(build()))
+            .downcast_ref()
+            .expect("one admission fact type per navigation world")
+    }
+
     /// The baked bank stands ([`BankStand`]) the banking session walks to
     /// and opens, ordered by tile.
     pub fn banks(&self) -> &[BankStand] {
@@ -148,6 +160,7 @@ impl NavWorld {
             banks,
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
+            risk_facts: OnceLock::new(),
         }
     }
 
@@ -265,6 +278,7 @@ impl NavWorld {
             banks: Vec::new(),
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
+            risk_facts: OnceLock::new(),
         }
     }
 }

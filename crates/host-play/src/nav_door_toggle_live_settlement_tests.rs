@@ -65,10 +65,13 @@ impl Script for SettlementWalker {
             control.started = true;
             let request = WalkRequest {
                 target: TARGET,
+                loc_id: Some(0),
                 radius: 1,
                 arrival: nav::arrival::ArrivalKind::Reach,
-                loc_id: Some(0),
-                options: script::native::WalkOptions::default(),
+                options: script::native::WalkOptions {
+                    allow_danger_zones: script::native::WalkBit::Allow,
+                    ..Default::default()
+                },
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
@@ -216,6 +219,7 @@ impl SettlementRig {
             self.world.as_ref(),
             false,
             false,
+            None,
             || Arc::new(api::query::ReachQueryView::unavailable()),
         );
     }
@@ -254,7 +258,7 @@ fn wait_for_route(
             .lock()
             .unwrap()
             .get(ALICE)
-            .and_then(|bot| bot.route.clone());
+            .and_then(|bot| bot.route.as_deref().cloned());
         if let Some(route) = route {
             if matches(route.dest) {
                 return route;

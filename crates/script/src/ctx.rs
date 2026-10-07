@@ -5,9 +5,9 @@ use api::interact::Driver;
 pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
-/// off, mirroring `nav::router::FindOptions` — the `script` crate
-/// deliberately takes no `nav` dependency, so the host converts between
-/// the two at the hook boundary. `allow_bank_fetch` latches a host
+/// off, mirroring the three booleans of `nav::router::FindOptions`; the nav
+/// type also carries essence and zone-exemption state the host owns, so the
+/// host converts between the two at the hook boundary. `allow_bank_fetch` latches a host
 /// BankBudget session when true; JS `Banking.walk` still uses defaults
 /// (flag off).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -32,10 +32,20 @@ pub struct CompiledTick<'a> {
     pub selected: Option<&'a api::game_data::SelectedGameData>,
     /// The host's cached reach observation, borrowed without copying its planes.
     pub reach: Option<&'a api::query::ReachQueryView>,
+    /// The account's bank memory, borrowed from the slot's read guard for
+    /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
+    /// the host has no memory for the slot.
+    pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
+    /// Packed world collision for off-scene Area arrival (resource return
+    /// stands). `None` in a bare ctx or when the host has no nav pack.
+    pub collision: Option<&'a nav::collision::WorldCollision>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.
     pub hold: bool,
+    /// The bound server profile's world type. `Unknown` when the host has no
+    /// profile for this slot, such as a Direct connection.
+    pub world_members: api::selected::Truth,
     /// The compiled interact queue for the tick in flight. [`crate::slot::SlotScript`]
     /// parks its own queue here around the compiled tick and takes it back
     /// when the tick returns; the isolate path forwards a queue of its own

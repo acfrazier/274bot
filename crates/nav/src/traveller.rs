@@ -14,6 +14,8 @@
 
 use std::collections::VecDeque;
 
+use std::sync::Arc;
+
 use api::hostlog::{Category, Level};
 use api::interact::{
     op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
@@ -379,9 +381,32 @@ impl Traveller {
         route: Route,
         options: &mut TravelOptions<'_>,
     ) -> Option<TravelOutcome> {
+        self.follow_with_route(d, snapshot, || route, options)
+    }
+
+    /// Follow a route retained by shared immutable owners without deep-cloning
+    /// it on every poll. The active run takes its own leg queue only when it
+    /// starts; later polls discard this cheap Arc clone.
+    pub fn follow_shared<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        route: Arc<Route>,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
+        self.follow_with_route(d, snapshot, || route.as_ref().clone(), options)
+    }
+
+    fn follow_with_route<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        start_route: impl FnOnce() -> Route,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
         if self.follow.is_none() {
             self.follow_terminal_leg = None;
-            self.follow = Some(FollowRun::start(route, options));
+            self.follow = Some(FollowRun::start(start_route(), options));
         }
         let outcome = self
             .follow

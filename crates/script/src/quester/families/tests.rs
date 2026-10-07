@@ -36,7 +36,16 @@ pub(crate) fn with_tick_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, None, ledger, tick, output, f)
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        output,
+        None,
+        f,
+    )
 }
 
 pub(crate) fn with_tick_reach<R>(
@@ -46,15 +55,88 @@ pub(crate) fn with_tick_reach<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    with_tick_output_reach(snapshot, Some(reach), ledger, tick, &mut Output, f)
+    with_tick_output_reach(
+        snapshot,
+        Some(reach),
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        f,
+    )
 }
 
-fn with_tick_output_reach<R>(
+/// A tick whose snapshot view carries the host-bound world type.
+pub(crate) fn with_tick_world<R>(
     snapshot: &GameSnapshot,
-    reach: Option<&api::query::ReachQueryView>,
+    world_members: Truth,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        world_members,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        f,
+    )
+}
+
+pub(crate) fn with_tick_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        f,
+    )
+}
+
+pub(crate) fn with_tick_output_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        output,
+        bank,
+        f,
+    )
+}
+
+// The world type (members-world) and the bank memory (bank S3/S4) both reach
+// the view through this one builder; the arg count is allowed.
+#[allow(clippy::too_many_arguments)]
+fn with_tick_output_reach<R>(
+    snapshot: &GameSnapshot,
+    reach: Option<&api::query::ReachQueryView>,
+    world_members: Truth,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    bank: Option<&api::bank_memory::BankMemory>,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -78,7 +160,10 @@ fn with_tick_output_reach<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             pin: &pin,
-            snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(reach),
+            snapshot: SnapshotView::new(Some(snapshot), evidence)
+                .with_reach(reach)
+                .with_world_members(world_members)
+                .with_bank_memory(bank),
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
@@ -97,7 +182,10 @@ fn with_tick_output_reach<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&data),
                 reach: None,
+                bank_memory: bank,
+                collision: None,
                 hold: false,
+                world_members,
                 interacts: Some(Vec::new()),
             },
         },
@@ -264,6 +352,9 @@ pub(crate) fn post_user_input_walk_receipt(
         end: crate::native::WalkEnd::UserInput,
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     request_id
 }
@@ -289,6 +380,9 @@ fn mapped_walk_receipt(
         end,
         blocked: None,
         detail,
+        refusal: None,
+        assessment: None,
+        escape: None,
     }
 }
 
@@ -572,7 +666,9 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
-        HostEffect::BankPick(_) => panic!("open door recovery cannot select a bank"),
+        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
+            panic!("open door recovery cannot select a bank or advisory")
+        }
     }
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -708,6 +804,9 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         end: crate::native::WalkEnd::RouteEnded,
         blocked: None,
         detail: Some(Arc::from("route stopped short")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(matches!(
         with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
@@ -791,6 +890,9 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         end: crate::native::WalkEnd::NeedsEvidence(Arc::clone(&gates)),
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
 
     let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
@@ -840,7 +942,9 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
-        HostEffect::BankPick(_) => panic!("door approach cannot select a bank"),
+        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
+            panic!("door approach cannot select a bank or advisory")
+        }
     }
 }
 
@@ -1006,13 +1110,11 @@ fn with_step_banks<R>(
 ) -> R {
     let quests = api::quest_facts::QuestCatalog::empty();
     let required_after = t.cx.evidence();
-    let bank = crate::quester::bank_memo::BankMemo::default();
     f(&mut StepContext {
         tick: t,
         quests: &quests,
         progress: &[],
         required_after,
-        bank: &bank,
         banks,
         choices: &crate::quester::choices::QuestChoices::default(),
     })
@@ -1035,7 +1137,6 @@ fn path_bank_context<'a>(
         recipes: base.recipes,
         bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
         bank_required: required,
-        bank_items: base.bank_items,
         loadouts: base.loadouts,
         keep_ids: base.keep_ids,
     }
@@ -1521,7 +1622,6 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         recipes: &recipes,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
@@ -2276,7 +2376,6 @@ fn compile_context_test_with_keep<R>(
         recipes: &Default::default(),
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids,
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
@@ -2371,7 +2470,6 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
                     required_after: t.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &crate::quester::bank_memo::BankMemo::default(),
                 }),
                 Truth::True
             );
@@ -2455,7 +2553,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
                 assert_eq!(request.target, tile(2542, 3170));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("talked before approaching the NPC")
             }
         }
@@ -2544,7 +2642,7 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
                 assert_eq!(request.target, tile(3200, 3276));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("used the item before approaching the NPC")
             }
         }
@@ -3223,14 +3321,12 @@ fn with_sheep_step<R>(
     let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let evidence = tick.cx.evidence();
     let progress = [counted_sheep_progress(&selected, evidence, remaining)];
-    let bank = crate::quester::bank_memo::BankMemo::default();
     let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
     f(&mut StepContext {
         tick,
         quests: &quests,
         progress: &progress,
         required_after: evidence,
-        bank: &bank,
         banks: &banks,
         choices: &crate::quester::choices::QuestChoices::default(),
     })
@@ -3333,11 +3429,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
         let path =
             crate::quester::compile::compile_uncached_for_test(&document, cx.selected, cx.quests)
                 .unwrap();
-        let mut bank = crate::quester::bank_memo::BankMemo::default();
-        bank.update(&crate::native_bank::BankReceipt {
-            counts: vec![],
-            complete: true,
-        });
+        let bank = api::bank_memory::BankMemory::seeded(&[], api::bank_memory::Origin::Session);
         for (id, name, count, expected) in [
             (1737, "Wool", 19, "shear"),
             (1737, "Wool", 20, "spin"),
@@ -3367,7 +3459,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                 ],
                 28,
             );
-            with_tick(&snapshot, &mut None, 1, |tick| {
+            with_tick_bank(&snapshot, Some(&bank), &mut None, 1, |tick| {
                 let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
                 let context = PredicateContext {
                     cx: &tick.cx,
@@ -3377,10 +3469,9 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                     required_after: tick.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &bank,
                 };
                 let crate::quester::select::SelectionDecision::Selected(selection) =
-                    crate::quester::select::select(&path, 1, &context)
+                    crate::quester::select::select(&path, 1, 0, &context)
                 else {
                     panic!("expected a known product-progress step");
                 };
@@ -3499,7 +3590,6 @@ fn public_chat_cannot_settle_or_set_message_state() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(message.evaluate(&pred), Truth::False);
             assert_eq!(state.evaluate(&pred), Truth::False);
@@ -3617,7 +3707,6 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             for index in [1, 2] {
                 assert_eq!(
@@ -3680,7 +3769,6 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(loaded.evaluate(&pred), Truth::False);
         });
@@ -3719,7 +3807,6 @@ fn progress_predicates_require_known_same_run_evidence() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
             assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
@@ -3753,7 +3840,6 @@ fn progress_predicates_require_known_same_run_evidence() {
                 },
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&known), Truth::True);
             assert_eq!(flag.evaluate(&known), Truth::True);
@@ -3923,7 +4009,6 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
                 required_after: evidence,
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(not_set.evaluate(&known), Truth::False);
             assert_eq!(exact.evaluate(&known), Truth::True);
@@ -4561,7 +4646,6 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
                 required_after: cx.required_after,
                 chat_since: 0,
                 outcome: Some(&outcome),
-                bank: cx.bank,
             })
         };
         assert_eq!(
@@ -4660,7 +4744,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
                     "route to the NPC's side, not an adjacent tile across the barrier"
                 );
             }
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 panic!("geometric proximity cannot bypass closed clipping")
             }
         }
@@ -4951,6 +5035,26 @@ fn path_walk_permissions_decode_as_tri_state_options() {
 }
 
 #[test]
+fn path_walk_radius_omitted_is_one_and_explicit_zero_is_the_exact_tile() {
+    let radius = |radius: Option<u16>| {
+        let mut args = serde_json::json!({
+            "tile": [3224, 3200, 0],
+            "source": "walk radius test",
+        });
+        if let Some(radius) = radius {
+            args["radius"] = serde_json::json!(radius);
+        }
+        super::parse_walk_plan(test_args::<WalkArgs>(args))
+            .unwrap()
+            .radius
+    };
+    assert_eq!(radius(None), 1);
+    assert_eq!(radius(Some(0)), 0);
+    assert_eq!(radius(Some(1)), 1);
+    assert_eq!(radius(Some(3)), 3);
+}
+
+#[test]
 fn path_walk_crossing_and_protection_are_independent() {
     compile_context_test(|cx| {
         for protect in [false, true] {
@@ -5163,7 +5267,6 @@ fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) ->
             required_after: tick.cx.evidence(),
             chat_since: 0,
             outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             pairs: None,
         })
     })
@@ -5489,6 +5592,126 @@ fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
     });
 }
 
+/// desertrescue's `stow-extras` skips on `pack_only` with its keep list: true
+/// once a `deposit_all` with that list (plus the Path's protected items)
+/// would move nothing, false while any other row is held, Unknown unobserved.
+#[test]
+fn pack_only_allows_listed_and_protected_rows_and_preserves_unknown() {
+    compile_context_test(|base| {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let protected = [selected.item_by_alias("bronze_axe").unwrap().id];
+        let cx = CompileContext {
+            keep_ids: &protected,
+            ..*base
+        };
+        let predicate = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "pack_only".into(),
+                version: 1,
+                args: serde_json::json!({"objs":["coins","shantay_pass","desert_shirt"]}),
+            },
+            &cx,
+        )
+        .unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::Unknown
+        );
+        let row = |alias, slot| loadout_test_item(alias, ItemContainer::Inventory, slot);
+        let mut emptied_helm = row("rune_full_helm", 1);
+        emptied_helm.count = 0;
+        for (pack, expected) in [
+            (vec![], Truth::True),
+            (vec![row("coins", 0)], Truth::True),
+            (vec![row("coins", 0), row("bronze_axe", 1)], Truth::True),
+            (
+                vec![row("coins", 0), row("rune_full_helm", 1)],
+                Truth::False,
+            ),
+            (vec![emptied_helm, row("desert_shirt", 2)], Truth::True),
+        ] {
+            snapshot.seed_inventory(pack, 28);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                expected
+            );
+        }
+    });
+}
+
+/// The CI6 desertrescue park: after the stage-0 buys and `desert-kit`, the
+/// pack held only kept rows, yet `stow-extras` (`deposit_all`, empty settle)
+/// was reselected every boundary until the watchdog parked it. Its bundled
+/// skip must now prove that pack clean, admit every kept row, and still run
+/// for anything else.
+#[test]
+fn desertrescue_stow_extras_skips_the_observed_clean_pack() {
+    compile_context_test(|cx| {
+        let document: crate::quester::path::PathDocument =
+            serde_json::from_str(crate::quester::compile::DESERT_RESCUE_JSON).unwrap();
+        let stow = document
+            .roles
+            .iter()
+            .flat_map(|role| &role.sequences)
+            .flat_map(|sequence| &sequence.steps)
+            .find(|step| step.id.0.as_ref() == "stow-extras")
+            .unwrap();
+        let PredicateDocument::Any(items) = &stow.skip_if else {
+            panic!("stow-extras skip_if is an Any");
+        };
+        let clean = items
+            .iter()
+            .find(
+                |item| matches!(item, PredicateDocument::Fact { kind, .. } if kind == "pack_only"),
+            )
+            .expect("stow-extras skips once the pack holds only its keep list");
+        let predicate = compile_predicate(clean, cx).unwrap();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let row = |id: i32, slot: i32| ItemView {
+            def: def(id, "row"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        // `EV/.../03-end-fail.json`: coins, passes, waterskins, bars,
+        // feathers, hammer, rune scimitar and lobsters.
+        let observed = [995, 1854, 1823, 2349, 314, 2347, 1333, 379];
+        let mut snapshot = ready();
+        snapshot.seed_inventory(
+            observed
+                .iter()
+                .enumerate()
+                .map(|(slot, id)| row(*id, slot as i32))
+                .collect(),
+            28,
+        );
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::True
+        );
+        for alias in stow.args["keep"].as_array().unwrap() {
+            let id = selected.item_by_alias(alias.as_str().unwrap()).unwrap().id;
+            snapshot.seed_inventory(vec![row(id, 0)], 28);
+            assert_eq!(
+                loadout_predicate_truth(predicate.as_ref(), &snapshot),
+                Truth::True,
+                "kept row {alias} must not rerun the sweep"
+            );
+        }
+        let helm = selected.item_by_alias("rune_full_helm").unwrap().id;
+        snapshot.seed_inventory(vec![row(995, 0), row(helm, 1)], 28);
+        assert_eq!(
+            loadout_predicate_truth(predicate.as_ref(), &snapshot),
+            Truth::False
+        );
+    });
+}
+
 #[test]
 fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
     with_loadout_context(|cx| {
@@ -5796,4 +6019,398 @@ fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
             }
         ));
     });
+}
+
+#[test]
+fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
+    let fact = PredicateDocument::Fact {
+        kind: "members_world".into(),
+        version: 1,
+        args: serde_json::json!({}),
+    };
+    compile_context_test(|cx| {
+        let plain = compile_predicate(&fact, cx).unwrap();
+        let negated =
+            compile_predicate(&PredicateDocument::Not(Box::new(fact.clone())), cx).unwrap();
+        // The account flag the server sent at login is true in every case:
+        // a members account on a free-to-play world must still read False.
+        let mut snapshot = ready();
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..Default::default()
+        });
+        for (world, expected) in [
+            (Truth::True, Truth::True),
+            (Truth::False, Truth::False),
+            (Truth::Unknown, Truth::Unknown),
+        ] {
+            with_tick_world(&snapshot, world, &mut None, 1, |t| {
+                let context = PredicateContext {
+                    cx: &t.cx,
+                    pairs: t.pairs,
+                    quests: cx.quests,
+                    progress: &[],
+                    required_after: t.cx.evidence(),
+                    chat_since: 0,
+                    outcome: None,
+                };
+                assert_eq!(plain.evaluate(&context), expected, "{world:?}");
+                assert_eq!(negated.evaluate(&context), !expected, "not {world:?}");
+            });
+        }
+        // A view with no host fact attached (no bound profile) is Unknown.
+        with_tick(&snapshot, &mut None, 1, |t| {
+            let context = PredicateContext {
+                cx: &t.cx,
+                pairs: t.pairs,
+                quests: cx.quests,
+                progress: &[],
+                required_after: t.cx.evidence(),
+                chat_since: 0,
+                outcome: None,
+            };
+            assert_eq!(plain.evaluate(&context), Truth::Unknown);
+        });
+    });
+}
+
+#[test]
+fn members_world_rejects_arguments() {
+    let document = PredicateDocument::Fact {
+        kind: "members_world".into(),
+        version: 1,
+        args: serde_json::json!({"members": true}),
+    };
+    compile_context_test(|cx| {
+        assert_eq!(
+            compile_predicate(&document, cx)
+                .err()
+                .unwrap()
+                .code
+                .as_ref(),
+            "invalid-args"
+        );
+    });
+}
+
+/// Tenzing's door (`death_sherpa_door`, shape 0 angle 2): a straight wall on
+/// the east edge of its own tile. The anchored pre-walk goes to the doorstep
+/// east of it at radius 0, not to the door tile across the wall, then opens
+/// the door from there.
+#[test]
+fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
+    compile_context_test(|_| {
+        let door_tile = tile(2822, 3555);
+        let doorstep = tile(2823, 3555);
+        let mut door = loc(3745, "Door", "Open");
+        door.tile = door_tile;
+        door.layer = LocLayer::Wall;
+        door.shape = 0;
+        door.angle = 2;
+        door.distance = 8;
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(2830, 3555)));
+        snapshot.seed_locs(vec![door.clone()]);
+        let plan = InteractPlan {
+            kind: reach::ReachKind::Loc {
+                id: Some(door.id),
+                name: None,
+            },
+            op: Arc::from("Open"),
+            tile: Some(door_tile),
+            radius: 2,
+            wait_if_missing: false,
+            settle_ms: None,
+            ambiguous: false,
+            default_dialogue: false,
+            dialogue_options: None,
+            until: None,
+            target_tile: None,
+            reachable_only: false,
+        };
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == doorstep && request.radius == 0
+                        && request.loc_id.is_none()
+            ),
+            "a straight-wall door is approached on its facing side, not its own tile"
+        );
+
+        snapshot.seed_local_player(local_player(doorstep));
+        door.distance = 1;
+        snapshot.seed_locs(vec![door]);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc { x: 2822, z: 3555, action, .. }
+                if action.eq_ignore_ascii_case("open")
+        ));
+    });
+}
+
+/// The Priest in Peril crypt gate (`pip_underground_door1`, shape 0 angle 3,
+/// the south edge of 3405,9895) is crossed both ways. Returning from the
+/// monuments (south) walks to the facing tile 3405,9894; entering from the
+/// north keeps the gate tile, which is on the player's side.
+#[test]
+fn anchored_interact_wall_gate_approaches_from_the_players_side() {
+    compile_context_test(|_| {
+        let gate_tile = WorldTile {
+            x: 3405,
+            z: 9895,
+            level: 0,
+        };
+        for (from, target, radius) in [
+            (tile(3428, 9891), tile(3405, 9894), 0),
+            (tile(3405, 9899), gate_tile, 1),
+            (tile(3403, 9895), gate_tile, 1),
+        ] {
+            let mut gate = loc(3444, "Gate", "Open");
+            gate.tile = gate_tile;
+            gate.layer = LocLayer::Wall;
+            gate.shape = 0;
+            gate.angle = 3;
+            gate.distance = 4;
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(from));
+            snapshot.seed_locs(vec![gate.clone()]);
+            let plan = InteractPlan {
+                kind: reach::ReachKind::Loc {
+                    id: Some(gate.id),
+                    name: None,
+                },
+                op: Arc::from("Open"),
+                tile: Some(gate_tile),
+                radius: 2,
+                wait_if_missing: false,
+                settle_ms: None,
+                ambiguous: false,
+                default_dialogue: false,
+                dialogue_options: None,
+                until: None,
+                target_tile: None,
+                reachable_only: false,
+            };
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(
+                    ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                    Some(HostEffect::Walk(request))
+                        if request.target == target && request.radius == radius
+                            && request.loc_id.is_none()
+                ),
+                "from {from:?} the gate is approached at {target:?} r{radius}"
+            );
+        }
+    });
+}
+
+/// DIAG-STEP-LATENCY regression 3, Priest in Peril's temple door
+/// (`priestperiltempledoorl`, shape 0 angle 2: the east edge of 3408,3489).
+/// `crypt-exit-temple-door` leaves from inside (anchor 3409,3489) with the
+/// player at 3415,3488. The pre-walk must stop at the inside facing tile:
+/// walking to the door tile made nav's door transport cross out, the
+/// authored Open from the door tile sent the player back in, and the acquire
+/// settle timed out. From there exactly one Open is sent. `cell-enter-temple`
+/// (anchor 3407,3489, outside) keeps the door tile, which is outside.
+#[test]
+fn temple_door_exit_prewalks_to_the_inside_stand_and_opens_once() {
+    compile_context_test(|_| {
+        let door_tile = tile(3408, 3489);
+        let inside = tile(3409, 3489);
+        let mut door = loc(3489, "Large door", "Open");
+        door.tile = door_tile;
+        door.layer = LocLayer::Wall;
+        door.shape = 0;
+        door.angle = 2;
+        door.distance = 7;
+        let door_id = door.id;
+        let plan = |anchor: WorldTile, radius| InteractPlan {
+            kind: reach::ReachKind::Loc {
+                id: Some(door_id),
+                name: None,
+            },
+            op: Arc::from("Open"),
+            tile: Some(anchor),
+            radius,
+            wait_if_missing: false,
+            settle_ms: None,
+            ambiguous: false,
+            default_dialogue: false,
+            dialogue_options: None,
+            until: None,
+            target_tile: None,
+            reachable_only: false,
+        };
+        let opens = |ledger: &Option<Box<ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        &entry.effect,
+                        HostEffect::Interaction(InteractReq::Loc { action, .. })
+                            if action.eq_ignore_ascii_case("open")
+                    )
+                })
+                .count()
+        };
+
+        let exit = plan(inside, 1);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3415, 3488)));
+        snapshot.seed_locs(vec![door.clone()]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| exit.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == inside && request.radius == 0
+                        && request.loc_id.is_none()
+            ),
+            "the exit pre-walk stops inside instead of routing through the door"
+        );
+        snapshot.seed_local_player(local_player(inside));
+        door.distance = 1;
+        snapshot.seed_locs(vec![door.clone()]);
+        for tick in 3..6 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert_eq!(opens(&ledger), 1, "one authored Open from the inside stand");
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc {
+                x: 3408,
+                z: 3489,
+                ..
+            }
+        ));
+
+        let enter = plan(tile(3407, 3489), 2);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3400, 3490)));
+        door.distance = 8;
+        snapshot.seed_locs(vec![door]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| enter.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.first().map(|entry| &entry.effect),
+                Some(HostEffect::Walk(request))
+                    if request.target == door_tile && request.radius == 1
+                        && request.loc_id.is_none()
+            ),
+            "the outside entry keeps the door tile, which is on the player's side"
+        );
+    });
+}
+
+/// The side is the half-plane across the wall edge for each angle: strictly
+/// on the facing side walks to the facing tile at r0; the loc's own side, the
+/// wall line and diagonal or corner walls (shapes 1-3, 9) keep the loc tile at
+/// r1. A footprint loc keeps its own arrival rule.
+#[test]
+fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
+    let origin = tile(10, 10);
+    let wall = |shape: i32, angle: i32| {
+        let mut wall = loc(1530, "Door", "Open");
+        wall.tile = origin;
+        wall.layer = LocLayer::Wall;
+        wall.shape = shape;
+        wall.angle = angle;
+        wall
+    };
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let walk = |wall: &LocView, here: Option<WorldTile>| {
+        let request = reach::loc_walk_request(wall, here, stamp);
+        (request.target, request.radius, request.loc_id)
+    };
+    // angle, facing tile, far facing-side tile, far loc-side tile, wall-line tile
+    for (angle, facing, far_facing, far_own, along) in [
+        (0, tile(9, 10), tile(4, 13), tile(16, 7), tile(10, 15)),
+        (1, tile(10, 11), tile(7, 16), tile(13, 4), tile(15, 10)),
+        (2, tile(11, 10), tile(16, 7), tile(4, 13), tile(10, 5)),
+        (3, tile(10, 9), tile(13, 4), tile(7, 16), tile(5, 10)),
+    ] {
+        let door = wall(0, angle);
+        for here in [Some(facing), Some(far_facing), None] {
+            assert_eq!(
+                walk(&door, here),
+                (facing, 0, None),
+                "angle {angle} from {here:?}"
+            );
+        }
+        for here in [far_own, along, origin] {
+            assert_eq!(
+                walk(&door, Some(here)),
+                (origin, 1, None),
+                "angle {angle} from {here:?}"
+            );
+        }
+    }
+    for shape in [1, 2, 3, 9] {
+        assert_eq!(
+            walk(&wall(shape, 2), Some(tile(16, 10))),
+            (origin, 1, None),
+            "shape {shape} has no single facing side"
+        );
+    }
+    let mut footprint = wall(10, 0);
+    footprint.layer = LocLayer::Ground;
+    footprint.width = 2;
+    footprint.length = 2;
+    footprint.footprint_width = 2;
+    footprint.footprint_length = 2;
+    assert_eq!(
+        walk(&footprint, Some(tile(16, 10))),
+        (origin, 1, Some(footprint.id))
+    );
 }

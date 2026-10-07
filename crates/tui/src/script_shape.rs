@@ -359,6 +359,7 @@ pub struct ScriptPane<'a> {
     /// A reload warning awaits confirmation.
     pub reload_confirm: bool,
     pub native_status: Option<&'a script::native::ScriptStatus>,
+    pub walk_risk: Option<&'a str>,
 }
 
 impl<'a> ScriptPane<'a> {
@@ -388,6 +389,7 @@ impl<'a> ScriptPane<'a> {
             slot,
             reload_confirm: false,
             native_status: None,
+            walk_risk: None,
         }
     }
 
@@ -398,6 +400,11 @@ impl<'a> ScriptPane<'a> {
 
     pub fn with_native_status(mut self, status: Option<&'a script::native::ScriptStatus>) -> Self {
         self.native_status = status;
+        self
+    }
+
+    pub fn with_walk_risk(mut self, reason: Option<&'a str>) -> Self {
+        self.walk_risk = reason;
         self
     }
 
@@ -545,6 +552,9 @@ impl Widget for ScriptPane<'_> {
                     lines.push(Line::from(format!("{label}: {value}")));
                 }
             }
+        }
+        if let Some(reason) = self.walk_risk {
+            lines.push(Line::from(format!("Walk risk: {reason}")));
         }
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
@@ -1117,6 +1127,31 @@ mod tests {
         assert!(text.contains("quest list unavailable"), "{text:?}");
         assert!(text.contains("Stop/Start Quester"), "{text:?}");
         assert!(!text.contains("script: running"), "{text:?}");
+    }
+
+    #[test]
+    fn retained_walk_assessment_has_a_walk_risk_row_without_native_status() {
+        let text = render(
+            ScriptPane::new(
+                RunState::Idle,
+                None,
+                &[],
+                &[],
+                false,
+                false,
+                false,
+                "",
+                false,
+                None,
+            )
+            .with_walk_risk(Some("Route assessment unknown: Poison")),
+            90,
+            10,
+        );
+        assert!(
+            text.contains("Walk risk: Route assessment unknown: Poison"),
+            "{text:?}"
+        );
     }
 
     #[test]

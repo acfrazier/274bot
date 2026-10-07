@@ -272,17 +272,29 @@ impl NativeMachine for Dialogue {
                 }
             }
             Surface::Chat if main_active => {
-                if !chat_active && matches!(main.kind, MainKind::Scroll | MainKind::Book) {
-                    match self.chat_transition_acknowledgement(cx) {
-                        ChatTransitionAck::Accepted => {
-                            self.surface = Surface::Main;
-                            self.phase = Phase::Open;
-                            return self.poll_main(cx, &main, now);
+                if !chat_active {
+                    // A selected document continues on the Main surface.
+                    // Any other Main modal can only be new here (one open at
+                    // begin fails), so once our own accepted advance opened
+                    // it (`set_sail`'s `if_openmain(ship_journey)` after the
+                    // boat or customs answer), the conversation is over: the
+                    // step's settle judges what the modal did.
+                    let document = matches!(main.kind, MainKind::Scroll | MainKind::Book);
+                    if document || self.chat_advance_request_id.is_some() {
+                        match self.chat_transition_acknowledgement(cx) {
+                            ChatTransitionAck::Accepted if document => {
+                                self.surface = Surface::Main;
+                                self.phase = Phase::Open;
+                                return self.poll_main(cx, &main, now);
+                            }
+                            ChatTransitionAck::Accepted => {
+                                return Poll::Ready(Ok(DialogueOutcome::Completed));
+                            }
+                            ChatTransitionAck::Pending if now < self.deadline_ms => {
+                                return Poll::Pending;
+                            }
+                            ChatTransitionAck::Pending | ChatTransitionAck::Failed => {}
                         }
-                        ChatTransitionAck::Pending if now < self.deadline_ms => {
-                            return Poll::Pending;
-                        }
-                        ChatTransitionAck::Pending | ChatTransitionAck::Failed => {}
                     }
                 }
                 return Poll::Ready(Ok(DialogueOutcome::Failed));

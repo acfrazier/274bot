@@ -75,6 +75,7 @@ fn walk_globals_publish_before_start_and_to_the_current_play() {
         allow_wilderness: true,
         allow_bank_fetch: true,
         allow_danger_zones: true,
+        survivable_routing: false,
     };
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());

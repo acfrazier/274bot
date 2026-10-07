@@ -511,6 +511,12 @@ ambiguous, missing-control or unchanged pages fail without a guessed fallback.
 `Dialogue::owned_chat_page` borrows only the first chat page from that driver's
 accepted NPC Talk request. It requires a newer game tick and a change from the
 pre-Talk page, and returns no page after Continue or an answer is emitted.
+A Main modal that is neither a selected scroll nor a book can only be new
+while the driver is on the chat surface. When it replaces the chat page after
+the driver's own accepted, fresh Continue or Answer (for example `set_sail`'s
+`if_openmain(ship_journey)` after a boat or customs answer), the conversation
+completes and the step's `settle` judges the outcome. The same modal after only
+the Talk-to, or after a refused answer, still fails.
 
 `interact` accepts `target: {"held": "death_iou"}` with an observed operation
 such as `"op": "Read"`. It selects the exact inventory item and slot, verifies
@@ -562,6 +568,11 @@ loc id as well as its display name; a nearer or co-located same-name loc cannot
 replace it.
 For an anchored loc, the settle deadline starts on arrival at the first legal
 stand and is shared by all repeated `until` attempts; retries do not restart it.
+An anchored `interact` or `use_on` on a straight wall (a door or gate, loc
+shape 0) approaches from the player's side of the wall. From the angle-facing
+side it walks to the facing tile at radius 0: the loc's own tile is across the
+wall, so nav's tile arrival would drop the doorstep and leave only far-side
+stands. From the loc's own side it walks to the loc tile at radius 1.
 
 The `ground_item_near` fact may declare `at: [x,z,level]`. It then requires the
 selected item id at that exact tile and within the declared radius; a nearby
@@ -1224,18 +1235,30 @@ script walking never exposes bank fetch.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
-walks. Danger is off by default; the map danger control opts in for this walk
-only while the global is off, and is replaced by a warning when it is on.
-Native scripts cannot use BankBudget, even when global bank fetch is enabled.
-Native bank selection ranks walking routes without teleports; the walk to the
-chosen bank may still use granted teleports. Compatibility scripts keep their
-existing option wiring, including always-enabled wilderness and bank fetch.
+walks. Danger has three levels: **Never**, **When survivable** (the stored
+default), and **Always**. The middle level stores `allow_danger_zones=false`
+and `survivable_routing=true`; Always stores the danger grant, and Never
+clears both. **S2b keeps `host_play::NET_AVAILABLE=false`**: every middle-level
+source resolves to Never, displayed as “When survivable (not available yet:
+acts as Never)”. Default/inherited walks preserve the pre-S2b router result,
+including origin-inside escapes and endpoint completion, with assessments
+informational only. A held-state informational note is logged once per session.
+Explicit script/per-walk overrides retain their S2b admission semantics.
+Only the integrated acceptance gate can enable the middle level.
+The map danger control remains an explicit grant for this walk, independent
+of the middle-level gate. Native scripts cannot use BankBudget, even when
+global bank fetch is enabled. Native bank selection ranks walking routes
+without teleports; the walk to the chosen bank may still use granted teleports.
+Compat v1 uses Proceed through derived danger zones, with assessment logged
+only and no eating/protection/net. Explicit avoids, the frozen catalog,
+automatic jail rule, other route gates and existing banking remain hard.
 All shared preference writers, including the TUI log pane, serialize through
 an in-process mutex and the `panel-ui.json.lock` advisory lock. Both frontends
 refresh a shared durable walk-permission projection for danger controls and
-inherited script rows, and refresh it again at manual admission. Missing or
-malformed preferences fail closed. A peer frontend's grant change therefore
-updates both the warning and the next walk's options.
+inherited script rows, and refresh it again at manual admission. An absent
+file or a valid old file without the new key uses the middle-level default;
+an unreadable or malformed file clears every grant. A peer frontend's change
+therefore updates both the warning and the next walk's options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.
@@ -1243,6 +1266,42 @@ Assistant mill walks inherit teleport permission, as their frozen callers do.
 Path `cross` names danger-zone exemptions for that walk; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may
 be used with or without that guard.
+
+Host walking returns the estimate through the same admission seam for native,
+v2 and manual callers. The existing tri-state derives `RiskPolicy`:
+walk-local Allow is Proceed, Forbid is Avoid, and Inherit uses script/global
+grants or the gated global level. Hard teleport/wilderness/avoid/quest
+authority is never broadened. Named `cross` grants bless only their zones:
+known granted damage still affects later crossings; a granted Unknown kind
+does not make an overlapping ungranted crossing safe.
+
+`WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed
+`refusal`, and optional passive `escape` data. `Refused` and `Aborted` map to
+`ActionError::Blocked(detail)`, never ordinary arrival. Quester/Gatherer keep
+their existing parked/blocked handling with the reason; both frontends show
+the current or last reason under **Walk risk**.
+`NativeActions::assess_walk(request, cx)` is compute-only: its independent
+correlated `AssessReceipt` includes the assessment and route ticks, spends no
+walk/event budget, arms no route or guard, and may run during a live escape.
+It can be requested without a foreground action handle; its run-owned
+compute authority does not replace or revoke the foreground walk or interaction.
+Taking it, replacing it or revoking the script run invalidates the old request.
+It is not exposed as a new JS API in S2b.
+
+S2b has no trustworthy live poison observer. A fresh entering crossing's
+assessment can therefore be `Unknown(Poison)`, not a claim of survivability.
+While activation is held, this does not change default/inherited admission.
+An explicit Forbid still applies S2b assessment refusal, while an explicit Allow
+may proceed with its honest Unknown assessment. A refused route cannot take its
+own first hop to clear uncertainty, and waiting alone does not clear it.
+Zero entering crossings are always admitted, even under unknown/player attackers,
+unattributed hits, missing facts or input overflow. Leaving a zone the origin is
+engaged in (inside its active acquisition area) is not entry; walking into a
+zone from inside only its pursuit envelope is, and so is re-entry after
+exiting. A failed assessment (for example `Unknown(Overflow)`) is refused by
+every enforcing non-Proceed admission. The same rules hold at publication.
+Recovery evidence becomes usable only with S2c's observer.
+An assessment does not fetch supplies or execute an escape.
 
 The guard holds protection without attacking or flicking. It uses Combat's eat
 line, choosing the largest ordinary food that fits the HP deficit (or the

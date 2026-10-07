@@ -311,6 +311,14 @@ impl PlayConnection {
         }
     }
 
+    /// World type for scripts: the bound profile's, `Unknown` with no profile.
+    pub(super) fn world_members(&self) -> api::selected::Truth {
+        self.profile()
+            .map_or(api::selected::Truth::Unknown, |profile| {
+                profile.world_members_truth()
+            })
+    }
+
     pub(super) fn require_bot_operation(&self) -> Result<(), String> {
         self.profile()
             .map_or(Ok(()), |profile| profile.require_bot_operation())
@@ -436,6 +444,7 @@ impl Play {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
+            bank_memories: HashMap::new(),
             pause_script_on_manual_walk_abort: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             walk_globals: Arc::new(Mutex::new(super::WalkGlobals::default())),
             walk_globals_store: None,

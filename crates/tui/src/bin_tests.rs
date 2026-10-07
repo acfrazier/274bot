@@ -1717,7 +1717,10 @@ mod bank_fetch_fixtures {
             },
         );
         c.bump_gens(ServerProt::IF_OPENMAIN);
-        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        // The withdraw grid's full inventory packet: the bank is loaded, as
+        // the slot's bank memory needs before it observes the rows.
+        let mut full = client::io::Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 0, 0]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
         c
     }
 
@@ -1819,6 +1822,7 @@ fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
         level: 0,
     });
     app.nav.allow_bank_fetch = true;
+    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     session.arm_walk_on(
         &mut app,
         Tile {
@@ -1851,6 +1855,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
     let mut app = TuiApp::new("274bot headless");
+    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     session.pump(&mut app);
     assert!(!app.fleet[0].walking);
 
@@ -1893,11 +1898,11 @@ fn resetting_the_same_walk_slot_session_twice_logs_one_cancellation() {
         level: 0,
     };
     let arm = Arc::new(Mutex::new(WalkArm {
-        route: Some(Route {
+        route: Some(Arc::new(Route {
             dest: destination,
             legs: vec![],
             ticks: 0.0,
-        }),
+        })),
         ..Default::default()
     }));
     let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::from([(slot.to_owned(), arm)])));
@@ -2083,7 +2088,7 @@ fn player_at_plane_one_follow_uses_level() {
     assert_eq!(here.2, 1, "fixture player must be upstairs");
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&c);
-    let final_route = Route {
+    let final_route = Arc::new(Route {
         dest: WorldTile {
             x: 99,
             z: 99,
@@ -2091,7 +2096,7 @@ fn player_at_plane_one_follow_uses_level() {
         },
         legs: vec![],
         ticks: 0.0,
-    };
+    });
     let pending = PendingBankFetch {
         steps: VecDeque::from([BankStep::Walk {
             x: here.0,
@@ -2160,7 +2165,7 @@ fn follow_tick_pumps_bank_budget_step() {
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&c);
     let world = Arc::new(knife_nav_world(2));
-    let final_route = Route {
+    let final_route = Arc::new(Route {
         dest: WorldTile {
             x: 4,
             z: 4,
@@ -2168,7 +2173,7 @@ fn follow_tick_pumps_bank_budget_step() {
         },
         legs: vec![],
         ticks: 0.0,
-    };
+    });
     let mut arm = WalkArm {
         bank_fetch: Some(PendingBankFetch {
             steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
@@ -2182,7 +2187,7 @@ fn follow_tick_pumps_bank_budget_step() {
             avoid: Vec::new(),
             progress: Default::default(),
         }),
-        route: Some(Route {
+        route: Some(Arc::new(Route {
             dest: WorldTile {
                 x: 0,
                 z: 4,
@@ -2190,7 +2195,7 @@ fn follow_tick_pumps_bank_budget_step() {
             },
             legs: vec![],
             ticks: 0.0,
-        }),
+        })),
         ..Default::default()
     };
     let before = c.out.pos;
@@ -2230,13 +2235,13 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
     };
     let stand = WorldTile { x: at.x + 1, ..at };
     let destination = WorldTile { x: at.x + 2, ..at };
-    let final_route = Route {
+    let final_route = Arc::new(Route {
         dest: destination,
         legs: vec![Leg::Walk {
             tiles: vec![stand, destination],
         }],
         ticks: 1.0,
-    };
+    });
     let mut arm = WalkArm {
         bank_fetch: Some(PendingBankFetch {
             steps: VecDeque::from([BankStep::Walk {
@@ -2250,13 +2255,13 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
             avoid: Vec::new(),
             progress: Default::default(),
         }),
-        route: Some(Route {
+        route: Some(Arc::new(Route {
             dest: stand,
             legs: vec![Leg::Walk {
                 tiles: vec![at, stand],
             }],
             ticks: 1.0,
-        }),
+        })),
         route_generation: 103,
         ..Default::default()
     };
@@ -2345,7 +2350,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         ticks: 0.0,
     };
     let mut arrived = WalkArm {
-        route: Some(arrived_route),
+        route: Some(Arc::new(arrived_route)),
         route_generation: 101,
         ..Default::default()
     };
@@ -2404,7 +2409,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         ticks: 7.0,
     };
     let mut aborted = WalkArm {
-        route: Some(aborted_route),
+        route: Some(Arc::new(aborted_route)),
         route_generation: 102,
         ..Default::default()
     };

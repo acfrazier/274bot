@@ -331,6 +331,67 @@ struct PendingZone {
     npc_id: i32,
     shape_bits: Option<u64>,
     carve_visibility: bool,
+    mobile_reach: Option<MobileReach>,
+}
+
+/// Engine facts that bound where a moving hunter can acquire a player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MobileReach {
+    /// NPC footprint side (`npc.size`).
+    size: i32,
+    /// Chebyshev bound on the NPC's south-west tile from its spawn: the larger
+    /// of its wander box and the farthest a valid chase can carry it.
+    move_radius: i32,
+    /// `huntrange`, measured from the NPC's south-west tile.
+    hunt_range: i32,
+    /// The hunt mode requires `check_vis=lineofsight`.
+    line_of_sight: bool,
+    /// The collision rule the engine steps this NPC under.
+    strategy: StepStrategy,
+}
+
+/// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
+/// tested per tile by `CollisionStrategy.canMove`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepStrategy {
+    /// `normal` and `passthru`, and the stand-in for `indoors`/`outdoors`:
+    /// those add a roof test to the same mask test, and the bake carries no
+    /// roof flag, so NORMAL reaches a superset of their tiles.
+    Normal,
+    /// `blocked`: only onto blocked ground (`FLOOR`), still stopped by walls,
+    /// scenery and ground decor.
+    Blocked,
+    /// `blocked+normal` (`CollisionType.LINE_OF_SIGHT`): only projectile-
+    /// blocking walls and scenery stop it; ground and ordinary scenery don't.
+    LineOfSight,
+}
+
+impl StepStrategy {
+    fn of(restrict: crate::map::services::MoveRestrict) -> Option<Self> {
+        use crate::map::services::MoveRestrict;
+        match restrict {
+            MoveRestrict::Normal
+            | MoveRestrict::Passthru
+            | MoveRestrict::Indoors
+            | MoveRestrict::Outdoors => Some(Self::Normal),
+            MoveRestrict::Blocked => Some(Self::Blocked),
+            MoveRestrict::BlockedNormal => Some(Self::LineOfSight),
+            MoveRestrict::Nomove => None,
+        }
+    }
+
+    /// `CollisionStrategy.canMove(collision, tileFlag, blockFlag)`.
+    fn can_move(self, tile: u32, block: u32) -> bool {
+        const FLOOR: u32 = 0x20_0000;
+        // Walls (`0xff`) and scenery (`0x100`); `<< 9` turns each into its
+        // projectile-blocker bit.
+        const LINE_OF_SIGHT_MOVEMENT: u32 = 0x1ff;
+        match self {
+            Self::Normal => tile & block == 0,
+            Self::Blocked => tile & block & !FLOOR == 0 && tile & FLOOR != 0,
+            Self::LineOfSight => tile & ((block & LINE_OF_SIGHT_MOVEMENT) << 9) == 0,
+        }
+    }
 }
 
 fn derive_zone_table(
@@ -339,8 +400,14 @@ fn derive_zone_table(
     graph: &crate::transport::TransportGraph,
     npc_types: &[client::config::NpcType],
     door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
 ) -> Result<DerivedZones, String> {
-    let inputs = crate::map::services::collect_hunter_inputs(content_root, npc_types, door_ids)?;
+    let inputs = crate::map::services::collect_hunter_inputs(
+        content_root,
+        npc_types,
+        door_ids,
+        opened_door_ids,
+    )?;
     let definitions: HashMap<_, _> = inputs
         .definitions
         .iter()
@@ -438,7 +505,7 @@ fn derive_zone_table(
                 definition.id
             ));
         }
-        let (zone, shape_bits) = if definition.stationary && !ap {
+        let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
             let width = u8::try_from(size)
                 .ok()
                 .filter(|size| *size <= 6)
@@ -453,8 +520,9 @@ fn derive_zone_table(
             (
                 Zone::shaped_npc(tile, width, width, class, cap, kind, NO_SHAPE),
                 Some(bits),
+                None,
             )
-        } else if definition.stationary && ap {
+        } else if definition.stationary() && ap {
             let (min_x, min_z, max_x, max_z) =
                 stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
                     .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
@@ -463,7 +531,7 @@ fn derive_zone_table(
             zone.min_z = min_z;
             zone.max_x = max_x;
             zone.max_z = max_z;
-            (zone, None)
+            (zone, None, None)
         } else {
             let wander = if definition.never_wanders {
                 0
@@ -480,18 +548,39 @@ fn derive_zone_table(
                 .ok_or_else(|| format!("hunter NPC {} tether range overflows", definition.id))?;
             let radius = u8::try_from(acquisition.min(tether))
                 .map_err(|_| format!("hunter NPC {} radius exceeds u8", definition.id))?;
-            (Zone::npc(tile, radius, class, cap, kind), None)
+            // A chase holds the NPC's footprint next to a target that is still
+            // inside the tether, and a non-wandering NPC stays wherever its last
+            // chase ended, so it can hunt from anywhere in that envelope.
+            let move_radius = tether
+                .checked_add(size)
+                .ok_or_else(|| format!("hunter NPC {} chase radius overflows", definition.id))?
+                .max(wander);
+            let strategy = StepStrategy::of(definition.move_restrict).ok_or_else(|| {
+                format!("hunter NPC {} walks but has no step rule", definition.id)
+            })?;
+            let reach = MobileReach {
+                size,
+                move_radius,
+                hunt_range: definition.huntrange,
+                line_of_sight: definition.check_lineofsight,
+                strategy,
+            };
+            (Zone::npc(tile, radius, class, cap, kind), None, Some(reach))
         };
+        // The engine checks LOS from the NPC's current tile. Keep positive-
+        // wander hunters conservative; carve only for nomove or zero-wander
+        // hunters around their spawn tile.
+        let carve_visibility = ap
+            && definition.check_lineofsight
+            && (definition.stationary() || definition.wanderrange == 0);
         pending.push(PendingZone {
             zone,
             npc_id: spawn.npc_id,
             shape_bits,
-            // The engine checks LOS from the NPC's current tile. Keep positive-
-            // wander hunters conservative; carve only for nomove or zero-wander
-            // hunters around their spawn tile.
-            carve_visibility: ap
-                && definition.check_lineofsight
-                && (definition.stationary || definition.wanderrange == 0),
+            carve_visibility,
+            // Spawn-centred visibility carving already narrows zero-wander
+            // ranged hunters; every other moving hunter gets its reach flood.
+            mobile_reach: mobile_reach.filter(|_| !carve_visibility),
         });
     }
     pending.sort_unstable_by_key(|row| {
@@ -518,18 +607,36 @@ fn derive_zone_table(
                 .map_err(|_| "zone shape count exceeds the packed limit".to_string())?;
             shapes.push(bits);
         }
+        let level = i32::from(row.zone.level);
+        let (min_x, min_z, max_x, max_z) = (
+            row.zone.min_x,
+            row.zone.min_z,
+            row.zone.max_x,
+            row.zone.max_z,
+        );
+        // Closed openable doors are not permanent cover or walls. Keep the
+        // conservative rectangle wherever such a door could affect LOS or
+        // the hunter's movement.
         if row.carve_visibility
-            && !inputs.openable_doors.iter().any(|door| {
-                door.level == i32::from(row.zone.level)
-                    && door.x >= row.zone.min_x - 1
-                    && door.x <= row.zone.max_x + 1
-                    && door.z >= row.zone.min_z - 1
-                    && door.z <= row.zone.max_z + 1
-            })
+            && !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
         {
-            // Closed openable doors are not permanent cover. Keep the
-            // conservative rectangle wherever such a door could affect LOS.
             append_ranged_visibility_carves(collision, &row.zone, zones.len(), &mut carves)?;
+        }
+        if let Some(reach) = row.mobile_reach {
+            // The hunter can stand anywhere within its move radius, so a door
+            // that could open or close a passage for it anywhere there counts.
+            let envelope = reach.move_radius + reach.size;
+            let (min_x, min_z, max_x, max_z) = (
+                min_x.min(row.zone.spawn_x - envelope),
+                min_z.min(row.zone.spawn_z - envelope),
+                max_x.max(row.zone.spawn_x + envelope),
+                max_z.max(row.zone.spawn_z + envelope),
+            );
+            if !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
+                && !openable_door_within(&inputs.opened_doors, level, min_x, min_z, max_x, max_z)
+            {
+                append_mobile_reach_carves(collision, &row.zone, reach, zones.len(), &mut carves)?;
+            }
         }
         zones.push(row.zone);
     }
@@ -723,6 +830,239 @@ fn append_ranged_visibility_carves(
             ));
             x += 1;
         }
+    }
+    Ok(())
+}
+
+/// Whether an openable (closed) door stands within the inclusive box grown by
+/// one tile on `level`.
+fn openable_door_within(
+    doors: &[crate::map::services::OpenableDoor],
+    level: i32,
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+) -> bool {
+    doors.iter().any(|door| {
+        door.level == level
+            && door.x >= min_x - 1
+            && door.x <= max_x + 1
+            && door.z >= min_z - 1
+            && door.z <= max_z + 1
+    })
+}
+
+/// Engine `routefinder/flags.ts` movement masks. The baked raw flags share the
+/// engine's wall (`0xff`), loc (`0x100`), projectile-blocker (`0x3fe00`),
+/// ground-decor (`0x40000`) and ground (`0x200000`) bits; dynamic NPC/player
+/// occupancy is never baked, so it is treated as open.
+mod npc_block {
+    pub const SOUTH: u32 = 0x24_0102;
+    pub const NORTH: u32 = 0x24_0120;
+    pub const WEST: u32 = 0x24_0108;
+    pub const EAST: u32 = 0x24_0180;
+    pub const SOUTH_WEST: u32 = 0x24_010e;
+    pub const SOUTH_EAST: u32 = 0x24_0183;
+    pub const NORTH_WEST: u32 = 0x24_0138;
+    pub const NORTH_EAST: u32 = 0x24_01e0;
+    pub const NORTH_AND_SOUTH_EAST: u32 = 0x24_013e;
+    pub const NORTH_AND_SOUTH_WEST: u32 = 0x24_01e3;
+    pub const NORTH_EAST_AND_WEST: u32 = 0x24_018f;
+    pub const SOUTH_EAST_AND_WEST: u32 = 0x24_01f8;
+}
+
+/// Whether the engine moves a `size`×`size` NPC whose south-west tile is
+/// `(x, z)` one step by `(dx, dz)`: `PathingEntity.takeStep` takes a diagonal
+/// only for width-1 NPCs and otherwise tries the E/W then the N/S component,
+/// each through `StepValidator.canTravel` under the NPC's own collision
+/// `strategy` with no dynamic extra flag.
+fn npc_step_ok(
+    flag: &impl Fn(i32, i32) -> u32,
+    x: i32,
+    z: i32,
+    (dx, dz): (i32, i32),
+    size: i32,
+    strategy: StepStrategy,
+) -> bool {
+    use npc_block::*;
+    let open = |x: i32, z: i32, mask: u32| strategy.can_move(flag(x, z), mask);
+    let s = size;
+    match (dx, dz) {
+        (0, -1) if s == 1 => open(x, z - 1, SOUTH),
+        (0, 1) if s == 1 => open(x, z + 1, NORTH),
+        (-1, 0) if s == 1 => open(x - 1, z, WEST),
+        (1, 0) if s == 1 => open(x + 1, z, EAST),
+        (-1, -1) if s == 1 => {
+            open(x - 1, z - 1, SOUTH_WEST) && open(x - 1, z, WEST) && open(x, z - 1, SOUTH)
+        }
+        (-1, 1) if s == 1 => {
+            open(x - 1, z + 1, NORTH_WEST) && open(x - 1, z, WEST) && open(x, z + 1, NORTH)
+        }
+        (1, -1) if s == 1 => {
+            open(x + 1, z - 1, SOUTH_EAST) && open(x + 1, z, EAST) && open(x, z - 1, SOUTH)
+        }
+        (1, 1) if s == 1 => {
+            open(x + 1, z + 1, NORTH_EAST) && open(x + 1, z, EAST) && open(x, z + 1, NORTH)
+        }
+        // Sizes 2 and up: the engine's size-2 cases equal this general form.
+        (0, -1) => {
+            open(x, z - 1, SOUTH_WEST)
+                && open(x + s - 1, z - 1, SOUTH_EAST)
+                && (x + 1..x + s - 1).all(|mid| open(mid, z - 1, NORTH_EAST_AND_WEST))
+        }
+        (0, 1) => {
+            open(x, z + s, NORTH_WEST)
+                && open(x + s - 1, z + s, NORTH_EAST)
+                && (x + 1..x + s - 1).all(|mid| open(mid, z + s, SOUTH_EAST_AND_WEST))
+        }
+        (-1, 0) => {
+            open(x - 1, z, SOUTH_WEST)
+                && open(x - 1, z + s - 1, NORTH_WEST)
+                && (z + 1..z + s - 1).all(|mid| open(x - 1, mid, NORTH_AND_SOUTH_EAST))
+        }
+        (1, 0) => {
+            open(x + s, z, SOUTH_EAST)
+                && open(x + s, z + s - 1, NORTH_EAST)
+                && (z + 1..z + s - 1).all(|mid| open(x + s, mid, NORTH_AND_SOUTH_WEST))
+        }
+        _ => false,
+    }
+}
+
+/// Tiles of a moving hunter's zone rectangle from which the engine could
+/// acquire a player: the NPC's south-west tile reaches a cell by engine steps
+/// (under its own collision strategy) from its spawn without leaving
+/// `move_radius`, and the player stands within `huntrange` of it (plus, for
+/// `lineofsight` hunt modes, the player-to-NPC ray the engine's `HuntIterator`
+/// casts). Row-major over the zone bounds.
+fn mobile_acquisition(collision: &WorldCollision, zone: &Zone, reach: MobileReach) -> Vec<bool> {
+    use api::line_of_sight::{has_line_of_sight_local, Footprint};
+
+    let level = i32::from(zone.level);
+    let flag = |x: i32, z: i32| collision.flag(x, z, level);
+    let radius = reach.move_radius.max(0);
+    let side = (2 * radius + 1) as usize;
+    let (spawn_x, spawn_z) = (zone.spawn_x, zone.spawn_z);
+    let cell = |x: i32, z: i32| -> Option<usize> {
+        let (dx, dz) = (x - spawn_x + radius, z - spawn_z + radius);
+        (dx >= 0 && dz >= 0 && dx < side as i32 && dz < side as i32)
+            .then(|| dz as usize * side + dx as usize)
+    };
+    let mut occupied = vec![false; side * side];
+    let mut queue = std::collections::VecDeque::from([(spawn_x, spawn_z)]);
+    occupied[cell(spawn_x, spawn_z).expect("spawn is the flood centre")] = true;
+    while let Some((x, z)) = queue.pop_front() {
+        for (dx, dz) in [
+            (0, -1),
+            (0, 1),
+            (-1, 0),
+            (1, 0),
+            (-1, -1),
+            (-1, 1),
+            (1, -1),
+            (1, 1),
+        ] {
+            let Some(next) = cell(x + dx, z + dz) else {
+                continue;
+            };
+            if occupied[next] || !npc_step_ok(&flag, x, z, (dx, dz), reach.size, reach.strategy) {
+                continue;
+            }
+            occupied[next] = true;
+            queue.push_back((x + dx, z + dz));
+        }
+    }
+
+    let width = (zone.max_x - zone.min_x + 1) as usize;
+    let height = (zone.max_z - zone.min_z + 1) as usize;
+    let hunt = reach.hunt_range;
+    let mut member = vec![false; width * height];
+    for z in zone.min_z..=zone.max_z {
+        for x in zone.min_x..=zone.max_x {
+            let acquired = (z - hunt..=z + hunt).any(|npc_z| {
+                (x - hunt..=x + hunt).any(|npc_x| {
+                    cell(npc_x, npc_z).is_some_and(|index| occupied[index])
+                        && (!reach.line_of_sight
+                            || has_line_of_sight_local(
+                                &|x, z| Some(flag(x, z) as i32),
+                                Footprint {
+                                    lx: x,
+                                    lz: z,
+                                    size: 1,
+                                },
+                                Footprint {
+                                    lx: npc_x,
+                                    lz: npc_z,
+                                    size: 1,
+                                },
+                            ))
+                })
+            });
+            member[(z - zone.min_z) as usize * width + (x - zone.min_x) as usize] = acquired;
+        }
+    }
+    member
+}
+
+/// Subtract every cell of a moving hunter's rectangle that
+/// [`mobile_acquisition`] rules out. Identical horizontal runs on consecutive
+/// rows merge into one rectangle to keep the packed carve list compact.
+fn append_mobile_reach_carves(
+    collision: &WorldCollision,
+    zone: &Zone,
+    reach: MobileReach,
+    index: usize,
+    carves: &mut Vec<(u16, crate::router::AvoidRect)>,
+) -> Result<(), String> {
+    if collision.flags.is_none() {
+        return Err("mobile hunter reach carving requires raw baked collision flags".into());
+    }
+    let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
+    let level = i32::from(zone.level);
+    let member = mobile_acquisition(collision, zone, reach);
+    let width = (zone.max_x - zone.min_x + 1) as usize;
+    // (min_x, max_x, carve position) of the runs that end on the previous row.
+    let mut open_runs: Vec<(i32, i32, usize)> = Vec::new();
+    for z in zone.min_z..=zone.max_z {
+        let row = &member[(z - zone.min_z) as usize * width..][..width];
+        let mut next_runs = Vec::new();
+        let mut x = zone.min_x;
+        while x <= zone.max_x {
+            if row[(x - zone.min_x) as usize] {
+                x += 1;
+                continue;
+            }
+            let run_min = x;
+            while x < zone.max_x && !row[(x + 1 - zone.min_x) as usize] {
+                x += 1;
+            }
+            let position = match open_runs
+                .iter()
+                .find(|(min_x, max_x, _)| *min_x == run_min && *max_x == x)
+            {
+                Some(&(_, _, position)) => {
+                    carves[position].1.max_z = z;
+                    position
+                }
+                None => {
+                    carves.push((
+                        index,
+                        crate::router::AvoidRect {
+                            min_x: run_min,
+                            max_x: x,
+                            min_z: z,
+                            max_z: z,
+                            level: Some(level),
+                        },
+                    ));
+                    carves.len() - 1
+                }
+            };
+            next_runs.push((run_min, x, position));
+            x += 1;
+        }
+        open_runs = next_runs;
     }
     Ok(())
 }
@@ -927,6 +1267,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
 
     // Openable wall door loc ids from the Server door configs.
     let mut door_ids = HashSet::new();
+    // Closed door id -> the id it becomes when opened, from the same configs.
+    let mut door_open_ids = HashMap::new();
     let mut parsed_door_configs = Vec::with_capacity(DOOR_CONFIGS.len() + 1);
     let mut config_failed = 0usize;
     for name in DOOR_CONFIGS {
@@ -934,6 +1276,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         match std::fs::read_to_string(&path) {
             Ok(text) => {
                 door_ids.extend(crate::pack::parse_door_config(&text));
+                door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
                 parsed_door_configs.push(path);
             }
             Err(e) => {
@@ -951,6 +1294,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     match std::fs::read_to_string(request.gates) {
         Ok(text) => {
             door_ids.extend(crate::pack::parse_door_config(&text));
+            door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
             parsed_door_configs.push(request.gates.to_path_buf());
         }
         Err(e) => {
@@ -969,6 +1313,12 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
             request.gates.display()
         ));
     }
+    // Open states of those doors: a player can close one placed open.
+    let opened_door_ids: HashSet<i32> = door_open_ids
+        .iter()
+        .filter(|(closed, _)| door_ids.contains(*closed))
+        .map(|(_, open)| *open)
+        .collect();
 
     // Loc/NPC definitions from the client cache: collision uses loc defs;
     // navpois validates NPC/loc ids and operations against the same tables.
@@ -1005,7 +1355,14 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
     require_members_guards(content_root, &graph, &audit)?;
-    let derived_zones = derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
+    let derived_zones = derive_zone_table(
+        content_root,
+        &collision,
+        &graph,
+        &npc_types,
+        &door_ids,
+        &opened_door_ids,
+    )?;
     let zone_count = u32::try_from(derived_zones.table.zones().len())
         .map_err(|_| "zone count exceeds the manifest range".to_string())?;
     let zone_npc_count = u32::try_from(derived_zones.npc_count)

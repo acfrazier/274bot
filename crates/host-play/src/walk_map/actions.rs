@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
 use nav::map::identity::Digest;
 use nav::map::spatial::{snap_walkable, GameTile};
 use nav::router::{FindOptions, Leg, Route};
@@ -12,7 +12,10 @@ use nav::WorldState;
 
 use super::catalogue::{safe_standable, tile, world_tile};
 use super::Catalogue;
+use crate::admission::Admission;
+use crate::walk_arm::WalkRoute;
 use crate::{Play, SlotArm, WalkArms};
+use script::combat::risk::RiskInput;
 pub(crate) const LEGACY_ZONES_DETAIL: &str = "zones: unavailable (legacy grid pack)";
 
 /// Process-unique slot lifetime plus the operator-selected world epoch. A uid
@@ -65,8 +68,16 @@ pub enum ActionError {
     Stale,
     NoNavigation,
     NoPath,
-    BlockedByZones { detail: Option<String> },
-    InsufficientItems { detail: String },
+    BlockedByZones {
+        detail: Option<String>,
+    },
+    InsufficientItems {
+        detail: String,
+    },
+    RiskRefused {
+        refusal: script::native::WalkRefusal,
+        detail: String,
+    },
     MembersOnly,
     Unauthorized,
     WrongAction,
@@ -100,6 +111,7 @@ impl fmt::Display for ActionError {
                 "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway",
             ),
             Self::InsufficientItems { detail } => write!(f, "Insufficient route supplies: {detail}"),
+            Self::RiskRefused { detail, .. } => f.write_str(detail),
             Self::MembersOnly => f.write_str("This route requires a members' world"),
             Self::Unauthorized => {
                 f.write_str("Debug Teleport requires a local loopback engine target")
@@ -124,6 +136,7 @@ impl ActionError {
             Self::NoPath => "no path",
             Self::BlockedByZones { .. } => "blocked by danger zones",
             Self::InsufficientItems { .. } => "insufficient route supplies",
+            Self::RiskRefused { .. } => "walk risk refused",
             Self::MembersOnly => "members-only path",
             Self::Unauthorized => "not authorised",
             Self::WrongAction => "wrong action",
@@ -171,8 +184,8 @@ pub struct WalkRequest<'a> {
 impl WalkRequest<'_> {
     pub fn run(
         self,
-        action: impl FnOnce() -> Result<Route, ActionError>,
-    ) -> Result<Route, ActionError> {
+        action: impl FnOnce() -> Result<WalkRoute, ActionError>,
+    ) -> Result<WalkRoute, ActionError> {
         let outcome = action();
         if api::hostlog::enabled(api::hostlog::Category::NavEvent) {
             api::hostlog::emit(
@@ -265,13 +278,14 @@ impl fmt::Display for WalkTile {
     }
 }
 
-struct WalkOutcome<'a>(&'a Result<Route, ActionError>);
+struct WalkOutcome<'a>(&'a Result<WalkRoute, ActionError>);
 impl fmt::Display for WalkOutcome<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let route = match self.0 {
-            Ok(route) => route,
+        let admitted = match self.0 {
+            Ok(admitted) => admitted,
             Err(reason) => return write!(f, "refused={reason:?}"),
         };
+        let route = &admitted.route;
         let steps: usize = route
             .legs
             .iter()
@@ -296,7 +310,11 @@ impl fmt::Display for WalkOutcome<'_> {
                 separator = ",";
             }
         }
-        f.write_str("]")
+        write!(
+            f,
+            "] risk={:?} reason={}",
+            admitted.assessment.verdict, admitted.assessment.reason
+        )
     }
 }
 
@@ -551,7 +569,9 @@ impl WalkSlotStatus {
 pub struct WalkSlotRequest<'a> {
     pub name: &'a str,
     pub state: &'a WorldState,
-    pub bank: &'a [(i32, i32)],
+    /// The slot's bank memory rows ([`crate::Play::bank_rows`]).
+    pub bank: &'a BankRows,
+    pub risk_input: RiskInput,
 }
 
 /// Shared destination after the selection is consumed. Each bot gets its own
@@ -927,7 +947,7 @@ fn blocking_zones_for_walk(
     let plan = plan_bank_fetch(
         &missing,
         slot.state,
-        slot.bank,
+        &nav::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
         world.banks(),
         from,
         &world.collision,
@@ -982,15 +1002,17 @@ impl MapCommand {
     }
     /// Shared offline/host seam. Production frontends use Play::map_walk, which
     /// additionally verifies the actual running slot and bound nav world.
+    #[allow(clippy::too_many_arguments)]
     pub fn walk_on(
         self,
         world: &NavWorld,
         current: &MapContext,
         name: &str,
         state: &WorldState,
-        bank: &[(i32, i32)],
+        bank: &BankRows,
+        admission: Admission,
         arms: &WalkArms,
-    ) -> Result<Route, ActionError> {
+    ) -> Result<WalkRoute, ActionError> {
         self.check(current, ActionKind::Walk)?;
         if !safe_standable(world, world_tile(self.origin)) {
             return Err(ActionError::OriginNotStandable);
@@ -1005,9 +1027,30 @@ impl MapCommand {
             self.options,
             state,
             bank,
+            admission,
             arms,
             Some(name),
         );
+        if let Err(crate::NoPath {
+            detail,
+            refusal: Some(refusal),
+            ..
+        }) = &result
+        {
+            if !matches!(
+                refusal,
+                script::native::WalkRefusal::NoRouteWithinBounds { .. }
+            ) {
+                let detail = detail
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("{refusal:?}"));
+                return Err(ActionError::RiskRefused {
+                    refusal: *refusal,
+                    detail,
+                });
+            }
+        }
         if result.is_err() {
             // Diagnose a legal item-gated route before an all-exempt zone
             // detour: a cheaper unsafe walk must not hide an unpaid fare.
@@ -1031,12 +1074,31 @@ impl MapCommand {
                     return Err(ActionError::InsufficientItems { detail });
                 }
             }
+            if let Err(crate::NoPath {
+                detail,
+                refusal: Some(refusal),
+                ..
+            }) = &result
+            {
+                return Err(ActionError::RiskRefused {
+                    refusal: *refusal,
+                    detail: detail
+                        .as_deref()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("{refusal:?}")),
+                });
+            }
             if let Some(keys) = blocking_zones_for_walk(
                 world,
                 self.origin,
                 self.destination,
                 self.options,
-                &WalkSlotRequest { name, state, bank },
+                &WalkSlotRequest {
+                    name,
+                    state,
+                    bank,
+                    risk_input: admission.input,
+                },
                 arms,
             ) {
                 let detail = world
@@ -1158,17 +1220,53 @@ impl Play {
         }
         Ok(name)
     }
+    /// A slot obligation freezes every ordinary mover, whichever caller owns it.
+    pub fn walk_escape(&self, name: &str) -> Option<script::combat::guard::Escape> {
+        self.navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .and_then(|bot| bot.slot_escape())
+    }
+
     pub fn map_walk(
         &self,
         command: MapCommand,
         current: &MapContext,
         state: &WorldState,
-        bank: &[(i32, i32)],
+        bank: &BankRows,
+        input: RiskInput,
         arms: &WalkArms,
-    ) -> Result<Route, ActionError> {
+    ) -> Result<WalkRoute, ActionError> {
         let name = self.validate_map_command(&command, current, ActionKind::Walk)?;
         let world = self.world.as_deref().ok_or(ActionError::NoNavigation)?;
-        command.walk_on(world, current, &name, state, bank, arms)
+        let manual = arms
+            .lock()
+            .unwrap()
+            .entry(name.clone())
+            .or_insert_with(|| {
+                std::sync::Arc::new(std::sync::Mutex::new(crate::WalkArm::default()))
+            })
+            .clone();
+        let globals = self.walk_globals();
+        {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(name.clone()).or_default();
+            bot.manual_arm = Some(std::sync::Arc::downgrade(&manual));
+            crate::walk_permissions::log_runtime_net_gate(
+                &name,
+                globals,
+                &mut bot.runtime_gate_logged,
+            );
+            if let Some(escape) = bot.slot_escape() {
+                return Err(ActionError::RiskRefused {
+                    refusal: script::native::WalkRefusal::EscapeInProgress,
+                    detail: crate::admission::escape_reason(escape),
+                });
+            }
+        }
+        let admission = Admission::manual(command.options, input, 0, globals);
+        command.walk_on(world, current, &name, state, bank, admission, arms)
     }
 
     /// Consume a destination plan into one `map_walk` per requested slot.
@@ -1222,7 +1320,7 @@ impl Play {
                     overlay: dest.overlay,
                     generation: dest.generation,
                 };
-                self.map_walk(command, &current, req.state, req.bank, arms)
+                self.map_walk(command, &current, req.state, req.bank, req.risk_input, arms)
             });
             let kind = match (status, result) {
                 (WalkSlotStatus::Excluded(reason), _) => WalkSlotOutcomeKind::Excluded(reason),

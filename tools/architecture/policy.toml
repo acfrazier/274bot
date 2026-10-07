@@ -85,8 +85,8 @@ reason = "dev-only: ctx unit tests build client ObjType tables. The compiled scr
 [[allow]]
 from = "script"
 to = "nav"
-kinds = ["dev"]
-reason = "dev-only: named-bank alias tests resolve catalog names against packed geometry. The compiled script crate must stay nav-free."
+kinds = ["normal"]
+reason = "0.2.0: compiled cards and host receipts share nav's arrival/zone/route vocabulary (ArrivalKind, ZoneKey, ZoneTable, Route, WildernessRules) and the named-bank alias tests resolve catalog names against packed geometry; nav never depends on script. 0.2.1 decision: move that vocabulary down to api (or the route-risk replay up to nav) and return this edge to dev-only, or keep it."
 
 # --- orchestration and composition ---
 
@@ -117,8 +117,8 @@ reason = "Play drives Traveller/WalkTo; the build script bakes/stages the select
 [[allow]]
 from = "host-play"
 to = "script"
-kinds = ["normal"]
-reason = "Play owns the per-slot script transaction (start/pause/stop/load) as one cohesive unit."
+kinds = ["normal", "dev"]
+reason = "Play owns the per-slot script transaction (start/pause/stop/load) as one cohesive unit. dev: host-play's own tests install native fixtures through script's test-hooks seams (start_test_script, prepare_for_test); production builds never enable them."
 
 [[allow]]
 from = "host-play"
@@ -129,8 +129,8 @@ reason = "Play unlocks the vault and assigns profiles to slots."
 [[allow]]
 from = "host-play"
 to = "scenario"
-kinds = ["optional"]
-reason = "optional: scenario runner is feature-gated (memory-profile / live harness), not a default host-play edge."
+kinds = ["optional", "dev"]
+reason = "optional: scenario runner is feature-gated (memory-profile / live harness), not a default host-play edge. dev: host-play's offline and LIVE test cells drive the shared ScenarioRunner without a feature flag; production builds still need the feature."
 
 [[allow]]
 from = "scenario"
@@ -149,6 +149,12 @@ from = "scenario"
 to = "nav"
 kinds = ["normal"]
 reason = "nav-family scenarios share the packed world/router, not script isolate internals."
+
+[[allow]]
+from = "scenario"
+to = "script"
+kinds = ["normal"]
+reason = "Path-backed Quester fixtures reuse script's Path document model and registry with default-features = false (no V8); scenario never starts or hosts a script."
 
 # --- shared operator lifecycle ---
 
@@ -183,6 +189,24 @@ kinds = ["normal"]
 reason = "the core owns the unlocked vault and profile setting writes for both front ends."
 
 [[allow]]
+from = "frontend-core"
+to = "nav"
+kinds = ["normal"]
+reason = "group walk and the durable walk permissions name the nav vocabulary Play's API already exposes (FindOptions, Tile, WorldState); the 0.2.1 move of panel's WalkTo/nav chrome into frontend-core widens this, never the reverse."
+
+[[allow]]
+from = "frontend-core"
+to = "client"
+kinds = ["dev"]
+reason = "dev-only: lifecycle tests drive a real Client through Play::run_with_io hooks (logout packet, frame capture) and build nav collision fixtures. Production frontend-core must stay client-free."
+
+[[allow]]
+from = "frontend-core"
+to = "scenario"
+kinds = ["dev"]
+reason = "dev-only: the blocked-stop LIVE cell runs the shared ScenarioRunner against the shared panel/TUI presentation. Production frontend-core never hosts a scenario."
+
+[[allow]]
 from = "panel"
 to = "frontend-core"
 kinds = ["normal", "dev"]
@@ -215,8 +239,8 @@ reason = "panel reads slot/random status owned by host."
 [[allow]]
 from = "panel"
 to = "host-play"
-kinds = ["normal"]
-reason = "panel is a composition front over the shared Play lifecycle, not a second kernel."
+kinds = ["normal", "dev"]
+reason = "panel is a composition front over the shared Play lifecycle, not a second kernel. The dev edge only enables host-play's live-probe feature for panel's manual-click LIVE cells."
 
 [[allow]]
 from = "panel"

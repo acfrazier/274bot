@@ -103,6 +103,7 @@ pub struct SlotLoadIdentity {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
     pub loadouts: Arc<[crate::loadouts_store::Loadout]>,
+    pub api_family: Option<crate::ApiFamily>,
 }
 
 #[cfg(feature = "load")]
@@ -161,6 +162,8 @@ pub struct SlotScript {
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
+    /// The bound server profile's world type, bound by the host on spawn.
+    world_members: api::selected::Truth,
     control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
     /// by the host on the same frames the isolate's queue is. Never both — a
@@ -286,6 +289,7 @@ impl SlotScript {
             pair_evidence: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
+            world_members: api::selected::Truth::Unknown,
             control_generation: 0,
             #[cfg(feature = "load")]
             compiled_interacts: Vec::new(),
@@ -451,6 +455,9 @@ impl SlotScript {
                     self.pending_logs.push(e.clone());
                 }
                 self.load_identity = Some(SlotLoadIdentity {
+                    api_family: crate::resolve_api_family(&source)
+                        .ok()
+                        .map(|(_, family)| family),
                     source: Arc::from(source),
                     shape,
                     siblings: siblings.into(),
@@ -476,6 +483,9 @@ impl SlotScript {
                     ));
                 }
                 let identity = SlotLoadIdentity {
+                    api_family: crate::resolve_api_family(&source)
+                        .ok()
+                        .map(|(_, family)| family),
                     source: Arc::from(source),
                     shape,
                     siblings: siblings.into(),
@@ -1250,6 +1260,17 @@ impl SlotScript {
         self.native_input = authority;
     }
 
+    /// Bind the server profile's world type (members or free-to-play). Call on
+    /// spawn before Start; a slot with no profile keeps `Unknown`.
+    pub fn bind_world_members(&mut self, world_members: api::selected::Truth) {
+        self.world_members = world_members;
+    }
+
+    /// The world type bound by [`SlotScript::bind_world_members`].
+    pub fn world_members(&self) -> api::selected::Truth {
+        self.world_members
+    }
+
     fn revoke_native_input(&mut self) {
         self.native_input.revoke();
         #[cfg(feature = "load")]
@@ -1538,6 +1559,9 @@ impl SlotScript {
                 end: crate::native::WalkEnd::UserInput,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             });
             ledger
                 .outbox
@@ -1637,6 +1661,16 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_bank_pick(authority, receipt);
+        }
+    }
+
+    pub fn complete_native_assess_walk(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native::AssessReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_assess_walk(authority, receipt);
         }
     }
 
@@ -1796,6 +1830,13 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn load_identity(&self) -> Option<&SlotLoadIdentity> {
         self.load_identity.as_ref()
+    }
+
+    /// API family captured with the active Load identity at Start.
+    #[cfg(feature = "load")]
+    pub fn api_family(&self) -> Option<crate::ApiFamily> {
+        self.load.as_ref()?;
+        self.load_identity.as_ref()?.api_family
     }
 
     pub fn watchdog(&self) -> &ProgressWatchdog {

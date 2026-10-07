@@ -461,11 +461,14 @@
           "default": ""
         },
         "radius": {
-          "type": "integer",
-          "default": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Navigation radius in tiles; 0 means 1."
+          "description": "Navigation radius in tiles; omitted means 1. An explicit 0 requires\nthe exact tile: the walk settles only on it, and a blocked or\nunstandable tile is refused by the route instead of approached."
         },
         "cross": {
           "type": "array",
@@ -592,6 +595,9 @@
                   "$ref": "#/$defs/fact.modal_open.v1"
                 },
                 {
+                  "$ref": "#/$defs/fact.members_world.v1"
+                },
+                {
                   "$ref": "#/$defs/fact.item_count_at_least.v1"
                 },
                 {
@@ -638,6 +644,9 @@
                 },
                 {
                   "$ref": "#/$defs/fact.equipment_only.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.pack_only.v1"
                 },
                 {
                   "$ref": "#/$defs/fact.partner_item_count_at_least.v1"
@@ -1004,6 +1013,26 @@
       "properties": {
         "kind": {
           "const": "modal_open"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NoArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.members_world.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "members_world"
         },
         "version": {
           "const": 1
@@ -1637,6 +1666,42 @@
         },
         "args": {
           "$ref": "#/$defs/EquipmentOnlyArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "PackOnlyArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Object aliases the pack may hold; none of them is required. The Path's\nprotected items (the set `bank deposit_all` always keeps) are allowed too."
+        }
+      },
+      "required": [
+        "objs"
+      ]
+    },
+    "fact.pack_only.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "pack_only"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/PackOnlyArgs"
         }
       },
       "required": [
@@ -4192,11 +4257,24 @@
       ]
     },
     "SequenceOrder": {
-      "type": "string",
-      "enum": [
-        "authored",
-        "nearest"
-      ]
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "authored",
+          "description": "Every boundary re-reads the steps from the top and starts the first\none whose `skip_if` is proven false."
+        },
+        {
+          "type": "string",
+          "const": "nearest",
+          "description": "Among the steps whose `skip_if` is proven false, start the one whose\nanchor is closest to the player; every step needs an anchor."
+        },
+        {
+          "type": "string",
+          "const": "ordered",
+          "description": "Steps run top to bottom through an in-memory cursor: a settled step\nmoves the cursor past itself, a proven-true `skip_if` jumps it forward,\nand a failed step is retried in place. The cursor starts over when the\nrun starts or restarts (Start, Resume, death) or the stage changes, so\nevery step must be safe to repeat from the first one (\"safe replay\")."
+        }
+      ],
+      "description": "How a sequence picks its next step at each step boundary."
     }
   }
 }

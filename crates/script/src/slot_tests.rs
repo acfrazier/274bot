@@ -1370,7 +1370,10 @@ fn compiled_ctx<'a>(
         compiled: crate::CompiledTick {
             selected,
             reach: None,
+            bank_memory: None,
+            collision: None,
             hold: false,
+            world_members: api::selected::Truth::Unknown,
             interacts: None,
         },
     }
