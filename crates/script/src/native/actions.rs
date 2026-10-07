@@ -58,8 +58,14 @@ impl ActionContext<'_> {
     /// adopting a live page, Buy, Make, Combat, Wear) acts now instead of a
     /// tick later. This never replenishes the per-tick budget and never
     /// dispatches another `on_game_tick`.
+    ///
+    /// Nor does it continue on the tick that first shows the player on a new
+    /// level, in a rebuilt build area or after a teleport: that frame can
+    /// still hold the old locs, so a loc op chosen from it can name a loc
+    /// the server has since changed (`ledger::TickBudget::entered_scene`).
+    /// The work starts on the next tick instead.
     pub(crate) fn may_continue_this_tick(&self) -> bool {
-        self.eligible && !self.interaction_event_spent()
+        self.eligible && !self.interaction_event_spent() && !self.budget.entered_scene()
     }
 
     /// The open bank session `generation` is known to withdraw as items:
