@@ -881,8 +881,9 @@ frozen `restoreStrippedGear`'s make-room deposit runs first: one posted pack row
 that is not a listed name and whose id is not a selected trail item (a clue
 scroll, a casket or a challenge scroll) goes to the bank, food included, so the
 claim has somewhere to land. A name that will not go back on stays listed and is
-logged as the named `restore-incomplete` (a bank trip that does not come up is
-the named `restore-walk-failed`): logs, never machine kinds, and never
+logged as the named `restore-incomplete`. A bank walk, exact stand approach or
+open that misses its existing deadline returns `aborted` with reason
+`bank-approach-failed`, leaving the list retained. Neither failure is
 `supplies-needed`. Freeze, yield and the posted hitpoints still win over the
 restore.
 

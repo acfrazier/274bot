@@ -865,6 +865,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     compiled: script::CompiledTick {
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
+                        reach_flood: packed.as_ref().and_then(|packed| packed.flood.as_deref()),
                         bank_memory: bank_memory.as_deref(),
                         collision: world.as_ref().map(|world| &world.collision),
                         hold: hold || ours,

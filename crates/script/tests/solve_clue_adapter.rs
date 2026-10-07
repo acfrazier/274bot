@@ -2766,7 +2766,7 @@ export default class T extends TaskBot {
     let text = value.to_string();
     for forbidden in [
         "restore-incomplete",
-        "restore-walk-failed",
+        "bank-approach-failed",
         "supplies-needed",
     ] {
         assert!(

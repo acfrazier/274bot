@@ -312,6 +312,7 @@ use acquire::*;
 #[cfg(test)]
 use combat::{keeper_type, key_step};
 pub(crate) use combat::{Delegation, Outcome};
+pub(crate) use entrana::BANK_APPROACH_FAILED;
 #[cfg(test)]
 use entrana::{entrana_coord, pick_pack_restricted, pick_worn};
 pub(crate) use family::Clue;
@@ -1730,18 +1731,24 @@ const ABANDON: &str = "abandon";
 /// out for it. A different held row — or the adapter's `retry` — clears it.
 const ABANDONED: &str = "abandoned";
 
-/// One live Entrana bank approach, shared by the strip's deposit and the
-/// restore's claim: whether this attempt's `walk-nearest-bank` has gone out.
-/// Session state on the live token, like `shop` — never a second scheduler and
-/// never a nested bank machine.
+/// One live Entrana bank approach, shared by the strip's deposits and the
+/// claims: one legacy nearest-bank walk, the last exact approach stand, and
+/// at most one in-flight booth-open request. Session state on the live token,
+/// like `shop` — never a second scheduler or a nested bank machine.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct BankApproach {
-    /// This attempt's walk has been sent: the calls after it read the posted
-    /// booth page instead of walking again.
-    walked: bool,
-    /// The interface has been observed open on this attempt: the strip's exit
-    /// and the restore's wear pass both owe it a close before their own verb,
-    /// so nothing is worn back on behind an open bank.
+    /// The approach starts once. Legacy pages use one nearest-bank route;
+    /// native pages begin at their projected exact stand instead.
+    started: bool,
+    /// The exact operable stand last sent for this booth. An unchanged
+    /// destination waits instead of re-emitting the same walk.
+    approach_dest: Option<Tile>,
+    /// The booth open stays latched through unchanged closed-bank evidence.
+    /// After success and an observed close, restore may start another claim cycle.
+    open_issued: bool,
+    /// The interface was observed open on this bank cycle: the strip exit or
+    /// restore wear pass owes it a close before its own verb, so nothing is
+    /// worn back on behind an open bank.
     opened: bool,
 }
 

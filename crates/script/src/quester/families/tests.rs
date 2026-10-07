@@ -182,6 +182,7 @@ fn with_tick_output_reach<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&data),
                 reach: None,
+                reach_flood: None,
                 bank_memory: bank,
                 collision: None,
                 hold: false,
