@@ -11,78 +11,6 @@ pub(super) const ENTRANA_Z_MIN: i32 = 3_329;
 pub(super) const ENTRANA_Z_MAX: i32 = 3_393;
 pub(super) const ENTRANA_LEVEL: i32 = 0;
 
-/// The frozen `DDS_IDS` the strip unequips like any other restricted name but
-/// never lists: the two hard-trail daggers come back with the hard kit, and
-/// nothing here stocks a weapon.
-pub(super) const DDS_IDS: [i32; 2] = [1231, 1215];
-
-/// The frozen `ENTRANA_RESTRICTED_GEAR_RE` alternatives, ported whole and in
-/// the frozen order — the same class of matcher the landed `keep` predicate is,
-/// over **posted display names** and never a selected item family (schema 4
-/// carries none, and none is invented). The three shapes the plain list cannot
-/// spell are their own reads below: the `two.handed` wildcard, the
-/// `gauntlets?` optional `s` (both spellings listed, which is the same language
-/// under `\b`), and the `body(?!\s+rune\b)` lookahead.
-pub(super) const ENTRANA_GEAR_WORDS: [&str; 57] = [
-    "sword",
-    "dagger",
-    "scimitar",
-    "longsword",
-    "2h",
-    "mace",
-    "warhammer",
-    "battleaxe",
-    "axe",
-    "pickaxe",
-    "spear",
-    "hasta",
-    "halberd",
-    "maul",
-    "claws",
-    "whip",
-    "bow",
-    "shortbow",
-    "longbow",
-    "crossbow",
-    "javelin",
-    "dart",
-    "thrownaxe",
-    "knife",
-    "staff",
-    "wand",
-    "battlestaff",
-    "cannon",
-    "helmet",
-    "full helm",
-    "med helm",
-    "coif",
-    "platebody",
-    "chainbody",
-    "platelegs",
-    "plateskirt",
-    "skirt of",
-    "kiteshield",
-    "square shield",
-    "sq shield",
-    "dragon square",
-    "god cape",
-    "fire cape",
-    "obsidian cape",
-    "defender",
-    "chaps",
-    "vambraces",
-    "gauntlet",
-    "gauntlets",
-    "gloves",
-    "shield",
-    "cape",
-    "cloak",
-    "snelm",
-    "cowl",
-    "hat",
-    "hood",
-];
-
 /// The frozen `Withdraw-1` label the restore's claim rides; the bank row's own
 /// posted action slots are matched by the host and never by this machine.
 pub(super) const WITHDRAW_ONE: &str = "Withdraw-1";
@@ -111,107 +39,31 @@ pub(super) const STILL_HOLDING: &str =
 /// like every other window here, so a frozen session never spends it.
 pub(super) const ENTRANA_WAIT_MS: u64 = 30_000;
 
-/// The frozen `ENTRANA_RESTRICTED_GEAR_RE` match over one posted display name:
-/// the alternatives under their own `\b…\b`, ASCII-folded, exactly as the
-/// frozen regex spells them. The vectors the frozen `entranaGear.test.ts`
-/// binds are the whole of it: `Dragonhide body`, `Coif` and `Dragon dagger(p)`
-/// are refused, and `Amulet of glory`, `Rune arrow`, `Body rune`, `Shark`,
-/// `Clue scroll`, `Spade`, `Sextant` and `Coins` are let through.
-pub(super) fn entrana_restricted_gear(name: &str) -> bool {
-    let folded = name.to_ascii_lowercase();
-    ENTRANA_GEAR_WORDS
-        .iter()
-        .any(|word| word_hit(&folded, word))
-        || two_handed_hit(&folded)
-        || body_hit(&folded)
-}
-
-/// One frozen alternative under its own `\b…\b`: the word occurs with a
-/// non-word byte — or the name's own start or end — on both sides.
-pub(super) fn word_hit(name: &str, word: &str) -> bool {
-    let bytes = name.as_bytes();
-    let mut from = 0;
-    while let Some(at) = name[from..].find(word) {
-        let start = from + at;
-        let end = start + word.len();
-        if boundary_before(bytes, start) && boundary_after(bytes, end) {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-/// The frozen `two.handed` alternative: `two`, exactly one byte, `handed`, all
-/// of it under the same word boundaries. `Two-handed` is the spelled form and
-/// `twohanded` is not this alternative — the `.` is one byte and not zero.
-pub(super) fn two_handed_hit(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    let mut from = 0;
-    while let Some(at) = name[from..].find("two") {
-        let start = from + at;
-        let end = start + 4 + "handed".len();
-        if end <= bytes.len()
-            && &bytes[start + 4..end] == b"handed"
-            && boundary_before(bytes, start)
-            && boundary_after(bytes, end)
-        {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-/// The frozen `body(?!\s+rune\b)` alternative: the word `body` under its own
-/// boundaries and not followed by whitespace and then the word `rune`. `Body
-/// rune` is the composed rune and is let through; `Body runes` and `Rune body`
-/// are not.
-pub(super) fn body_hit(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    let mut from = 0;
-    while let Some(at) = name[from..].find("body") {
-        let start = from + at;
-        let end = start + "body".len();
-        if boundary_before(bytes, start)
-            && boundary_after(bytes, end)
-            && !rune_word_after(name, end)
-        {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
-/// The `(?!\s+rune\b)` lookahead over the rest of the name: whitespace, then
-/// the word `rune`. A rest with no whitespace at all, or with anything but
-/// `rune` after it, is not this lookahead.
-pub(super) fn rune_word_after(name: &str, at: usize) -> bool {
-    let rest = &name[at..];
-    let trimmed = rest.trim_start();
-    if trimmed.len() == rest.len() {
-        return false;
-    }
-    let Some(tail) = trimmed.strip_prefix("rune") else {
+/// The monk's restriction from `content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50`.
+/// Categories at lines 27–49 apply to both the pack and worn equipment; the
+/// `cannon_parts` category at line 50 applies to the pack alone.
+pub(super) fn restricted_item(
+    selected: Option<&SelectedGameData>,
+    id: i32,
+    inventory: bool,
+) -> bool {
+    let Some(category) = selected
+        .and_then(|data| data.item_by_id(id))
+        .and_then(|item| item.category.as_deref())
+    else {
         return false;
     };
-    !tail.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
-/// The frozen `\b`'s own `\w`: ASCII alphanumerics and the underscore. A byte
-/// that is none of those is a boundary, a non-ASCII byte included — the frozen
-/// regex is a JavaScript one without the `u` flag.
-pub(super) fn word_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-pub(super) fn boundary_before(bytes: &[u8], at: usize) -> bool {
-    at == 0 || !word_byte(bytes[at - 1])
-}
-
-pub(super) fn boundary_after(bytes: &[u8], at: usize) -> bool {
-    at >= bytes.len() || !word_byte(bytes[at])
+    match category {
+        "armour_hands" | "weapon_staff" | "armour_helmet" | "armour_body" | "armour_legs"
+        | "armour_shield" | "armour_cape" | "armour_godcape" | "weapon_slash" | "weapon_blunt"
+        | "weapon_stab" | "weapon_crossbow" | "weapon_axe" | "weapon_pickaxe"
+        | "weapon_javelin" | "weapon_2h_sword" | "weapon_spear" | "weapon_spiked"
+        | "weapon_thrown" | "weapon_scythe" | "weapon_bow" | "weapon_claws" | "weapon_polearm" => {
+            true
+        }
+        "cannon_parts" => inventory,
+        _ => false,
+    }
 }
 
 /// Whether the identified row arms the strip: the row's own selected
@@ -235,49 +87,48 @@ pub(super) fn entrana_coord(row: &TrailMembershipRow) -> bool {
         && (ENTRANA_Z_MIN..=ENTRANA_Z_MAX).contains(&tile.z)
 }
 
-/// One posted worn row as this machine reads it: the display name the frozen
-/// matcher folds and the packed id the DDS exclusion joins. A row the page
-/// posted without a name is not a worn row here — the matcher is names, and no
-/// id is ever folded into one.
+/// One posted worn row selected by the item's selected category. Its display
+/// name is retained only for the host's unequip and reclaim actions.
 pub(super) struct Worn<'a> {
     pub(super) name: &'a str,
-    pub(super) id: Option<i32>,
 }
 
-/// The first posted worn row this call's page carries whose name the frozen
-/// matcher folds, in posted order. The page is the wrapper's marshalling of
+/// The first posted worn row whose selected item's category is restricted, in
+/// posted order. The page is the wrapper's marshalling of
 /// `host().snapshot.equipment`, the raw rows with their own `slot`, and never
 /// `Equipment.items()` — which drops the slot — and never a scan of the item
 /// table.
-pub(super) fn pick_worn(input: &Value) -> Option<Worn<'_>> {
+pub(super) fn pick_worn<'a>(
+    selected: Option<&SelectedGameData>,
+    input: &'a Value,
+) -> Option<Worn<'a>> {
     input
         .get("equipment")
         .and_then(Value::as_array)?
         .iter()
         .find_map(|row| {
+            let id = posted_i32(row, "id")?;
             let name = row.get("name").and_then(Value::as_str)?;
-            entrana_restricted_gear(name).then_some(Worn {
-                name,
-                id: posted_i32(row, "id"),
-            })
+            restricted_item(selected, id, false).then_some(Worn { name })
         })
 }
 
-/// The first posted pack row whose display name the frozen matcher folds: the
-/// strip's deposit candidate, listed or not. The row is the frozen
-/// `depositAllMatching`'s own read of the pack — a positive count and the
-/// display name — and nothing about which pass put it there is consulted, so
-/// an unequipped helm, a dagger id that is never listed and a restricted item
-/// the player was carrying are all the same candidate.
-pub(super) fn pick_pack_restricted(input: &Value) -> Option<String> {
+/// The first posted pack row whose selected item's category is restricted: the
+/// strip's deposit candidate, listed or not. The row needs a positive count
+/// and its posted display name for the host's deposit action.
+pub(super) fn pick_pack_restricted(
+    selected: Option<&SelectedGameData>,
+    input: &Value,
+) -> Option<String> {
     input
         .get("inv")
         .and_then(Value::as_array)?
         .iter()
         .find_map(|row| {
+            let id = posted_i32(row, "id")?;
             let name = row.get("name").and_then(Value::as_str)?;
             let count = posted_i32(row, "count")?;
-            (count > 0 && entrana_restricted_gear(name)).then(|| name.to_string())
+            (count > 0 && restricted_item(selected, id, true)).then(|| name.to_string())
         })
 }
 
@@ -683,31 +534,31 @@ impl ClueRuntime {
     }
 
     /// The Entrana strip in front of the identified box row's own arms: the
-    /// frozen `heldClueNeedsEntranaStrip` with `bankFirst`'s own two halves, one
-    /// verb per call.
+    /// source category rule at
+    /// `content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50`,
+    /// followed by the bank approach's own two halves, one verb per call.
     ///
     /// Membership is this row's own selected `trail_coord`, decoded the landed
     /// way and inside the cap box — `entrana_coord` — and nothing else: a casket
-    /// never arms it and no copied `CLUE_DB` is consulted. In order: every
-    /// posted worn row whose name the frozen matcher folds is unequipped with
-    /// the landed `unequip` verb — the worn row's own `Remove`, because the
-    /// host's `wear` resolves inventory rows alone — and listed unless it is one
-    /// of the two hard-trail dagger ids; then every posted pack row the matcher
-    /// folds goes to the bank, one per call — the names the unequip put there,
-    /// the dagger ids that were never listed, and a restricted item that was
-    /// carried rather than worn — and the interface closes before the row's own
-    /// arms run.
-    ///
-    /// The deposit is the frozen `depositAllMatching(name => !isKeep(name))` cut
-    /// to the matcher's own rows: every regex-matching name in the pack, listed
-    /// or not, and never the ordinary loot deposit.
+    /// never arms it and no copied `CLUE_DB` is consulted. In order: every worn
+    /// item with a restricted category is unequipped with the landed `unequip`
+    /// verb — the worn row's own `Remove`, because the host's `wear` resolves
+    /// inventory rows alone — and listed by its display name for reclaim; then
+    /// every pack row with a restricted category goes to the bank, one per call,
+    /// and the interface closes before the row's own arms run. `cannon_parts`
+    /// applies to pack rows only, as in the content rule.
     ///
     /// `None` is the fall-through: not a box row, or a strip this step already
     /// settled. The listed names outlive the step — they are the restore's own
     /// list — and a strip that cannot finish re-arms and logs rather than
-    /// walking with the gear in hand: the frozen `bankFirst` returns false on
-    /// that same failure and the trail does not run.
-    pub(super) fn strip(&mut self, row: &TrailMembershipRow, input: &Value) -> Option<Value> {
+    /// walking with restricted gear in hand: the frozen `bankFirst` returns
+    /// false on that same failure and the trail does not run.
+    pub(super) fn strip(
+        &mut self,
+        row: &TrailMembershipRow,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Option<Value> {
         if !entrana_coord(row) {
             return None;
         }
@@ -726,7 +577,7 @@ impl ClueRuntime {
         // page — the host fails closed on an item that is already gone — and a
         // whole window of that is the frozen `still holding …` line with a
         // fresh attempt behind it.
-        if let Some(worn) = pick_worn(input) {
+        if let Some(worn) = pick_worn(selected, input) {
             if self.clock.bound_reached() {
                 self.clock.arm(ENTRANA_WAIT_MS);
                 return Some(json!({
@@ -739,11 +590,9 @@ impl ClueRuntime {
             self.strip = Some(state);
             return Some(unequip_verb(worn.name, self.token));
         }
-        // The deposit pass: a posted pack row the frozen matcher folds goes to
-        // the bank, one per call and whatever put it there — the unequip above,
-        // a dagger id that is never listed, or a restricted item the player was
-        // carrying rather than wearing.
-        if let Some(name) = pick_pack_restricted(input) {
+        // The deposit pass selects every posted pack row in a restricted
+        // category, whether it was just unequipped or was already carried.
+        if let Some(name) = pick_pack_restricted(selected, input) {
             if let Some(step) = self.bank_approach(&mut state.bank, input) {
                 self.strip = Some(state);
                 return Some(step);
@@ -810,13 +659,9 @@ impl ClueRuntime {
         Some(self.emit("wait"))
     }
 
-    /// List one stripped name the way the frozen `strippedGear` does: never
-    /// twice under a different case, and never one of the two hard-trail dagger
-    /// ids, which are unequipped like any other match and left off the list.
+    /// List one stripped item's display name for reclaim, never twice under a
+    /// different case.
     pub(super) fn list(&mut self, worn: &Worn<'_>) {
-        if worn.id.is_some_and(|id| DDS_IDS.contains(&id)) {
-            return;
-        }
         if self
             .stripped
             .iter()

@@ -2277,16 +2277,11 @@ export default class T extends TaskBot {
     assert_clean(&logs);
 }
 
-/// The Entrana strip and its restore over the whole public path: the box row
-/// `3579` is stripped — the frozen matcher's names unequipped with the landed
-/// `unequip` verb and the item modelled back in the pack, the non-matches left
-/// worn, the hard-trail dagger id unequipped and never listed and deposited
-/// like any other regex match — the listed name is deposited at the posted
-/// booth, the `ownsEquipment()` seat reads the machine's own list from false to
-/// true and back, the adapter's own gate is refused while the abandon latch
-/// holds the row and `retry()` clears it without touching the token or the
-/// list, and the collect's exit wears the name back on before the exact
-/// `'clue solved'`, the `grind-ready` and the `done`.
+/// The public Entrana path banks and restores every worn restricted category.
+/// The monk's rule has no dagger-ID exception: weapon_stab and armour_helmet
+/// are forbidden, while jewellery remains worn (content scripts/areas/
+/// area_port_sarim/scripts/monk_of_entrana.rs2:26-50). Ownership survives
+/// retry/abandon and clears only after both original items are worn again.
 #[test]
 fn solve_clue_adapter_strips_and_restores_entrana_gear_before_the_solved_mark() {
     let src = r#"
@@ -2312,9 +2307,7 @@ export default class T extends TaskBot {
         level: 0,
     };
 
-    // Tick 1: the gate, and the strip's first unequip. The dagger is first in
-    // posted order, and its id is never listed: the adapter still owns
-    // nothing.
+    // Tick 1: the first restricted worn item is unequipped and remembered.
     let dagger_first = [
         worn_row(DDS_ITEM, "Dragon dagger(p)", 3),
         worn_row(HELM_ITEM, "Rune full helm", 0),
@@ -2342,8 +2335,8 @@ export default class T extends TaskBot {
             &iso,
             "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
         ),
-        "false",
-        "a dagger id is never listed"
+        "true",
+        "the content rule has no dagger-ID exclusion from restoration"
     );
 
     // Tick 2: the dagger unequipped for real — it left the worn page and it is
@@ -2388,10 +2381,8 @@ export default class T extends TaskBot {
     assert_ne!(probe["token"], "null", "retry never aborts: {probe:?}");
     assert_eq!(probe["validate"], true, "{probe:?}");
 
-    // Tick 3: both unequips landed in the pack, so the strip owes the bank trip
-    // its walk. The worn page still carries the name the monks let through, the
-    // pack carries the dagger the machine never listed and the helm it did, and
-    // the deposit pass takes every regex match the pack holds.
+    // Tick 3: both restricted worn items are now held and remembered.
+    // The permitted amulet stays worn; the bank pass follows posted order.
     let held = [(ENTRANA_ID, 1), (DDS_ITEM, 1), (HELM_ITEM, 1)];
     let names = [
         (DDS_ITEM, "Dragon dagger(p)"),
@@ -2445,9 +2436,7 @@ export default class T extends TaskBot {
         "the posted booth's own open, no invented stand"
     );
 
-    // Tick 5: the interface is up — the pack's own regex match goes first, in
-    // posted order, and the dagger id the machine never listed is banked like
-    // any other restricted row.
+    // Tick 5: the bank is open; the first restricted category is deposited.
     post_scene(
         &iso,
         5,
@@ -2467,7 +2456,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Deposit {
             name: "Dragon dagger(p)".to_string(),
         }],
-        "the unlisted dagger is deposited too, and a never-listed name is not a rule"
+        "the category-restricted dagger is deposited"
     );
 
     // Tick 6: it landed — the listed helm's own deposit follows.
@@ -2491,7 +2480,7 @@ export default class T extends TaskBot {
         vec![InteractReq::Deposit {
             name: "Rune full helm".to_string(),
         }],
-        "the regex-restricted name and nothing else is deposited"
+        "the category-restricted helm and nothing else is deposited"
     );
 
     // Tick 7: it landed — the interface closes.
@@ -2645,11 +2634,10 @@ export default class T extends TaskBot {
     );
     std::thread::sleep(std::time::Duration::from_millis(2_100));
 
-    // Tick 13: the collect is over and the name is in the pack: the reclaim
-    // wears it back on before any completion kind, and no `'clue solved'` has
-    // gone out with the name still listed.
-    let back = [(HELM_ITEM, 1)];
-    let back_names = [(HELM_ITEM, "Rune full helm")];
+    // Tick 13: both original items are available to reclaim. The dagger was
+    // stripped first, so it must be restored before the helm and solved mark.
+    let back = [(DDS_ITEM, 1), (HELM_ITEM, 1)];
+    let back_names = names;
     post_scene(
         &iso,
         13,
@@ -2665,7 +2653,7 @@ export default class T extends TaskBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![InteractReq::Wear {
-            name: "Rune full helm".to_string(),
+            name: "Dragon dagger(p)".to_string(),
         }],
         "the collect's exit wears the listed name back on"
     );
@@ -2686,20 +2674,48 @@ export default class T extends TaskBot {
         "the name is listed until it is worn again"
     );
 
-    // Tick 14: worn again. The list empties, and the exact status, the
-    // `grind-ready` and the `done` follow — and the adapter's own read is
-    // finally false.
+    // Tick 14: the dagger is worn; the helm must still be restored.
     post_scene(
         &iso,
         14,
-        &[],
+        &[(HELM_ITEM, 1)],
         &Scene {
-            equipment: &[worn_row(HELM_ITEM, "Rune full helm", 0)],
+            names: &back_names,
+            equipment: &[worn_row(DDS_ITEM, "Dragon dagger(p)", 3)],
             main_modal_id: -1,
             ..Scene::default()
         },
     );
     tick(&iso, 14);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Wear {
+            name: "Rune full helm".to_string(),
+        }]
+    );
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
+        ),
+        "true"
+    );
+
+    // Tick 15: both originals are worn. Only now can completion clear ownership.
+    post_scene(
+        &iso,
+        15,
+        &[],
+        &Scene {
+            equipment: &[
+                worn_row(DDS_ITEM, "Dragon dagger(p)", 3),
+                worn_row(HELM_ITEM, "Rune full helm", 0),
+            ],
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 15);
     assert!(
         iso.drain_interacts().is_empty(),
         "the completion queues no verb"

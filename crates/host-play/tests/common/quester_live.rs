@@ -1039,6 +1039,10 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
     run_cells(cells, RunPlan::Pair(mode), None, None, None, false)
 }
 
+fn has_native_start(script: Option<&str>, family_override: bool) -> bool {
+    script == Some("Quester") || (family_override && script.is_some_and(|name| !name.is_empty()))
+}
+
 fn run_cells(
     mut cells: Vec<LiveCell>,
     mode: RunPlan,
@@ -1058,8 +1062,8 @@ fn run_cells(
         }
     }
     for cell in &cells {
-        if cell.scenario.settings.start_script != Some("Quester") {
-            return Err(format!("{} does not Start Quester", cell.label));
+        if !has_native_start(cell.scenario.settings.start_script, start_family.is_some()) {
+            return Err(format!("{} has no supported native Start", cell.label));
         }
         if cell.scenario.seed.profiles.len() != 1 {
             return Err(format!(
@@ -2837,6 +2841,15 @@ pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_family_start_requires_an_explicit_override_and_named_script() {
+        assert!(has_native_start(Some("Quester"), false));
+        assert!(has_native_start(Some("Sherlock"), true));
+        assert!(!has_native_start(Some("Sherlock"), false));
+        assert!(!has_native_start(None, true));
+        assert!(!has_native_start(Some(""), true));
+    }
 
     fn settings(gang: &str) -> Map<String, Value> {
         Map::from_iter([("gang".into(), json!(gang))])

@@ -309,7 +309,7 @@ use acquire::*;
 use combat::{keeper_type, key_step};
 pub(crate) use combat::{Delegation, Outcome};
 #[cfg(test)]
-use entrana::{entrana_coord, entrana_restricted_gear};
+use entrana::{entrana_coord, pick_pack_restricted, pick_worn};
 pub(crate) use family::Clue;
 use puzzle::*;
 use scene::*;
@@ -1523,13 +1523,11 @@ impl ClueRuntime {
                 "radius": ARRIVE_RADIUS,
             });
         }
-        // The Entrana strip sits in front of every `Steady` arm this row owns
-        // and with them in front of the walk they would make: an identified row
-        // whose own selected `trail_coord` decodes inside the cap box is stripped
-        // — and its restricted names banked — before the search, dig or talk arm
-        // it belongs to ever runs. Every other row falls straight through, and a
-        // strip this step already settled never re-enters.
-        if let Some(step) = self.strip(row, input) {
+        // The Entrana strip precedes every `Steady` arm and the walk this row
+        // would otherwise make. Its selected coordinate chooses the box row;
+        // the selected item categories choose the restricted inventory and
+        // worn rows before search, dig, talk, or walking.
+        if let Some(step) = self.strip(row, input, selected) {
             return step;
         }
         if search_tile(row).is_some() {
