@@ -125,8 +125,10 @@
             "args": {
               "npc": "fred_the_farmer",
               "anchor": { "tile": [3189, 3273, 0], "source": "A defs/sheepshearer.ts:28-30" },
-              "leash": 6, "prefer": []
+              "leash": 6, "prefer": [],
+              "gap_ticks": 2
             },
+            "comment": "gap_ticks 2: fred_the_farmer.rs2:70-82 closes the chat (if_close) then p_delay(1) before the loop continues (2 engine ticks; inv_del and mes can re-arm).",
             "skip_if": { "Not": { "Any": [
               { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
               { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } } } } }

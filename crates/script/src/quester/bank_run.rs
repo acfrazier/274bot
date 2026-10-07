@@ -217,7 +217,7 @@ impl BankRun {
                         Err(error) => return Poll::Ready(Err(error)),
                     },
                 );
-                return Poll::Pending;
+                return self.poll_begun(cx);
             }
         }
 
@@ -278,7 +278,7 @@ impl BankRun {
                         Err(error) => return Poll::Ready(Err(error)),
                     },
                 );
-                return Poll::Pending;
+                return self.poll_begun(cx);
             }
         }
 
@@ -309,12 +309,26 @@ impl BankRun {
                     Err(error) => return Poll::Ready(Err(error)),
                 },
             );
-            return Poll::Pending;
+            return self.poll_begun(cx);
         }
         Poll::Ready(Ok(self
             .last
             .take()
             .unwrap_or(BankReceipt { complete: true })))
+    }
+
+    /// A child (Select, Open, BankMachine) begun by this poll emits nothing
+    /// in `begin`; poll it on its begin tick when the tick's event is still
+    /// unspent (TICK-FIX #4, D4/E-Q8a/E-G6). Each reentry follows a new begin,
+    /// so the depth is bounded by the trip's children.
+    fn poll_begun(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<BankReceipt, ActionError>> {
+        if !cx.tick.cx.may_continue_this_tick() {
+            return Poll::Pending;
+        }
+        self.poll(cx)
     }
 
     pub(super) fn cancel(&mut self, actions: &mut NativeActions) {

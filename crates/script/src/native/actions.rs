@@ -48,6 +48,39 @@ impl ActionContext<'_> {
         self.budget.events != 0
     }
 
+    /// The one same-tick continuation rule (TICK-FIX #4/#5/#6/#7): a caller
+    /// that has just begun a machine, or whose machine or step has just
+    /// completed, carries on within this observed tick (polls the new handle,
+    /// evaluates the settle, begins the next one) only while the tick's single
+    /// interaction event is unspent. A `begin` that already emitted (Walk,
+    /// Reach, Talk-to, OneOp) leaves nothing a same-tick poll could add; one
+    /// that did not (Select, Open, BankMachine, JournalMachine, a Dialogue
+    /// adopting a live page, Buy, Make, Combat, Wear) acts now instead of a
+    /// tick later. This never replenishes the per-tick budget and never
+    /// dispatches another `on_game_tick`.
+    pub(crate) fn may_continue_this_tick(&self) -> bool {
+        self.eligible && !self.interaction_event_spent()
+    }
+
+    /// The open bank session `generation` is known to withdraw as items:
+    /// this account's native kernel opened it, and the server's open label
+    /// resets `%bankcert` to 0 (`content/scripts/interface_bank/scripts/
+    /// bank.rs2:18-19`), or it pressed Item in it. No native path presses Note.
+    pub(crate) fn bank_item_mode(&self, generation: u64) -> bool {
+        let run = self.run();
+        self.ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.bank_item_session == Some((run, generation)))
+    }
+
+    /// Record that bank session `generation` withdraws as items.
+    pub(crate) fn note_bank_item_mode(&mut self, generation: u64) {
+        let run = self.run();
+        if let Some(ledger) = self.ledger.as_mut() {
+            ledger.bank_item_session = Some((run, generation));
+        }
+    }
+
     /// Queue one game interaction. Walks go through [`Self::walk`], which owns
     /// their follow and terminal receipt; route, channel, mouse, run-policy
     /// and lifecycle requests are host-owned and never native interactions.

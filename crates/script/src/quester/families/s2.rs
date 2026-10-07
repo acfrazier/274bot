@@ -542,7 +542,11 @@ impl StepRun for BuyRun {
                     .actions
                     .begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)?,
             );
-            return Poll::Pending;
+            // BuyMachine emits on its first poll: poll it now (TICK-FIX #4,
+            // C-BUY-PHASE).
+            if !cx.tick.cx.may_continue_this_tick() {
+                return Poll::Pending;
+            }
         }
         match cx
             .tick
@@ -741,7 +745,11 @@ impl StepRun for MakeRun {
                             .actions
                             .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
                     );
-                    return Poll::Pending;
+                    // The make menu may already be posted on the snapshot that
+                    // proved the trigger (TICK-FIX #4, C-MAKE-PHASE).
+                    if !cx.tick.cx.may_continue_this_tick() {
+                        return Poll::Pending;
+                    }
                 }
             }
         }

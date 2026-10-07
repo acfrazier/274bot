@@ -312,6 +312,10 @@ pub struct BankMachine {
     object_dialogue_finished: bool,
     /// The until-empty side-view bound is armed in `deadline`.
     view_armed: bool,
+    /// The bank session generation seen when this machine sent its open
+    /// (`u64::MAX` before any session). A later generation is a session this
+    /// open created, which the server starts in Item mode.
+    opened_from: Option<u64>,
 }
 
 const BANK_OBJECT_RADIUS: i32 = 4;
@@ -468,6 +472,7 @@ impl NativeMachine for BankMachine {
             object_interaction_sent: false,
             object_dialogue_finished: false,
             view_armed: false,
+            opened_from: None,
         })
     }
 
@@ -498,6 +503,7 @@ impl NativeMachine for BankMachine {
                         &self.request.action,
                         BankAction::OpenStand { access } if access.kind == AccessKind::Teller
                     ) {
+                        self.opened_from = Some(open_generation(cx));
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
                             dialogue: AccessDialogue::Teller,
@@ -613,6 +619,7 @@ impl NativeMachine for BankMachine {
                                 choose: access.choose.as_deref().map(str::to_owned),
                             })?;
                         }
+                        self.opened_from = Some(open_generation(cx));
                         self.phase = Phase::AwaitOpen;
                         return Poll::Pending;
                     }
@@ -651,6 +658,7 @@ impl NativeMachine for BankMachine {
                         name,
                         action,
                     })?;
+                    self.opened_from = Some(open_generation(cx));
                     self.phase = Phase::AwaitOpen;
                     return Poll::Pending;
                 }
@@ -742,6 +750,7 @@ impl NativeMachine for BankMachine {
                                 ))));
                             }
                             self.session = session.value.generation;
+                            self.note_fresh_session(cx);
                             self.phase = Phase::Act;
                             continue;
                         }
@@ -753,6 +762,7 @@ impl NativeMachine for BankMachine {
                             .snapshot()
                             .bank_session()
                             .map_or(0, |session| session.value.generation);
+                        self.note_fresh_session(cx);
                         self.phase = Phase::Act;
                         continue;
                     }
@@ -846,6 +856,7 @@ impl NativeMachine for BankMachine {
                         ))));
                     }
                     self.item_mode_ensured = true;
+                    cx.note_bank_item_mode(self.session);
                     self.phase = Phase::Act;
                     continue;
                 }
@@ -1424,6 +1435,13 @@ enum Clicked {
     NoOp,
 }
 
+/// The bank session generation now, or `u64::MAX` before any session.
+fn open_generation(cx: &ActionContext<'_>) -> u64 {
+    cx.snapshot()
+        .bank_session()
+        .map_or(u64::MAX, |session| session.value.generation)
+}
+
 impl BankMachine {
     fn same_session(&self, cx: &ActionContext<'_>) -> bool {
         cx.snapshot()
@@ -1431,8 +1449,17 @@ impl BankMachine {
             .is_some_and(|session| session.value.open && session.value.generation == self.session)
     }
 
+    /// A session this machine's own open created starts in Item mode
+    /// (`bank.rs2:18-19` resets `%bankcert`); later verbs read it from the
+    /// ledger instead of pressing Item again (TICK-FIX #11, D3).
+    fn note_fresh_session(&self, cx: &mut ActionContext<'_>) {
+        if self.opened_from.is_some_and(|from| from != self.session) {
+            cx.note_bank_item_mode(self.session);
+        }
+    }
+
     /// Send the kernel's next click toward `goal`, after selecting Item mode
-    /// once per open session.
+    /// once in a session not already known to be in Item mode.
     fn click_withdraw(
         &mut self,
         cx: &mut ActionContext<'_>,
@@ -1457,6 +1484,9 @@ impl BankMachine {
             };
             request
         };
+        if !self.item_mode_ensured && cx.bank_item_mode(self.session) {
+            self.item_mode_ensured = true;
+        }
         if !self.item_mode_ensured {
             let evidence = cx.evidence();
             let request_id = cx.emit(ops::note_req(NoteIntent::Item))?;
@@ -2561,8 +2591,11 @@ mod tests {
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
+    /// A session this machine did not open (here: adopted already open) has an
+    /// unknown `%bankcert`, so the first withdraw still presses Item. A
+    /// session a native machine opened skips it (TICK-FIX #11, below).
     #[test]
-    fn exact_withdraw_selects_item_mode_before_id_fenced_transfer() {
+    fn exact_withdraw_in_an_adopted_session_selects_item_mode_before_id_fenced_transfer() {
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -2635,6 +2668,93 @@ mod tests {
             }
         });
         assert!(receipt.complete);
+    }
+
+    /// TICK-FIX #11 (D3): the open label resets `%bankcert` to Item
+    /// (`content/scripts/interface_bank/scripts/bank.rs2:18-19`), so in a
+    /// session this account's kernel opened, a later withdraw verb clicks the
+    /// item at once instead of pressing Item a tick first.
+    #[test]
+    fn exact_withdraw_in_a_session_the_kernel_opened_skips_the_item_press() {
+        let item_id = 314;
+        let stand = WorldTile {
+            x: 3208,
+            z: 3220,
+            level: 2,
+        };
+        let access = Arc::new(BankStandAccess {
+            bank: NamedBank::new("Test bank", stand),
+            stand_tile: stand,
+            kind: AccessKind::Booth,
+            stand_op: 1,
+            name: None,
+            choose: None,
+        });
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_locs(vec![bank_object_loc(
+            2213,
+            "Bank booth",
+            "Use-quickly",
+            stand,
+            0,
+        )]);
+        let mut ledger = None;
+        let open = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::OpenStand { .. })
+        ));
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(item_id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            assert!(matches!(
+                tick.actions.poll(&open, &mut tick.cx),
+                Poll::Ready(Ok(_))
+            ));
+            let withdraw = tick
+                .actions
+                .begin::<BankMachine>(
+                    BankRequest {
+                        bank: None,
+                        action: BankAction::WithdrawTo {
+                            withdrawals: Arc::from([Withdrawal {
+                                id: item_id,
+                                name: Arc::from("Bait"),
+                                target: 2,
+                            }]),
+                        },
+                        partial_ok: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&withdraw, &mut tick.cx).is_pending());
+        });
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 2),
+                HostEffect::Interaction(InteractReq::WithdrawX {
+                    count: 2,
+                    bank_item_id,
+                    ..
+                }) if bank_item_id == item_id
+            ),
+            "the first click in a session the kernel opened is the withdraw itself"
+        );
     }
 
     fn row_with(item: ItemView, actions: &[&str], slot: i32) -> ItemView {

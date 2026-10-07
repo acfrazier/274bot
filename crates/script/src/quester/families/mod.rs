@@ -1239,7 +1239,17 @@ pub(crate) struct DialogueOptionsDocument {
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
     #[serde(default)]
     strict: bool,
+    /// Quiet ticks after the chat closes before the conversation counts as
+    /// over (default 1). Author it only where the NPC's script closes the chat
+    /// and delays before its next page, citing the content lines: the client
+    /// sees the same close at a script's end.
+    #[serde(default)]
+    gap_ticks: Option<u16>,
 }
+
+/// The longest authored end gap: above the longest shipped hole (Harold's
+/// Blurberry Special, 10 ticks) with room, short of hiding a stuck page.
+const MAX_GAP_TICKS: u16 = 30;
 
 /// Unconfigured continuation policy for an operation-started dialogue.
 #[derive(Debug, Deserialize)]
@@ -1268,6 +1278,9 @@ fn compile_dialogue_options(
 ) -> Result<dialogue::DialogueOptions, CompileError> {
     if args.choose.is_some_and(|choose| choose < 1)
         || args
+            .gap_ticks
+            .is_some_and(|ticks| !(1..=MAX_GAP_TICKS).contains(&ticks))
+        || args
             .line_rules
             .iter()
             .any(|rule| rule.when_line.trim().is_empty() || rule.choose.trim().is_empty())
@@ -1287,6 +1300,7 @@ fn compile_dialogue_options(
             .collect(),
         strict: args.strict,
         chat_only: false,
+        gap_ticks: args.gap_ticks,
     })
 }
 
@@ -1354,6 +1368,12 @@ pub(crate) struct TalkArgs {
     /// Adopted pages always require authored answers, even when this is false.
     #[serde(default)]
     strict: bool,
+    /// Quiet ticks after the chat closes before the conversation counts as
+    /// over (default 1). Author it only where the NPC's script closes the chat
+    /// and delays before its next page, citing the content lines: the client
+    /// sees the same close at a script's end.
+    #[serde(default)]
+    gap_ticks: Option<u16>,
     /// Exact NPC config which may take over this dialogue through reciprocal combat.
     #[serde(default)]
     expect_combat: Option<ExpectedCombatArgs>,
@@ -1411,6 +1431,7 @@ pub(crate) fn compile_talk(
         choose: arg.choose,
         line_rules: arg.line_rules,
         strict: arg.strict || arg.continue_only,
+        gap_ticks: arg.gap_ticks,
     })?;
     let expect_combat = arg
         .expect_combat
@@ -1494,7 +1515,11 @@ impl StepRun for TalkRun {
                 &mut cx.tick.cx,
             )?);
             self.started = true;
-            return Poll::Pending;
+            // Talk-to spent the event; an adopted live page drives now
+            // (TICK-FIX #4/#14, C-DIALOGUE-ADOPT).
+            if !cx.tick.cx.may_continue_this_tick() {
+                return Poll::Pending;
+            }
         }
         if let Some(handle) = &self.dialogue {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
@@ -1993,9 +2018,14 @@ impl InteractRun {
             );
         }
     }
-}
-impl StepRun for InteractRun {
-    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+
+    /// One poll. `adopt` allows one same-poll reentry after a Dialogue is
+    /// begun on a live page (TICK-FIX #14, C-DIALOGUE-ADOPT).
+    fn poll_round(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        adopt: bool,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
         self.note_dialogue_progress(&cx.tick.cx);
         let deadline = self.deadline;
         let now = cx.tick.cx.active_now();
@@ -2046,7 +2076,7 @@ impl StepRun for InteractRun {
                 &mut cx.tick.cx,
             )?);
             self.dialogue_started = Some(cx.tick.cx.active_now());
-            return Poll::Pending;
+            return self.poll_adopted(cx, adopt);
         }
         let deadline = self.deadline;
         let now = cx.tick.cx.active_now();
@@ -2296,7 +2326,7 @@ impl StepRun for InteractRun {
                             &mut cx.tick.cx,
                         )?);
                         self.dialogue_started = Some(cx.tick.cx.active_now());
-                        Poll::Pending
+                        self.poll_adopted(cx, adopt)
                     } else if self.until.is_some() || self.default_dialogue {
                         Poll::Pending
                     } else {
@@ -2316,6 +2346,24 @@ impl StepRun for InteractRun {
                 receipt: None,
             }))
         }
+    }
+
+    /// A Dialogue just begun on this poll drives a page that is already up
+    /// on the same tick unless its begin spent the event.
+    fn poll_adopted(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        adopt: bool,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        if adopt && cx.tick.cx.may_continue_this_tick() {
+            return self.poll_round(cx, false);
+        }
+        Poll::Pending
+    }
+}
+impl StepRun for InteractRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        self.poll_round(cx, true)
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.walk = None;
@@ -2873,6 +2921,9 @@ impl UseOnRun {
 
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        // One same-poll reentry after a Dialogue is begun on a live page
+        // (TICK-FIX #14, C-DIALOGUE-ADOPT); the loop top polls it.
+        let mut adopt = true;
         loop {
             if self.dialogue.is_some() {
                 let deadline = self.deadline;
@@ -3031,7 +3082,10 @@ impl StepRun for UseOnRun {
                         &mut cx.tick.cx,
                     )?);
                     self.dialogue_started = Some(cx.tick.cx.active_now());
-                    return Poll::Pending;
+                    if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
+                        return Poll::Pending;
+                    }
+                    continue;
                 }
                 let snapshot = cx.tick.cx.snapshot();
                 let Some(inventory) = snapshot.inventory() else {
@@ -3251,7 +3305,10 @@ impl StepRun for UseOnRun {
                         &mut cx.tick.cx,
                     )?);
                     self.dialogue_started = Some(cx.tick.cx.active_now());
-                    return Poll::Pending;
+                    if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
+                        return Poll::Pending;
+                    }
+                    continue;
                 }
             }
             if self.accepted && until_reached(self.until, &cx.tick.cx) {
@@ -3629,8 +3686,15 @@ impl AcquireRun {
         }
     }
 }
-impl StepRun for AcquireRun {
-    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+impl AcquireRun {
+    /// One poll. `reentry` allows one same-poll pass after a child completes,
+    /// so its settle (and the next child's begin and first poll) uses the
+    /// snapshot that proved it (TICK-FIX #5, E-Q15).
+    fn poll_pass(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        reentry: bool,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
         match self.poll_prayer_cleanup(cx) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -3740,10 +3804,19 @@ impl StepRun for AcquireRun {
                 if self.steps[self.index].advances {
                     self.waiting_for_read = true;
                 }
-                // Publish the child receipt before evaluating settle/next-child facts.
+                // The child's trace events are already queued for the caller
+                // to drain this tick, ahead of the settle's own events.
+                if reentry && !self.waiting_for_read && cx.tick.cx.may_continue_this_tick() {
+                    return self.poll_pass(cx, false);
+                }
                 Poll::Pending
             }
         }
+    }
+}
+impl StepRun for AcquireRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        self.poll_pass(cx, true)
     }
     fn needs_progress_read(&self) -> bool {
         self.waiting_for_read

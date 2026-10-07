@@ -283,9 +283,10 @@
               "I need to get a key given to you by Sir Prysin.",
               "Well, have you got any keys knocking around?",
               "I'll get the bones for you."
-            ]
+            ],
+            "gap_ticks": 3
           },
-          "comment": "Traiborn takes one bone per tick (25 ticks), then the incantation pages and the key (traiborn.rs2:22-32,201-212).",
+          "comment": "Traiborn takes one bone per tick (25 ticks), then the incantation pages and the key (traiborn.rs2:22-32,201-212). gap_ticks 3: traiborn.rs2:206-211 closes the chat (if_close) then p_delay(2) before mes and inv_add (3 engine ticks; both can re-arm before the next page).",
           "advances": true,
           "skip_if": {
             "Fact": {

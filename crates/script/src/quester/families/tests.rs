@@ -743,6 +743,76 @@ fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
     )));
 }
 
+/// TICK-FIX #8 (C-REACH-WAITDOOR): the engine's `open_door` proc deletes the
+/// shut door and adds the open leaf in the op's own execution
+/// (`content/scripts/doors/scripts/doors.rs2:6-20`, `loc_del` + `loc_add`),
+/// so the passage's collision changes on the tick the swap is observed. The
+/// fallback walks then instead of waiting out `DOOR_WAIT_MS` (still the bound).
+#[test]
+fn door_fallback_walks_on_the_tick_the_opened_door_is_observed() {
+    let mut s = ready();
+    s.seed_local_player(local_player(tile(5, 5)));
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(8, 5);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(6, 5);
+    door.distance = 1;
+    door.layer = LocLayer::Wall;
+    door.shape = 0;
+    door.angle = 0;
+    s.seed_locs(vec![wheel.clone(), door]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let reach = wall_door_reach_view();
+    let handle = with_tick_reach(&s, &reach, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 2, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    ledger.as_mut().unwrap().outbox.clear();
+    // Still shut on the next tick: no walk yet.
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    // The swap lands: the shut door is gone and the open leaf stands beside it.
+    let mut leaf = loc(1531, "Door", "Close");
+    leaf.tile = tile(6, 6);
+    leaf.distance = 1;
+    leaf.layer = LocLayer::Wall;
+    s.seed_locs(vec![wheel.clone(), leaf]);
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 4, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Walk(_))),
+        "the fallback walks on the tick the open door is observed, well inside the 5 s bound"
+    );
+}
+
 #[test]
 fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
     let mut s = ready();
@@ -1200,12 +1270,10 @@ fn bank_without_candidates_fails_before_walk_or_open() {
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())
         });
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
+        // Select is polled on its begin tick (TICK-FIX #4), so the empty
+        // candidate set fails on the first poll.
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Err(crate::native::ActionError::Unavailable(reason)))
@@ -3018,17 +3086,9 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())
         });
+        // The shared driver adopts the objbox and continues it on the same
+        // poll (TICK-FIX #14, C-DIALOGUE-ADOPT), not another product round.
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
-        assert!(
-            ledger
-                .as_ref()
-                .is_none_or(|ledger| ledger.outbox.is_empty()),
-            "begin the shared driver without dispatching another product round"
-        );
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
@@ -3039,6 +3099,7 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
             ),
             "objbox from a successful shear must be continued before the next UseOn"
         );
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
     });
 }
 
@@ -4078,14 +4139,12 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(-1, vec![]);
-    // The second gap starts at tick 5, so the quiet close completes at tick
-    // 9 with the four-tick gap (tick 13 with the old eight-tick gap).
-    for tick in 5..9 {
-        with_tick(&snapshot, &mut ledger, tick, |t| {
-            assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
-        });
-    }
-    with_tick(&snapshot, &mut ledger, 9, |t| {
+    // The second gap starts when the close is observed at tick 5, then one
+    // quiet game tick completes it at tick 6.
+    with_tick(&snapshot, &mut ledger, 5, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    with_tick(&snapshot, &mut ledger, 6, |t| {
         assert!(matches!(
             t.actions.poll(&handle, &mut t.cx),
             Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4121,6 +4180,7 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
                     options: dialogue::DialogueOptions {
                         prefer: Arc::from([]),
                         choose: None,
+                        gap_ticks: Some(4),
                         ..Default::default()
                     },
                 },
@@ -4158,16 +4218,16 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
     ));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    // The second gap starts at tick 25, so the quiet close completes at
-    // tick 29 with the four-tick gap (tick 33 with the old eight-tick gap).
-    for tick in 24..29 {
+    // The second gap starts at tick 24, when the close is observed; its
+    // four quiet ticks complete at tick 28.
+    for tick in 24..28 {
         assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 29, |tick| {
+        with_tick(&snapshot, &mut ledger, 28, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4213,11 +4273,10 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    // One starting unit plus four slack updates may re-arm; later unrelated
-    // updates keep happening but must not postpone the fifth quiet deadline.
-    // The gap starts at tick 2 and re-arms at 3, 4, 5, 6, 7, so it completes
-    // at tick 11 with the four-tick gap (tick 15 with the old eight-tick gap).
-    for game_tick in 3..11 {
+    // The gap starts at tick 2. Five inventory changes re-arm the one-tick
+    // deadline (ticks 3 through 7); further churn cannot extend it, so tick 8
+    // is the completion deadline.
+    for game_tick in 3..8 {
         snapshot.seed_inventory(
             vec![ItemView {
                 slot: (game_tick % 2) as i32,
@@ -4230,9 +4289,9 @@ fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
         })
         .is_pending());
     }
-    snapshot.seed_inventory(vec![ItemView { slot: 1, ..item }], 28);
+    snapshot.seed_inventory(vec![ItemView { slot: 0, ..item }], 28);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 11, |tick| {
+        with_tick(&snapshot, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -4445,11 +4504,9 @@ fn assert_reused_dialogue_page_is_acknowledged(
     with_tick(&snapshot, &mut ledger, 4, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
-    // Preserve the existing one-game-tick quiet period after the real page turn.
-    with_tick(&snapshot, &mut ledger, 5, |t| {
-        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
-    });
+    // The engine writes the next page in the resume's own cycle
+    // (`ResumePauseButtonHandler.ts:7-13`, `chat.rs2:271-321`), so the real
+    // page turn is continued on the tick it is observed (TICK-FIX #14).
     assert!(matches!(
         emitted(&ledger),
         InteractReq::ContinueDialog { component_id: None }
