@@ -90,6 +90,20 @@
           }
         },
         {
+          "id": "withdraw-redberry-pie",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberry_pie", "qty": 1 }], "partial_ok": true },
+          "comment": "Nothing sells a redberry pie and none spawns (AIOQuester knightssword/supplies.ts), but a banked one skips the whole bake. Skipped when the bank is known to hold none.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "redberry_pie" } } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+        },
+        {
           "id": "take-pie-dish",
           "kind": "interact",
           "version": 1,
@@ -660,7 +674,7 @@
             "radius": 3,
             "settle_ms": 15000
           },
-          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the enclosing acquire then restarts this recipe from 'empty-burnt-pie'.",
+          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the parent 'pie' step's goal (a held redberry_pie) is then still false, so the acquire restarts this recipe and 'empty-burnt-pie' runs first (at most 8 restarts, then the step parks).",
           "advances": false,
           "skip_if": {
             "Fact": {

@@ -305,6 +305,21 @@ pub trait StepPlan: Send + Sync {
     fn compile_warning(&self) -> Option<&'static str> {
         None
     }
+    /// A copy of this plan that knows its step's own `skip_if` and `settle`.
+    /// Only `acquire` uses it, to restart its recipe while the step would
+    /// still run and its goal is still false; every other family returns
+    /// `None` and keeps its plan.
+    fn with_goal(&self, _goal: StepGoal) -> Option<Arc<dyn StepPlan>> {
+        None
+    }
+}
+/// A step's compiled `skip_if` and `settle`, plus the authored settle
+/// summary, handed to the plan by [`StepPlan::with_goal`].
+#[derive(Clone)]
+pub struct StepGoal {
+    pub skip_if: Arc<dyn PredicatePlan>,
+    pub settle: Arc<dyn PredicatePlan>,
+    pub summary: Arc<str>,
 }
 #[derive(Debug, Clone)]
 pub enum StepTraceEvent {
@@ -325,6 +340,13 @@ pub enum AcquisitionTraceOutcome {
     Skipped(Arc<str>),
     Settled,
     Failed(Arc<str>),
+    /// The last child settled but the acquire step's goal is still false, so
+    /// the recipe starts again from its first step (restart `restart` of `max`).
+    Restarted {
+        restart: u8,
+        max: u8,
+        goal: Arc<str>,
+    },
 }
 
 pub trait StepRun: Send {
@@ -1199,6 +1221,18 @@ fn compile_steps(
             detail: err.detail,
             source: None,
         })?;
+        // A non-advancing step's settle is a live-frame goal the plan may poll
+        // itself; an advancing settle waits on a progress read it cannot see.
+        let plan = if step.advances == Some(true) {
+            plan
+        } else {
+            plan.with_goal(StepGoal {
+                skip_if: Arc::clone(&skip_if),
+                settle: Arc::clone(&settle),
+                summary: Arc::from(predicate_summary(&step.settle)),
+            })
+            .unwrap_or(plan)
+        };
         let loadout: Option<Arc<str>> = if step.kind == "loadout" {
             step.args
                 .get("loadout")

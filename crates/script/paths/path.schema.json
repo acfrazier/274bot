@@ -2431,6 +2431,16 @@
         "recipe": {
           "type": "string",
           "description": "Name of a recipe in the quest header's `acquire` table."
+        },
+        "max_restarts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 255,
+          "description": "How many times the recipe may start again from its first step when its\nlast step has settled but this step's `settle` is still false and its\n`skip_if` is still false (a burnt pie, a lost product). Every restart\nre-checks each child's `skip_if`; a pass that only skips never\nrestarts. Past the bound the step parks. Defaults to 8."
         }
       },
       "required": [

@@ -13,7 +13,7 @@ pub mod thieve;
 
 use super::compile::{
     AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
-    StepContext, StepOutcome, StepPlan, StepRun, StepTraceEvent,
+    StepContext, StepGoal, StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
@@ -3373,7 +3373,19 @@ impl crate::native::NativeMachine for UseOnAction {
 struct AcquireArgs {
     /// Name of a recipe in the quest header's `acquire` table.
     recipe: String,
+    /// How many times the recipe may start again from its first step when its
+    /// last step has settled but this step's `settle` is still false and its
+    /// `skip_if` is still false (a burnt pie, a lost product). Every restart
+    /// re-checks each child's `skip_if`; a pass that only skips never
+    /// restarts. Past the bound the step parks. Defaults to 8.
+    #[serde(default)]
+    max_restarts: Option<u8>,
 }
+
+/// Restarts an `acquire` step allows when the Path does not author
+/// `max_restarts`. A 49% burn chance survives eight restarts about 0.3% of the
+/// time; live cells that must not depend on chance seed the product instead.
+pub const DEFAULT_ACQUIRE_MAX_RESTARTS: u8 = 8;
 
 fn compile_acquire(
     arg: AcquireArgs,
@@ -3387,6 +3399,8 @@ fn compile_acquire(
     Ok(Arc::new(AcquirePlan {
         recipe: Arc::from(arg.recipe),
         steps,
+        goal: None,
+        max_restarts: arg.max_restarts.unwrap_or(DEFAULT_ACQUIRE_MAX_RESTARTS),
     }))
 }
 
@@ -3394,6 +3408,11 @@ fn compile_acquire(
 pub struct AcquirePlan {
     pub recipe: Arc<str>,
     pub steps: Arc<[CompiledAcquireStep]>,
+    /// The acquire step's own `skip_if` and `settle`. When the last child
+    /// settles while both are false, the recipe restarts from its first
+    /// child. `None` (provisioning, advancing steps) returns after one pass.
+    pub goal: Option<StepGoal>,
+    pub max_restarts: u8,
 }
 
 #[derive(Clone)]
@@ -3411,15 +3430,22 @@ impl Default for AcquirePlan {
         Self {
             recipe: Arc::from(""),
             steps: Arc::from([]),
+            goal: None,
+            max_restarts: DEFAULT_ACQUIRE_MAX_RESTARTS,
         }
     }
 }
 
 impl StepPlan for AcquirePlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(AcquireRun {
             recipe: Arc::clone(&self.recipe),
             steps: Arc::clone(&self.steps),
+            goal: self.goal.clone(),
+            max_restarts: self.max_restarts,
+            restarts: 0,
+            pass_began_child: false,
+            goal_chat_since: reach::last_chat_seq(&cx.tick.cx),
             current: None,
             child_outcome: None,
             index: 0,
@@ -3433,11 +3459,34 @@ impl StepPlan for AcquirePlan {
             trace_events: VecDeque::new(),
         }))
     }
+    fn with_goal(&self, goal: StepGoal) -> Option<Arc<dyn StepPlan>> {
+        Some(Arc::new(AcquirePlan {
+            recipe: Arc::clone(&self.recipe),
+            steps: Arc::clone(&self.steps),
+            goal: Some(goal),
+            max_restarts: self.max_restarts,
+        }))
+    }
+}
+
+/// What the cursor does once it walks off the recipe's last child.
+enum PassEnd {
+    Done(StepOutcome),
+    Restart,
+    GaveUp(ActionError),
 }
 
 struct AcquireRun {
     recipe: Arc<str>,
     steps: Arc<[CompiledAcquireStep]>,
+    goal: Option<StepGoal>,
+    max_restarts: u8,
+    restarts: u8,
+    /// Whether the current pass began a child; a pass that only skipped made
+    /// no progress, so it never restarts.
+    pass_began_child: bool,
+    /// Chat floor for the goal: step start, then each restart.
+    goal_chat_since: i32,
     current: Option<Box<dyn StepRun>>,
     child_outcome: Option<StepOutcome>,
     index: usize,
@@ -3460,6 +3509,78 @@ impl AcquireRun {
             child_step: Arc::clone(&step.id.0),
             outcome,
         });
+    }
+
+    /// The cursor is past the last child. Rewind to the first child while the
+    /// acquire step would still be selected (`skip_if` false) and its goal is
+    /// still false, at most `max_restarts` times, then give up. Otherwise
+    /// (goal met, either predicate unknown, no goal, or a pass that only
+    /// skipped) return the outcome to the runner's settle window.
+    fn end_pass(&mut self, cx: &StepContext<'_, '_>) -> PassEnd {
+        let outcome = StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: None,
+        };
+        let Some(goal) = self.goal.as_ref().filter(|_| self.pass_began_child) else {
+            return PassEnd::Done(outcome);
+        };
+        let met = goal.settle.evaluate(&PredicateContext {
+            cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: self.goal_chat_since,
+            outcome: Some(&outcome),
+        });
+        if met != Truth::False {
+            return PassEnd::Done(outcome);
+        }
+        let skip = goal.skip_if.evaluate(&PredicateContext {
+            cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: reach::last_chat_seq(&cx.tick.cx),
+            outcome: None,
+        });
+        if skip != Truth::False {
+            return PassEnd::Done(outcome);
+        }
+        let last_child = self
+            .steps
+            .last()
+            .map_or_else(|| Arc::clone(&self.recipe), |step| Arc::clone(&step.id.0));
+        if self.restarts >= self.max_restarts {
+            let reason: Arc<str> = Arc::from(format!(
+                "{} gave up after {} attempts: {} is still false",
+                self.recipe,
+                u16::from(self.restarts) + 1,
+                goal.summary
+            ));
+            self.trace_events.push_back(StepTraceEvent::Acquisition {
+                recipe: Arc::clone(&self.recipe),
+                child_step: last_child,
+                outcome: AcquisitionTraceOutcome::Failed(Arc::clone(&reason)),
+            });
+            return PassEnd::GaveUp(ActionError::Blocked(reason));
+        }
+        self.restarts += 1;
+        self.trace_events.push_back(StepTraceEvent::Acquisition {
+            recipe: Arc::clone(&self.recipe),
+            child_step: last_child,
+            outcome: AcquisitionTraceOutcome::Restarted {
+                restart: self.restarts,
+                max: self.max_restarts,
+                goal: Arc::clone(&goal.summary),
+            },
+        });
+        self.index = 0;
+        self.pass_began_child = false;
+        self.goal_chat_since = reach::last_chat_seq(&cx.tick.cx);
+        PassEnd::Restart
     }
 
     fn trace_child_failure(&mut self, error: &ActionError) {
@@ -3540,56 +3661,61 @@ impl StepRun for AcquireRun {
             self.index += 1;
         }
         if self.current.is_none() {
-            while self.index < self.steps.len() {
-                let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
-                    cx: &cx.tick.cx,
-                    pairs: cx.tick.pairs,
-                    quests: cx.quests,
-                    progress: cx.progress,
-                    required_after: cx.required_after,
-                    chat_since: reach::last_chat_seq(&cx.tick.cx),
-                    outcome: None,
-                });
-                if skip == Truth::Unknown {
-                    let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
-                    if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
-                        let error = ActionError::Failed(Arc::from(
-                            "acquire skip predicate evidence unavailable",
-                        ));
-                        self.trace_child_failure(&error);
-                        return Poll::Ready(Err(error));
+            loop {
+                while self.index < self.steps.len() {
+                    let skip = self.steps[self.index].skip_if.evaluate(&PredicateContext {
+                        cx: &cx.tick.cx,
+                        pairs: cx.tick.pairs,
+                        quests: cx.quests,
+                        progress: cx.progress,
+                        required_after: cx.required_after,
+                        chat_since: reach::last_chat_seq(&cx.tick.cx),
+                        outcome: None,
+                    });
+                    if skip == Truth::Unknown {
+                        let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
+                        if cx.tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16)
+                        {
+                            let error = ActionError::Failed(Arc::from(
+                                "acquire skip predicate evidence unavailable",
+                            ));
+                            self.trace_child_failure(&error);
+                            return Poll::Ready(Err(error));
+                        }
+                        return Poll::Pending;
                     }
-                    return Poll::Pending;
-                }
-                self.selection_since = None;
-                if skip == Truth::True {
-                    self.trace_child(AcquisitionTraceOutcome::Skipped(Arc::clone(
-                        &self.steps[self.index].skip_if_summary,
-                    )));
-                    self.index += 1;
-                    continue;
-                }
-                self.chat_since = reach::last_chat_seq(&cx.tick.cx);
-                let child_index = self.index;
-                let result = self.steps[child_index].plan.begin(cx);
-                self.trace_child(AcquisitionTraceOutcome::Begin);
-                let run = match result {
-                    Ok(run) => run,
-                    Err(error) => {
-                        self.trace_child_failure(&error);
-                        return Poll::Ready(Err(error));
+                    self.selection_since = None;
+                    if skip == Truth::True {
+                        self.trace_child(AcquisitionTraceOutcome::Skipped(Arc::clone(
+                            &self.steps[self.index].skip_if_summary,
+                        )));
+                        self.index += 1;
+                        continue;
                     }
-                };
-                self.current = Some(run);
-                self.child_outcome = None;
-                break;
-            }
-            if self.current.is_none() {
-                return Poll::Ready(Ok(StepOutcome {
-                    progress: None,
-                    evidence: cx.tick.cx.evidence(),
-                    receipt: None,
-                }));
+                    self.chat_since = reach::last_chat_seq(&cx.tick.cx);
+                    let child_index = self.index;
+                    let result = self.steps[child_index].plan.begin(cx);
+                    self.trace_child(AcquisitionTraceOutcome::Begin);
+                    let run = match result {
+                        Ok(run) => run,
+                        Err(error) => {
+                            self.trace_child_failure(&error);
+                            return Poll::Ready(Err(error));
+                        }
+                    };
+                    self.current = Some(run);
+                    self.child_outcome = None;
+                    self.pass_began_child = true;
+                    break;
+                }
+                if self.current.is_some() {
+                    break;
+                }
+                match self.end_pass(cx) {
+                    PassEnd::Done(outcome) => return Poll::Ready(Ok(outcome)),
+                    PassEnd::GaveUp(error) => return Poll::Ready(Err(error)),
+                    PassEnd::Restart => {}
+                }
             }
         }
         let child_poll = self.current.as_mut().unwrap().poll(cx);
