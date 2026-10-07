@@ -88,7 +88,7 @@ impl Default for DialogueOptions {
 }
 
 impl DialogueOptions {
-    pub(super) fn continue_only() -> Self {
+    pub(crate) fn continue_only() -> Self {
         Self {
             strict: true,
             ..Self::default()

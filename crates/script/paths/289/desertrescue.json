@@ -1763,6 +1763,7 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
             {
               "id": "wield-scimitar",
@@ -1807,10 +1808,67 @@
               }
             },
             {
+              "id": "walk-to-captain",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3270,
+                  3029,
+                  0
+                ],
+                "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830); same tile and radius as taunt-captain's anchor and leash",
+                "radius": 6,
+                "allow_danger_zones": true
+              },
+              "comment": "Irena (3302,3114) to the captain crosses the Kharidian strip, Ugthanki / Desert Wolf habitat with no danger-free route; the talk's own approach walk inherits the danger forbid and is refused (DIAG-QUESTER-CI7 §2). This walk grants danger zones for this crossing only (AIOQuester walks the same tile, touristtrap.ts:163), and taunt-captain then starts inside its leash and issues no walk.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3270,
+                          3029,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3270,
+                      3029,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
               "id": "taunt-captain",
               "kind": "talk",
               "version": 1,
-              "advances": true,
+              "advances": false,
               "args": {
                 "npc": "desertminingcaptain",
                 "anchor": {
@@ -1834,19 +1892,81 @@
                   "npc": "desertminingcaptain"
                 }
               },
-              "comment": "mercenary_captain.rs2:13-19,29-67: the only chain that ends in the captain attacking the player (npc_retaliate). Every other branch hands the player to the guards, who dump them in the desert and empty the waterskins (125-188), so strict matching. 'You approach the Mercenary Captain' sets stage 3 at once.",
+              "comment": "mercenary_captain.rs2:13-19,29-67: the only chain that ends in the captain attacking the player (npc_retaliate). Every other branch hands the player to the guards, who dump them in the desert and empty the waterskins (125-188), so strict matching. 'You approach the Mercenary Captain' sets stage 3 at once. Expected-combat handoff shape (docs/api/script.md 'Quester expected combat handoff'): no advancement read during the fight, which would have the captain's hits close the journal (live QUESTER-CI7-FIXES desert1: 'journal ownership repeatedly lost'); fight-captain-first reads once the key is held. The sequence is ordered, so the settled talk is not re-selected mid-fight; skip_if is the key alone, because a stray hitsplat sets in_combat for about 8 s and skipping on it sent fight-captain-first to a cold Attack ('Are you sure', mercenary_capt_attack) in live desert2.",
               "skip_if": {
-                "Any": []
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  }
+                ]
               },
               "settle": {
                 "Fact": {
-                  "kind": "stage_in",
+                  "kind": "in_combat",
+                  "version": 1,
+                  "args": {}
+                }
+              }
+            },
+            {
+              "id": "fight-captain-first",
+              "kind": "combat",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "npc": "desertminingcaptain",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "stand": {
+                  "tile": [
+                    3270,
+                    3029,
+                    0
+                  ],
+                  "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830, lvl 47, hp 80 desertrescue.npc:253-305)"
+                },
+                "lost_radius": 15,
+                "kill_budget_ticks": 500,
+                "win": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "metal_key"
+                    }
+                  }
+                }
+              },
+              "comment": "The stage-1 copy of fight-captain: taunt-captain hands the fight over without a progress read, so the fight runs in this sequence. mercenary_captain.rs2:193-216: the captain's death adds the metal key straight to the pack and sets stage 4, which this step's advancement read observes.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
                   "version": 1,
                   "args": {
-                    "quest": "desertrescue",
-                    "any": [
-                      "desertrescue:3"
-                    ]
+                    "obj": "metal_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "metal_key"
                   }
                 }
               }
@@ -1910,10 +2030,74 @@
               }
             },
             {
+              "id": "walk-to-captain-again",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3270,
+                  3029,
+                  0
+                ],
+                "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830); same tile and radius as taunt-captain-again's anchor and leash",
+                "radius": 6,
+                "allow_danger_zones": true
+              },
+              "comment": "Same grant as walk-to-captain for a resume at stage 3 away from the captain: the Kharidian strip is Ugthanki / Desert Wolf habitat with no danger-free route (DIAG-QUESTER-CI7 §2).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3270,
+                          3029,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "metal_key"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_combat",
+                      "version": 1,
+                      "args": {}
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3270,
+                      3029,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              }
+            },
+            {
               "id": "taunt-captain-again",
               "kind": "talk",
               "version": 1,
-              "advances": true,
+              "advances": false,
               "args": {
                 "npc": "desertminingcaptain",
                 "anchor": {
@@ -1937,7 +2121,7 @@
                   "npc": "desertminingcaptain"
                 }
               },
-              "comment": "mercenary_captain.rs2:13-19,29-67: the only chain that ends in the captain attacking the player (npc_retaliate). Every other branch hands the player to the guards, who dump them in the desert and empty the waterskins (125-188), so strict matching. 'You approach the Mercenary Captain' sets stage 3 at once.",
+              "comment": "mercenary_captain.rs2:13-19,29-67: the only chain that ends in the captain attacking the player (npc_retaliate). Every other branch hands the player to the guards, who dump them in the desert and empty the waterskins (125-188), so strict matching. Expected-combat handoff shape: no advancement read during the fight; fight-captain reads once the key is held.",
               "skip_if": {
                 "Any": [
                   {
@@ -1960,14 +2144,9 @@
               },
               "settle": {
                 "Fact": {
-                  "kind": "stage_in",
+                  "kind": "in_combat",
                   "version": 1,
-                  "args": {
-                    "quest": "desertrescue",
-                    "any": [
-                      "desertrescue:3"
-                    ]
-                  }
+                  "args": {}
                 }
               }
             },

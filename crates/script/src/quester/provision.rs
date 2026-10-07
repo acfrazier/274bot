@@ -206,6 +206,11 @@ impl Provisioner {
         self.carry_drawn
     }
 
+    /// A bank or acquisition run is live and may own an open dialogue.
+    pub(super) fn run_live(&self) -> bool {
+        self.bank_run.is_some() || (self.acquire_run.is_some() && !self.acquire_finished)
+    }
+
     pub fn needs_progress_read(&self) -> bool {
         self.acquire_run
             .as_ref()

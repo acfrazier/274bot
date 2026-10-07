@@ -753,8 +753,15 @@ consumes a transaction but does not click. Exhaustion parks and reports
 Successful reads reset this budget; an explicit Start begins a fresh budget.
 A chat modal at read
 start waits within the existing bounded read window; if it remains occupied,
-the parked status names the chat root and text. Modal ownership, quiet leases
-and Stop/Pause revocation still govern all captures and closes.
+the parked status names the chat root and text. The exception is a chat
+continue page that no live step or provisioning run owns, such as the player
+chat a zone trigger opens after a walk settles. Nothing else would click it,
+so the read drains it with the shared dialogue continuation driver (continue
+clicks only; a menu is not answered) and then retries. A page that a live
+step's dialogue owns stays busy for that step to advance. One read allows at
+most three drains within 30 s of active time. A page that keeps reopening then
+parks with its chat root and text. Modal ownership, quiet leases and
+Stop/Pause revocation still govern all captures and closes.
 
 ### Quester finite gathering
 
