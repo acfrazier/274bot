@@ -157,9 +157,8 @@ enum Phase {
     Pick,
     /// A batch of Buy/Sell ops is outstanding.
     WaitBatch,
-    /// Settle one poll after a batch: the frozen `delayTicks(1)` that lets the
-    /// batch's own server tick land before the recount.
-    SettleTick,
+    /// Waiting for a later server cycle before dispatching the next batch.
+    ReadyBatch,
 }
 
 /// The caller's `Shop.sell` `pick` hook.
@@ -195,10 +194,12 @@ pub(crate) struct Shop {
     candidates: Vec<Row>,
     /// Amount observed to have moved so far.
     transferred: i32,
-    /// Observed amount of the outstanding batch (settled after one tick).
+    /// Largest observed amount moved by the outstanding batch.
     batch_delta: i32,
     /// The observed held count when the outstanding batch was sent.
     batch_baseline: i32,
+    /// Last observed game tick in which this row emitted a shop batch.
+    last_dispatch_tick: Option<u64>,
     /// The observed held count now (kept for the next batch baseline).
     held_now: i32,
     /// An op is outstanding in the current wait window (`Shop.open` presses
@@ -212,6 +213,7 @@ impl Family for Shop {
     const NAME: &'static str = "shop";
     /// A new shop call replaces the one in flight.
     const EXCLUSIVE: bool = true;
+    const SNAPSHOT_SENSITIVE: bool = true;
     const CALLBACKS: &'static [&'static str] = &["pick"];
     /// `pick` runs in the caller's tick, like the frozen `find(pick)`.
     const KICK_ON_START: bool = true;
@@ -353,6 +355,32 @@ impl Family for Shop {
             Kind::Buy | Kind::Sell | Kind::SellAll => self.transfer_step(&probe, cx),
         }
     }
+
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        let reply = cx.reply();
+        if let Some(Reply::Threw(thrown)) = reply {
+            return Step::Fail(thrown);
+        }
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
+        let probe = obs.probe();
+        if !probe.ingame {
+            return Step::Done(self.kind.value(false, 0));
+        }
+        if self.phase == Phase::Pick {
+            return self.pick_step(&probe, reply, cx);
+        }
+        match self.kind {
+            Kind::Open if probe.shop_open => self.open_step(&probe, cx),
+            Kind::Open if self.attempts_left <= 1 && cx.clock().bound_reached() => {
+                self.done(false)
+            }
+            // A snapshot may confirm the page, but retrying Trade remains
+            // owned by a real tick and cannot reuse that event budget.
+            Kind::Open => Step::Wait,
+            Kind::Close => self.close_step(&probe, cx),
+            Kind::Buy | Kind::Sell | Kind::SellAll => self.transfer_step(&probe, cx),
+        }
+    }
 }
 
 impl Shop {
@@ -368,6 +396,7 @@ impl Shop {
             candidates: Vec::new(),
             transferred: 0,
             batch_delta: 0,
+            last_dispatch_tick: None,
             batch_baseline: 0,
             held_now: 0,
             clicks: 0,
@@ -437,6 +466,11 @@ impl Shop {
     /// Emit the next batch of Buy/Sell ops for the outstanding remainder and
     /// arm the held-count settlement window.
     fn send_batch(&mut self, row: &Row, cx: &mut Cx<'_>) -> Step<Value> {
+        let tick = observed::with(|scene| scene.tick().unwrap_or(0));
+        if self.last_dispatch_tick == Some(tick) {
+            self.phase = Phase::ReadyBatch;
+            return Step::Wait;
+        }
         if self.kind == Kind::SellAll && self.clicks >= SELL_ALL_CLICKS {
             return self.done(false);
         }
@@ -456,6 +490,7 @@ impl Shop {
         } else {
             "sell"
         };
+        self.last_dispatch_tick = Some(tick);
         for &chunk in chunks.as_deref().unwrap_or(&[10]) {
             cx.emit(InteractReq::ShopButton {
                 kind: kind.into(),
@@ -505,6 +540,39 @@ impl Shop {
     }
 
     fn transfer_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        let container_available = match self.kind {
+            Kind::Buy => probe.shop_open && probe.has_stock,
+            _ => probe.shop_open && probe.player.is_some(),
+        };
+        if self.phase == Phase::ReadyBatch {
+            let held = count_of(probe.inv, &self.name);
+            let delta = match self.kind {
+                Kind::Buy => (held - self.held_now).max(0),
+                _ => (self.held_now - held).max(0),
+            };
+            self.transferred = self.transferred.saturating_add(delta);
+            self.held_now = held;
+            if self.transferred >= self.requested {
+                return self.done(true);
+            }
+            if !container_available {
+                return self.done(false);
+            }
+        }
+        if !container_available && self.phase == Phase::WaitBatch {
+            let delta = self.batch_delta(probe);
+            self.batch_delta = self.batch_delta.max(delta);
+            if self.batch_delta == 0 {
+                return if cx.clock().bound_reached() {
+                    self.done(false)
+                } else {
+                    Step::Wait
+                };
+            }
+            self.transferred = self.transferred.saturating_add(self.batch_delta);
+            self.batch_delta = 0;
+            return self.done(self.transferred >= self.requested);
+        }
         if !probe.shop_open {
             return self.done(false);
         }
@@ -524,30 +592,60 @@ impl Shop {
         match self.phase {
             Phase::WaitBatch => {
                 let delta = self.batch_delta(probe);
-                if delta > 0 {
-                    self.batch_delta = delta;
-                    self.phase = Phase::SettleTick;
-                } else if cx.clock().bound_reached() {
-                    // The window closed with no movement; the batch's own
-                    // server tick may still land, so settle exactly one more
-                    // tick before declaring the transfer stalled.
-                    self.phase = Phase::SettleTick;
+                self.batch_delta = self.batch_delta.max(delta);
+                if self.batch_delta == 0 {
+                    return if cx.clock().bound_reached() {
+                        self.done(false)
+                    } else {
+                        Step::Wait
+                    };
                 }
-                Step::Wait
-            }
-            Phase::SettleTick => {
-                let delta = self.batch_delta(probe).max(self.batch_delta);
-                self.transferred += delta;
-                self.held_now = count_of(probe.inv, &self.name);
-                if self.transferred >= self.requested {
+                let transferred = self.transferred.saturating_add(self.batch_delta);
+                if transferred >= self.requested {
+                    self.transferred = transferred;
+                    self.batch_delta = 0;
                     return self.done(true);
                 }
-                if delta == 0 {
-                    // Nothing moved across the settle window and its one tick.
-                    return self.done(false);
-                }
+                self.transferred = transferred;
+                self.batch_delta = 0;
+                self.held_now = count_of(probe.inv, &self.name);
+                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
                 if self.pick {
                     // The frozen loop asks `pick` again before every batch.
+                    self.candidates = container
+                        .iter()
+                        .filter(|row| row.name.eq_ignore_ascii_case(&self.name))
+                        .cloned()
+                        .collect();
+                    if self.candidates.is_empty() {
+                        return self.done(false);
+                    }
+                    if self.last_dispatch_tick == Some(tick) {
+                        self.phase = Phase::ReadyBatch;
+                        return Step::Wait;
+                    }
+                    self.phase = Phase::Pick;
+                    return self.pick_step(probe, None, cx);
+                }
+                let Some(row) = row else {
+                    return self.done(false);
+                };
+                // The frozen `Shop.buy` breaks out on a stock row already at zero.
+                if self.kind == Kind::Buy && row.count <= 0 {
+                    return self.done(false);
+                }
+                if self.last_dispatch_tick == Some(tick) {
+                    self.phase = Phase::ReadyBatch;
+                    return Step::Wait;
+                }
+                self.send_batch(&row, cx)
+            }
+            Phase::ReadyBatch => {
+                let tick = observed::with(|scene| scene.tick().unwrap_or(0));
+                if self.last_dispatch_tick == Some(tick) {
+                    return Step::Wait;
+                }
+                if self.pick {
                     self.candidates = container
                         .iter()
                         .filter(|row| row.name.eq_ignore_ascii_case(&self.name))
@@ -559,7 +657,6 @@ impl Shop {
                 let Some(row) = row else {
                     return self.done(false);
                 };
-                // The frozen `Shop.buy` breaks out on a stock row already at zero.
                 if self.kind == Kind::Buy && row.count <= 0 {
                     return self.done(false);
                 }
@@ -860,13 +957,16 @@ mod tests {
 
     #[test]
     fn sell_all_caps_clicks_even_while_shop_still_has_stock() {
-        let mut rt = shop(Kind::SellAll, "Vial", i32::MAX, Phase::SettleTick);
+        let mut rt = shop(Kind::SellAll, "Vial", i32::MAX, Phase::WaitBatch);
         rt.clicks = SELL_ALL_CLICKS - 1;
         rt.batch_baseline = 100;
         rt.held_now = 100;
+        rt.last_dispatch_tick = Some(0);
         let mut clock = InstantTaskClock::new();
         let pack = [row("Vial", 100, 1)];
         let inv = [row("Vial", 90, 1)];
+        observed::on_reset();
+        observed::post(1, |_| {});
         let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &inv));
         assert!(out.is_none());
         assert_eq!(ops.len(), 1);
@@ -874,7 +974,8 @@ mod tests {
         let after = [row("Vial", 80, 1)];
         let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
         assert!(out.is_none());
-        assert!(ops.is_empty());
+        assert!(ops.is_empty(), "same-tick snapshot cannot dispatch batch 41");
+        observed::post(2, |_| {});
         let (out, ops) = step(&mut rt, &mut clock, &probe(&[], Some(&pack), &after));
         assert_eq!(out, Some(json!(20)));
         assert!(ops.is_empty());
@@ -887,7 +988,6 @@ mod tests {
         let mut clock = armed(SETTLE_MS);
         let empty_pack: [Row; 0] = [];
         let post = probe(&[], Some(&empty_pack), &[]);
-        assert_eq!(step(&mut rt, &mut clock, &post), (None, vec![]));
         assert_eq!(step(&mut rt, &mut clock, &post), (Some(json!(7)), vec![]));
     }
 
@@ -902,11 +1002,9 @@ mod tests {
         // Nothing moved yet: the batch still waits inside its window.
         assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
         assert_eq!(rt.transferred, 0);
-        // Past the window the batch settles exactly one more tick (the tick
-        // the frozen loop waits for its batch to land in) before it counts.
+        // The bounded window itself is enough to classify a batch with no
+        // observed movement as stalled; no extra game tick is manufactured.
         expire(&mut clock);
-        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
-        // Only a recount that is still empty stalls the transfer at 0.
         assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(0)), vec![]));
     }
 
@@ -986,7 +1084,7 @@ mod tests {
 
     #[test]
     fn a_depleted_stock_row_counts_the_last_batch_before_stopping() {
-        let mut rt = shop(Kind::Buy, "Feather", 25, Phase::SettleTick);
+        let mut rt = shop(Kind::Buy, "Feather", 25, Phase::WaitBatch);
         rt.transferred = 10;
         rt.batch_baseline = 10;
         let mut clock = InstantTaskClock::new();
@@ -1000,22 +1098,58 @@ mod tests {
     }
 
     #[test]
-    fn a_served_batch_settles_one_tick_then_continues_the_remainder() {
+    fn snapshot_progress_can_complete_after_shop_closes() {
+        let mut rt = shop(Kind::Buy, "Feather", 10, Phase::WaitBatch);
+        rt.batch_baseline = 4;
+        let mut clock = armed(SETTLE_MS);
+        let stock = [row("Feather", 20, 3)];
+        let inv = [row("Feather", 14, 1)];
+        let closed = Probe {
+            shop_open: false,
+            ..probe(&stock, None, &inv)
+        };
+        assert_eq!(step(&mut rt, &mut clock, &closed), (Some(json!(10)), vec![]));
+    }
+
+    #[test]
+    fn ready_batch_counts_later_snapshot_progress_before_dispatching() {
+        let mut rt = shop(Kind::Buy, "Feather", 25, Phase::ReadyBatch);
+        rt.transferred = 20;
+        rt.held_now = 20;
+        rt.last_dispatch_tick = Some(1);
+        let mut clock = InstantTaskClock::new();
+        let stock = [row("Feather", 90, 3)];
+        let inv = [row("Feather", 25, 1)];
+        observed::on_reset();
+        observed::post(1, |_| {});
+        assert_eq!(
+            step(&mut rt, &mut clock, &probe(&stock, None, &inv)),
+            (Some(json!(25)), vec![])
+        );
+    }
+
+    #[test]
+    fn a_served_batch_counts_snapshot_progress_and_defers_its_remainder() {
         let mut rt = shop(Kind::Buy, "Feather", 25, Phase::WaitBatch);
         rt.transferred = 10;
         rt.batch_baseline = 10;
+        rt.last_dispatch_tick = Some(1);
         let mut clock = armed(SETTLE_MS);
         let stock = [row("Feather", 90, 3)];
         let inv = [row("Feather", 20, 1)];
         let probe = probe(&stock, None, &inv);
-        // The batch moved 10 of the 10 requested: settle one tick, no count yet.
+        observed::on_reset();
+        observed::post(1, |_| {});
+        // This same-tick snapshot contributes the moved quantity but cannot
+        // dispatch a second batch.
         assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
-        assert_eq!(rt.transferred, 10, "settlement is not added yet");
+        assert_eq!(rt.transferred, 20);
+        assert_eq!(rt.phase, Phase::ReadyBatch);
 
-        // One tick later the delta is added and the remainder is batch-planned.
+        // The next observed game tick can dispatch the remaining five.
+        observed::post(2, |_| {});
         let (out, ops) = step(&mut rt, &mut clock, &probe);
         assert_eq!(out, None);
-        assert_eq!(rt.transferred, 20);
         assert_eq!(
             ops,
             vec![InteractReq::ShopButton {
@@ -1042,13 +1176,12 @@ mod tests {
             row("Feather", 99, 8),
         ];
         let probe = probe(&stock, None, &inv);
-        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
         assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(15)), vec![]));
     }
 
     #[test]
     fn sell_plans_against_the_shop_player_pack_and_counts_inventory_losses() {
-        let mut rt = shop(Kind::Sell, "Vial", 10, Phase::SettleTick);
+        let mut rt = shop(Kind::Sell, "Vial", 10, Phase::WaitBatch);
         rt.batch_baseline = 12;
         rt.batch_delta = 10;
         let mut clock = InstantTaskClock::new();
@@ -1072,7 +1205,6 @@ mod tests {
             row("vIaL", 6, 11),
         ];
         let probe = probe(&[], Some(&player), &inv);
-        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
         assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(10)), vec![]));
     }
 

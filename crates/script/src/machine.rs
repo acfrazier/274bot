@@ -169,6 +169,8 @@ pub(crate) trait Family: Sized + 'static {
     /// first step (teleport clicks in begin). Clue's first next is a
     /// callback, so it opts in.
     const KICK_ON_START: bool = false;
+    /// Whether this family may use a changed snapshot without a new game tick.
+    const SNAPSHOT_SENSITIVE: bool = false;
     /// This family owns a walking operation while its row is live.
     const WALKING_OPERATION: bool = false;
     /// [`Family::CALLBACKS`] indexes called synchronously (frozen calls
@@ -183,6 +185,14 @@ pub(crate) trait Family: Sized + 'static {
     fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self>;
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output>;
+    /// Drive an observation-only pass when opted in above.
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        if Self::SNAPSHOT_SENSITIVE {
+            self.step(cx)
+        } else {
+            Step::Wait
+        }
+    }
 
     fn abort(&mut self, _why: AbortReason) {}
 
@@ -671,6 +681,8 @@ pub(crate) fn walking_live() -> bool {
 /// The type-erased row the host steps.
 trait Machine {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
+    fn snapshot_sensitive(&self) -> bool;
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
     fn abort(&mut self, why: AbortReason);
     fn release(&self) -> Option<InteractReq>;
     fn walking_operation(&self) -> bool;
@@ -679,6 +691,19 @@ trait Machine {
 impl<F: Family> Machine for F {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
         match Family::step(self, cx) {
+            Step::Wait => Step::Wait,
+            Step::Call(call) => Step::Call(call),
+            Step::Done(out) => Step::Done(out.into()),
+            Step::Fail(reason) => Step::Fail(reason),
+        }
+    }
+
+    fn snapshot_sensitive(&self) -> bool {
+        F::SNAPSHOT_SENSITIVE
+    }
+
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        match Family::snapshot_step(self, cx) {
             Step::Wait => Step::Wait,
             Step::Call(call) => Step::Call(call),
             Step::Done(out) => Step::Done(out.into()),
@@ -735,6 +760,8 @@ struct Row {
     hooks: Vec<Hook>,
     /// Callbacks run this tick, across both passes.
     calls: usize,
+    /// Last observation-only pass this row consumed.
+    last_snapshot: Option<(u64, u64)>,
     /// The settled callback the next step reads.
     reply: Option<Reply>,
     /// The callback promise the row waits on.
@@ -1013,6 +1040,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     clock,
                     hooks,
                     calls: 0,
+                    last_snapshot: None,
                     reply: None,
                     pending: None,
                     machine: Box::new(machine),
@@ -1095,6 +1123,18 @@ pub(crate) fn resume(js: &mut impl Js) {
     pass(js, Pass::Resume);
 }
 
+/// Recheck opted-in rows against one changed snapshot without starting a
+/// new tick's callback or per-family event budget.
+pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, input_identity: u64) {
+    pass(
+        js,
+        Pass::Snapshot {
+            tick,
+            input_identity,
+        },
+    );
+}
+
 /// Whether an outcome waits for its JS await.
 pub(crate) fn any_settled() -> bool {
     HOST.with(|host| !host.borrow().settled.is_empty())
@@ -1106,6 +1146,11 @@ enum Pass {
     Step,
     /// Rows waiting on a promise; the budget carries over.
     Resume,
+    /// Opted-in rows, once per distinct changed snapshot; carries the budget.
+    Snapshot {
+        tick: u64,
+        input_identity: u64,
+    },
 }
 
 /// Rows are taken out of the host while they step, so a callback may
@@ -1138,10 +1183,23 @@ fn pass(js: &mut impl Js, pass: Pass) {
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
     rows.retain_mut(|row| {
-        if pass == Pass::Step {
-            row.calls = 0;
-        } else if row.pending.is_none() {
-            return true;
+        match pass {
+            Pass::Step => row.calls = 0,
+            Pass::Resume if row.pending.is_none() => return true,
+            Pass::Resume => {}
+            Pass::Snapshot {
+                tick,
+                input_identity,
+            } => {
+                if !row.machine.snapshot_sensitive() || row.pending.is_some() {
+                    return true;
+                }
+                let snapshot = (tick, input_identity);
+                if row.last_snapshot == Some(snapshot) {
+                    return true;
+                }
+                row.last_snapshot = Some(snapshot);
+            }
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
             if let Some(op) = release_op(&*row.machine) {
@@ -1152,7 +1210,11 @@ fn pass(js: &mut impl Js, pass: Pass) {
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
             return false;
         }
-        match drive(row, js, &mut at) {
+        let outcome = match pass {
+            Pass::Snapshot { .. } => drive_snapshot(row, js, &mut at),
+            Pass::Step | Pass::Resume => drive(row, js, &mut at),
+        };
+        match outcome {
             Some(outcome) => {
                 HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
                 settle(row.handle, outcome);
@@ -1178,6 +1240,19 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// One row's steps for this pass; `Some` when it ended. Stops, leaving
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    drive_in_pass(row, js, at, false)
+}
+
+fn drive_snapshot(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    drive_in_pass(row, js, at, true)
+}
+
+fn drive_in_pass(
+    row: &mut Row,
+    js: &mut impl Js,
+    at: &mut usize,
+    snapshot: bool,
+) -> Option<Outcome> {
     if row.rebaseline_on_resume {
         // Pause and reconnect holds produce no runnable observations. Refresh
         // on the first eligible resumed step, after its Running snapshot.
@@ -1191,10 +1266,15 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
         row.rebaseline_on_resume = false;
     }
     let baseline = row.carries_walk_baseline.then_some(row.intent_baseline);
-    with_walk_baseline(baseline, || drive_inner(row, js, at))
+    with_walk_baseline(baseline, || drive_inner(row, js, at, snapshot))
 }
 
-fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+fn drive_inner(
+    row: &mut Row,
+    js: &mut impl Js,
+    at: &mut usize,
+    snapshot: bool,
+) -> Option<Outcome> {
     loop {
         if js.claimed() || TERMINATED.with(Cell::get) {
             return None;
@@ -1217,7 +1297,13 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcom
             intent_baseline: row.intent_baseline,
             ending: None,
         };
-        let step = row.machine.step(&mut cx);
+        // Callback continuations belong to the same pass: a snapshot-only
+        // pass must not fall back to the normal tick step after a JS call.
+        let step = if snapshot {
+            row.machine.snapshot_step(&mut cx)
+        } else {
+            row.machine.step(&mut cx)
+        };
         let asked = cx.asks > 0;
         // An ask that failed ends the row whatever the step returned; the
         // ops of that step are dropped with it.

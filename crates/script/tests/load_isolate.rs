@@ -8894,6 +8894,128 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn snapshot_wake_settles_shop_purchase_without_advancing_tick() {
+    let iso = spawn_ready(
+        r#"
+import { Shop } from '../../api/shop/Shop.js';
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (globalThis.__loops !== 1) return;
+        globalThis.__bought = await Shop.buy('Lobster', 1);
+        globalThis.__finishedAt = Game.tick();
+    }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    let mut snap = base_snapshot();
+    snap.shop_open = true;
+    let stock = [item_row(377, Some("Lobster"), 100, &[], false, -1, 9201)];
+    snap.shop_stock = &stock;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::ShopButton {
+            kind,
+            chunk: 1,
+            ..
+        }] if kind == "buy"
+    ));
+    assert_eq!(
+        iso.probe("globalThis.__bought ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    let loops = iso.probe("globalThis.__loops").unwrap();
+
+    let inventory = [item_row(377, Some("Lobster"), 1, &[], false, -1, 0)];
+    let stock_after = [item_row(377, Some("Lobster"), 99, &[], false, -1, 9201)];
+    snap.inv = &inventory;
+    snap.inv_size = 1;
+    snap.shop_stock = &stock_after;
+    post_snapshot_input(&iso, &snap);
+    iso.on_snapshot_change_at(1, 1);
+
+    assert_eq!(iso.probe("globalThis.__bought").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__finishedAt").unwrap(), 1);
+    assert_eq!(iso.probe("Game.tick()").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), loops);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn snapshot_progress_does_not_refresh_shop_event_budget() {
+    let iso = spawn_ready(
+        r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (globalThis.__loops !== 1) return;
+        globalThis.__bought = await Shop.buy('Lobster', 25);
+    }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    let mut snap = base_snapshot();
+    snap.shop_open = true;
+    let stock = [item_row(377, Some("Lobster"), 100, &[], false, -1, 9201)];
+    snap.shop_stock = &stock;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.drain_interacts()
+            .into_iter()
+            .map(|op| match op {
+                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                other => panic!("unexpected interaction: {other:?}"),
+            })
+            .collect::<Vec<_>>(),
+        vec![10, 10, 5]
+    );
+
+    let inventory = [item_row(377, Some("Lobster"), 10, &[], false, -1, 0)];
+    let stock_after = [item_row(377, Some("Lobster"), 90, &[], false, -1, 9201)];
+    snap.inv = &inventory;
+    snap.inv_size = 1;
+    snap.shop_stock = &stock_after;
+    post_snapshot_input(&iso, &snap);
+    iso.on_snapshot_change_at(1, 1);
+    assert_eq!(
+        iso.probe("globalThis.__bought ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the changed snapshot cannot dispatch another batch in tick 1"
+    );
+
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.drain_interacts()
+            .into_iter()
+            .map(|op| match op {
+                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                other => panic!("unexpected interaction: {other:?}"),
+            })
+            .collect::<Vec<_>>(),
+        vec![10, 5]
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_shop_buy_by_id_throws_not_impl() {
     let src = r#"
 import { Shop } from '../../api/shop/Shop.js';
