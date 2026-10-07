@@ -10,7 +10,7 @@ import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
+import { categoryName, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
@@ -48,6 +48,29 @@ data=stat_change,attack,1,5
 assert.equal(rows.length, 1);
 assert.deepEqual(rows[0].values.consumable, [['bread'], ['anchovies']]);
 assert.deepEqual(rows[0].values.stat_heal[1], ['energy', '2', '0']);
+const itemCategories = new Map<number, string>();
+for (const [name, id] of parsePack('14=weapon_slash\n15=unstrung_bow\n')) {
+    itemCategories.set(id, name);
+}
+const categoryObj = (id: number, category?: number) => ({
+    id,
+    debugname: null,
+    name: null,
+    cost: 0,
+    stackable: false,
+    members: false,
+    certlink: -1,
+    certtemplate: -1,
+    wearpos: -1,
+    wearpos2: -1,
+    wearpos3: -1,
+    ...(category === undefined ? {} : { category }),
+});
+assert.equal(categoryName(categoryObj(2961, 14), itemCategories), 'weapon_slash');
+assert.equal(categoryName(categoryObj(48, 15), itemCategories), 'unstrung_bow');
+assert.equal(categoryName(categoryObj(1, -1), itemCategories), null);
+assert.equal(categoryName(categoryObj(2), itemCategories), null);
+assert.throws(() => categoryName(categoryObj(3, 99), itemCategories), /obj 3: category 99 has no content name/);
 
 const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-fixture-'));
 const pack = path.join(content, 'pack');
