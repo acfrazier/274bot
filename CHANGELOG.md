@@ -132,6 +132,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   before moving on.
 - Dying mid-clue ends that attempt cleanly, and the death is remembered across
   Stop and Start.
+- Before an Entrana clue, the solver walks to a side of the bank booth it can
+  actually use to bank the gear Entrana forbids, and stops with a clear error
+  if the bank won't open. It no longer clicks an unreachable booth every tick.
 
 ### Sessions
 
