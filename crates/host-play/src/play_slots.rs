@@ -47,6 +47,11 @@ use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
 
+/// Snapshot families whose new evidence can settle a parked machine.
+pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
+    dirty.iface || dirty.inv || dirty.stat || dirty.chat
+}
+
 /// Facts delivered before frontend follow and script observation/dispatch.
 /// `hold` retains the guardian/readiness gate; it does not suppress intent.
 /// Each queued manual step counts even if the client later refuses its send.
@@ -913,6 +918,9 @@ fn spawn_slot_thread(
             let mut world_dirty = world_round.is_some();
             let mut refresh_key = false;
             let mut key_refreshed = false;
+            // Slot-thread tick identity: one increment per observed drain
+            // containing PLAYER_INFO. It survives relogs; dirty snapshots and
+            // host receipts reuse it, never a wall-clock/frame-derived tick.
             let mut script_tick: u64 = 0;
             let mut run_policy = ScriptRunPolicy::default();
             let mut last_relog_park = None;
@@ -1577,20 +1585,17 @@ fn spawn_slot_thread(
                             // The observer borrows the account's bank memory
                             // for the compiled tick alone; the slot's own
                             // write for the frame already happened above.
-                            let crate::script_runtime::ScriptObservation {
-                                wrote: _wrote,
-                                journal_paint_hidden,
-                                exclusive,
-                            } = script_observe_cached_with_channels(
+                            let mut observe = |c: &mut Client, tick_edge, evidence_dirty, state| {
+                                script_observe_cached_with_channels(
                                 c,
                                 name,
                                 up,
                                 tick_edge,
-                                drain.dirty.iface || drain.dirty.inv,
+                                evidence_dirty,
                                 *script_tick,
                                 here,
                                 inv,
-                                nav_state,
+                                state,
                                 Some(&nav_snapshot),
                                 Some(slot_bank.memory()),
                                 npc_boxes.as_deref(),
@@ -1607,8 +1612,19 @@ fn spawn_slot_thread(
                                 Some(Arc::clone(&slot_obj_names)),
                                 Some(&observe_channels),
                                 broker_world,
-                                Some(run_policy),
+                                Some(&mut *run_policy),
                                 Some(&mut debug_replies),
+                                )
+                            };
+                            let crate::script_runtime::ScriptObservation {
+                                wrote: _wrote,
+                                journal_paint_hidden,
+                                exclusive,
+                            } = observe(
+                                c,
+                                tick_edge,
+                                script_evidence_dirty(drain.dirty),
+                                nav_state,
                             );
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
@@ -1666,6 +1682,11 @@ fn spawn_slot_thread(
                                     b.route.is_some() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
                                 })
                             }) {
+                                let before_outcome = slot_navs
+                                    .lock()
+                                    .unwrap()
+                                    .get(name)
+                                    .map(|bot| bot.walk_outcome_seq);
                                 step_nav_bot(
                                     c,
                                     name,
@@ -1688,6 +1709,29 @@ fn spawn_slot_thread(
                                         )
                                     },
                                 );
+                                let after_outcome = slot_navs
+                                    .lock()
+                                    .unwrap()
+                                    .get(name)
+                                    .map(|bot| bot.walk_outcome_seq);
+                                if before_outcome != after_outcome {
+                                    // Follow can finish on this PLAYER_INFO edge
+                                    // after the first observation. Deliver its
+                                    // receipt now, without another game tick.
+                                    // This is still a partial PI-frame scene:
+                                    // later zone packets may change a loc. Same-call
+                                    // consumers must not treat arrival as a tick-end
+                                    // fence for their next scene interaction.
+                                    let completion = observe(
+                                        c,
+                                        false,
+                                        false,
+                                        nav_world_state_for_observe(
+                                            here, &nav_snapshot, running, true, map_members,
+                                        ),
+                                    );
+                                    c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
+                                }
                             }
                             // Busy flag for the idle scheduler: a slot with
                             // a running script, queued cheats, or an armed

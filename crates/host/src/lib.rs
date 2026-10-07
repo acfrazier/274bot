@@ -818,6 +818,17 @@ enum ParkWake {
     Timeout,
 }
 
+/// Readiness includes WS leftovers and TLS/tungstenite buffers, not just
+/// kernel bytes. `available` is nonblocking; an error wakes the ordinary
+/// client transport-loss path. A stalled partial packet remains suppressed.
+fn buffered_socket_ready(client: &mut Client, poll_socket: bool) -> bool {
+    poll_socket
+        && client
+            .stream
+            .as_mut()
+            .is_some_and(|stream| stream.available().map_or(true, |bytes| bytes != 0))
+}
+
 /// Block until the client socket is readable, a control wake lands, or
 /// `timeout` elapses. The socket is polled only when `poll_socket` — a
 /// previous no-consumption wake (EOF or a packet still mid-flight) leaves
@@ -828,7 +839,18 @@ enum ParkWake {
 /// heap). Windows counterpart uses fixed `[WSAPOLLFD; 2]` + `WSAPoll`.
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Duration) -> ParkWake {
+fn park(
+    client: &mut Client,
+    ctl: Option<&SlotPark>,
+    poll_socket: bool,
+    timeout: Duration,
+) -> ParkWake {
+    if buffered_socket_ready(client, poll_socket) {
+        if let Some(ctl) = ctl {
+            ctl.drain();
+        }
+        return ParkWake::Socket;
+    }
     let mut fds = [libc::pollfd {
         fd: -1,
         events: 0,
@@ -889,7 +911,18 @@ fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Dur
 /// control-drain / socket-priority / timeout semantics as the Unix body.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Duration) -> ParkWake {
+fn park(
+    client: &mut Client,
+    ctl: Option<&SlotPark>,
+    poll_socket: bool,
+    timeout: Duration,
+) -> ParkWake {
+    if buffered_socket_ready(client, poll_socket) {
+        if let Some(ctl) = ctl {
+            ctl.drain();
+        }
+        return ParkWake::Socket;
+    }
     use windows_sys::Win32::Networking::WinSock::{
         WSAPoll, POLLERR, POLLHUP, POLLIN, POLLNVAL, SOCKET, WSAPOLLFD,
     };

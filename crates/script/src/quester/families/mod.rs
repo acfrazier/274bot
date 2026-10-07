@@ -1548,20 +1548,24 @@ impl StepRun for TalkRun {
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
                 if !near {
-                    self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.leash, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    )?);
+                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(tile, self.leash, None, cx.required_after),
+                            &mut cx.tick.cx,
+                        ),
+                    ))?);
                     return Poll::Pending;
                 }
             }
-            self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                dialogue::DialogueArgs {
-                    target: self.target.clone(),
-                    options: self.options.clone(),
-                },
-                &mut cx.tick.cx,
-            )?);
+            self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<dialogue::Dialogue>(
+                    dialogue::DialogueArgs {
+                        target: self.target.clone(),
+                        options: self.options.clone(),
+                    },
+                    &mut cx.tick.cx,
+                ),
+            ))?);
             self.started = true;
             // Talk-to spent the event; an adopted live page drives now
             // (TICK-FIX #4/#14, C-DIALOGUE-ADOPT).
@@ -2123,20 +2127,24 @@ impl InteractRun {
                 }
             }
         }
-        if self.round_accepted
-            && !self.dialogue_completed
-            && self.default_dialogue
-            && dialogue::page_open(&cx.tick.cx)
-        {
-            self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                dialogue::DialogueArgs {
-                    target: dialogue::DialogueTarget::Continuation,
-                    options: dialogue::DialogueOptions::continue_only(),
-                },
-                &mut cx.tick.cx,
-            )?);
-            self.dialogue_started = Some(cx.tick.cx.active_now());
-            return self.poll_adopted(cx, adopt);
+        if self.round_accepted && !self.dialogue_completed {
+            let options = self.dialogue_options.clone().or_else(|| {
+                (self.default_dialogue && dialogue::page_open(&cx.tick.cx))
+                    .then(dialogue::DialogueOptions::continue_only)
+            });
+            if let Some(options) = options {
+                self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick.actions.begin::<dialogue::Dialogue>(
+                        dialogue::DialogueArgs {
+                            target: dialogue::DialogueTarget::Continuation,
+                            options,
+                        },
+                        &mut cx.tick.cx,
+                    ),
+                ))?);
+                self.dialogue_started = Some(cx.tick.cx.active_now());
+                return self.poll_adopted(cx, adopt);
+            }
         }
         let deadline = self.deadline;
         let now = cx.tick.cx.active_now();
@@ -2270,7 +2278,9 @@ impl InteractRun {
                         self.round_pick = Some(tile);
                     }
                     if !arrived {
-                        self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
+                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                            cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                        ))?);
                         return Poll::Pending;
                     }
                 }
@@ -2286,15 +2296,17 @@ impl InteractRun {
                     .local_player()
                     .map(|player| player.value.player.network);
                 if !here.is_some_and(|here| reach::within(here, tile, self.radius)) {
-                    self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(
-                            tile,
-                            self.radius.max(1) as u16,
-                            None,
-                            cx.required_after,
+                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(
+                                tile,
+                                self.radius.max(1) as u16,
+                                None,
+                                cx.required_after,
+                            ),
+                            &mut cx.tick.cx,
                         ),
-                        &mut cx.tick.cx,
-                    )?);
+                    ))?);
                     return Poll::Pending;
                 }
             }
@@ -2349,18 +2361,20 @@ impl InteractRun {
                 };
                 self.round_before = Some(count);
             }
-            self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
-                reach::ReachArgs {
-                    kind: self.kind.clone(),
-                    op: Arc::clone(&self.op),
-                    anchor: self.tile,
-                    radius: self.radius,
-                    wait_if_missing: self.wait_if_missing,
-                    target_tile: self.pinned_tile(),
-                    reachable_only: self.strict(),
-                },
-                &mut cx.tick.cx,
-            )?);
+            self.reach = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<reach::Reach>(
+                    reach::ReachArgs {
+                        kind: self.kind.clone(),
+                        op: Arc::clone(&self.op),
+                        anchor: self.tile,
+                        radius: self.radius,
+                        wait_if_missing: self.wait_if_missing,
+                        target_tile: self.pinned_tile(),
+                        reachable_only: self.strict(),
+                    },
+                    &mut cx.tick.cx,
+                ),
+            ))?);
             self.started = true;
             return Poll::Pending;
         }
@@ -2401,13 +2415,15 @@ impl InteractRun {
                         }));
                     }
                     if let Some(options) = &self.dialogue_options {
-                        self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                            dialogue::DialogueArgs {
-                                target: dialogue::DialogueTarget::Continuation,
-                                options: options.clone(),
-                            },
-                            &mut cx.tick.cx,
-                        )?);
+                        self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
+                            cx.tick.actions.begin::<dialogue::Dialogue>(
+                                dialogue::DialogueArgs {
+                                    target: dialogue::DialogueTarget::Continuation,
+                                    options: options.clone(),
+                                },
+                                &mut cx.tick.cx,
+                            ),
+                        ))?);
                         self.dialogue_started = Some(cx.tick.cx.active_now());
                         self.poll_adopted(cx, adopt)
                     } else if self.until.is_some() || self.default_dialogue {
@@ -3135,15 +3151,17 @@ impl StepRun for UseOnRun {
                     if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius))
                         && !target_here
                     {
-                        self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(
-                                tile,
-                                self.radius.max(1) as u16,
-                                None,
-                                cx.required_after,
+                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                            cx.tick.actions.begin::<Walk>(
+                                reach::walk_request(
+                                    tile,
+                                    self.radius.max(1) as u16,
+                                    None,
+                                    cx.required_after,
+                                ),
+                                &mut cx.tick.cx,
                             ),
-                            &mut cx.tick.cx,
-                        )?);
+                        ))?);
                         self.anchor_walk = true;
                         return Poll::Pending;
                     }
@@ -3157,13 +3175,15 @@ impl StepRun for UseOnRun {
                     .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
                 if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
                 {
-                    self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                        dialogue::DialogueArgs {
-                            target: dialogue::DialogueTarget::Continuation,
-                            options: dialogue::DialogueOptions::continue_only(),
-                        },
-                        &mut cx.tick.cx,
-                    )?);
+                    self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<dialogue::Dialogue>(
+                            dialogue::DialogueArgs {
+                                target: dialogue::DialogueTarget::Continuation,
+                                options: dialogue::DialogueOptions::continue_only(),
+                            },
+                            &mut cx.tick.cx,
+                        ),
+                    ))?);
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
@@ -3208,14 +3228,16 @@ impl StepRun for UseOnRun {
                                 if self.tile.is_some() && !self.anchored_stand_arrived {
                                     self.deadline = None;
                                 }
-                                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                    reach::loc_walk_request(
-                                        loc,
-                                        cx.tick.cx.snapshot().here().map(|here| here.value),
-                                        cx.required_after,
+                                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                                    cx.tick.actions.begin::<Walk>(
+                                        reach::loc_walk_request(
+                                            loc,
+                                            cx.tick.cx.snapshot().here().map(|here| here.value),
+                                            cx.required_after,
+                                        ),
+                                        &mut cx.tick.cx,
                                     ),
-                                    &mut cx.tick.cx,
-                                )?);
+                                ))?);
                                 return Poll::Pending;
                             }
                             if self.tile.is_some() {
@@ -3241,10 +3263,12 @@ impl StepRun for UseOnRun {
                         if !adjacent {
                             // Chase the live NPC; the walk is re-checked every
                             // tick and ends as soon as the NPC is beside us.
-                            self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(npc_tile, 1, None, cx.required_after),
-                                &mut cx.tick.cx,
-                            )?);
+                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                                cx.tick.actions.begin::<Walk>(
+                                    reach::walk_request(npc_tile, 1, None, cx.required_after),
+                                    &mut cx.tick.cx,
+                                ),
+                            ))?);
                             self.chase = Some((npc_index, npc_tile));
                             return Poll::Pending;
                         }
@@ -3266,10 +3290,12 @@ impl StepRun for UseOnRun {
                             reach::Pick::None => return Poll::Pending,
                         };
                         if !reachable {
-                            self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(target, 1, None, cx.required_after),
-                                &mut cx.tick.cx,
-                            )?);
+                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                                cx.tick.actions.begin::<Walk>(
+                                    reach::walk_request(target, 1, None, cx.required_after),
+                                    &mut cx.tick.cx,
+                                ),
+                            ))?);
                             return Poll::Pending;
                         }
                         if self.target_tile.is_none() {
@@ -3315,11 +3341,11 @@ impl StepRun for UseOnRun {
                         .then_some(self.target_id),
                     target_item_slot,
                 };
-                self.interaction = Some(
+                self.interaction = Some(std::task::ready!(crate::native::defer_budget(
                     cx.tick
                         .actions
-                        .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
-                );
+                        .begin::<UseOnAction>(request, &mut cx.tick.cx),
+                ))?);
                 // A pre-dispatch adoption completes only that old page, not
                 // the new action's post-accept continuation.
                 self.dialogue_completed = false;
@@ -3380,13 +3406,15 @@ impl StepRun for UseOnRun {
                     dialogue::page_open(&cx.tick.cx).then(dialogue::DialogueOptions::continue_only)
                 });
                 if let Some(options) = options {
-                    self.dialogue = Some(cx.tick.actions.begin::<dialogue::Dialogue>(
-                        dialogue::DialogueArgs {
-                            target: dialogue::DialogueTarget::Continuation,
-                            options,
-                        },
-                        &mut cx.tick.cx,
-                    )?);
+                    self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<dialogue::Dialogue>(
+                            dialogue::DialogueArgs {
+                                target: dialogue::DialogueTarget::Continuation,
+                                options,
+                            },
+                            &mut cx.tick.cx,
+                        ),
+                    ))?);
                     self.dialogue_started = Some(cx.tick.cx.active_now());
                     if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
                         return Poll::Pending;

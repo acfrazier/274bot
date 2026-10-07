@@ -136,6 +136,15 @@ fn call(data: &SelectedGameData, token: u64, held: Value, extra: Value) -> Value
     dispatch(Some(data), &payload("next", Some(token), held, extra))
 }
 
+fn call_native(data: &SelectedGameData, token: u64, tick: u64, held: Value, extra: Value) -> Value {
+    next_native(
+        Some(data),
+        &payload("next", Some(token), held, extra),
+        false,
+        tick,
+    )
+}
+
 fn token_of(step: &Value) -> u64 {
     step["token"].as_u64().expect("token")
 }
@@ -4698,6 +4707,55 @@ fn a_board_no_plan_exists_for_stalls_to_the_close() {
     assert_eq!(closed["kind"], "close-modal", "{closed}");
     let latched = call(&data, token, held_box(), closed_board_page());
     assert_eq!(latched["kind"], "wait", "{latched}");
+}
+
+#[test]
+fn native_puzzle_stall_budget_advances_once_per_observed_tick() {
+    on_reset();
+    let data = selected();
+    let token = steady(&data, PUZZLE_RIDDLE);
+    let opened = call_native(&data, token, 1, held_box(), closed_board_page());
+    assert_eq!(opened["kind"], "held", "{opened}");
+
+    // Two pieces claim one target, so every dispatch sees the same board with
+    // no plan. Re-polling it many times in tick 2 spends only one stall.
+    let mut mixed = one_move_board();
+    mixed[6] = Some(5);
+    let page = board_page(&mixed, 7);
+    for _ in 0..(2 * STALL_LIMIT) {
+        let stalled = call_native(&data, token, 2, held_box(), page.clone());
+        assert_eq!(stalled["kind"], "wait", "{stalled}");
+    }
+    for tick in 3..=8 {
+        let stalled = call_native(&data, token, tick, held_box(), page.clone());
+        assert_eq!(stalled["kind"], "wait", "tick {tick}: {stalled}");
+    }
+    let closed = call_native(&data, token, 9, held_box(), page);
+    assert_eq!(closed["kind"], "close-modal", "{closed}");
+}
+
+#[test]
+fn native_puzzle_processes_new_board_evidence_in_the_same_tick() {
+    on_reset();
+    let data = selected();
+    let token = steady(&data, PUZZLE_RIDDLE);
+    let opened = call_native(&data, token, 1, held_box(), closed_board_page());
+    assert_eq!(opened["kind"], "held", "{opened}");
+
+    let mut mixed = one_move_board();
+    mixed[6] = Some(5);
+    let stalled = call_native(&data, token, 2, held_box(), board_page(&mixed, 7));
+    assert_eq!(stalled["kind"], "wait", "{stalled}");
+
+    let moved = call_native(
+        &data,
+        token,
+        2,
+        held_box(),
+        board_page(&one_move_board(), 7),
+    );
+    assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+    assert_eq!(moved["slot"], 24, "{moved}");
 }
 
 #[test]

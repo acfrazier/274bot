@@ -488,7 +488,9 @@ impl NativeMachine for BankMachine {
                             return Poll::Ready(Ok(self.receipt(true)));
                         }
                         let run = cx.evidence().run;
-                        cx.emit(InteractReq::Close)?;
+                        std::task::ready!(crate::native::defer_budget(
+                            cx.emit(InteractReq::Close)
+                        ))?;
                         self.deadline = cx.active_now().saturating_add(ops::close_deadline(None));
                         self.phase = Phase::AwaitClose {
                             baseline: CloseBaseline {
@@ -567,16 +569,19 @@ impl NativeMachine for BankMachine {
                             .reachable() else {
                                 return Poll::Pending;
                             };
-                            if opening_first {
-                                self.open_first_target = Some((loc.id, loc.tile));
+                            let first_target = opening_first.then_some((loc.id, loc.tile));
+                            std::task::ready!(crate::native::defer_budget(cx.emit(
+                                InteractReq::Loc {
+                                    x: loc.tile.x,
+                                    z: loc.tile.z,
+                                    level: loc.tile.level,
+                                    action: operation.op.to_owned(),
+                                    id: Some(loc.id),
+                                },
+                            )))?;
+                            if let Some(target) = first_target {
+                                self.open_first_target = Some(target);
                             }
-                            cx.emit(InteractReq::Loc {
-                                x: loc.tile.x,
-                                z: loc.tile.z,
-                                level: loc.tile.level,
-                                action: operation.op.to_owned(),
-                                id: Some(loc.id),
-                            })?;
                             self.object_interaction_sent = true;
                             self.object_dialogue_finished = false;
                         } else {
@@ -609,15 +614,17 @@ impl NativeMachine for BankMachine {
                             let Some(stand_op) = stand_op else {
                                 return Poll::Pending;
                             };
-                            cx.emit(InteractReq::OpenStand {
-                                x: loc.tile.x,
-                                z: loc.tile.z,
-                                level: loc.tile.level,
-                                kind: access.kind.as_str().to_owned(),
-                                name: loc.name.as_deref().map(str::to_owned),
-                                stand_op: Some(stand_op),
-                                choose: access.choose.as_deref().map(str::to_owned),
-                            })?;
+                            std::task::ready!(crate::native::defer_budget(cx.emit(
+                                InteractReq::OpenStand {
+                                    x: loc.tile.x,
+                                    z: loc.tile.z,
+                                    level: loc.tile.level,
+                                    kind: access.kind.as_str().to_owned(),
+                                    name: loc.name.as_deref().map(str::to_owned),
+                                    stand_op: Some(stand_op),
+                                    choose: access.choose.as_deref().map(str::to_owned),
+                                },
+                            )))?;
                         }
                         self.opened_from = Some(open_generation(cx));
                         self.phase = Phase::AwaitOpen;
@@ -650,14 +657,16 @@ impl NativeMachine for BankMachine {
                     };
                     let action = wanted.map(|row| row.op.to_string());
                     let name = wanted.map(|row| row.name.to_string());
-                    cx.emit(InteractReq::OpenBooth {
-                        x: booth.tile.x,
-                        z: booth.tile.z,
-                        level: booth.tile.level,
-                        id: booth.id,
-                        name,
-                        action,
-                    })?;
+                    std::task::ready!(crate::native::defer_budget(cx.emit(
+                        InteractReq::OpenBooth {
+                            x: booth.tile.x,
+                            z: booth.tile.z,
+                            level: booth.tile.level,
+                            id: booth.id,
+                            name,
+                            action,
+                        },
+                    )))?;
                     self.opened_from = Some(open_generation(cx));
                     self.phase = Phase::AwaitOpen;
                     return Poll::Pending;
@@ -682,13 +691,21 @@ impl NativeMachine for BankMachine {
                             choose: "",
                         },
                     };
-                    match core.step(
+                    let deadline = self.deadline;
+                    let step = match crate::native::defer_budget(core.step(
                         intent,
                         &mut NativeNpcContext {
                             cx,
                             deadline: &mut self.deadline,
                         },
-                    )? {
+                    )) {
+                        Poll::Pending => {
+                            self.deadline = deadline;
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(result) => result?,
+                    };
+                    match step {
                         npc::Step::Wait => {
                             self.phase = Phase::NpcAccess { core, dialogue };
                             return Poll::Pending;
@@ -894,16 +911,17 @@ impl NativeMachine for BankMachine {
                             }
                             Progress::Incomplete | Progress::PackFull | Progress::OverTarget => {}
                         }
-                        let reason = match self.click_withdraw(cx, &goal, view.held)? {
-                            Clicked::Sent => return Poll::Pending,
-                            Clicked::Closed => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank closed during withdraw",
-                                ))));
-                            }
-                            Clicked::NoStock => "bank lacks requested item",
-                            Clicked::NoOp => "bank item has no compatible withdraw action",
-                        };
+                        let reason =
+                            match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
+                                Clicked::Sent => return Poll::Pending,
+                                Clicked::Closed => {
+                                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                        "bank closed during withdraw",
+                                    ))));
+                                }
+                                Clicked::NoStock => "bank lacks requested item",
+                                Clicked::NoOp => "bank item has no compatible withdraw action",
+                            };
                         // `partial_ok` takes the incomplete receipt; an unmet
                         // exact target is never reported complete.
                         return if self.request.partial_ok {
@@ -964,7 +982,7 @@ impl NativeMachine for BankMachine {
                                 "bank closed during tier withdraw",
                             ))));
                         }
-                        match self.click_withdraw(cx, &goal, view.held)? {
+                        match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
                             Clicked::Sent => return Poll::Pending,
                             Clicked::Closed => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1014,7 +1032,7 @@ impl NativeMachine for BankMachine {
                             }
                             Progress::Incomplete | Progress::PackFull => {}
                         }
-                        match self.click_withdraw(cx, &goal, view.held)? {
+                        match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
                             Clicked::Sent => return Poll::Pending,
                             Clicked::Closed => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -1115,7 +1133,9 @@ impl NativeMachine for BankMachine {
                                         rows.iter().filter(|row| row.count > 0).count()
                                     })
                                 });
-                                cx.emit(ops::deposit_req(click, self.session))?;
+                                std::task::ready!(crate::native::defer_budget(
+                                    cx.emit(ops::deposit_req(click, self.session))
+                                ))?;
                                 self.deposits += 1;
                                 self.view_armed = false;
                                 self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
@@ -1465,22 +1485,22 @@ impl BankMachine {
         cx: &mut ActionContext<'_>,
         goal: &WithdrawGoal,
         held: i32,
-    ) -> Result<Clicked, ActionError> {
+    ) -> Poll<Result<Clicked, ActionError>> {
         let request = {
             let snapshot = cx.snapshot();
             let Some(bank) = snapshot.bank() else {
-                return Ok(Clicked::Closed);
+                return Poll::Ready(Ok(Clicked::Closed));
             };
             let Some(row) = bank
                 .value
                 .iter()
                 .find(|row| row.def.id == goal.bank_item_id && row.count > 0)
             else {
-                return Ok(Clicked::NoStock);
+                return Poll::Ready(Ok(Clicked::NoStock));
             };
             let Some(request) = ops::withdraw_click(row, ops::withdraw_remaining(goal, held), goal)
             else {
-                return Ok(Clicked::NoOp);
+                return Poll::Ready(Ok(Clicked::NoOp));
             };
             request
         };
@@ -1489,15 +1509,17 @@ impl BankMachine {
         }
         if !self.item_mode_ensured {
             let evidence = cx.evidence();
-            let request_id = cx.emit(ops::note_req(NoteIntent::Item))?;
+            let request_id = std::task::ready!(crate::native::defer_budget(
+                cx.emit(ops::note_req(NoteIntent::Item))
+            ))?;
             self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
             self.phase = Phase::AwaitNoteMode {
                 request_id,
                 evidence,
             };
-            return Ok(Clicked::Sent);
+            return Poll::Ready(Ok(Clicked::Sent));
         }
-        cx.emit(request)?;
+        std::task::ready!(crate::native::defer_budget(cx.emit(request)))?;
         self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
         self.phase = Phase::AwaitTransfer {
             before: held,
@@ -1505,7 +1527,7 @@ impl BankMachine {
             item_id: goal.lands_as_id,
             evidence: cx.evidence(),
         };
-        Ok(Clicked::Sent)
+        Poll::Ready(Ok(Clicked::Sent))
     }
 
     fn protected_unchanged(&self, cx: &ActionContext<'_>) -> Option<bool> {
@@ -1734,9 +1756,11 @@ impl NativeMachine for Close {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::{HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use crate::native::{ActionContext, HostEffect, InteractionReceipt};
+    use crate::quester::families::tests::{
+        local_player, with_tick, with_tick_reach, with_tick_snapshots,
+    };
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView};
 
     fn catalog_bank(name: &str) -> NamedBank {
         let definition = api::named_banks::BANK_CATALOG
@@ -1811,6 +1835,102 @@ mod tests {
             },
         );
         action.effect
+    }
+    fn spend_interaction(cx: &mut ActionContext<'_>) {
+        cx.action_id = cx.ledger.as_ref().unwrap().owner.as_ref().unwrap().id.get();
+        let request_id = cx
+            .emit(InteractReq::ContinueDialog { component_id: None })
+            .unwrap();
+        let evidence = cx.evidence();
+        let ledger = cx.ledger.as_mut().unwrap();
+        let action = ledger.outbox.pop().expect("budget-filling interaction");
+        assert_eq!(action.request_id.get(), request_id);
+        ledger.complete_interaction(
+            &action.authority(),
+            InteractionReceipt {
+                request_id,
+                evidence,
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    fn spend_batch_event(cx: &mut ActionContext<'_>) {
+        cx.action_id = cx.ledger.as_ref().unwrap().owner.as_ref().unwrap().id.get();
+        let request_id = cx
+            .emit_batch([
+                Some(InteractReq::SideTab { tab: 0 }),
+                None,
+                None,
+                None,
+                None,
+            ])
+            .unwrap();
+        let evidence = cx.evidence();
+        let ledger = cx.ledger.as_mut().unwrap();
+        let action = ledger.outbox.pop().expect("budget-filling batch");
+        assert_eq!(action.request_id.get(), request_id);
+        ledger.complete_interaction(
+            &action.authority(),
+            InteractionReceipt {
+                request_id,
+                evidence,
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    fn acknowledge_current(cx: &mut ActionContext<'_>) -> HostEffect {
+        let evidence = cx.evidence();
+        let ledger = cx.ledger.as_mut().unwrap();
+        let action = ledger.outbox.remove(0);
+        ledger.complete_interaction(
+            &action.authority(),
+            InteractionReceipt {
+                request_id: action.request_id.get(),
+                evidence,
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        action.effect
+    }
+
+    fn start_bank(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        request: BankRequest,
+    ) -> crate::native::ActionHandle<BankMachine> {
+        with_tick(snapshot, ledger, 1, |tick| {
+            tick.actions
+                .begin::<BankMachine>(request, &mut tick.cx)
+                .unwrap()
+        })
+    }
+
+    fn assert_bank_emit_deferred(
+        snapshot: &GameSnapshot,
+        request: BankRequest,
+        assert_emitted: impl FnOnce(&HostEffect),
+    ) {
+        let mut ledger = None;
+        let handle = start_bank(snapshot, &mut ledger, request);
+        let denied = with_tick(snapshot, &mut ledger, 2, |tick| {
+            spend_interaction(&mut tick.cx);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(denied.is_pending(), "budget denial must remain Pending");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        let retry = with_tick(snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retry.is_pending(), "admitted interaction remains in flight");
+        let ledger = ledger.as_ref().unwrap();
+        assert_eq!(ledger.outbox.len(), 1);
+        assert_emitted(&ledger.outbox[0].effect);
     }
 
     fn teller_access(
@@ -3211,5 +3331,372 @@ mod tests {
             },
         );
         assert_eq!(defaults.eligible_indices(&fishing(68), &quest), vec![0, 1]);
+    }
+
+    #[test]
+    fn native_bank_close_budget_denial_retries_next_tick() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        assert_bank_emit_deferred(
+            &snapshot,
+            bank_request(BankAction::Close, false),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::Close)
+                ))
+            },
+        );
+    }
+
+    #[test]
+    fn native_bank_catalog_loc_budget_denial_retries_next_tick() {
+        let bank = catalog_bank("Shantay Pass");
+        let loc_tile = WorldTile {
+            x: bank.tile.x + 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2693,
+            "Shantay chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: loc_tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Shantay chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap()
+        });
+        let denied = with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            spend_interaction(&mut tick.cx);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(denied.is_pending(), "budget denial must remain Pending");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        let retry = with_tick_reach(&snapshot, &reach, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retry.is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Loc { id: Some(2693), .. })
+        ));
+    }
+
+    #[test]
+    fn native_bank_open_stand_budget_denial_retries_next_tick() {
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bank = NamedBank::new("Fixture bank", tile);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![bank_object_loc(
+            4010,
+            "Fixture booth",
+            "Use-quickly",
+            tile,
+            0,
+        )]);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: tile,
+            kind: AccessKind::Booth,
+            stand_op: 1,
+            name: Some(Arc::from("Fixture booth")),
+            choose: None,
+        });
+        assert_bank_emit_deferred(&snapshot, open_request(access), |effect| {
+            assert!(matches!(
+                effect,
+                HostEffect::Interaction(InteractReq::OpenStand {
+                    stand_op: Some(1),
+                    ..
+                })
+            ));
+        });
+    }
+
+    #[test]
+    fn native_bank_open_booth_budget_denial_retries_next_tick() {
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bank = NamedBank::new("Fixture bank", tile);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![bank_object_loc(
+            4011,
+            "Fixture booth",
+            "Use-quickly",
+            tile,
+            0,
+        )]);
+        assert_bank_emit_deferred(
+            &snapshot,
+            BankRequest {
+                bank: Some(bank),
+                action: BankAction::Scan,
+                partial_ok: false,
+            },
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::OpenBooth { id: 4011, .. })
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn native_bank_deposit_budget_denial_retries_next_tick() {
+        let id = 333;
+        let side = row_with(
+            item(id, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(id, "Trout", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![side]);
+        assert_bank_emit_deferred(
+            &snapshot,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            ),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::InvButton { id: button_id, .. })
+                        if *button_id == id
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn native_bank_note_mode_budget_denial_retries_next_tick() {
+        let id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        assert_bank_emit_deferred(
+            &snapshot,
+            bank_request(
+                BankAction::WithdrawTo {
+                    withdrawals: Arc::from([Withdrawal {
+                        id,
+                        name: Arc::from("Bait"),
+                        target: 2,
+                    }]),
+                },
+                false,
+            ),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn native_bank_withdraw_click_budget_denial_retries_next_tick() {
+        let id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(id, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let handle = start_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::WithdrawTo {
+                    withdrawals: Arc::from([Withdrawal {
+                        id,
+                        name: Arc::from("Bait"),
+                        target: 2,
+                    }]),
+                },
+                false,
+            ),
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+
+        let denied = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            spend_batch_event(&mut tick.cx);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(denied.is_pending(), "budget denial must remain Pending");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        let retry = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retry.is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::Interaction(InteractReq::WithdrawX { count: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn native_teller_talk_budget_denial_retries_next_tick() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
+        assert_bank_emit_deferred(
+            &snapshot,
+            open_request(teller_access(
+                catalog_bank("Mage Arena"),
+                Some("Gundai"),
+                0,
+                None,
+            )),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::Npc {
+                        name,
+                        index: Some(7),
+                        ..
+                    }) if name == "Gundai"
+                ));
+            },
+        );
+    }
+
+    fn assert_teller_page_deferral(
+        page: &GameSnapshot,
+        access: Arc<BankStandAccess>,
+        assert_emitted: impl FnOnce(&HostEffect),
+    ) {
+        let mut initial = GameSnapshot::new();
+        initial.seed_ingame(2);
+        initial.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
+        let mut ledger = None;
+        let handle = with_tick_snapshots(&initial, page, &mut ledger, 1, |tick, next| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert!(matches!(
+                acknowledge_current(&mut tick.cx),
+                HostEffect::Interaction(InteractReq::Npc { .. })
+            ));
+
+            let mut evidence = tick.cx.evidence();
+            evidence.sequence += 1;
+            tick.cx.evidence = evidence;
+            tick.cx.snapshot = SnapshotView::new(Some(next), evidence);
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert!(
+                tick.cx.ledger.as_ref().unwrap().outbox.is_empty(),
+                "same-tick page wake must defer its denied action"
+            );
+            handle
+        });
+        let retry = with_tick(page, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retry.is_pending());
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert_emitted(&ledger.as_ref().unwrap().outbox[0].effect);
+    }
+
+    #[test]
+    fn native_teller_continue_page_budget_denial_retries_next_tick() {
+        let mut page = GameSnapshot::new();
+        page.seed_ingame(2);
+        page.seed_chat_modal(1, vec!["Bank access page".into()]);
+        page.seed_chat_options(Vec::new(), 99);
+        assert_teller_page_deferral(
+            &page,
+            teller_access(catalog_bank("Mage Arena"), Some("Gundai"), 0, None),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn native_teller_choice_page_budget_denial_retries_next_tick() {
+        let mut page = GameSnapshot::new();
+        page.seed_ingame(2);
+        page.seed_chat_modal(1, vec!["Bank access page".into()]);
+        page.seed_chat_options(
+            vec![
+                api::snapshot::ChatOptionView {
+                    component_id: 1,
+                    text: "Not now".into(),
+                },
+                api::snapshot::ChatOptionView {
+                    component_id: 2,
+                    text: "I'd like to access my bank account".into(),
+                },
+            ],
+            -1,
+        );
+        assert_teller_page_deferral(
+            &page,
+            teller_access(catalog_bank("Mage Arena"), Some("Gundai"), 0, None),
+            |effect| {
+                assert!(matches!(
+                    effect,
+                    HostEffect::Interaction(InteractReq::Answer { option: 2 })
+                ));
+            },
+        );
     }
 }

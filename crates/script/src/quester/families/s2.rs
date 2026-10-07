@@ -531,10 +531,12 @@ impl StepRun for BuyRun {
                 .here()
                 .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.tile, 4, None, cx.required_after),
-                    &mut cx.tick.cx,
-                )?);
+                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick.actions.begin::<Walk>(
+                        reach::walk_request(self.tile, 4, None, cx.required_after),
+                        &mut cx.tick.cx,
+                    ),
+                ))?);
                 return Poll::Pending;
             }
             self.buy = Some(
@@ -706,27 +708,31 @@ impl StepRun for MakeRun {
                 .here()
                 .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.tile, 4, None, cx.required_after),
-                    &mut cx.tick.cx,
-                )?);
+                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick.actions.begin::<Walk>(
+                        reach::walk_request(self.tile, 4, None, cx.required_after),
+                        &mut cx.tick.cx,
+                    ),
+                ))?);
                 return Poll::Pending;
             }
-            self.trigger = Some(cx.tick.actions.begin::<reach::Reach>(
-                reach::ReachArgs {
-                    kind: reach::ReachKind::Loc {
-                        id: Some(self.loc_id),
-                        name: Some(Arc::clone(&self.loc_name)),
+            self.trigger = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<reach::Reach>(
+                    reach::ReachArgs {
+                        kind: reach::ReachKind::Loc {
+                            id: Some(self.loc_id),
+                            name: Some(Arc::clone(&self.loc_name)),
+                        },
+                        op: Arc::clone(&self.op),
+                        anchor: Some(self.tile),
+                        radius: 8,
+                        wait_if_missing: true,
+                        target_tile: None,
+                        reachable_only: false,
                     },
-                    op: Arc::clone(&self.op),
-                    anchor: Some(self.tile),
-                    radius: 8,
-                    wait_if_missing: true,
-                    target_tile: None,
-                    reachable_only: false,
-                },
-                &mut cx.tick.cx,
-            )?);
+                    &mut cx.tick.cx,
+                ),
+            ))?);
             return Poll::Pending;
         }
         if let Some(handle) = &self.trigger {

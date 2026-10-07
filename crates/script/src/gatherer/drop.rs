@@ -1,4 +1,4 @@
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::snapshot::ItemView;
 use std::sync::Arc;
@@ -104,7 +104,7 @@ impl NativeMachine for DropBatch {
                     .chat_modal()
                     .is_some_and(|modal| modal.value.root >= 0))
         {
-            let request = cx.emit(InteractReq::CloseModal)?;
+            let request = std::task::ready!(defer_budget(cx.emit(InteractReq::CloseModal)))?;
             self.close_request = Some(request);
             self.close_tick = cx.evidence().tick;
             self.packets += 1;
@@ -243,5 +243,70 @@ impl DropBatch {
                 row.count > 0 && self.is_product(row.def.id) && !self.is_protected(row.def.id)
             })
             .count() as u16
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::HostEffect;
+    use crate::quester::families::tests::{def, with_tick, with_tick_snapshots};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer};
+
+    #[test]
+    fn same_tick_modal_after_disposals_defers_close_until_next_tick() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(1511, "Logs"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Drop".into())],
+                component_id: -1,
+            }],
+            28,
+        );
+        let mut later = GameSnapshot::new();
+        later.seed_ingame(2);
+        later.seed_inventory(Vec::new(), 28);
+        later.seed_chat_modal(100, vec!["Your inventory is full.".into()]);
+        let mut ledger = None;
+        let handle = with_tick_snapshots(&snapshot, &later, &mut ledger, 1, |tick, later| {
+            let handle = tick
+                .actions
+                .begin::<DropBatch>(
+                    DropBatchArgs {
+                        products: Arc::from([1511]),
+                        protected: [0; MAX_PROTECTED],
+                        protected_len: 0,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(later), tick.cx.evidence());
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            }
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            handle
+        });
+        let result = with_tick(&later, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Ok(DropResult {
+                end: DropEnd::Cleared,
+                dropped: 1
+            }))
+        ));
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Interaction(InteractReq::CloseModal)
+        ));
     }
 }

@@ -30,8 +30,8 @@ pub(super) struct InterruptedExecution {
     pub(super) consumed: bool,
 }
 
-/// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
-/// one-shot worker decide under this same mutex.
+/// Teardown coordination and an independent producer evidence sequence.
+/// Finish and the one-shot worker decide under this same mutex.
 pub(super) struct TeardownState {
     pub(super) phase: TeardownPhase,
     pub(super) deadline: Option<Instant>,
@@ -67,6 +67,9 @@ pub(super) struct TeardownState {
     /// A terminate armed for the active eval and not yet cancelled by the
     /// isolate thread.
     pub(super) execution_interrupt: Option<InterruptedExecution>,
+    /// Producer evidence generation. Independent of native input identity
+    /// and execution lifecycle; shared only to publish the host's delta key.
+    pub(super) snapshot_evidence_sequence: u64,
 }
 
 impl TeardownState {
@@ -89,6 +92,7 @@ impl TeardownState {
             execution_deadline_owner: None,
             pause_requested: false,
             execution_interrupt: None,
+            snapshot_evidence_sequence: 0,
         }
     }
 }
