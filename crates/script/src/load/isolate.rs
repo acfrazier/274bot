@@ -118,6 +118,7 @@ enum IsolateCmd {
         tick: u64,
         generation: u64,
         input_identity: u64,
+        evidence_sequence: u64,
         wait_only: bool,
     },
     /// A session boundary. `keep_work`: hold the script's work for the next
@@ -645,16 +646,43 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
-        self.dispatch_tick(snap_tick, input_identity, false);
+        self.dispatch_tick(snap_tick, input_identity, 0, false);
     }
 
     /// Recheck parked waits against a changed snapshot without advancing
     /// game-tick listeners, machines, or the script's loop.
-    pub fn on_snapshot_change_at(&self, snap_tick: u64, input_identity: u64) {
-        self.dispatch_tick(snap_tick, input_identity, true);
+    /// `evidence_sequence` comes from actual producer field changes; native
+    /// input identity remains the separate interaction authority fence.
+    pub fn on_snapshot_change_at(
+        &self,
+        snap_tick: u64,
+        input_identity: u64,
+        evidence_sequence: u64,
+    ) {
+        self.dispatch_tick(snap_tick, input_identity, evidence_sequence, true);
     }
 
-    fn dispatch_tick(&self, snap_tick: u64, input_identity: u64, wait_only: bool) {
+    /// Record a producer delta that carries changed evidence.
+    pub(crate) fn record_snapshot_evidence_change(&self, changed: bool) {
+        if changed {
+            let mut state = self.teardown.lock().unwrap();
+            state.snapshot_evidence_sequence =
+                state.snapshot_evidence_sequence.wrapping_add(1);
+        }
+    }
+
+    /// Current producer evidence generation, independent of native identity.
+    pub(crate) fn snapshot_evidence_sequence(&self) -> u64 {
+        self.teardown.lock().unwrap().snapshot_evidence_sequence
+    }
+
+    fn dispatch_tick(
+        &self,
+        snap_tick: u64,
+        input_identity: u64,
+        evidence_sequence: u64,
+        wait_only: bool,
+    ) {
         // Before Ready no tick has started, so none can be over budget.
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
@@ -688,6 +716,7 @@ impl LoadIsolate {
             tick: snap_tick,
             generation,
             input_identity,
+            evidence_sequence,
             wait_only,
         });
     }
@@ -709,6 +738,7 @@ impl LoadIsolate {
             tick: snap_tick,
             generation,
             input_identity: 0,
+            evidence_sequence: 0,
             wait_only: false,
         });
     }

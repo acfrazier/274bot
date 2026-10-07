@@ -1269,6 +1269,7 @@ fn tick_loop(
                 tick: n,
                 generation,
                 input_identity,
+                evidence_sequence,
                 wait_only,
             } => {
                 if !wait_only
@@ -1375,7 +1376,7 @@ fn tick_loop(
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
                         if wait_only {
-                            super::machine_v8::snapshot_step(runtime, n, input_identity, &|| {
+                            super::machine_v8::snapshot_step(runtime, n, evidence_sequence, &|| {
                                 machines_halted(&teardown)
                             });
                         } else {

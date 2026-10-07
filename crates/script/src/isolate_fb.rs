@@ -1961,6 +1961,107 @@ impl DeltaMask {
             side_modal_id: next.side_modal_id != last.side_modal_id,
         }
     }
+    /// Whether this delta carries an actual evidence change. The tick and
+    /// unchanged forced `hold`/`banks` retransmissions do not advance it.
+    fn has_evidence_change(
+        &self,
+        last: &SnapshotFingerprint,
+        next: &SnapshotFingerprint,
+    ) -> bool {
+        self.here
+            || self.ingame
+            || self.inv
+            || self.inv_size
+            || self.stats
+            || self.booths
+            || self.nearest_booth
+            || self.bank
+            || self.bank_side
+            || self.bank_open
+            || self.bank_loaded
+            || self.bank_generation
+            || self.count_dialog_open
+            || self.withdraw_x_result_seq
+            || self.withdraw_x_result
+            || self.withdraw_load_result_seq
+            || self.withdraw_load_result
+            || self.bank_op_result_seq
+            || self.bank_op_result
+            || self.ours
+            || self.npcs
+            || self.locs
+            || self.projectiles
+            || self.players
+            || self.ground
+            || self.equipment
+            || self.chat_open
+            || self.chat_continue
+            || self.chat_text
+            || self.chat_options
+            || self.side_tab
+            || self.varps
+            || self.combat_styles
+            || self.run_energy
+            || self.run_enabled
+            || self.retaliate_enabled
+            || self.my_name
+            || self.in_combat
+            || self.animating
+            || self.main_modal_id
+            || self.chat_modal_id
+            || self.make_products
+            || self.side_tab_ifaces
+            || self.spell_buttons
+            || self.chat_lines
+            || self.bank_note_on
+            || self.bank_note_off
+            || self.scene_state
+            || self.weight
+            || self.combat_level
+            || self.camera_yaw
+            || self.camera_pitch
+            || self.teleports_enabled
+            || self.self_slot
+            || self.trade_offer_open
+            || self.trade_confirm_open
+            || self.trade_partner
+            || self.trade_mine
+            || self.trade_theirs
+            || self.trade_side
+            || self.trade_accept_id
+            || self.trade_decline_id
+            || self.shop_open
+            || self.shop_stock
+            || self.shop_player
+            || self.main_make
+            || self.reach
+            || self.attacked_by_player
+            || self.self_target
+            || self.widgets
+            || self.self_chat
+            || self.hint_tile
+            || self.retaliate_controls
+            || self.quest_statuses
+            || self.npc_boxes
+            || self.bank_approaches
+            || self.user_move_intent_seq
+            || self.walk_outcome
+            || self.route_inspect
+            || self.collision
+            || self.main_modal_texts
+            || self.puzzle_board
+            || self.bank_selection
+            || self.self_anim
+            || self.local_player_motion
+            || self.bank_snapshot_generation
+            || self.api_gather
+            || self.api_gather_outcome
+            || self.api_progress
+            || self.chat_page_fingerprint
+            || self.side_modal_id
+            || (self.banks && next.banks != last.banks)
+            || (self.hold && next.hold != last.hold)
+    }
 }
 
 /// One reusable FlatBuffer builder for isolate IPC. Each started JS slot
@@ -2034,15 +2135,37 @@ impl IsolateBuf {
         native: NativeFactsInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
+        let (bytes, fingerprint, _) = self.encode_snapshot_delta_with_native_and_evidence(
+            last,
+            input,
+            native,
+            force_banks,
+        );
+        (bytes, fingerprint)
+    }
+
+    /// Encode a delta and report whether its mask contains a changed
+    /// evidence field. Keyframes and forced retransmissions stay unchanged.
+    pub(crate) fn encode_snapshot_delta_with_native_and_evidence(
+        &mut self,
+        last: Option<&SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+        force_banks: bool,
+    ) -> (Vec<u8>, SnapshotFingerprint, bool) {
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
         fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
-        let mask = match last {
-            None => DeltaMask::all(),
-            Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
+        let (mask, evidence_changed) = match last {
+            None => (DeltaMask::all(), false),
+            Some(prev) => {
+                let mask = DeltaMask::changed(prev, &fp, force_banks);
+                let evidence_changed = mask.has_evidence_change(prev, &fp);
+                (mask, evidence_changed)
+            }
         };
         self.builder.reset();
         encode_snapshot_masked_into(&mut self.builder, input, native, &mask);
-        (self.copy_finished(), fp)
+        (self.copy_finished(), fp, evidence_changed)
     }
 
     /// Wake posts do not observe the tick-only screen projection. Retain its
@@ -2056,8 +2179,33 @@ impl IsolateBuf {
         force_banks: bool,
         preserve_inv: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
+        let (bytes, fingerprint, _) = self.encode_snapshot_wake_with_native_and_evidence(
+            last,
+            input,
+            native,
+            force_banks,
+            preserve_inv,
+        );
+        (bytes, fingerprint)
+    }
+
+    /// Encode a wake delta and report only evidence carried by its final
+    /// mask, after wake-suppressed pages have been removed.
+    pub(crate) fn encode_snapshot_wake_with_native_and_evidence(
+        &mut self,
+        last: Option<&mut SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+        force_banks: bool,
+        preserve_inv: bool,
+    ) -> (Vec<u8>, SnapshotFingerprint, bool) {
         let Some(last) = last else {
-            return self.encode_snapshot_delta_with_native(None, input, native, force_banks);
+            return self.encode_snapshot_delta_with_native_and_evidence(
+                None,
+                input,
+                native,
+                force_banks,
+            );
         };
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
         fp.collision = collision_fp(Some(&last.collision), native.collision);
@@ -2070,9 +2218,10 @@ impl IsolateBuf {
             fp.inv = std::mem::take(&mut last.inv);
             fp.inv_size = last.inv_size;
         }
+        let evidence_changed = mask.has_evidence_change(last, &fp);
         self.builder.reset();
         encode_snapshot_masked_into(&mut self.builder, input, native, &mask);
-        (self.copy_finished(), fp)
+        (self.copy_finished(), fp, evidence_changed)
     }
 
     /// Encode the tick's shim interact queue as a root-`InteractBatch`.
@@ -5335,6 +5484,66 @@ pub(crate) mod tests {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
             assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
         });
+    }
+
+    #[test]
+    fn evidence_change_metadata_ignores_keyframes_and_forced_retransmits() {
+        let mut input = empty_input(1);
+        let mut buf = IsolateBuf::new();
+        let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
+            None,
+            &input,
+            NativeFactsInput::default(),
+            false,
+        );
+        assert!(!changed, "the keyframe establishes a baseline");
+
+        input.tick = 2;
+        let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
+            Some(&fingerprint),
+            &input,
+            NativeFactsInput::default(),
+            true,
+        );
+        assert!(
+            !changed,
+            "tick, always-posted hold, and an unchanged forced bank list are not changes"
+        );
+
+        let (_, _, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
+            None,
+            &input,
+            NativeFactsInput::default(),
+            false,
+        );
+        assert!(!changed, "a full keyframe retransmission is not a change");
+        static BANK_STANDS: [BankStandInput<'static>; 1] = [BankStandInput {
+            name: "Bank",
+            x: 1,
+            z: 2,
+            level: 0,
+            kind: "booth",
+            op: 1,
+            choose: None,
+        }];
+        input.banks = &BANK_STANDS;
+        let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
+            Some(&fingerprint),
+            &input,
+            NativeFactsInput::default(),
+            true,
+        );
+        assert!(changed, "a real bank-list change counts even when banks are forced");
+
+
+        input.bank_open = true;
+        let (_, _, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
+            Some(&fingerprint),
+            &input,
+            NativeFactsInput::default(),
+            true,
+        );
+        assert!(changed, "a real bank field change counts even when banks are forced");
     }
 
     /// `side_modal_id` is an appended delta scalar: present on the

@@ -2986,11 +2986,31 @@ export default class T extends LoopingBot {
     let paints = iso.probe("globalThis.__paints ?? 0").unwrap();
     let listeners = iso.probe("globalThis.__listeners").unwrap();
 
+    // Unrelated evidence changes while the bank remains closed; the open
+    // wait observes this generation but stays parked.
+    snap.run_energy = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_snapshot_change_at(1, 1, 1);
+    assert_eq!(
+        iso.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    // A full unchanged retransmission keeps the same evidence generation.
+    post_snapshot_input(&iso, &snap);
+    iso.on_snapshot_change_at(1, 1, 1);
+    assert_eq!(
+        iso.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    // A second changed observation at the same game tick and native identity
+    // must recheck the wait and settle it.
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
     post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 0);
+    iso.on_snapshot_change_at(1, 1, 2);
 
     assert_eq!(iso.probe("globalThis.__opened").unwrap(), true);
     assert_eq!(iso.probe("globalThis.__openedAt").unwrap(), 1);
@@ -3047,13 +3067,13 @@ export default class T extends LoopingBot {
     snap.bank_open = true;
     common::post_snapshot_input(&iso, &snap);
     iso.pause();
-    iso.on_snapshot_change_at(1, 0);
+    iso.on_snapshot_change_at(1, 1, 1);
     assert_eq!(
         iso.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
     iso.resume();
-    iso.on_snapshot_change_at(1, 0);
+    iso.on_snapshot_change_at(1, 1, 1);
     assert_eq!(iso.probe("globalThis.__opened").unwrap(), 1);
     assert_eq!(
         iso.probe("globalThis.__delayed ?? null").unwrap(),
@@ -3061,7 +3081,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__paints").unwrap(), paints);
-    iso.on_snapshot_change_at(1, 0);
+    iso.on_snapshot_change_at(1, 1, 1);
     assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
     iso.on_game_tick(2);
     assert_eq!(iso.probe("globalThis.__delayed").unwrap(), 2);
@@ -8943,7 +8963,7 @@ export default class T extends LoopingBot {
     snap.inv_size = 1;
     snap.shop_stock = &stock_after;
     post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 1);
+    iso.on_snapshot_change_at(1, 1, 1);
 
     assert_eq!(iso.probe("globalThis.__bought").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__finishedAt").unwrap(), 1);
@@ -8994,7 +9014,7 @@ export default class T extends LoopingBot {
     snap.inv_size = 1;
     snap.shop_stock = &stock_after;
     post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 1);
+    iso.on_snapshot_change_at(1, 1, 1);
     assert_eq!(
         iso.probe("globalThis.__bought ?? null").unwrap(),
         serde_json::Value::Null

@@ -1399,8 +1399,8 @@ impl SlotScript {
 
     /// Encode `input` into this slot's reusable isolate buffer and return
     /// the finished bytes. Stores the new last-post fingerprint so the
-    /// next observe is a delta. Disjoint-field borrow of `ipc` and
-    /// `last_snapshot` — no extra fingerprint clone.
+    /// next observe is a delta. The actual changed-field mask advances the
+    /// isolate evidence sequence without cloning the fingerprint.
     #[cfg(feature = "load")]
     pub fn encode_snapshot_delta(
         &mut self,
@@ -1428,13 +1428,18 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
-        let (bytes, fp) = self.ipc.encode_snapshot_delta_with_native(
-            self.last_snapshot.as_ref(),
-            input,
-            native,
-            force_banks,
-        );
+        let (bytes, fp, evidence_changed) = self
+            .ipc
+            .encode_snapshot_delta_with_native_and_evidence(
+                self.last_snapshot.as_ref(),
+                input,
+                native,
+                force_banks,
+            );
         self.last_snapshot = Some(fp);
+        if let Some(isolate) = self.load.as_ref() {
+            isolate.record_snapshot_evidence_change(evidence_changed);
+        }
         bytes
     }
 
@@ -1453,14 +1458,19 @@ impl SlotScript {
             .api
             .as_ref()
             .and_then(|seat| seat.progress_page.as_ref());
-        let (bytes, fp) = self.ipc.encode_snapshot_wake_with_native(
-            self.last_snapshot.as_mut(),
-            input,
-            native,
-            force_banks,
-            preserve_inv,
-        );
+        let (bytes, fp, evidence_changed) = self
+            .ipc
+            .encode_snapshot_wake_with_native_and_evidence(
+                self.last_snapshot.as_mut(),
+                input,
+                native,
+                force_banks,
+                preserve_inv,
+            );
         self.last_snapshot = Some(fp);
+        if let Some(isolate) = self.load.as_ref() {
+            isolate.record_snapshot_evidence_change(evidence_changed);
+        }
         bytes
     }
 
@@ -2130,7 +2140,9 @@ impl SlotScript {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
-            isolate.on_snapshot_change_at(ctx.tick, self.native_input.lock().identity());
+            let evidence_sequence = isolate.snapshot_evidence_sequence();
+            let input_identity = self.native_input.lock().identity();
+            isolate.on_snapshot_change_at(ctx.tick, input_identity, evidence_sequence);
             self.tick_api(ctx);
             return;
         }
