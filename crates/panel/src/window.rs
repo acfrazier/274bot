@@ -532,7 +532,7 @@ struct GpuParts {
 /// and on a hybrid laptop a cold NVIDIA D3D12 driver held that for ~140 s
 /// even when the Intel GPU was then chosen, while Vulkan answered in 0.3 s.
 /// D3D12 stays the fallback for GPUs without a Vulkan driver.
-fn backend_attempts() -> Vec<wgpu::Backends> {
+pub(crate) fn backend_attempts() -> Vec<wgpu::Backends> {
     if let Some(backends) = wgpu::Backends::from_env() {
         return vec![backends];
     }
@@ -544,7 +544,7 @@ fn backend_attempts() -> Vec<wgpu::Backends> {
 }
 
 /// One instance per attempt; the wgpu debug flags follow the environment.
-fn instance_for(backends: wgpu::Backends) -> wgpu::Instance {
+pub(crate) fn instance_for(backends: wgpu::Backends) -> wgpu::Instance {
     wgpu::Instance::new(
         wgpu::InstanceDescriptor {
             backends,

@@ -131,13 +131,40 @@ fn publish_staged(
         )));
     }
     let published = match mode {
-        Publish::Replace => fs::rename(&staged.path, path),
+        Publish::Replace => replace(&staged.path, path),
         Publish::CreateNew => link_without_replacing(&staged, path, data),
     };
     if published.is_err() || matches!(mode, Publish::CreateNew) {
         staged.discard();
     }
     published
+}
+
+/// How long [`replace`] waits for a Windows refusal to clear: 200 tries
+/// 10 ms apart, about two seconds.
+const REPLACE_RETRIES: u32 = 200;
+const REPLACE_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Renames the staged file over `path`. Windows refuses the rename as access
+/// denied while another process holds either file open without delete
+/// sharing; the virus scanner reading a file just written is the usual one,
+/// and the refusal clears when it closes the file. That refusal is retried for
+/// about two seconds before it is returned. Elsewhere the rename runs once.
+fn replace(staged: &Path, path: &Path) -> io::Result<()> {
+    let mut retries = 0;
+    loop {
+        match fs::rename(staged, path) {
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && retries < REPLACE_RETRIES =>
+            {
+                retries += 1;
+                std::thread::sleep(REPLACE_WAIT);
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Publishes the staged file at `path` unless something is there. The staged
@@ -956,5 +983,39 @@ mod tests {
             store_file_verdict(&facts(502), 501, 10),
             Verdict::Refuse(reason) if reason.contains("another user")
         ));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A reader holding the published file open without delete sharing, as
+    /// the virus scanner does right after a write, makes Windows refuse the
+    /// replacing rename; the write waits for it instead of failing.
+    #[test]
+    fn a_replace_waits_out_a_reader_without_delete_sharing() {
+        const FILE_SHARE_READ: u32 = 0x1;
+        let dir = std::env::temp_dir().join(format!("274bot-vault-replace-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vault");
+        write_private_file(&path, b"first").unwrap();
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(reader);
+        });
+        write_private_file(&path, b"second").unwrap();
+        release.join().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"second");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

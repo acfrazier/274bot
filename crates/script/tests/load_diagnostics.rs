@@ -41,8 +41,12 @@ fn library(dir: &Path) -> JsLibrary {
     JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
 }
 
+/// `rel` uses `/`; the path is joined part by part so it is spelled with the
+/// platform separator, as the library stores and prints it.
 fn write(dir: &Path, rel: &str, src: &str) -> PathBuf {
-    let path = dir.join(rel);
+    let path = rel
+        .split('/')
+        .fold(dir.to_path_buf(), |path, part| path.join(part));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }

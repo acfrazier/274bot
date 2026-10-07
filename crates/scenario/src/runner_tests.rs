@@ -16,7 +16,7 @@ fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     }

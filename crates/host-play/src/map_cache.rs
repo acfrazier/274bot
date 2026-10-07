@@ -281,7 +281,7 @@ impl MapCacheRoot {
                 drop(lock);
                 continue;
             }
-            fs::remove_dir_all(&path)?;
+            unless_gone(|| fs::remove_dir_all(&path))?;
             // The lock file itself is never unlinked: a process that opened
             // it before an unlink would lock an orphaned inode while another
             // creates and locks a fresh one, giving the key two owners.
@@ -387,11 +387,49 @@ impl ReadyImages {
     }
 }
 
+/// How long [`retry_while_denied`] waits for a Windows refusal to clear before
+/// it counts as a real error: 200 tries 10 ms apart, about two seconds.
+const DENIED_RETRIES: u32 = 200;
+const DENIED_WAIT: Duration = Duration::from_millis(10);
+
+/// Runs `op`, retrying for a moment while Windows refuses it as access denied.
+/// Windows reports a path whose delete another process has started (some
+/// handle on it still open) as access denied, and refuses to rename a
+/// directory while another process holds a handle inside it: a concurrent
+/// cache walker in another front end, or the virus scanner reading a file just
+/// written. Both clear when that handle closes. A refusal that persists is
+/// returned, and elsewhere `op` runs once.
+fn retry_while_denied<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let mut retries = 0;
+    loop {
+        match op() {
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && retries < DENIED_RETRIES =>
+            {
+                retries += 1;
+                thread::sleep(DENIED_WAIT);
+            }
+            result => return result,
+        }
+    }
+}
+
+/// `op()` on one cache path, or `None` when another process removed that path
+/// meanwhile: not found, which a Windows delete-pending path becomes once its
+/// last handle closes (see [`retry_while_denied`]).
+fn unless_gone<T>(op: impl FnMut() -> io::Result<T>) -> io::Result<Option<T>> {
+    match retry_while_denied(op) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn directory_bytes(path: &Path) -> io::Result<u64> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => return Err(error),
+    let Some(metadata) = unless_gone(|| fs::symlink_metadata(path))? else {
+        return Ok(0);
     };
     if metadata.file_type().is_symlink() {
         return Ok(0);
@@ -403,10 +441,8 @@ fn directory_bytes(path: &Path) -> io::Result<u64> {
     if !metadata.is_dir() {
         return Ok(0);
     }
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => return Err(error),
+    let Some(entries) = unless_gone(|| fs::read_dir(path))? else {
+        return Ok(0);
     };
     let mut bytes: u64 = 0;
     for entry in entries {
@@ -437,18 +473,14 @@ fn collect_ready_entries(
     required: &BTreeSet<PathBuf>,
     out: &mut Vec<(SystemTime, PathBuf, u64)>,
 ) -> io::Result<()> {
-    let root_metadata = match fs::symlink_metadata(root) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
+    let Some(root_metadata) = unless_gone(|| fs::symlink_metadata(root))? else {
+        return Ok(());
     };
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Ok(());
     }
-    let revisions = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
+    let Some(revisions) = unless_gone(|| fs::read_dir(root))? else {
+        return Ok(());
     };
     for revision in revisions {
         let revision = match revision {
@@ -456,18 +488,14 @@ fn collect_ready_entries(
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
-        let metadata = match fs::symlink_metadata(&revision) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
+        let Some(metadata) = unless_gone(|| fs::symlink_metadata(&revision))? else {
+            continue;
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             continue;
         }
-        let kinds = match fs::read_dir(&revision) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
+        let Some(kinds) = unless_gone(|| fs::read_dir(&revision))? else {
+            continue;
         };
         for kind in kinds {
             let kind = match kind {
@@ -475,18 +503,14 @@ fn collect_ready_entries(
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
             };
-            let metadata = match fs::symlink_metadata(&kind) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
+            let Some(metadata) = unless_gone(|| fs::symlink_metadata(&kind))? else {
+                continue;
             };
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 continue;
             }
-            let entries = match fs::read_dir(&kind) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
+            let Some(entries) = unless_gone(|| fs::read_dir(&kind))? else {
+                continue;
             };
             for entry in entries {
                 let path = match entry {
@@ -497,10 +521,8 @@ fn collect_ready_entries(
                 let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
-                let metadata = match fs::symlink_metadata(&path) {
-                    Ok(metadata) => metadata,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(error),
+                let Some(metadata) = unless_gone(|| fs::symlink_metadata(&path))? else {
+                    continue;
                 };
                 let is_partial = name.starts_with('.') && name.ends_with(".partial");
                 if (!is_partial && name.starts_with('.'))
@@ -1458,7 +1480,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), MapCacheError> {
             .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        fs::rename(&temp, path)?;
+        retry_while_denied(|| fs::rename(&temp, path))?;
         Ok::<(), io::Error>(())
     })();
     if result.is_err() {
@@ -2155,7 +2177,7 @@ fn execute_artifact(
 
 /// Atomically publish a finished partial directory as `ready`.
 fn publish_partial(partial: &Path, ready: &Path) -> Result<(), MapCacheError> {
-    fs::rename(partial, ready)?;
+    retry_while_denied(|| fs::rename(partial, ready))?;
     sync_directory(ready.parent().ok_or(MapCacheError::Map(MapError::Path))?)?;
     clear_checkpoint(ready)
 }
@@ -3761,6 +3783,39 @@ mod tests {
             );
             assert_eq!(producer.runs.load(AtomicOrdering::Relaxed), 0);
         }
+    }
+
+    /// Windows retries a refusal until it clears and returns one that lasts;
+    /// elsewhere a refusal is returned at once. A path that is gone is `None`.
+    #[test]
+    fn a_windows_refusal_is_retried_until_it_clears_and_a_lasting_one_returned() {
+        let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+        let mut calls = 0;
+        let brief = retry_while_denied(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(denied())
+            } else {
+                Ok(calls)
+            }
+        });
+        if cfg!(windows) {
+            assert_eq!(brief.unwrap(), 3);
+        } else {
+            assert_eq!(brief.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(calls, 1);
+        }
+
+        let mut calls = 0;
+        let lasting = retry_while_denied(|| -> io::Result<()> {
+            calls += 1;
+            Err(denied())
+        });
+        assert_eq!(lasting.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(calls, if cfg!(windows) { DENIED_RETRIES + 1 } else { 1 });
+
+        let gone = unless_gone(|| fs::symlink_metadata("/274bot/no/such/map-cache/entry"));
+        assert!(gone.unwrap().is_none());
     }
 
     const SAME_KEY_CHILD_ENV: &str = "274BOT_MAP_CACHE_SAME_KEY_CHILD_ROOT";

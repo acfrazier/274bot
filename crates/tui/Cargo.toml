@@ -7,7 +7,9 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }
-crossterm = "0.29"
+# `use-dev-tty`: see host-play's crossterm entry (a burst over 1 KiB, such as
+# a paste, is read whole instead of stalling until the next key).
+crossterm = { version = "0.29", features = ["use-dev-tty"] }
 frontend-core = { path = "../frontend-core" }
 host-play = { path = "../host-play", features = ["live-harness"] }
 libc = "0.2"

@@ -336,6 +336,7 @@ fn expand_rgba(src: &[u32], dst: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::{expand_rgba, frame_pixels, FrameGpu, GameView, APPLET_H, APPLET_W};
+    use crate::test_support::headless_gpu;
     use client::graphics::PixMap;
     use client::render::backend::{FrameOutput, TextureHandle};
     use dear_imgui_rs::TextureId;
@@ -387,28 +388,6 @@ mod tests {
             pixels: vec![1, 2, 3],
         }));
         assert!(out.is_empty());
-    }
-
-    /// A real headless wgpu device/queue on this machine's adapter
-    /// (`None` when no adapter exists — the GPU tests then skip).
-    fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .ok()?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("274 panel test"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-        }))
-        .ok()?;
-        Some((device, queue))
     }
 
     /// A real 2×2 RGBA8 texture on the given device, written with four
