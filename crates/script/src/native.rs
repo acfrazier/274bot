@@ -731,6 +731,15 @@ pub enum ActionError {
     NeedsEvidence(Arc<[QuestGate]>),
 }
 
+/// A poll-time admission that has used this tick's event must retry later.
+/// Callers commit request state only after this returns `Ready(Ok(_))`.
+pub(crate) fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionError>> {
+    match result {
+        Err(ActionError::BudgetExhausted) => Poll::Pending,
+        result => Poll::Ready(result),
+    }
+}
+
 pub trait NativeMachine: Send + 'static {
     type Args: Send;
     type Output: Send;

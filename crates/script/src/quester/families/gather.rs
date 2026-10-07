@@ -352,14 +352,18 @@ impl StepRun for Run {
         else {
             return Poll::Pending;
         };
-        if let Some(anchor) = self.approach.take() {
+        if let Some(anchor) = self.approach {
             if !super::reach::within(here.value, anchor, i32::from(self.radius)) {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    super::reach::walk_request(anchor, self.radius, None, cx.required_after),
-                    &mut cx.tick.cx,
-                )?);
+                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick.actions.begin::<Walk>(
+                        super::reach::walk_request(anchor, self.radius, None, cx.required_after),
+                        &mut cx.tick.cx,
+                    ),
+                ))?);
+                self.approach = None;
                 return Poll::Pending;
             }
+            self.approach = None;
         }
         let area = *self.area.get_or_insert(WorkArea {
             mode: AreaMode::Start,
@@ -417,22 +421,26 @@ impl StepRun for Run {
             return Poll::Pending;
         };
         if let Some(request) = target.approach(snapshot, cx.required_after) {
-            self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
+            self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+            ))?);
             return Poll::Pending;
         }
         if self.last_attempt == Some(cx.tick.cx.evidence().tick) {
             return Poll::Pending;
         }
+        self.gather = Some(std::task::ready!(crate::native::defer_budget(
+            cx.tick.actions.begin::<GatherRun>(
+                GatherRunArgs {
+                    target: target.plan,
+                    catalog: Arc::clone(&self.catalog),
+                    stall_ticks: DEFAULT_STALL_TICKS,
+                    quest_owned: true,
+                },
+                &mut cx.tick.cx,
+            ),
+        ))?);
         self.last_attempt = Some(cx.tick.cx.evidence().tick);
-        self.gather = Some(cx.tick.actions.begin::<GatherRun>(
-            GatherRunArgs {
-                target: target.plan,
-                catalog: Arc::clone(&self.catalog),
-                stall_ticks: DEFAULT_STALL_TICKS,
-                quest_owned: true,
-            },
-            &mut cx.tick.cx,
-        )?);
         Poll::Pending
     }
 
@@ -763,6 +771,47 @@ mod tests {
                 .poll(cx))),
             Poll::Ready(Ok(_))
         ));
+    }
+
+    #[test]
+    fn same_tick_gather_and_authored_approach_admissions_keep_their_plan() {
+        for approach in [false, true] {
+            let mut plan = plan("mining.copper", 2);
+            let snapshot = snapshot(&plan, 1);
+            let anchor = snapshot.local_player().unwrap().player.actor.tile;
+            if approach {
+                plan.anchor = Some(WorldTile {
+                    x: anchor.x + 20,
+                    ..anchor
+                });
+            }
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+                assert!(tick.cx.budget.event(false));
+                for _ in 0..3 {
+                    assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
+                }
+                assert!(tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .is_none_or(|ledger| ledger.outbox.is_empty()));
+                run
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            let effect = &ledger.as_ref().unwrap().outbox.last().unwrap().effect;
+            if approach {
+                assert!(matches!(effect, crate::native::HostEffect::Walk(request)
+                    if request.target.x == anchor.x + 20));
+            } else {
+                assert!(matches!(effect, crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::Loc { action, .. }) if action == "Mine"));
+            }
+        }
     }
 
     #[test]

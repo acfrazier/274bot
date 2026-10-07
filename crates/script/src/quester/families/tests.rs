@@ -46,7 +46,7 @@ pub(crate) fn with_tick_snapshots<R>(
         &mut Output,
         None,
         next_snapshot,
-        f,
+        |native, later, _| f(native, later),
     )
 }
 pub(crate) fn with_tick_output<R>(
@@ -65,7 +65,7 @@ pub(crate) fn with_tick_output<R>(
         output,
         None,
         snapshot,
-        |native, _| f(native),
+        |native, _, _| f(native),
     )
 }
 
@@ -85,7 +85,28 @@ pub(crate) fn with_tick_reach<R>(
         &mut Output,
         None,
         snapshot,
-        |native, _| f(native),
+        |native, _, _| f(native),
+    )
+}
+
+pub(crate) fn with_tick_reach_snapshots<R>(
+    snapshot: &GameSnapshot,
+    next_snapshot: &GameSnapshot,
+    reach: &api::query::ReachQueryView,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, SnapshotView<'a>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        Some(reach),
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        next_snapshot,
+        |native, _, later| f(native, later),
     )
 }
 
@@ -106,7 +127,7 @@ pub(crate) fn with_tick_world<R>(
         &mut Output,
         None,
         snapshot,
-        |native, _| f(native),
+        |native, _, _| f(native),
     )
 }
 
@@ -126,7 +147,7 @@ pub(crate) fn with_tick_bank<R>(
         &mut Output,
         bank,
         snapshot,
-        |native, _| f(native),
+        |native, _, _| f(native),
     )
 }
 
@@ -147,7 +168,7 @@ pub(crate) fn with_tick_output_bank<R>(
         output,
         bank,
         snapshot,
-        |native, _| f(native),
+        |native, _, _| f(native),
     )
 }
 
@@ -162,7 +183,7 @@ fn with_tick_output_reach<R>(
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
     next_snapshot: &GameSnapshot,
-    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot) -> R,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let pin = data.selected_pin().unwrap();
@@ -215,7 +236,11 @@ fn with_tick_output_reach<R>(
             },
         },
     };
-    f(&mut native, next_snapshot)
+    let next_view = SnapshotView::new(Some(next_snapshot), evidence)
+        .with_reach(reach)
+        .with_world_members(world_members)
+        .with_bank_memory(bank);
+    f(&mut native, next_snapshot, next_view)
 }
 fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
@@ -707,6 +732,148 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
                 if action.eq_ignore_ascii_case("close")
         ))
     );
+}
+
+#[test]
+fn same_tick_reach_seek_retries_new_target_on_next_tick() {
+    let mut initial = ready();
+    initial.seed_ground_items(Vec::new());
+    let mut later = ready();
+    later.seed_ground_items(vec![ground()]);
+    let mut ledger = None;
+    let handle = with_tick_snapshots(&initial, &later, &mut ledger, 1, |tick, later| {
+        let handle = tick
+            .actions
+            .begin::<reach::Reach>(egg(true), &mut tick.cx)
+            .unwrap();
+        tick.cx.emit(InteractReq::CloseModal).unwrap();
+        tick.cx.snapshot = SnapshotView::new(Some(later), tick.cx.evidence());
+        for _ in 0..3 {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        }
+        assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        handle
+    });
+    assert!(with_tick(&later, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(emitted(&ledger), InteractReq::Obj { .. }));
+}
+
+#[test]
+fn same_tick_cant_reach_retarget_preserves_avoid_and_attempt_budget() {
+    let mut initial = ready();
+    let first = ground();
+    let mut second = first.clone();
+    second.tile = tile(3228, 3302);
+    second.distance = first.distance + 1;
+    initial.seed_ground_items(vec![first.clone(), second.clone()]);
+    let mut later = ready();
+    later.seed_ground_items(vec![first, second]);
+    later.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    let mut ledger = None;
+    let handle = with_tick_snapshots(&initial, &later, &mut ledger, 1, |tick, later| {
+        let handle = tick
+            .actions
+            .begin::<reach::Reach>(egg(true), &mut tick.cx)
+            .unwrap();
+        tick.cx.snapshot = SnapshotView::new(Some(later), tick.cx.evidence());
+        for _ in 0..12 {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        }
+        assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        handle
+    });
+    assert!(with_tick(&later, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Obj {
+            x: 3228,
+            z: 3302,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn same_tick_cant_reach_door_open_waits_for_next_tick() {
+    let mut initial = ready();
+    initial.seed_local_player(local_player(tile(5, 5)));
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(8, 5);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(6, 5);
+    door.distance = 1;
+    door.layer = LocLayer::Wall;
+    door.shape = 0;
+    door.angle = 0;
+    initial.seed_locs(vec![wheel.clone(), door.clone()]);
+    let mut later = ready();
+    later.seed_local_player(local_player(tile(5, 5)));
+    later.seed_locs(vec![wheel.clone(), door]);
+    later.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let flood = wall_door_reach_view();
+    let mut ledger = None;
+    let handle =
+        with_tick_reach_snapshots(&initial, &later, &flood, &mut ledger, 1, |tick, later| {
+            let handle = tick
+                .actions
+                .begin::<reach::Reach>(args, &mut tick.cx)
+                .unwrap();
+            tick.cx.snapshot = later;
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            handle
+        });
+    assert!(with_tick_reach(&later, &flood, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Loc { id: Some(1530), .. }
+    ));
+
+    // Once the door wait expires, a later drain must also preserve the
+    // recovery walk when this tick's event was spent elsewhere.
+    with_tick_reach(&later, &flood, &mut ledger, 10, |tick| {
+        assert!(tick.cx.budget.event(false));
+        for _ in 0..3 {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 2);
+        }
+    });
+    assert!(with_tick_reach(&later, &flood, &mut ledger, 11, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(request) if request.target == wheel.tile
+    ));
 }
 #[test]
 fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
@@ -1629,6 +1796,176 @@ fn use_on_item_target_emits_inventory_kind() {
                 ..
             } if kind == "inv" && *source == source_id && *target == target_id
         ));
+    });
+}
+
+#[test]
+fn same_tick_use_on_admission_waits_after_a_completed_interaction() {
+    compile_context_test(|compile| {
+        let source_id = resolve_obj(compile, "shears").unwrap();
+        let target_id = resolve_obj(compile, "wool").unwrap();
+        let source = ItemView {
+            def: def(source_id, "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let target = ItemView {
+            def: def(target_id, "Wool"),
+            slot: 7,
+            ..source.clone()
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![source, target], 28);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears", "target": {"item": "wool"}, "settle_ms": 20_000
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let prior = tick
+                .actions
+                .begin::<UseOnAction>(InteractReq::CloseModal, &mut tick.cx)
+                .unwrap();
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            accept_last(tick.cx.ledger, 1, true);
+            assert!(matches!(
+                tick.actions.poll(&prior, &mut tick.cx),
+                Poll::Ready(Ok(_))
+            ));
+            let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+            for _ in 0..3 {
+                assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
+            }
+            assert!(tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn {
+            source_item_id: Some(source), target_item_id: Some(target), ..
+        } if *source == source_id && *target == target_id));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    });
+}
+
+#[test]
+fn same_tick_composed_approaches_defer_before_native_dispatch() {
+    compile_context_test(|compile| {
+        let anchor =
+            serde_json::json!({"tile": [3220, 3200, 0], "source": "native admission fixture"});
+        let plans = [
+            compile_talk(test_args::<TalkArgs>(serde_json::json!({
+                "npc": "fred_the_farmer", "anchor": anchor
+            })), compile).unwrap(),
+            compile_interact(test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "spinningwheel"}, "op": "Spin", "anchor": anchor
+            })), compile).unwrap(),
+            compile_use_on(test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears", "target": {"npc": "sheepunsheered"}, "anchor": anchor,
+                "settle_ms": 20_000
+            })), compile).unwrap(),
+            s2::compile_buy(test_args::<s2::BuyArgs>(serde_json::json!({
+                "shop": {"npc": "generalshopkeeper1", "anchor": anchor}, "obj": "rope", "qty": 1
+            })), compile).unwrap(),
+            s2::compile_make(test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"}, "anchor": anchor,
+                "product": "ball_of_wool", "menu": {"obj": "wool", "source": "native admission fixture"},
+                "qty": 1
+            })), compile).unwrap(),
+        ];
+        for (index, plan) in plans.into_iter().enumerate() {
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3200, 3200)));
+            snapshot.seed_inventory(
+                vec![ItemView {
+                    def: def(resolve_obj(compile, "shears").unwrap(), "Shears"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                }],
+                28,
+            );
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+                assert!(tick.cx.budget.event(false));
+                for _ in 0..3 {
+                    assert!(
+                        with_step(tick, |cx| run.poll(cx)).is_pending(),
+                        "plan {index}"
+                    );
+                }
+                assert!(tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .is_none_or(|ledger| ledger.outbox.is_empty()));
+                run
+            });
+            assert!(
+                with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    with_step(tick, |cx| run.poll(cx))
+                })
+                .is_pending(),
+                "plan {index}"
+            );
+            assert!(
+                matches!(
+                    &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                    HostEffect::Walk(request) if request.target == tile(3220, 3200)
+                ),
+                "plan {index}"
+            );
+        }
+    });
+}
+
+#[test]
+fn same_tick_make_trigger_retries_the_same_location_next_tick() {
+    compile_context_test(|compile| {
+        let selected = compile.selected.loc_by_config("spinningwheel").unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3200, 3200)));
+        let mut wheel = loc(selected.id, "Spinning wheel", "Spin");
+        wheel.tile = tile(3201, 3200);
+        wheel.distance = 1;
+        snapshot.seed_locs(vec![wheel]);
+        let plan = s2::compile_make(test_args::<s2::MakeArgs>(serde_json::json!({
+            "loc": {"name": "spinningwheel", "op": "Spin"},
+            "anchor": {"tile": [3200, 3200, 0], "source": "native admission fixture"},
+            "product": "ball_of_wool", "menu": {"obj": "wool", "source": "native admission fixture"},
+            "qty": 1
+        })), compile).unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+            assert!(tick.cx.budget.event(false));
+            for _ in 0..3 {
+                assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
+            }
+            assert!(tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(emitted(&ledger), InteractReq::Loc { id: Some(id), action, .. }
+            if *id == selected.id && action == "Spin")
+        );
     });
 }
 

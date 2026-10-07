@@ -851,7 +851,7 @@ impl Gatherer {
     }
 
     fn action_failure(&mut self, error: ActionError) {
-        if matches!(error, ActionError::Held) {
+        if matches!(error, ActionError::Held | ActionError::BudgetExhausted) {
             return;
         }
         self.fail("action-error", format!("native action failed: {error:?}"));
@@ -1758,7 +1758,11 @@ impl Script for Gatherer {
         if handoff {
             self.poll_active(tick);
         }
-        if self.active_matches_none() && !self.fence.sealed && self.failure.is_none() {
+        if self.active_matches_none()
+            && !self.fence.sealed
+            && !tick.cx.interaction_event_spent()
+            && self.failure.is_none()
+        {
             let disposal_due = tick.cx.snapshot().stock().pack_full() == Some(true);
             if let Some(revision) = self.apply_pending(disposal_due) {
                 tick.output.settings_applied(revision);

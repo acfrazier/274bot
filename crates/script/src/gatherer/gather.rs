@@ -1,7 +1,7 @@
 use super::oneop::{OneOp, OneOpArgs};
 use super::select::TargetPlan;
 use super::supply::method_ready;
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod, TargetClass};
 use api::selected::{EntityId, Knowledge};
@@ -177,7 +177,7 @@ impl NativeMachine for GatherRun {
             }));
         }
         if let Some(args) = OneOpArgs::stray_modal(snapshot) {
-            self.tend = Some(OneOp::begin(args, cx)?);
+            self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
             return Poll::Pending;
         }
         if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
@@ -223,11 +223,11 @@ impl NativeMachine for GatherRun {
             return Poll::Pending;
         }
         if !self.retried {
+            if cx.evidence().tick > self.last_emit_tick {
+                std::task::ready!(defer_budget(self.emit_click(cx)))?;
+            }
             self.retried = true;
             self.quiet_ticks = 0;
-            if cx.evidence().tick > self.last_emit_tick {
-                self.emit_click(cx)?;
-            }
             return Poll::Pending;
         }
         Poll::Ready(Ok(GatherResult {
@@ -610,6 +610,66 @@ mod tests {
             assert!(super::super::settings::admit_quest_method("method", &method).is_err());
         });
         assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn gather_retry_waits_for_budget_without_spending_the_retry() {
+        use crate::quester::families::tests::with_tick;
+        let catalog = prepared_catalog();
+        let method = catalog.methods_for_resource("normal").next().unwrap();
+        let method_index = catalog
+            .methods()
+            .iter()
+            .position(|row| row.id == method.id)
+            .unwrap();
+        let entity = known_rows(&method.targets)
+            .iter()
+            .find(|row| row.class == TargetClass::Resource)
+            .unwrap()
+            .entity;
+        let EntityId::Loc(id) = entity else {
+            panic!("loc tree")
+        };
+        let tile = WorldTile {
+            x: 3201,
+            z: 3202,
+            level: 0,
+        };
+        let mut plan = target(entity, -1, tile);
+        plan.method_index = method_index as u16;
+        plan.skill_stat = 14;
+        let mut snapshot = supply_snapshot(99, &[1265]);
+        snapshot.seed_locs(vec![loc(id, tile)]);
+        snapshot.seed_npcs(Vec::new());
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<GatherRun>(
+                    GatherRunArgs {
+                        target: plan,
+                        catalog: Arc::clone(&catalog),
+                        stall_ticks: 1,
+                        quest_owned: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.action_id = tick.cx.ledger.as_ref().unwrap().outbox[0].action_id().get();
+            tick.cx.emit(InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert_eq!(handle.inspect(|machine| machine.retried), Some(false));
+            }
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 2);
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(handle.inspect(|machine| machine.retried), Some(true));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 3);
     }
 
     #[test]

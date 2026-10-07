@@ -1062,6 +1062,117 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 
+fn chopping_snapshot(selected: &Arc<api::game_data::SelectedGameData>) -> GameSnapshot {
+    use api::gather_methods::{known_rows, TargetClass};
+    use api::selected::EntityId;
+
+    let mut frame = depleted_snapshot(selected);
+    let catalog = fixture_catalog(selected);
+    let method = catalog.methods_for_resource("normal").next().unwrap();
+    let EntityId::Loc(id) = known_rows(&method.targets)
+        .iter()
+        .find(|row| row.class == TargetClass::Resource)
+        .unwrap()
+        .entity
+    else {
+        panic!("normal woodcutting has loc resources");
+    };
+    let mut target = frame.locs()[0].clone();
+    target.id = id;
+    target.name = Some("Tree".into());
+    target.actions = vec![Some("Chop down".into())];
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = WorldTile {
+        x: target.tile.x + 1,
+        ..target.tile
+    };
+    frame.seed_local_player(player);
+    frame.seed_locs(vec![target]);
+    frame
+}
+
+fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
+    slot.on_snapshot_change(&mut ScriptCtx {
+        driver: &mut Rec::default(),
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: CompiledTick::default(),
+    });
+}
+
+#[test]
+fn same_tick_level_up_wake_defers_continue_and_gatherer_resumes() {
+    let selected = selected();
+    let mut slot = started(4391, &selected);
+    let mut frame = chopping_snapshot(&selected);
+    tick(&mut slot, &frame, 1);
+    let chop = slot
+        .take_native_action()
+        .expect("tick 1 begins a real chop");
+    assert!(matches!(
+        chop.effect,
+        HostEffect::Interaction(InteractReq::Loc { action, .. }) if action == "Chop down"
+    ));
+    assert!(!slot.has_native_actions());
+
+    frame.seed_chat_modal(
+        100,
+        vec!["Congratulations, you just advanced a Woodcutting level.".into()],
+    );
+    frame.seed_chat_options(Vec::new(), 101);
+    for _ in 0..3 {
+        wake(&mut slot, &frame, 1);
+        assert_eq!(slot.native_status().unwrap().failure, None);
+        assert!(!slot.has_native_actions(), "the chop spent tick 1's event");
+    }
+
+    tick(&mut slot, &frame, 2);
+    let continued = slot.take_native_action().expect("page handled next tick");
+    assert!(matches!(
+        continued.effect,
+        HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+    ));
+    let run = slot.native_run().unwrap();
+    slot.complete_native_interaction(
+        &continued.authority(),
+        InteractionReceipt {
+            request_id: continued.request_id.get(),
+            evidence: EvidenceStamp {
+                run,
+                tick: 2,
+                sequence: 2,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    frame.seed_chat_modal(-1, Vec::new());
+    frame.seed_chat_options(Vec::new(), -1);
+    wake(&mut slot, &frame, 2);
+    assert!(!slot.has_native_actions());
+    assert_eq!(slot.native_status().unwrap().failure, None);
+
+    let mut resumed = false;
+    for now in 3..=5 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            resumed |= matches!(
+                action.effect,
+                HostEffect::Interaction(InteractReq::Loc { action, .. }) if action == "Chop down"
+            );
+        }
+        assert_eq!(slot.native_status().unwrap().failure, None);
+    }
+    assert!(resumed, "the continued page must not end the Gatherer run");
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Working);
+    slot.stop();
+}
+
 #[test]
 fn gather_progress_must_not_hide_a_later_idle_stall() {
     use api::gather_methods::{known_rows, TargetClass};

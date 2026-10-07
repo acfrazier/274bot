@@ -65,8 +65,11 @@ machine can be polled again when evidence changes within the same observed
 tick. These polls consume new receipts and facts; they do not advance tick
 windows or renew the single interaction-event budget. Tick-based quiet,
 stall and settle counters must distinguish observed ticks from polls.
-`ActionError::BudgetExhausted` at a Quester step begin waits for the next
-observed tick without counting a failed attempt or parking the Path.
+`ActionError::BudgetExhausted` at a poll-time action admission waits for the
+next observed tick without counting a failed attempt or parking the script.
+Native callers use the shared `defer_budget` helper and commit request state,
+phases and deadlines only after admission. Dialogue gap rearms also spend
+their finite allowance at most once per observed tick, not once per drain.
 `ActionError::Unavailable` is a per-request refusal (for example a disposal
 that requires a slot-exact Drop). Sherlock retains its existing clue
 queue/dispatch behavior through one crate-private borrowed host frame (no raw

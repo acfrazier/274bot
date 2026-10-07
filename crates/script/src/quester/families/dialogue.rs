@@ -191,6 +191,7 @@ pub struct Dialogue {
     gap_position: Option<api::WorldTile>,
     gap_chat_mark: i32,
     gap_rearms_left: u64,
+    gap_rearm_tick: Option<u64>,
     ack_page: PageAcknowledgement,
     npc_index: i32,
     npc_action: Arc<str>,
@@ -230,6 +231,7 @@ impl NativeMachine for Dialogue {
                 })
                 .saturating_add(4)
                 .min(DRIVE_STEPS as u64),
+            gap_rearm_tick: None,
             ack_page: PageAcknowledgement::default(),
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
@@ -277,8 +279,12 @@ impl NativeMachine for Dialogue {
                         Phase::WaitMainCloseAck | Phase::WaitMainCloseTick
                     );
                     if own_close && main.root == -1 {
-                        self.surface = Surface::Chat;
-                        self.phase = Phase::Drive;
+                        let phase_before_drive = self.phase;
+                        let result = self.drive(cx, &obs);
+                        if self.phase != phase_before_drive {
+                            self.surface = Surface::Chat;
+                        }
+                        return result;
                     } else {
                         return Poll::Ready(Ok(DialogueOutcome::Failed));
                     }
@@ -302,9 +308,15 @@ impl NativeMachine for Dialogue {
                     if document || self.chat_advance_request_id.is_some() {
                         match self.chat_transition_acknowledgement(cx) {
                             ChatTransitionAck::Accepted if document => {
-                                self.surface = Surface::Main;
+                                let previous_phase = self.phase;
                                 self.phase = Phase::Open;
-                                return self.poll_main(cx, &main, now);
+                                let result = self.poll_main(cx, &main, now);
+                                if self.phase == Phase::Open && result.is_pending() {
+                                    self.phase = previous_phase;
+                                } else {
+                                    self.surface = Surface::Main;
+                                }
+                                return result;
                             }
                             ChatTransitionAck::Accepted => {
                                 return Poll::Ready(Ok(DialogueOutcome::Completed));
@@ -349,10 +361,8 @@ impl NativeMachine for Dialogue {
                     if target.distance <= 2 && talk_reachable(cx, target.tile) {
                         cx.cancel_request(self.walk_request_id);
                         self.walk_request_id = 0;
-                        return match self.open(cx) {
-                            Ok(()) => Poll::Pending,
-                            Err(error) => Poll::Ready(Err(error)),
-                        };
+                        std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
+                        return Poll::Pending;
                     }
                 }
                 if now >= self.deadline_ms
@@ -367,7 +377,6 @@ impl NativeMachine for Dialogue {
             }
             Phase::Open => {
                 if obs.ready {
-                    self.phase = Phase::Drive;
                     return self.drive(cx, &obs);
                 }
                 if now >= self.deadline_ms {
@@ -407,7 +416,6 @@ impl NativeMachine for Dialogue {
             }
             Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
                 if obs.tick >= self.due_tick {
-                    self.phase = Phase::Drive;
                     self.drive(cx, &obs)
                 } else {
                     Poll::Pending
@@ -415,7 +423,6 @@ impl NativeMachine for Dialogue {
             }
             Phase::WaitGap => {
                 if obs.ready {
-                    self.phase = Phase::Drive;
                     self.drive(cx, &obs)
                 } else {
                     let inventory = inventory_fingerprint(cx);
@@ -438,28 +445,32 @@ impl NativeMachine for Dialogue {
                                     .iter()
                                     .any(|line| line.username.is_none() && line.type_ == 0)
                             });
-                    if (inventory != self.gap_inventory || moved || chat_new)
-                        && self.gap_rearms_left > 0
-                    {
-                        // Bulk hand-ins, server cutscenes, and scripted `mes`
-                        // output can close chat before reopening it. Spend
-                        // the existing finite budget.
+                    let evidence_changed = inventory != self.gap_inventory || moved || chat_new;
+                    if evidence_changed {
+                        // Process every wake so later changes use the latest
+                        // baseline, but charge only once per observed tick.
                         self.gap_inventory = inventory;
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
-                        self.gap_rearms_left -= 1;
-                        self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+                        if self.gap_rearms_left > 0 && self.gap_rearm_tick != Some(obs.tick) {
+                            self.gap_rearms_left -= 1;
+                            self.gap_rearm_tick = Some(obs.tick);
+                            self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+                        }
                     }
                     if obs.tick >= self.due_tick {
-                        if self.gap_rearms_left > 0
-                            && cx
-                                .snapshot()
-                                .local_player()
-                                .is_some_and(|player| player.value.player.actor.animation >= 0)
-                        {
+                        let animation_active = cx
+                            .snapshot()
+                            .local_player()
+                            .is_some_and(|player| player.value.player.actor.animation >= 0);
+                        if animation_active && self.gap_rearms_left > 0 {
+                            if self.gap_rearm_tick == Some(obs.tick) {
+                                return Poll::Pending;
+                            }
                             // Scripted work can close chat before its final page.
-                            // Spend the same finite budget, only at a gap expiry.
+                            // Share the evidence-tick limit with changed evidence.
                             self.gap_rearms_left -= 1;
+                            self.gap_rearm_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
                             return Poll::Pending;
                         }
@@ -562,14 +573,16 @@ impl Dialogue {
             self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS;
             return Ok(());
         };
-        self.talk_baseline = chat.as_ref().map(|obs| {
+        let talk_baseline = chat.as_ref().map(|obs| {
             PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint())
         });
-        self.talk_request_id = Some(cx.emit(InteractReq::Npc {
+        let talk_request_id = cx.emit(InteractReq::Npc {
             name: name.to_string(),
             action: self.npc_action.to_string(),
             index: (self.npc_index >= 0).then_some(self.npc_index),
-        })?);
+        })?;
+        self.talk_baseline = talk_baseline;
+        self.talk_request_id = Some(talk_request_id);
         self.surface = Surface::Chat;
         self.phase = Phase::Open;
         self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS;
@@ -622,7 +635,6 @@ impl Dialogue {
         match self.phase {
             Phase::Open => {
                 if obs.open() {
-                    self.phase = Phase::Drive;
                     self.drive_main(cx, obs, now)
                 } else if now >= self.deadline_ms {
                     Poll::Ready(Ok(DialogueOutcome::Failed))
@@ -656,7 +668,6 @@ impl Dialogue {
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 if obs.tick >= self.due_tick {
-                    self.phase = Phase::Drive;
                     self.drive_main(cx, obs, now)
                 } else {
                     Poll::Pending
@@ -708,15 +719,16 @@ impl Dialogue {
         }
         match obs.kind {
             MainKind::Scroll => {
-                self.steps += 1;
-                self.ack_page =
+                let ack_page =
                     PageAcknowledgement::capture(obs.root, false, obs.page_fingerprint());
+                std::task::ready!(crate::native::defer_budget(
+                    cx.emit(InteractReq::CloseModal)
+                ))?;
+                self.steps += 1;
+                self.ack_page = ack_page;
                 self.phase = Phase::WaitMainCloseAck;
                 self.deadline_ms = now.saturating_add(PAGE_ACK_MS);
-                match cx.emit(InteractReq::CloseModal) {
-                    Ok(_) => Poll::Pending,
-                    Err(error) => Poll::Ready(Err(error)),
-                }
+                Poll::Pending
             }
             MainKind::Book => {
                 let Some(forward_visible) = obs.book_forward_visible() else {
@@ -736,15 +748,16 @@ impl Dialogue {
                     };
                     (widget.component_id, Phase::WaitMainCloseAck)
                 };
-                self.steps += 1;
-                self.ack_page =
+                let ack_page =
                     PageAcknowledgement::capture(obs.root, forward_visible, obs.page_fingerprint());
+                std::task::ready!(crate::native::defer_budget(
+                    cx.emit(InteractReq::IfButton { component_id })
+                ))?;
+                self.steps += 1;
+                self.ack_page = ack_page;
                 self.phase = phase;
                 self.deadline_ms = now.saturating_add(PAGE_ACK_MS);
-                match cx.emit(InteractReq::IfButton { component_id }) {
-                    Ok(_) => Poll::Pending,
-                    Err(error) => Poll::Ready(Err(error)),
-                }
+                Poll::Pending
             }
             MainKind::Closed | MainKind::Unsupported => Poll::Ready(Ok(DialogueOutcome::Failed)),
         }
@@ -771,19 +784,18 @@ impl Dialogue {
             return Poll::Pending;
         }
         if obs.r#continue {
-            self.steps += 1;
-            self.ack_page =
+            let ack_page =
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
+            let request_id = std::task::ready!(crate::native::defer_budget(
+                cx.emit(InteractReq::ContinueDialog { component_id: None })
+            ))?;
+            self.steps += 1;
+            self.ack_page = ack_page;
             self.phase = Phase::WaitContinueAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             self.chat_advanced = true;
-            return match cx.emit(InteractReq::ContinueDialog { component_id: None }) {
-                Ok(request_id) => {
-                    self.chat_advance_request_id = Some(request_id);
-                    Poll::Pending
-                }
-                Err(error) => Poll::Ready(Err(error)),
-            };
+            self.chat_advance_request_id = Some(request_id);
+            return Poll::Pending;
         }
         if !obs.options.is_empty() {
             let Some(option) = self.args.options.select(obs) else {
@@ -799,19 +811,18 @@ impl Dialogue {
                 }
                 return Poll::Ready(Ok(DialogueOutcome::Failed));
             };
-            self.steps += 1;
-            self.ack_page =
+            let ack_page =
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
+            let request_id = std::task::ready!(crate::native::defer_budget(
+                cx.emit(InteractReq::Answer { option })
+            ))?;
+            self.steps += 1;
+            self.ack_page = ack_page;
             self.phase = Phase::WaitChoiceAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             self.chat_advanced = true;
-            return match cx.emit(InteractReq::Answer { option }) {
-                Ok(request_id) => {
-                    self.chat_advance_request_id = Some(request_id);
-                    Poll::Pending
-                }
-                Err(error) => Poll::Ready(Err(error)),
-            };
+            self.chat_advance_request_id = Some(request_id);
+            return Poll::Pending;
         }
         self.steps += 1;
         self.phase = Phase::WaitContinueTick;
