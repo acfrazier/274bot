@@ -260,7 +260,11 @@
             "anchor": {"tile": [3405,9894,0], "source": "C maps/m53_154.jm2:4168 south side of gate; scripts/areas/area_mausoleum/scripts/gates.rs2:1-13"},
             "radius": 1
           },
-          "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "monuments"}}}},
+          "comment": "Gate 2's west stand (3431,9897) lies outside 'monuments' and nav has no edge through either quest gate, so this Open also runs there: the walk to the south side (3405,9894) routes through the monuments hall, while the north walk below cannot until Gate 1 is open (DIAG-CRYPT-GATE-NAV).",
+          "skip_if": {"Not": {"Any": [
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "monuments"}}},
+            {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3431,9897,0], "radius": 2}}}
+          ]}},
           "settle": {"All": []}
         },
         {

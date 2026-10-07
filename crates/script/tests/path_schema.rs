@@ -1287,3 +1287,42 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
         "no GAP wait remains in Monk's Friend"
     );
 }
+
+/// DIAG-CRYPT-GATE-NAV: nav has no edge through either Priest in Peril crypt
+/// gate, and Gate 2's west stand (3431,9897) is outside `monuments`. Leaving
+/// from there must Open Gate 1 from its routable south side instead of asking
+/// nav for its north side, which only exists once the gate is open.
+#[test]
+fn priestperil_leave_crypt_opens_gate_1_from_the_gate_2_west_stand() {
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-priestperil-gates");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("priestperil.json")))
+            .expect("priestperil decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    let step = |id: &str| Choice::Step(FactKey::new(id));
+    let leave = |x, z| probe.recipe_choice("leave:crypt", &snapshot_at(x, z));
+
+    // East of Gate 2 the westbound Open runs first; it lands on 3431,9897.
+    assert_eq!(leave(3432, 9897), step("crypt-return-through-second-gate"));
+    assert_eq!(leave(3431, 9897), step("crypt-return-through-first-gate"));
+    assert_eq!(leave(3420, 9890), step("crypt-return-through-first-gate"));
+    // North of Gate 1 the gates are behind: walk on to the ladder.
+    assert_eq!(leave(3405, 9897), step("crypt-exit-approach"));
+}
