@@ -48,8 +48,9 @@ guides.
   Romeo & Juliet, Imp Catcher, Vampire Slayer, Doric's Quest, Goblin
   Diplomacy, Witch's Potion, Prince Ali Rescue, Pirate's Treasure, Demon
   Slayer, The Knight's Sword, Death Plateau, The Tourist Trap, Priest in
-  Peril and Clock Tower. A quest the server can't run (Haunted Mine) is
-  listed with the reason instead of being offered.
+  Peril, Clock Tower, Monk's Friend, Hazeel Cult and Plague City. Members
+  quests run only on members worlds. A quest the server can't run (Haunted
+  Mine) is listed with the reason instead of being offered.
 - Pick quests, skips and priorities from lists. An empty list runs every
   quest in the built-in order; priorities run first. Finished quests are
   skipped, and a quest that can't run on this server stays visible with its
@@ -59,7 +60,11 @@ guides.
   blocks it.
 - Missing supplies are fetched from the bank as part of the quest: it checks
   what you carry first, keeps unrelated items and tools, and banks only what
-  it must to make room. Leftovers carry into the next quest.
+  it must to make room. Leftovers carry into the next quest. It plans from
+  what the account's bank held last time it was open, so it usually goes
+  straight to the withdraw; if the bank has already been checked this session
+  and something required isn't there, the quest stops at once and says what's
+  short (for example "need 300 Coins; held 0, banked 0").
 - Quests gather, make items, fight and pickpocket where the quest needs it,
   using the same gathering, making and combat handling as the other scripts.
 - Progress is always read from the game's quest journal, so Stop and Start,
@@ -91,7 +96,10 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   banked or dropped with it.
 - If the bank is short on bait, food or runes, it takes what is there and
   keeps working, and stops only when something essential is missing, saying
-  what.
+  what. It plans trips from what the bank held last time it was open, so a
+  partly stocked bank costs one trip, and once the bank has been checked a
+  missing essential stops the Gatherer where it is instead of sending it on
+  another trip. A tool you're wielding counts as carried.
 - When a rock, tree or fishing spot runs out it moves straight to the next
   one, and waits for respawns when everything nearby is used up. It keeps
   clear of hazards such as gas, ents and whirlpools.
@@ -173,10 +181,13 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   Camelot, Ardougne, Watchtower and Trollheim teleports); the walk is refused
   with "This route requires a members' world".
 - Map-walk bank fetch (the "allow bank fetch" setting, off by default) now
-  also works at banks served by a teller instead of a booth, checks that each
-  bank step actually landed (stopping with a logged reason if it never does),
-  and no longer mistakes items that are only in your bank for items you
-  carry. The bank must be open when you start the walk.
+  also works at banks served by a teller or opened by using an object,
+  checks that each bank step actually landed (stopping with a logged reason
+  if it never does), and no longer mistakes items that are only in your bank
+  for items you carry. Bots remember what each account's bank held the last
+  time it was open (saved per account), so a walk can plan its bank trip
+  without the bank being open; if that memory turns out to be out of date,
+  the walk makes one trip and then plans from what the bank really holds.
 - Custom navigation packs (`--nav-pack`) now support Firemaking like bundled
   navigation. A custom pack whose reach or Firemaking data doesn't match its
   manifest is refused when the profile loads instead of being silently
@@ -225,9 +236,6 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   worn.
 - Boarding a boat steps on from the tile you're actually standing on, which
   fixes walks that stalled at the dock, including the Entrana boats.
-- Bank fetch during a walk also works at banks you open by using an object,
-  such as the Shantay chest. If the bank never opens, the walk stops and says
-  so.
 - Doors are handled more patiently: re-opens are paced instead of repeated,
   a swing door someone else closes mid-walk is reopened, and walks never step
   into a walled-up doorway.
@@ -375,6 +383,27 @@ They are listed here for completeness and are left out of the release notes.
   can't be started.
 - Combat: after a death had already cleared every prayer, the bot could try
   to turn off prayers it had raised before the death.
+- Quester: walking to doors and gates from the wrong side, which stalled
+  Death Plateau at Tenzing's door and Priest in Peril at the crypt gate, and
+  made the temple door bounce the player in and out.
+- Quester: pauses of up to 20 seconds after opening a trapdoor, climbing
+  down, or fighting, and an extra tick between every step.
+- Quester: a quest journal that opened slowly, or a "click to continue"
+  still showing, could stop a quest (Death Plateau at Dunstan).
+- Quester: boat and customs trips counted as failed conversations (Pirate's
+  Treasure); The Tourist Trap could loop before it started; Priest in Peril
+  tried the wrong monuments first; The Knight's Sword could run Wydin's shop
+  out of redberries after burnt pies.
+- Quester: steps that use a banked item if there is one, or else get it, and
+  steps allowed to take only some of their items (Imp Catcher's beads), stopped
+  once the bank was known not to hold everything.
+- Gatherer: after banking at Draynor it could pick a spot inside the bank to
+  walk back to, lose sight of the fishing spot and give up; at Catherby and
+  some other fishing spots it could pick a spot it can't stand on.
+- Navigation: the White Wolf Mountain danger zone was larger than the
+  wolves' real reach, so Lumbridge to Ardougne by land was refused even for
+  high-level characters; it now routes for combat 51 and above. Ghasts in
+  Mort Myre are tracked by how they really move.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
