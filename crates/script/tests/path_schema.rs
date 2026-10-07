@@ -1584,6 +1584,11 @@ fn totem_coin_float_covers_the_round_trip_fare() {
 /// [2634,3323,0] (`C:maps/m41_51.jm2:6748`, `C:pack/loc.pack:2706`), which
 /// `C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90`
 /// (`[oploc1,combodoor]`) opens once the combination flag is set.
+/// PORT-S6-DRAFTS-R5 D1: both door steps are side-aware on the named
+/// `mansion_stair_room` area (the R4 skip held in the hall too and
+/// oscillated), and the ascent gets a hall-side mirror step, since
+/// `solve-combination` anchors east of the door while `disarm-trap`
+/// anchors west of it with no nav edge between.
 #[test]
 #[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
 fn totem_mansion_descent_reaches_the_return_boat() {
@@ -1658,12 +1663,89 @@ fn totem_mansion_descent_reaches_the_return_boat() {
         "the door step starts where climb-down lands"
     );
     let door_skip = door.pointer("/skip_if").expect("door skip").to_string();
-    for needle in ["on_level", "mansion", "tribal_totem"] {
+    for needle in ["on_level", "mansion_stair_room", "tribal_totem"] {
         assert!(
             door_skip.contains(needle),
-            "combo door skips off the ground floor, outside the mansion and without the totem: {door_skip}"
+            "combo door skips off the ground floor, outside the stair room and without the totem: {door_skip}"
         );
     }
+    // PORT-S6-DRAFTS-R5 D1: the R4 step skipped on the mansion-wide area,
+    // which also holds in the hall, so the stateless prelude selector
+    // re-selected it after crossing and oscillated through the door. The
+    // skip must name the stair-room side and the settle must require
+    // leaving it, handing over to return-totem.
+    assert_eq!(
+        door.pointer("/settle").expect("door settle"),
+        &json!({"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mansion_stair_room"}}}}),
+        "the stair-room door step settles outside the stair room"
+    );
+    // The stair-room area covers the landing and the floor west of
+    // combodoor 2705 at [2634,3323,0], and stops at the door: the door
+    // tile and every hall tile stay outside so return-totem is selected
+    // there (see totem_combo_door_steps_are_side_aware in select.rs).
+    let stair_room = value
+        .pointer("/quest/areas/mansion_stair_room/boxes")
+        .expect("mansion_stair_room boxes")
+        .as_array()
+        .expect("stair-room boxes array");
+    fn box_contains(box5: &[Value], tile: [i64; 3]) -> bool {
+        let get = |i: usize| box5[i].as_i64().expect("box coord");
+        tile[2] == get(4)
+            && tile[0] >= get(0).min(get(2))
+            && tile[0] <= get(0).max(get(2))
+            && tile[1] >= get(1).min(get(3))
+            && tile[1] <= get(1).max(get(3))
+    }
+    let in_stair_room = |tile: [i64; 3]| {
+        stair_room
+            .iter()
+            .any(|box5| box_contains(box5.as_array().expect("box array"), tile))
+    };
+    for tile in [[2631, 3325, 0], [2633, 3323, 0], [2627, 3324, 0]] {
+        assert!(
+            in_stair_room(tile),
+            "stair-room floor {tile:?} must be inside mansion_stair_room"
+        );
+    }
+    for tile in [[2634, 3323, 0], [2635, 3323, 0], [2640, 3322, 0]] {
+        assert!(
+            !in_stair_room(tile),
+            "hall tile {tile:?} must be outside mansion_stair_room"
+        );
+    }
+    // Inbound mirror: after solve-combination the bot stands east of the
+    // door while disarm-trap anchors west of it, with no nav edge between.
+    // The hall-side open sits between the stair-room door and return-totem,
+    // waits for the combination flag so it never blocks solving, and
+    // settles once the bot reaches the stair room.
+    let hall_at = pos("open-combo-door-from-hall");
+    assert!(
+        door_at < hall_at && hall_at < home_at,
+        "hall-side door runs after the stair-room door and before return-totem: door at {door_at}, hall at {hall_at}, return at {home_at}"
+    );
+    let hall = &prelude[hall_at];
+    assert_eq!(
+        hall.pointer("/args/target/loc").expect("hall target"),
+        &json!("combodoor"),
+    );
+    assert_eq!(hall.pointer("/args/op").expect("hall op"), &json!("Open"),);
+    assert_eq!(
+        hall.pointer("/args/anchor/tile").expect("hall anchor"),
+        &json!([2635, 3323, 0]),
+        "the hall-side step starts east of the door"
+    );
+    let hall_skip = hall.pointer("/skip_if").expect("hall skip").to_string();
+    for needle in ["mansion_stair_room", "totem:4", "tribal_totem", "combo"] {
+        assert!(
+            hall_skip.contains(needle),
+            "hall-side door is stair-room-aware, stage-gated, totem-gated and combo-gated: {hall_skip}"
+        );
+    }
+    assert_eq!(
+        hall.pointer("/settle").expect("hall settle"),
+        &json!({"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mansion_stair_room"}}}),
+        "the hall-side door step settles inside the stair room"
+    );
     compile_value(value, &selected, &quests).expect("totem compiles");
 
     let pack = PathBuf::from(
