@@ -162,6 +162,8 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 
 ### Navigation
 
+- Script and map walks start moving about half a second sooner: the first
+  step no longer waits for the next game tick after the route is ready.
 - Walks between Lumbridge and Al Kharid now pay the 10-coin toll at the border
   gate instead of stopping there. Without 10 coins the walk stops and says
   the coins are missing.
