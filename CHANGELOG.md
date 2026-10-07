@@ -195,11 +195,14 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   manifest is refused when the profile loads instead of being silently
   ignored.
 - Walks now route around dangerous monsters and the Temple of Ikov lava
-  bridge by default. When no safe route exists, the refusal names the
-  monsters in the way. "Route through danger zones" in Nav config allows
-  crossing them on every walk; while it's off, WalkTo in the panel and the
-  TUI can allow it for a single walk, and each script can allow it for its
-  own walks.
+  bridge by default. **Danger routing** in Nav config has three levels:
+  Never, When survivable (the default) and Always. Until the bot can track
+  poison, When survivable behaves like Never, so a low-level account can be
+  refused routes that cross aggressive monsters. The refusal names the
+  monsters in the way and says how to allow it. Set Danger routing to Always
+  to cross danger zones on every walk; WalkTo in the panel and the TUI can
+  also allow it for a single walk, and each script can allow it for its own
+  walks in Script prefs.
 - Bots approach stairs, ladders, large trees and other big objects (for
   example the Lumbridge Castle staircase) from a side they can actually use,
   instead of trying through a wall.
