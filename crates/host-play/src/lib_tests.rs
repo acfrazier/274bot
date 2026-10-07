@@ -19485,9 +19485,7 @@ fn tick_fix_stat_and_chat_are_evidence_wake_families() {
     assert!(!crate::play_slots::script_evidence_dirty(dirty), "screen-only frames do not pump scripts");
 }
 
-#[test]
-fn tick_fix_host_completions_publish_and_wake_without_player_info() {
-    for inspect in [true, false] {
+fn assert_host_completion_wake(inspect: bool) {
         let condition = if inspect {
             "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
         } else {
@@ -19532,7 +19530,16 @@ export default class T extends LoopingBot {{
         rig.frame(2, true);
         assert_eq!(rig.slot().lock().unwrap().probe("globalThis.__later ?? false").unwrap(), true);
         rig.slot().lock().unwrap().stop();
-    }
+}
+
+#[test]
+fn tick_fix_route_inspect_completion_wakes_without_player_info() {
+    assert_host_completion_wake(true);
+}
+
+#[test]
+fn tick_fix_bank_selection_completion_wakes_without_player_info() {
+    assert_host_completion_wake(false);
 }
 
 type SnapshotPumpFrames = Arc<Mutex<Vec<(u64, bool, Result<u64, script::native::ActionError>)>>>;
