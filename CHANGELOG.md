@@ -388,8 +388,10 @@ They are listed here for completeness and are left out of the release notes.
   made the temple door bounce the player in and out.
 - Quester: pauses of up to 20 seconds after opening a trapdoor, climbing
   down, or fighting, and an extra tick between every step.
-- Quester: a quest journal that opened slowly, or a "click to continue"
-  still showing, could stop a quest (Death Plateau at Dunstan).
+- Quester: a quest journal that opened slowly, or a "click to continue" left
+  on screen by a cutscene or area trigger, could stop a quest (Death Plateau
+  at Dunstan and the secret way). The Quester now clicks through such a page
+  itself.
 - Quester: boat and customs trips counted as failed conversations (Pirate's
   Treasure); The Tourist Trap could loop before it started; Priest in Peril
   tried the wrong monuments first; The Knight's Sword could run Wydin's shop
@@ -397,6 +399,11 @@ They are listed here for completeness and are left out of the release notes.
 - Quester: steps that use a banked item if there is one, or else get it, and
   steps allowed to take only some of their items (Imp Catcher's beads), stopped
   once the bank was known not to hold everything.
+- Quester: a burnt pie stopped The Knight's Sword instead of baking another;
+  quest steps that make an item now try again (a few times at most) when a
+  chance step fails. Priest in Peril needed coins it never fetched, waited in
+  the crypt after the coffin, and couldn't get back through the first gate;
+  The Tourist Trap was refused on the walk to the mining camp captain.
 - Gatherer: after banking at Draynor it could pick a spot inside the bank to
   walk back to, lose sight of the fishing spot and give up; at Catherby and
   some other fishing spots it could pick a spot it can't stand on.

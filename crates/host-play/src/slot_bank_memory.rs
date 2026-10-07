@@ -1116,9 +1116,12 @@ mod tests {
         drop(ExitSave(&slot));
         let waited = left.elapsed();
         assert_eq!(slot.submitted(), 1);
+        // Settled by the failure, not by the bound: well under the exit
+        // wait. Half the bound keeps the distinction without a wall-clock
+        // threshold that a loaded machine can miss.
         assert!(
-            waited < Duration::from_secs(1),
-            "a failed publication settles the exit promptly: {waited:?}"
+            waited < EXIT_SAVE_TIMEOUT / 2,
+            "a failed publication settles the exit before its bound: {waited:?}"
         );
         assert!(slot.read().dirty(), "the failed rows stay pending");
         assert!(!path.exists());
