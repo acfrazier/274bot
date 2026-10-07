@@ -19485,15 +19485,28 @@ fn tick_fix_stat_and_chat_are_evidence_wake_families() {
     assert!(!crate::play_slots::script_evidence_dirty(dirty), "screen-only frames do not pump scripts");
 }
 
-fn assert_host_completion_wake(inspect: bool) {
-        let condition = if inspect {
-            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
-        } else {
-            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
-        };
-        let mut rig = ReconnectRig::with_source(
-            format!(r#"
+#[derive(Clone, Copy, Debug)]
+enum TickFixEvidence {
+    RouteInspect,
+    BankSelection,
+    Stat,
+    Chat,
+}
+
+fn assert_tick_fix_evidence_wake(evidence: TickFixEvidence) {
+    let condition = match evidence {
+        TickFixEvidence::RouteInspect =>
+            "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23",
+        TickFixEvidence::BankSelection =>
+            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42",
+        TickFixEvidence::Stat => "Skills.xp('attack') === 100",
+        TickFixEvidence::Chat => "GameMessages.sawSince(0, /tickfix chat/)",
+    };
+    let mut rig = ReconnectRig::with_source(
+        format!(r#"
 import {{ Execution }} from '../../api/execution/Execution.js';
+import {{ Skills }} from '../../api/skills/Skills.js';
+import {{ GameMessages }} from '../../api/chatbox/gameMessages.js';
 export default class T extends LoopingBot {{
     async loop() {{
         globalThis.__loops = (globalThis.__loops || 0) + 1;
@@ -19504,42 +19517,67 @@ export default class T extends LoopingBot {{
     }}
 }}
 "#),
-            open_world(64, 64),
-            (3, 3, 0),
-        );
-        rig.frame(1, true);
-        {
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    rig.frame(1, true);
+    let mut dirty = host::DirtyFamilies::default();
+    match evidence {
+        TickFixEvidence::RouteInspect => {
             let mut navs = rig.navs.lock().unwrap();
-            let bot = navs.entry("alice".into()).or_default();
-            if inspect {
-                bot.inspect.refused[0] = 23;
-            } else {
-                bot.bank_pick.posted = script::isolate_fb::BankSelectionInput {
+            navs.entry("alice".into()).or_default().inspect.refused[0] = 23;
+        }
+        TickFixEvidence::BankSelection => {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.entry("alice".into()).or_default().bank_pick.posted =
+                script::isolate_fb::BankSelectionInput {
                     generation: 1, request_id: 42, bank_index: 0, kind: 1,
                     ..Default::default()
                 };
-            }
         }
-        rig.frame(1, false);
-        assert_eq!(
-            rig.slot().lock().unwrap()
-                .probe("[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]").unwrap(),
-            serde_json::json!([1, false, 1]),
-            "{} completion must publish and settle within the existing tick", if inspect { "route-inspect" } else { "bank selection" },
-        );
-        rig.frame(2, true);
-        assert_eq!(rig.slot().lock().unwrap().probe("globalThis.__later ?? false").unwrap(), true);
-        rig.slot().lock().unwrap().stop();
+        TickFixEvidence::Stat => {
+            rig.client.stat_xp[0] = 100;
+            rig.client.gens.stat = rig.client.gens.stat.wrapping_add(1);
+            dirty.stat = true;
+            rig.snap.rebuild(&rig.client);
+        }
+        TickFixEvidence::Chat => {
+            rig.client.add_chat(0, "tickfix chat", "");
+            rig.client.gens.chat = rig.client.gens.chat.wrapping_add(1);
+            dirty.chat = true;
+            rig.snap.rebuild(&rig.client);
+        }
+    }
+    rig.frame_dirty(1, false, crate::play_slots::script_evidence_dirty(dirty));
+    assert_eq!(
+        rig.slot().lock().unwrap()
+            .probe("[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]").unwrap(),
+        serde_json::json!([1, false, 1]),
+        "{evidence:?} evidence must publish and settle within the existing tick",
+    );
+    rig.frame(2, true);
+    assert_eq!(rig.slot().lock().unwrap().probe("globalThis.__later ?? false").unwrap(), true);
+    rig.slot().lock().unwrap().stop();
 }
 
 #[test]
 fn tick_fix_route_inspect_completion_wakes_without_player_info() {
-    assert_host_completion_wake(true);
+    assert_tick_fix_evidence_wake(TickFixEvidence::RouteInspect);
 }
 
 #[test]
 fn tick_fix_bank_selection_completion_wakes_without_player_info() {
-    assert_host_completion_wake(false);
+    assert_tick_fix_evidence_wake(TickFixEvidence::BankSelection);
+}
+
+#[test]
+fn tick_fix_stat_snapshot_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::Stat);
+}
+
+#[test]
+fn tick_fix_chat_snapshot_wakes_without_player_info() {
+    assert_tick_fix_evidence_wake(TickFixEvidence::Chat);
 }
 
 type SnapshotPumpFrames = Arc<Mutex<Vec<(u64, bool, Result<u64, script::native::ActionError>)>>>;
