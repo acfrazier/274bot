@@ -487,6 +487,80 @@ impl Rig {
 }
 
 #[test]
+fn route_published_after_an_unarmed_check_steps_the_same_player_key() {
+    let mut rig = open_rig(false);
+    let key = (rig.client.gens.player, rig.snapshot.tile());
+    let mut last = None;
+    assert!(!crate::play_slots::nav_step_due(
+        &mut last,
+        key,
+        false,
+        false,
+        || rig.walk_armed(),
+    ));
+    rig.observe(1);
+    rig.wait_routed();
+    let identity = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").unwrap();
+        (bot.route_generation, bot.walk_request_id)
+    };
+    assert!(
+        crate::play_slots::nav_step_due(&mut last, key, false, false, || rig.walk_armed()),
+        "an unarmed check must not delay this route until the next player key"
+    );
+    rig.step();
+    assert_eq!(rig.driver.move_calls, 1);
+    assert!(!crate::play_slots::nav_step_due(
+        &mut last,
+        key,
+        false,
+        false,
+        || rig.walk_armed(),
+    ));
+    assert_eq!(rig.shared.lock().begun, 1, "no walk was rearmed");
+    let navs = rig.navs.lock().unwrap();
+    let bot = navs.get("alice").unwrap();
+    assert_eq!((bot.route_generation, bot.walk_request_id), identity);
+}
+
+#[test]
+fn suppressed_unarmed_key_stays_suppressed_after_route_publication() {
+    for (hold, exclusive) in [(true, false), (false, true)] {
+        let mut last = None;
+        let key = (7, Some((0, 0, 0)));
+        assert!(!crate::play_slots::nav_step_due(
+            &mut last,
+            key,
+            hold,
+            exclusive,
+            || false,
+        ));
+        assert!(!crate::play_slots::nav_step_due(
+            &mut last,
+            key,
+            false,
+            false,
+            || true,
+        ));
+        assert!(crate::play_slots::nav_step_due(
+            &mut last,
+            (8, key.1),
+            false,
+            false,
+            || true,
+        ));
+        assert!(!crate::play_slots::nav_step_due(
+            &mut last,
+            (8, key.1),
+            false,
+            false,
+            || true,
+        ));
+    }
+}
+
+#[test]
 fn a_blocked_tick_dispatches_no_native_walk() {
     let mut rig = open_rig(true);
     rig.observe(1);
