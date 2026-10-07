@@ -28,7 +28,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use api::bank_memory::{BankMemory, HintRowsError, MAX_HINT_ROWS};
-use client::util::JString;
 use serde::{Deserialize, Serialize};
 use vault::{read_private_file, valid_component, write_private_file};
 
@@ -149,13 +148,9 @@ pub fn account_component(account: &str) -> Result<String, HintError> {
     if account.len() > MAX_ACCOUNT_CHARS {
         return Err(unsafe_account());
     }
-    let hash = JString::to_userhash(account);
     // The decoder answers `invalid_name` for a hash that spells no account;
     // of what `to_userhash` can return, that is exactly zero.
-    if hash == 0 {
-        return Err(unsafe_account());
-    }
-    let identity = JString::to_raw_username(hash as i64);
+    let identity = api::bank_memory::login_identity(account).ok_or_else(unsafe_account)?;
     debug_assert!(
         valid_component(&identity),
         "the decoder spells {account:?} as {identity:?}"
