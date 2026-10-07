@@ -1,7 +1,10 @@
-//! API-owned Gatherer seat. Registration, ticking and authority remain native.
+//! API-owned Gatherer and combat seats. Registration, ticking and authority
+//! remain native.
 use super::*;
+use crate::api_combat::{CombatEnd, CombatPage, CombatSessionRequest};
 use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
-use crate::native::{ScriptStatus, SettingsBag, StartError, StatusValue};
+use crate::combat_session::{CombatSessionCard, Settle, SettleCell};
+use crate::native::{Script, ScriptStatus, SettingsBag, StartError, StatusValue};
 use api::selected::RunKey;
 use std::sync::Mutex;
 
@@ -9,12 +12,19 @@ use std::sync::Mutex;
 mod progress;
 use progress::ProgressSeat;
 
+#[path = "combat.rs"]
+mod combat;
+use combat::{Cancel, CombatSeat};
+
 #[derive(Default)]
 pub(super) struct ApiSeat {
     gather: GatherSeat,
     pub(super) page: Option<Arc<GatherPage>>,
     pub(super) terminal: Option<GatherEnd>,
     pub(super) retiring: Vec<Preparation>,
+    combat: CombatSeat,
+    pub(super) combat_page: Option<Arc<CombatPage>>,
+    pub(super) combat_terminal: Option<CombatEnd>,
     progress: ProgressSeat,
     pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
     progress_retiring: Vec<progress::ProgressJob>,
@@ -35,6 +45,8 @@ enum GatherSeat {
     Preparing {
         token: u64,
         job: Preparation,
+        /// Manual movement took over before install.
+        user_input: bool,
     },
     Running {
         token: u64,
@@ -54,6 +66,7 @@ impl GatherSeat {
 #[derive(Clone, Copy)]
 enum DropOwner {
     Gather,
+    Combat,
     Progress,
 }
 
@@ -61,6 +74,7 @@ impl DropOwner {
     fn label(self) -> &'static str {
         match self {
             Self::Gather => "gather",
+            Self::Combat => "combat",
             Self::Progress => "progress",
         }
     }
@@ -118,19 +132,52 @@ impl ApiSeat {
     fn foreground_owner(&self) -> Option<DropOwner> {
         if self.gather.token().is_some() {
             Some(DropOwner::Gather)
+        } else if self.combat.token().is_some() {
+            Some(DropOwner::Combat)
         } else if self.progress.token().is_some() {
             Some(DropOwner::Progress)
         } else {
             None
         }
     }
+
+    /// Any live API session: they share the slot's one foreground.
+    fn busy(&self) -> bool {
+        self.gather.token().is_some()
+            || self.combat.token().is_some()
+            || self.progress.token().is_some()
+    }
 }
 
 impl SlotScript {
     pub fn api_owns_foreground(&self) -> bool {
+        self.api.as_ref().is_some_and(|seat| seat.busy())
+    }
+
+    /// A live Gather or Combat session: work in the world that manual
+    /// movement takes over, with or without a walk in flight. A quest
+    /// progress read moves nothing and is not included.
+    pub(super) fn api_session_takes_manual_input(&self) -> bool {
         self.api
             .as_ref()
-            .is_some_and(|seat| seat.gather.token().is_some() || seat.progress.token().is_some())
+            .is_some_and(|seat| seat.gather.token().is_some() || seat.combat.token().is_some())
+    }
+
+    /// Manual movement took over the slot: every live Gather or Combat
+    /// session learns it, whether or not a walk was in flight.
+    pub(super) fn api_user_input(&mut self) {
+        self.cancel_api_combat(Cancel::UserInput);
+        let Some(seat) = self.api.as_mut() else {
+            return;
+        };
+        match &mut seat.gather {
+            GatherSeat::Idle => {}
+            GatherSeat::Preparing { user_input, .. } => *user_input = true,
+            GatherSeat::Running { .. } => {
+                // The Gatherer blocks `manual-movement`, as for a cancelled walk.
+                self.signal_api_gather(|script| script.user_input());
+            }
+        }
     }
 
     /// Read-only receipt seam for the ignored public Script API live cells.
@@ -165,13 +212,21 @@ impl SlotScript {
     }
 
     pub(super) fn api_status(&self) -> Option<Arc<ScriptStatus>> {
-        self.api.as_ref()?.page.as_ref()?.status.clone()
+        let seat = self.api.as_ref()?;
+        seat.page
+            .as_ref()
+            .or(seat.combat_page.as_ref())?
+            .status
+            .clone()
     }
 
     pub(super) fn api_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         match &self.api.as_ref()?.gather {
             GatherSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
-            _ => self.api.as_ref()?.progress.selected(),
+            _ => match &self.api.as_ref()?.combat {
+                CombatSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
+                _ => self.api.as_ref()?.progress.selected(),
+            },
         }
     }
 
@@ -185,6 +240,13 @@ impl SlotScript {
             }
             crate::shim::InteractReq::GatherStop { request_id } => {
                 self.stop_api_gather(*request_id)
+            }
+            crate::shim::InteractReq::CombatFight {
+                request_id,
+                request,
+            } => self.start_api_combat(*request_id, request),
+            crate::shim::InteractReq::CombatStop { request_id } => {
+                self.stop_api_combat(*request_id)
             }
             crate::shim::InteractReq::ProgressRead { request_id, name } => {
                 self.start_api_progress(*request_id, name);
@@ -207,10 +269,7 @@ impl SlotScript {
         {
             return;
         }
-        if seat.gather.token().is_some()
-            || seat.progress.token().is_some()
-            || seat.retiring.len() + seat.progress_retiring.len() >= 4
-        {
+        if seat.busy() || seat.retiring.len() + seat.progress_retiring.len() >= 4 {
             // Genuine callers keep their family Busy until consuming the old
             // terminal; this also fails closed if a reserved control races it.
             seat.terminal = Some(GatherEnd::Refused {
@@ -277,7 +336,11 @@ impl SlotScript {
                     phase: GatherPhase::Preparing,
                     status: None,
                 }));
-                seat.gather = GatherSeat::Preparing { token, job };
+                seat.gather = GatherSeat::Preparing {
+                    token,
+                    job,
+                    user_input: false,
+                };
             }
             Err(error) => {
                 seat.terminal = Some(GatherEnd::Refused {
@@ -325,7 +388,12 @@ impl SlotScript {
         };
         seat.reap();
         if matches!(&seat.gather, GatherSeat::Preparing { job, .. } if job.is_finished()) {
-            let GatherSeat::Preparing { token, job } = std::mem::take(&mut seat.gather) else {
+            let GatherSeat::Preparing {
+                token,
+                job,
+                user_input,
+            } = std::mem::take(&mut seat.gather)
+            else {
                 unreachable!()
             };
             match job.join() {
@@ -342,6 +410,9 @@ impl SlotScript {
                     };
                     // Publish the install page before the first native tick.
                     self.api = Some(seat);
+                    if user_input {
+                        self.signal_api_gather(|script| script.user_input());
+                    }
                     return;
                 }
                 Err(error) => {
@@ -353,6 +424,7 @@ impl SlotScript {
                 }
             }
         }
+        self.tick_api_combat(&mut seat, ctx);
         if let GatherSeat::Running { token, run } = &mut seat.gather {
             ctx.compiled.interacts = None;
             let result = {
@@ -429,13 +501,20 @@ impl SlotScript {
     }
 
     pub(super) fn interrupt_api(&mut self, event: Interrupt) {
+        self.interrupt_api_combat(event);
+        self.signal_api_gather(|script| script.interrupt(event));
+    }
+
+    /// Deliver a lifecycle signal to the installed Gatherer card; a panic
+    /// ends the session `failed`.
+    fn signal_api_gather(&mut self, signal: impl FnOnce(&mut dyn Script)) {
         let Some(seat) = self.api.as_mut() else {
             return;
         };
         let GatherSeat::Running { run, token } = &mut seat.gather else {
             return;
         };
-        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| run.script.interrupt(event))) {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| signal(&mut *run.script))) {
             let terminal = GatherEnd::Failed {
                 token: *token,
                 counts: counts(run.output.status.as_deref()),
@@ -454,6 +533,7 @@ impl SlotScript {
     }
 
     pub(super) fn api_session_boundary(&mut self, reconnect: bool) {
+        self.combat_session_boundary(reconnect);
         if reconnect {
             if let Some(seat) = self.api.as_mut() {
                 if let GatherSeat::Running { run, .. } = &mut seat.gather {
@@ -486,6 +566,7 @@ impl SlotScript {
         let Some(mut seat) = self.api.take() else {
             return;
         };
+        self.teardown_api_combat(&mut seat, reason);
         self.native_runtime.revoke();
         if let GatherSeat::Running { run, .. } = std::mem::take(&mut seat.gather) {
             if let Some(error) = compiled::destroy_run(run, reason) {

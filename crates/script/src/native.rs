@@ -352,6 +352,10 @@ pub trait Script: Send {
         })
     }
     fn interrupt(&mut self, _event: Interrupt) {}
+    /// Manual movement took over the foreground this card owns as an API
+    /// session, whether or not one of its walks was in flight. Walking work
+    /// also learns it from its `WalkEnd::UserInput` receipt.
+    fn user_input(&mut self) {}
     /// Accepted Combat raises still owed when the host retires this fight.
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()

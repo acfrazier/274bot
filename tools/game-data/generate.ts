@@ -304,11 +304,39 @@ export function assertRs2b0tPinned(rs2b0tRoot: string, pin = RS2B0T_PIN) {
     }
 }
 /**
+ * Item category ids are decoded from the selected cache and named by the
+ * selected content's `pack/category.pack`; `-1` is the engine's unassigned value.
  * `tradeable` is the engine's own decode after load: opcode 15 (`tradeable=no`), a nonzero `dummyitem`, or a note of an
  * untradeable item. `stack_variant` marks the objs another obj names as a pile-size model (`countobj`); they repeat the
  * base name and are not separate items.
  */
-function row(obj: ObjType, piles: ReadonlySet<number>) { if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`); return { alias: obj.debugname, id: obj.id, name: obj.name, cost: obj.cost, stackable: obj.stackable, members: obj.members, certificate_link: obj.certlink, certificate_template: obj.certtemplate, wear_position: obj.wearpos, wear_position_2: obj.wearpos2, wear_position_3: obj.wearpos3, tradeable: obj.tradeable, stack_variant: piles.has(obj.id) }; }
+export function categoryName(obj: ObjType, categories: ReadonlyMap<number, string>): string | null {
+    const id = obj.category ?? -1;
+    if (id === -1) return null;
+    const name = categories.get(id);
+    if (name === undefined) throw new Error(`obj ${obj.id}: category ${id} has no content name`);
+    return name;
+}
+
+function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>) {
+    if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`);
+    return {
+        alias: obj.debugname,
+        id: obj.id,
+        name: obj.name,
+        cost: obj.cost,
+        stackable: obj.stackable,
+        members: obj.members,
+        certificate_link: obj.certlink,
+        certificate_template: obj.certtemplate,
+        wear_position: obj.wearpos,
+        wear_position_2: obj.wearpos2,
+        wear_position_3: obj.wearpos3,
+        category: categoryName(obj, categories),
+        tradeable: obj.tradeable,
+        stack_variant: piles.has(obj.id),
+    };
+}
 function pileModels(objs: readonly ObjType[]) { const piles = new Set<number>(); for (const obj of objs) for (const pile of Array.from(obj.countobj ?? [])) if (pile > 0) piles.add(pile); return piles; }
 function required(values: Record<string, string[][]>, key: string, rowName: string) { const value = values[key]?.[0]?.[0]; if (value === undefined) throw new Error(`${rowName}: missing ${key}`); return value; }
 function boolean(values: Record<string, string[][]>, key: string, rowName: string) {
@@ -2924,7 +2952,16 @@ async function generate(spec: Revision) {
     if (environment.default.node.members !== true) throw new Error(`${spec.revision}: generate with a members world config (NODE_MEMBERS) so tradeable is the content's own flag`);
     const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
-    const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
+    const categoriesById = new Map<number, string>();
+    for (const [name, id] of parsePack(fs.readFileSync(path.join(spec.content, 'pack/category.pack'), 'utf8'))) {
+        categoriesById.set(id, name);
+    }
+    const piles = pileModels(objModule.default.configs);
+    const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById));
+    const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string);
+    if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) {
+        throw new Error(`${spec.revision}: duplicate ids or aliases`);
+    }
     const debugHandlerPath = engineHandlerRelative();
     const debugHandlerText = fs.readFileSync(path.join(spec.engine, debugHandlerPath), 'utf8');
     const debugStatPath = DEBUG_STAT_RELATIVE;

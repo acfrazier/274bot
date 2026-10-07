@@ -565,6 +565,58 @@ fn tsc_gather_quest_sample_type_checks() {
     std::fs::remove_dir_all(&dir).expect("remove gather-quest sample dir");
 }
 
+/// Sample gate (pinned TypeScript 5.8.3): the combat samples type-check with
+/// `--strict` against the generated declarations.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_combat_samples_type_check() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!("host-js-combat-samples-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear combat sample dir");
+    }
+    let host_js = dir.join("host-js");
+    let examples = dir.join("examples");
+    std::fs::create_dir_all(&host_js).expect("create sample host-js dir");
+    std::fs::create_dir_all(&examples).expect("create sample examples dir");
+    std::fs::write(host_js.join("index.d.ts"), render_host_js_dts())
+        .expect("write sample declarations");
+    for (name, source) in [
+        ("fight_v2.ts", include_str!("../examples/fight_v2.ts")),
+        (
+            "combat_showcase_v2.ts",
+            include_str!("../examples/combat_showcase_v2.ts"),
+        ),
+    ] {
+        std::fs::write(examples.join(name), source).expect("write combat sample");
+        let output = Command::new("npx")
+            .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+            .args([
+                "--target",
+                "ES2022",
+                "--module",
+                "ESNext",
+                "--moduleResolution",
+                "Bundler",
+                "--skipLibCheck",
+                "false",
+                "--noEmit",
+                "--strict",
+            ])
+            .arg(examples.join(name))
+            .output()
+            .unwrap_or_else(|e| panic!("tsc {name} failed to spawn: {e}"));
+        assert!(
+            output.status.success(),
+            "strict {name} compile failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("remove combat sample dir");
+}
+
 #[test]
 #[ignore = "requires npx and TypeScript 5.8.3"]
 fn tsc_manual_walk_consumer_uses_correlated_outcome_reason() {

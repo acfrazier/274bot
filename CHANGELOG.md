@@ -132,6 +132,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   before moving on.
 - Dying mid-clue ends that attempt cleanly, and the death is remembered across
   Stop and Start.
+- Before an Entrana clue, the solver walks to a side of the bank booth it can
+  actually use to bank the gear Entrana forbids, and stops with a clear error
+  if the bank won't open. It no longer clicks an unreachable booth every tick.
 
 ### Sessions
 
@@ -162,6 +165,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 
 ### Navigation
 
+- Walking out of the desert through the Shantay Pass gate on a members world
+  no longer stalls for about 36 seconds and then fails when the walk must end
+  on an exact tile (for example from Irena to the Shantay bank chest).
 - Script and map walks start moving about half a second sooner: the first
   step no longer waits for the next game tick after the route is ready.
 - Walks between Lumbridge and Al Kharid now pay the 10-coin toll at the border
@@ -195,11 +201,14 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   manifest is refused when the profile loads instead of being silently
   ignored.
 - Walks now route around dangerous monsters and the Temple of Ikov lava
-  bridge by default. When no safe route exists, the refusal names the
-  monsters in the way. "Route through danger zones" in Nav config allows
-  crossing them on every walk; while it's off, WalkTo in the panel and the
-  TUI can allow it for a single walk, and each script can allow it for its
-  own walks.
+  bridge by default. **Danger routing** in Nav config has three levels:
+  Never, When survivable (the default) and Always. Until the bot can track
+  poison, When survivable behaves like Never, so a low-level account can be
+  refused routes that cross aggressive monsters. The refusal names the
+  monsters in the way and says how to allow it. Set Danger routing to Always
+  to cross danger zones on every walk; WalkTo in the panel and the TUI can
+  also allow it for a single walk, and each script can allow it for its own
+  walks in Script prefs.
 - Bots approach stairs, ladders, large trees and other big objects (for
   example the Lumbridge Castle staircase) from a side they can actually use,
   instead of trying through a wall.
@@ -340,9 +349,26 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Catalog scripts in JavaScript or TypeScript get checked type declarations
   for the rs2b0t script API, so editors and the compiler catch wrong
   arguments.
+- Scripts can use `Area` from the rs2b0t API (rectangular and circular
+  areas with `contains` and `getRandomTile`), whether imported from
+  `@rs2b0t/api` or from the geometry module. It used to stop the script with
+  "not implemented".
 - Load scripts can start, watch and stop the Gatherer, and read quest
   progress (which quests exist, their current stage and whether they're
   done). A bundled example gathers and then checks progress.
+- Load scripts can run the bot's own fighter with `api.combat.fight(...)`:
+  melee, ranged or magic against chosen monsters or whatever is attacking
+  you, with the bot's eating, potion and prayer rules. `api.snapshot.combat`
+  shows the fight and `api.combat.stop()` ends it. Pausing, reconnecting or
+  moving the player yourself ends the fight, even before it has started. The
+  bot turns off only prayers it turned on; turning on a protection prayer can
+  switch off a different protection prayer you had on, and that one isn't
+  restored. A bundled example shows every fight type.
+- In a Load script, moving the player yourself now also ends a Gatherer
+  session that's gathering in place (not only while it walks), with a
+  `manual-movement` result. "Pause script on manual movement" applies to
+  Gatherer and combat sessions too; turning it off skips the pause, not the
+  stop.
 - Script gathering lookups page through long lists and report game data that
   is incomplete, instead of returning partial results silently.
 - A script setting that names a saved loadout refuses an unknown or ambiguous
@@ -364,6 +390,82 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Faster startup: after the first launch, the client reuses the game assets
   it already downloaded and checked, so later launches reach the game in
   seconds instead of downloading everything again.
+
+### Not in this release
+
+Things that were planned for 0.2.0, or that you might reasonably expect, but
+that aren't here yet. Where we know the target, it's noted.
+
+**Quester**
+
+- Guides ship for 25 of the game's 69 quests. The other 44 don't have one
+  yet: guides for them are planned for 0.2.0.1. Haunted Mine can't be run on
+  this server and stays listed as unavailable.
+- The guides are untested drafts. Most have been run at least part of the
+  way, and a few all the way through, but any of them may stop partway. When
+  that happens, the panel shows the step it was on.
+- A quest that's waiting or stopped can look idle in the Status card: the
+  reason is shown in the script section, not in Status yet.
+
+**Combat**
+
+- Fights hold protection prayers; prayer flicking isn't supported yet.
+- Fights are fought in the open: safespots, luring into corners and
+  face-tanking fallbacks aren't supported yet, and the bot doesn't pick a
+  standing spot by your weapon's attack range (planned for 0.2.1, with an
+  attack-range debug overlay).
+- The combat machine doesn't attack players. It does defend itself against
+  players who attack it.
+- Hunt fights give up after two minutes, and a retreat can end next to a
+  different monster that attacks.
+
+**Gatherer**
+
+- There's no "closest location" option: choose a named place, your start
+  tile, a custom area or Auto.
+- Tools aren't bought from shops. If neither you nor your bank has a usable
+  tool, gathering stops and names the tool it needs.
+- Some spots behind area unlocks (for example Miscellania) aren't offered.
+
+**Clues**
+
+- Some trail clue types don't complete yet, including key-keeper clues
+  without a key drop, locked chests, and clues in Kharazi and Tirannwn.
+
+**Navigation**
+
+- Accounts below combat level 51 have no land route past White Wolf
+  Mountain; take a boat instead.
+- WalkTo's list of town destinations is a fixed list.
+
+**Scripts**
+
+- Some rs2b0t script API members still stop the script with "not
+  implemented", among them `Game.castOnNpc`, `Shop.buyById`,
+  `ChatDialog.makeOne`, `Traversal.remaining`/`requestRepath`,
+  `EntityQuery.inside`/`nearestPreferLocal`, script events
+  (`events.on`/`off`, `registerScript`), the `InvItem` class and task-tree
+  classes, and several gathering, fishing and banking data helpers. Closing
+  these, checked against rs2b0t's own tests, is planned for 0.2.0.1 and 0.2.1.
+- Script errors don't yet tell "not possible right now" apart from "not
+  implemented".
+- Equipping an item while the bank is open isn't handled reliably; close
+  the bank first.
+- Some catalog scripts stay greyed out until they've been qualified,
+  including FlourCollector, the Zanaris cook and most Jive scripts other
+  than King Black Dragon trips.
+
+**Panel and TUI**
+
+- The script window doesn't resize with its contents.
+- Profiles can't be put in a custom order.
+- The TUI shows the map and fleet, not actual game pixels (planned for
+  0.2.2).
+
+**Game versions**
+
+- Revision 289 is the supported version. Revision 274 may work but isn't
+  tested.
 
 ### Fixed during development
 

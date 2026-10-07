@@ -55,7 +55,7 @@
 
 #[cfg(test)]
 use api::game_data::SelectedGameData;
-use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot};
+use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, WorldTile};
 use serde_json::{json, Map, Value};
 
 use std::sync::{Arc, LazyLock};
@@ -675,10 +675,15 @@ impl Sherlock {
                 "aborted" => {
                     let reason = answer.get("reason").and_then(Value::as_str).unwrap_or("");
                     self.end(reason);
-                    if reason.starts_with("combat-") {
+                    let bank_failure = reason == crate::clue::BANK_APPROACH_FAILED;
+                    if reason.starts_with("combat-") || bank_failure {
                         self.blocked = Some(ScriptFailure {
                             code: Arc::from(reason),
-                            message: Arc::from(reason),
+                            message: Arc::from(if bank_failure {
+                                "bank approach/open did not reach a ready bank before its deadline"
+                            } else {
+                                reason
+                            }),
                         });
                     }
                     return;
@@ -875,7 +880,7 @@ fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value
     let Some(snapshot) = ctx.snapshot else {
         return Value::Object(page);
     };
-    if let Some(booth) = nearest_booth(snapshot) {
+    if let Some(booth) = nearest_booth(ctx) {
         page.insert("nearest_booth".into(), booth);
     }
     page.insert(
@@ -1065,9 +1070,11 @@ fn equipment_page(ctx: &HostFrame<'_>) -> Value {
     )
 }
 
-/// The posted nearest Use-quickly booth, or `None` when the frame posted no
-/// booth on the plane. Never an invented stand.
-fn nearest_booth(snapshot: &GameSnapshot) -> Option<Value> {
+/// The posted nearest Use-quickly booth and, when its Rust-side cached reach
+/// flood can prove one, the shared operability/approach facts. Only those
+/// small facts enter the clue page; the borrowed flood never crosses a wire.
+fn nearest_booth(ctx: &HostFrame<'_>) -> Option<Value> {
+    let snapshot = ctx.snapshot?;
     let loc = snapshot.nearest_use_quickly_booth()?;
     let mut row = Map::new();
     row.insert("x".into(), json!(loc.tile.x));
@@ -1084,6 +1091,25 @@ fn nearest_booth(snapshot: &GameSnapshot) -> Option<Value> {
         .find(|action| action.eq_ignore_ascii_case("Use-quickly"))
     {
         row.insert("op".into(), json!(op));
+    }
+    row.insert("approach".into(), Value::Null);
+    if let (Some((x, z, level)), Some(flood)) = (ctx.here, ctx.compiled.reach_flood) {
+        if let Some(approach) = api::query::loc_approach::booth_approach(
+            loc,
+            snapshot.scene(),
+            WorldTile { x, z, level },
+            flood,
+        ) {
+            let mut facts = Map::new();
+            facts.insert("can_operate".into(), json!(approach.can_operate));
+            if let Some(dest) = approach.dest {
+                facts.insert(
+                    "dest".into(),
+                    json!({ "x": dest.x, "z": dest.z, "level": dest.level }),
+                );
+            }
+            row.insert("approach".into(), Value::Object(facts));
+        }
     }
     Some(Value::Object(row))
 }
@@ -1198,11 +1224,12 @@ mod tests {
     use client::client::{Client, ClientConfig, Skill};
     use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
-    use client::dash3d::ClientObj;
+    use client::dash3d::{ClientObj, CollisionFlag};
     use client::datastruct::LinkList;
     use client::io::{ClientRevision, ServerProt};
     use serde::Deserialize;
     use std::sync::Arc;
+    const SCENE_BASE: i32 = 2_000;
 
     #[test]
     fn walk_permission_schema_and_legacy_settings_are_snake_case_and_false() {
@@ -1432,18 +1459,16 @@ mod tests {
         s
     }
 
-    /// The client build base the ground frame plants its scene on, so the
-    /// posted row's tile is the tile the frame posts as `here`.
-    const SCENE_BASE: i32 = 3200;
-
     /// One observed frame: its snapshot, the posted tile, this frame's
     /// cooperative interrupt and the obj-id → name table its pages resolve
-    /// against (`None` for the frames whose observed scene posts no name).
+    /// against (`None` for the frames whose observed scene posts no name),
+    /// plus this tick's cached Rust-side reach flood.
     struct Frame {
         snapshot: GameSnapshot,
         here: Option<(i32, i32, i32)>,
         hold: bool,
         names: Option<api::obj_names::ObjNames>,
+        reach_flood: Option<api::query::ReachFlood>,
     }
 
     impl Frame {
@@ -1454,6 +1479,7 @@ mod tests {
                 here,
                 hold: false,
                 names: None,
+                reach_flood: None,
             }
         }
 
@@ -1469,6 +1495,7 @@ mod tests {
                 compiled: crate::CompiledTick {
                     selected,
                     reach: None,
+                    reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
                     collision: None,
                     hold: self.hold,
@@ -1476,6 +1503,66 @@ mod tests {
                     interacts: Some(Vec::new()),
                 },
             }
+        }
+    }
+    fn draynor_diagonal_booth_frame() -> Frame {
+        let here = WorldTile {
+            x: 3092,
+            z: 3243,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_tile(here);
+        let mut collision_flags = vec![0; 25];
+        // Both booth tiles are blocked. The second booth also occupies the
+        // diagonal booth's north stand, leaving its east stand at
+        // (3092,3242) as the nearest reachable option.
+        collision_flags[6] = CollisionFlag::SQ_BLOCKED;
+        collision_flags[7] = CollisionFlag::SQ_BLOCKED;
+        snapshot.seed_scene(api::snapshot::SceneView {
+            available: true,
+            base_x: 3090,
+            base_z: 3241,
+            level: 0,
+            width: 5,
+            height: 5,
+            collision_flags,
+        });
+        let booth = |x, z| api::snapshot::LocView {
+            typecode: 0,
+            info: 10,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            description: None,
+            actions: vec![Some("Use".into()), Some("Use-quickly".into())],
+            tile: WorldTile { x, z, level: 0 },
+            distance: 1,
+            layer: api::snapshot::LocLayer::Wall,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: true,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        };
+        snapshot.seed_locs(vec![booth(3091, 3242), booth(3091, 3243)]);
+        let reach_flood = api::query::SceneQuery::new(snapshot.scene(), Some(here))
+            .flood_reach()
+            .expect("Draynor scene and player tile produce one reach flood");
+        Frame {
+            snapshot,
+            here: Some((here.x, here.z, here.level)),
+            hold: false,
+            names: None,
+            reach_flood: Some(reach_flood),
         }
     }
 
@@ -1515,6 +1602,7 @@ mod tests {
             here: Some(tile),
             hold: false,
             names: Some(names),
+            reach_flood: None,
         }
     }
 
@@ -1537,6 +1625,7 @@ mod tests {
             here: Some(far()),
             hold: false,
             names: None,
+            reach_flood: None,
         }
     }
 
@@ -1577,6 +1666,7 @@ mod tests {
             here,
             hold: false,
             names: None,
+            reach_flood: None,
         }
     }
 
@@ -1724,6 +1814,27 @@ mod tests {
             "a fact this frame did not carry is omitted, never defaulted: {page}"
         );
         assert_ne!(tile.0, 0, "the decoded search tile is a real destination");
+    }
+    #[test]
+    fn native_bank_page_projects_the_tied_diagonal_booths_exact_stand() {
+        let mut frame = draynor_diagonal_booth_frame();
+        let mut driver = crate::ctx::test_support::NullDriver::default();
+        let page = {
+            let ctx = frame.ctx(&mut driver, None);
+            next_payload(&ctx, 3, None)
+        };
+        assert_eq!(page["nearest_booth"]["x"], 3091, "{page}");
+        assert_eq!(page["nearest_booth"]["z"], 3242, "{page}");
+        assert_eq!(
+            page["nearest_booth"]["approach"]["can_operate"], false,
+            "{page}"
+        );
+        assert_eq!(
+            page["nearest_booth"]["approach"]["dest"],
+            json!({ "x": 3092, "z": 3242, "level": 0 }),
+            "{page}"
+        );
+        assert!(page.get("reach_flood").is_none(), "{page}");
     }
 
     #[test]

@@ -149,8 +149,10 @@ observe `'user-input'` and choose what to do. Already-paused or reconnect-carrie
 work is not cancelled merely because movement happens during that hold. After
 an explicit Resume, a native script may make a fresh decision, but the old
 cancelled request, host carry, queued work, and watchdog recovery are never
-automatically replayed. See [Nav](nav.md) for the accepted intent bounds and
-known detector residue.
+automatically replayed. A live `api.gather` or `api.combat` session is owned
+work too, with or without a walk in flight: manual movement ends it (see
+"Gather sessions" and "Combat sessions") and the preference pauses its script.
+See [Nav](nav.md) for the accepted intent bounds and known detector residue.
 
 User-owned world/minimap clicks and TUI Manual steps are classified as intent;
 script-generated input is not. This is not evidence that the player moved.
@@ -347,7 +349,9 @@ settled. The terminal is the nested `value` of the unchanged `done` envelope:
 anchor/counters like operator Stop; `blocked` (with the card's `failure` and
 counts) keeps them so the next `run` resumes; `refused` carries the host
 preparation/admission reason and never ran; `failed` carries the card panic
-reason with counts.
+reason with counts. Manual movement while the session is live — walking, or
+gathering in place, or still being prepared — ends it `blocked` with
+`failure.code: 'manual-movement'`.
 
 While a session is live the host owns the slot's foreground: the script's
 game rows are dropped, not deferred (see [script.md](script.md) "Two
@@ -357,6 +361,182 @@ admission but stay queued in Starting/Paused slots until ordinary dispatch
 resumes, even if the paused frame is offline, held or has no snapshot. Held
 reconnect walks and the carried host walk are discarded, not replayed after
 the session.
+
+## Combat sessions
+
+`api.combat.fight(request)` runs one fight of the native Combat machine —
+the same machine the Quester's combat steps and Sherlock use — from a Load
+script. One session per slot. `api.snapshot.combat` is the live session
+(`{ token, phase, status }`, `null` when none); `phase` is `preparing` while
+the host resolves the request against the slot's selected game data
+off-pump and `running` once the card is installed. `status` is `null` until
+the card publishes (`stage`: `starting`, `fighting` or `clearing-prayers`;
+`engaged_kind`: `npc`, `player` or `none`; `engaged_index`, -1 when nothing
+is engaged), and changes only when one of those values does. `await`ing
+`fight` settles exactly once, at the session terminal (`value.end`);
+`api.combat.stop()` ends the live session so its `fight` resolves
+`stopped`.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `await api.combat.fight(request)` | one `CombatOutcome` settlement | sync `invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`; host `refused`, `failed`, or a machine abort |
+| `api.combat.stop()` | `HelperResult<null>` | `no-session` (idempotent while live) |
+
+### The request
+
+`CombatRequest` is a plain object; every key but `target` is optional and
+takes the native default. Field names in errors are these keys.
+
+| Key | Meaning |
+| --- | --- |
+| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }` (below) |
+| `pick` | npc targets: `nearest` (default), `random` or `lowestHealth` |
+| `notTargetingOthers` | npc targets: skip npcs already fighting another player (default `true`) |
+| `area` | one `SceneRegionInput` box or 1..16 boxes a target must stand in |
+| `radius` | engage radius in tiles, 1..255 (default 12) |
+| `lostRadius` | tiles before an engaged target counts as lost, 1..255 (default 20) |
+| `style` | `melee` (default), `ranged` or `magic` |
+| `meleeMode` | melee only: `accurate`, `aggressive`, `defensive` or `controlled`; omitted keeps the current attack style |
+| `rangedMode` | ranged only: `accurate`, `rapid` (default) or `longRange` |
+| `spells` | magic only: selected spell aliases (`wind_strike`, `Fire Bolt`) cast manually in this order; omitted casts the strongest castable spell |
+| `fallbackSpells` | magic only: after the order is exhausted, fall back to the strongest castable spell (default `false`) |
+| `prayer` | let the bot raise prayers and drink prayer potions (default `true`) |
+| `food` | let the bot eat (default `true`) |
+| `potions` | let the bot drink potions (default `true`) |
+| `retaliate` | the game's Auto Retaliate setting during the fight (default `true`) |
+| `budgetTicks` | fight budget, 1..65535 game ticks (default 1500); the fight settles `budget` |
+
+**Target.** `{ npc: 'cow' }` takes a selected npc config name; a name that is
+not a config name is matched against display names (ASCII case-insensitive),
+so `{ npc: 'Chicken' }` fights any attackable npc called Chicken. `npc` and
+`npcId` take one value or a list (up to 32). `{ attackers: 'npcs' | 'players'
+| 'any' }` is defensive: it engages only actors already attacking the bot and
+never starts a fight with a player or npc that is not. Names are resolved on
+the host; an unknown name is `done{end:'refused', reason:
+'invalid-setting:target:unknown-npc'}`, an npc with no Attack option is
+`invalid-setting:target:unattackable`, an unknown spell
+`invalid-setting:spells:unknown-spell`.
+
+**Prayer.** Combat waits for one complete observation of all prayer rows,
+and any prayer already on then is the user's: the bot never clicks it off,
+and a user's offensive tier is never replaced with a stronger one. The bot
+raises a protection prayer for the style the live attackers use (from
+incoming projectiles first, else from the threats' content attack styles)
+when the account's base Prayer meets that prayer's level and points remain.
+The game allows one protection prayer at a time, so raising one switches off
+a different protection prayer the user had on; the bot does not turn the
+user's back on. In melee fights against targets worth boosting (a
+player, or an npc with at least 40 hitpoints), it also raises the strongest
+Strength and Attack prayers it can afford. It drinks a prayer potion when a
+prayer is wanted or on and points fall to `base − (7 + base/4)` (at least 3).
+`prayer: false` raises nothing and drinks no prayer potion.
+
+**Food and potions.** Food is any item the selected content lists as food.
+The eat line is `2 × danger + 1` hitpoints, where `danger` is the most the
+live threats can hit in one attack after the active protection, from the
+engine's npc facts; when a threat's damage is unknown the line is half the
+bot's hitpoints, and when nothing can hurt the bot it does not eat. The bot
+takes the largest heal that fits the missing hitpoints (else the smallest),
+and adds a no-delay combo food only when ordinary food cannot lift it above
+the drink gate (`3 × danger + 1`). At the emergency line (`danger + 1`, or
+half when unknown) with no food left, the fight ends `aborted` with reason
+`no-food`. Potions are drunk only while hitpoints stay above the drink gate:
+combat boosts (melee: super attack, strength, defence; ranged: ranging and
+super defence; magic: magic and super defence) once the boost has faded and
+only against targets worth boosting, prayer potions as above, and antifire
+against dragonfire. `food: false` / `potions: false` turn these off.
+
+**Weapons and attack styles.** For each style Combat wields a suitable
+weapon (and ammunition) it finds worn or carried, then sets `meleeMode` or
+`rangedMode` on the game's combat tab. The game switches that tab to the
+wielded weapon only once the account is past Tutorial Island, so on an
+account still inside the tutorial a ranged fight waits for the tab and
+settles `budget` without a shot.
+
+**Retaliate.** Combat clicks the combat tab's Auto Retaliate when it differs
+from `retaliate` and does not restore it afterwards. Manual spell casting
+(`spells`, or magic with no autocast staff) keeps Auto Retaliate off, since
+the game would otherwise replace the manual cast with an auto attack.
+
+A non-object request is `invalid-args`. A malformed object (unknown key,
+wrong type, non-integer number) is `invalid-settings`. A semantic failure is
+`invalid-setting:<field>:<code>`, for example `target:required`,
+`target:ambiguous` (two target keys), `target:empty`, `target:duplicate`,
+`pick:requires-npc-target`, `meleeMode:requires-melee`,
+`rangedMode:requires-ranged`, `spells:requires-magic`,
+`area:invalid-box`, `radius:out-of-range` and `budgetTicks:out-of-range`.
+Each admits no session and emits no row.
+
+### Outcomes
+
+The terminal is the nested `value` of the `done` envelope:
+
+- `fought` carries the machine's `report`: `end` (`killed`, `target-gone`,
+  `no-target`, `budget`, `died` or `aborted`), `reason` for `aborted`
+  (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
+  `prep-failed:<weapon|shield|ammo|staff|arm>`, `unresponsive`, ...), the
+  engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,
+  `damageTaken`, `food`, `prayerDoses`, `boostDoses`, `antifireDoses`,
+  `protectSwitches`).
+- `stopped`: `api.combat.stop()` ended it.
+- `interrupted` with `cause`: `pause` (operator Pause; the session settles
+  after Resume), `user-input` (manual movement, whether or not the bot was
+  walking), `died` (the host saw the death before Combat did; a death Combat
+  sees first is `fought` with `report.end: 'died'`) or `reconnect`.
+- `refused`: the host refused the admitted request before any fight — a name
+  it could not resolve, `busy`, `unavailable:<why>` (for example missing
+  selected game data), or Combat refusing to begin.
+- `failed`: a machine error (`failed:<why>`, `blocked:<why>`) or a card panic.
+
+`refused` appears at two levels, as for Gather: a top-level
+`{ kind: 'refused', reason }` is a synchronous refusal before any session
+(nothing reached the host), while `done` with `end: 'refused'` is the host
+refusing a session it had admitted. Resets, supersessions and terminations
+are `aborted`.
+
+### Lifecycle and prayer ownership
+
+The session follows the native combat prayer ownership rules
+([script.md](script.md) "Native combat prayer ownership"):
+
+- The bot turns off only prayers it raised itself (accepted clicks,
+  observed on). The game allows one protection prayer at a time, so when the
+  bot raises a protection prayer, the game switches off a different protection
+  prayer the user had on; the bot does not turn that one back on. Other user
+  prayers stay on.
+- A fight Combat settles clears the prayers it raised in its own wind-down
+  before `fought` resolves.
+- Pause, manual movement and a reconnect cancel the session at any point
+  after admission: while the host prepares it, once it is installed but before
+  Combat begins, or mid-fight. Manual movement counts whether or not the bot is
+  walking; with “Pause script on manual movement” on, the script is also
+  paused. On the next eligible tick (after Resume for a Pause, in the new
+  session for a reconnect) the bot turns off the prayers it raised, then the
+  session settles `interrupted` with that cause. A session cancelled before
+  Combat began raised nothing, so nothing is clicked.
+- Death retires the obligation (the game cleared every prayer), so nothing is
+  clicked afterwards, even if the user turns a prayer on after respawning.
+- `api.combat.stop()`, operator Stop and any script stop end the session at
+  once and hand the bot's accepted raises to the host, whose ordinary pump
+  turns exactly those off; the next session waits for that cleanup instead
+  of taking the raised prayers as the user's.
+- A session reset (logout) ends it with no terminal; the await is `aborted:
+  reset`.
+
+While a session is live the host owns the slot's foreground exactly as for
+Gather: the script's game rows are dropped, not deferred; control rows still
+pass while paused.
+
+**One API session per slot.** A fight is `busy` while a gather session, a
+quest-progress read or a Hunt run is live, and `api.gather.run`,
+`api.questProgress` and every Hunt `*Run` are `busy` while a combat session
+is live. Nothing supersedes. Compatibility (v1) scripts have no `api.combat`;
+their rs2b0t combat helpers run in v1 slots only.
+
+Examples: `crates/script/examples/fight_v2.ts` (one fight) and
+`crates/script/examples/combat_showcase_v2.ts` (melee with an attack-style
+switch, ranged, magic, prayer with a user prayer kept, eating, a potion sip
+and a clean stop).
 
 ## Quest progress
 
@@ -476,6 +656,13 @@ Hooks are all optional: `log` / `vlog` / `setStatus` notifications, awaited
 target, HP, food, style, safespot, weapon, and supplies. Getters and
 notifications run synchronously (a returned promise is `not impl`); a hook
 that throws rejects the run promise with that value.
+
+Hunt's fight leg (`fightRun`) is its own
+isolate-side stepper with the script's hooks; it is not the native Combat
+machine. To run that machine from a script, use a
+[combat session](#combat-sessions) (`api.combat.fight`). The two do not run
+together: every Hunt `*Run` is refused `busy` while a combat session is live,
+and a fight is `busy` while a Hunt run is.
 
 | Method | Settles with |
 | --- | --- |
@@ -857,15 +1044,18 @@ row's own selected decode: a row whose `trail_coord` decodes inside the cap box
 (`2802–2878, 3329–3393`, level 0 — the proof row `3579`,
 `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)`) is stripped
 before the walk that row would otherwise make, and a casket never arms it. The
-posted worn rows whose display name the frozen `ENTRANA_RESTRICTED_GEAR_RE`
-matcher folds are unequipped with the landed `unequip` verb — the worn row's
-own `Remove`, because `wear` resolves inventory rows alone — and the two
-hard-trail dagger ids `1231`/`1215` are unequipped but never listed. Every
-posted pack row the matcher folds is then deposited at the posted booth
+posted worn rows whose selected item category is restricted under the monk's
+rule (`monk_of_entrana.rs2:26-50`, mirrored by `restricted_item`: the 23
+armour/weapon categories on worn and pack, `cannon_parts` on pack alone) are
+unequipped in posted order with the landed `unequip` verb — the worn row's own
+`Remove`, because `wear` resolves inventory rows alone — and listed by display
+name for reclaim, with no dagger-ID exception (`1231`/`1215` are `weapon_stab`
+and are listed like the helm and restored with it). Every posted pack row with
+a positive count whose selected category is restricted (pack-side rule, so
+carried `cannon_parts` counts) is then deposited at the posted booth
 (`walk-nearest-bank`, the posted `nearest_booth`'s own `open-booth`, `deposit`,
-`close`, and no ordinary loot): the names the unequip put in the pack, the
-dagger ids that were never listed, and a restricted item the player was carrying
-rather than wearing. The list is the machine's own `strippedGear`: it outlives
+`close`, and no ordinary loot): the names the unequip put in the pack and a
+restricted item the player was carrying rather than wearing. The list is the machine's own `strippedGear`: it outlives
 the step and a dead token — a connection-boundary reset drops the step alone —
 and only the restore or a fresh task instance (Stop/Start) empties it.
 
@@ -878,8 +1068,9 @@ frozen `restoreStrippedGear`'s make-room deposit runs first: one posted pack row
 that is not a listed name and whose id is not a selected trail item (a clue
 scroll, a casket or a challenge scroll) goes to the bank, food included, so the
 claim has somewhere to land. A name that will not go back on stays listed and is
-logged as the named `restore-incomplete` (a bank trip that does not come up is
-the named `restore-walk-failed`): logs, never machine kinds, and never
+logged as the named `restore-incomplete`. A bank walk, exact stand approach or
+open that misses its existing deadline returns `aborted` with reason
+`bank-approach-failed`, leaving the list retained. Neither failure is
 `supplies-needed`. Freeze, yield and the posted hitpoints still win over the
 restore.
 
@@ -955,7 +1146,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
 | `unequip` | the Entrana strip's unequip pass: take the worn row named `name` off, `{ name }`. It is the host's worn-row `Remove` op, resolved by display name — `wear` resolves inventory rows alone and cannot take a worn row off, so the strip never rides it. Not a `V2_OPS` author verb: `api.request({ op: 'unequip' })` stays `not impl` |
 | `wear` | the Entrana restore's wear pass: equip the pack row named `name`, `{ name }`. The landed equip-from-pack verb, one listed name per call, and never the strip's unequip. Not a `V2_OPS` author verb either: `api.request({ op: 'wear' })` stays `not impl` |
-| `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the frozen `depositAllMatching` cut to the rows the `ENTRANA_RESTRICTED_GEAR_RE` matcher folds, whether or not the strip listed them. The restore's make-room deposit rides the same kind |
+| `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the first posted pack row with a positive count whose selected category is restricted under the monk's rule, whether or not the strip listed it. The restore's make-room deposit rides the same kind |
 | `withdraw` | the Entrana restore's claim: withdraw one listed name with the machine's own posted action label, `{ name, action: 'Withdraw-1' }`. One claim in flight at a time |
 | `walk-nearest-bank` | the Entrana strip's and the restore's bank trip: walk to the nearest stand the host picks from the packed world. No tile rides it, because the machine never invents one |
 | `open-booth` | the bank trip's `open-booth`: the posted `nearest_booth`'s own identity, `{ x, z, level, id, name?, action? }`, exactly as the landed bank helpers queue it |

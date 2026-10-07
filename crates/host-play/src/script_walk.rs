@@ -528,10 +528,9 @@ pub(crate) fn take_manual_walk_ownership(
         && slot
             .as_ref()
             .is_some_and(|slot| slot.want_run && slot.state() == script::RunState::Running);
-    let live_family = eligible
-        && slot
-            .as_ref()
-            .is_some_and(|slot| slot.live_walking_operation());
+    // A Gather or Combat API session is taken over even with no walk in
+    // flight; it learns the movement through `note_manual_walk_takeover`.
+    let live_work = eligible && slot.as_ref().is_some_and(|slot| slot.manual_input_owner());
     let mut all = navs.lock().unwrap();
     if !all.contains_key(name) {
         all.insert(name.to_owned(), NavBot::default());
@@ -548,7 +547,7 @@ pub(crate) fn take_manual_walk_ownership(
         || bot.bank_fetch.is_some()
         || bot.carried_walk.is_some()
         || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
-    if !eligible || !(active_walk || live_family) {
+    if !eligible || !(active_walk || live_work) {
         return false;
     }
     bot.cancel_for_manual_input();

@@ -4460,6 +4460,323 @@ impl ::core::fmt::Debug for ApiGatherOutcome<'_> {
       ds.finish()
   }
 }
+pub enum ApiCombatOutcomeOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ApiCombatOutcome<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ApiCombatOutcome<'a> {
+  type Inner = ApiCombatOutcome<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ApiCombatOutcome<'a> {
+  pub const VT_REQUEST_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_END: ::flatbuffers::VOffsetT = 6;
+  pub const VT_REASON: ::flatbuffers::VOffsetT = 8;
+  pub const VT_REPORT_END: ::flatbuffers::VOffsetT = 10;
+  pub const VT_NPC_TYPE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_TICKS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_SWINGS: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CASTS: ::flatbuffers::VOffsetT = 18;
+  pub const VT_DAMAGE_TAKEN: ::flatbuffers::VOffsetT = 20;
+  pub const VT_FOOD: ::flatbuffers::VOffsetT = 22;
+  pub const VT_PRAYER_DOSES: ::flatbuffers::VOffsetT = 24;
+  pub const VT_BOOST_DOSES: ::flatbuffers::VOffsetT = 26;
+  pub const VT_ANTIFIRE_DOSES: ::flatbuffers::VOffsetT = 28;
+  pub const VT_PROTECT_SWITCHES: ::flatbuffers::VOffsetT = 30;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ApiCombatOutcome { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ApiCombatOutcomeArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ApiCombatOutcome<'bldr>> {
+    let mut builder = ApiCombatOutcomeBuilder::new(_fbb);
+    builder.add_request_id(args.request_id);
+    builder.add_npc_type(args.npc_type);
+    if let Some(x) = args.reason { builder.add_reason(x); }
+    builder.add_damage_taken(args.damage_taken);
+    builder.add_casts(args.casts);
+    builder.add_swings(args.swings);
+    builder.add_ticks(args.ticks);
+    builder.add_protect_switches(args.protect_switches);
+    builder.add_antifire_doses(args.antifire_doses);
+    builder.add_boost_doses(args.boost_doses);
+    builder.add_prayer_doses(args.prayer_doses);
+    builder.add_food(args.food);
+    builder.add_report_end(args.report_end);
+    builder.add_end(args.end);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ApiCombatOutcome::VT_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn end(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_END, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn reason(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiCombatOutcome::VT_REASON, None)}
+  }
+  #[inline]
+  pub fn report_end(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_REPORT_END, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn npc_type(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ApiCombatOutcome::VT_NPC_TYPE, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn ticks(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(ApiCombatOutcome::VT_TICKS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn swings(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(ApiCombatOutcome::VT_SWINGS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn casts(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(ApiCombatOutcome::VT_CASTS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn damage_taken(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(ApiCombatOutcome::VT_DAMAGE_TAKEN, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn food(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_FOOD, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn prayer_doses(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_PRAYER_DOSES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn boost_doses(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_BOOST_DOSES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn antifire_doses(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_ANTIFIRE_DOSES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn protect_switches(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_PROTECT_SWITCHES, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ApiCombatOutcome<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("request_id", Self::VT_REQUEST_ID, false)?
+     .visit_field::<u8>("end", Self::VT_END, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("reason", Self::VT_REASON, false)?
+     .visit_field::<u8>("report_end", Self::VT_REPORT_END, false)?
+     .visit_field::<i32>("npc_type", Self::VT_NPC_TYPE, false)?
+     .visit_field::<u16>("ticks", Self::VT_TICKS, false)?
+     .visit_field::<u16>("swings", Self::VT_SWINGS, false)?
+     .visit_field::<u16>("casts", Self::VT_CASTS, false)?
+     .visit_field::<u16>("damage_taken", Self::VT_DAMAGE_TAKEN, false)?
+     .visit_field::<u8>("food", Self::VT_FOOD, false)?
+     .visit_field::<u8>("prayer_doses", Self::VT_PRAYER_DOSES, false)?
+     .visit_field::<u8>("boost_doses", Self::VT_BOOST_DOSES, false)?
+     .visit_field::<u8>("antifire_doses", Self::VT_ANTIFIRE_DOSES, false)?
+     .visit_field::<u8>("protect_switches", Self::VT_PROTECT_SWITCHES, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ApiCombatOutcomeArgs<'a> {
+    pub request_id: u64,
+    pub end: u8,
+    pub reason: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub report_end: u8,
+    pub npc_type: i32,
+    pub ticks: u16,
+    pub swings: u16,
+    pub casts: u16,
+    pub damage_taken: u16,
+    pub food: u8,
+    pub prayer_doses: u8,
+    pub boost_doses: u8,
+    pub antifire_doses: u8,
+    pub protect_switches: u8,
+}
+impl<'a> Default for ApiCombatOutcomeArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ApiCombatOutcomeArgs {
+      request_id: 0,
+      end: 0,
+      reason: None,
+      report_end: 0,
+      npc_type: -1,
+      ticks: 0,
+      swings: 0,
+      casts: 0,
+      damage_taken: 0,
+      food: 0,
+      prayer_doses: 0,
+      boost_doses: 0,
+      antifire_doses: 0,
+      protect_switches: 0,
+    }
+  }
+}
+
+pub struct ApiCombatOutcomeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiCombatOutcomeBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_request_id(&mut self, request_id: u64) {
+    self.fbb_.push_slot::<u64>(ApiCombatOutcome::VT_REQUEST_ID, request_id, 0);
+  }
+  #[inline]
+  pub fn add_end(&mut self, end: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_END, end, 0);
+  }
+  #[inline]
+  pub fn add_reason(&mut self, reason: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiCombatOutcome::VT_REASON, reason);
+  }
+  #[inline]
+  pub fn add_report_end(&mut self, report_end: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_REPORT_END, report_end, 0);
+  }
+  #[inline]
+  pub fn add_npc_type(&mut self, npc_type: i32) {
+    self.fbb_.push_slot::<i32>(ApiCombatOutcome::VT_NPC_TYPE, npc_type, -1);
+  }
+  #[inline]
+  pub fn add_ticks(&mut self, ticks: u16) {
+    self.fbb_.push_slot::<u16>(ApiCombatOutcome::VT_TICKS, ticks, 0);
+  }
+  #[inline]
+  pub fn add_swings(&mut self, swings: u16) {
+    self.fbb_.push_slot::<u16>(ApiCombatOutcome::VT_SWINGS, swings, 0);
+  }
+  #[inline]
+  pub fn add_casts(&mut self, casts: u16) {
+    self.fbb_.push_slot::<u16>(ApiCombatOutcome::VT_CASTS, casts, 0);
+  }
+  #[inline]
+  pub fn add_damage_taken(&mut self, damage_taken: u16) {
+    self.fbb_.push_slot::<u16>(ApiCombatOutcome::VT_DAMAGE_TAKEN, damage_taken, 0);
+  }
+  #[inline]
+  pub fn add_food(&mut self, food: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_FOOD, food, 0);
+  }
+  #[inline]
+  pub fn add_prayer_doses(&mut self, prayer_doses: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_PRAYER_DOSES, prayer_doses, 0);
+  }
+  #[inline]
+  pub fn add_boost_doses(&mut self, boost_doses: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_BOOST_DOSES, boost_doses, 0);
+  }
+  #[inline]
+  pub fn add_antifire_doses(&mut self, antifire_doses: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_ANTIFIRE_DOSES, antifire_doses, 0);
+  }
+  #[inline]
+  pub fn add_protect_switches(&mut self, protect_switches: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_PROTECT_SWITCHES, protect_switches, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiCombatOutcomeBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ApiCombatOutcomeBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ApiCombatOutcome<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ApiCombatOutcome<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ApiCombatOutcome");
+      ds.field("request_id", &self.request_id());
+      ds.field("end", &self.end());
+      ds.field("reason", &self.reason());
+      ds.field("report_end", &self.report_end());
+      ds.field("npc_type", &self.npc_type());
+      ds.field("ticks", &self.ticks());
+      ds.field("swings", &self.swings());
+      ds.field("casts", &self.casts());
+      ds.field("damage_taken", &self.damage_taken());
+      ds.field("food", &self.food());
+      ds.field("prayer_doses", &self.prayer_doses());
+      ds.field("boost_doses", &self.boost_doses());
+      ds.field("antifire_doses", &self.antifire_doses());
+      ds.field("protect_switches", &self.protect_switches());
+      ds.finish()
+  }
+}
 pub enum ProgressFlagRowOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -5359,6 +5676,8 @@ impl<'a> Snapshot<'a> {
   pub const VT_CHAT_PAGE_FINGERPRINT: ::flatbuffers::VOffsetT = 282;
   pub const VT_SIDE_MODAL_ID: ::flatbuffers::VOffsetT = 284;
   pub const VT_LOCAL_PLAYER_MOTION: ::flatbuffers::VOffsetT = 286;
+  pub const VT_API_COMBAT: ::flatbuffers::VOffsetT = 288;
+  pub const VT_API_COMBAT_OUTCOME: ::flatbuffers::VOffsetT = 290;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5401,6 +5720,8 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.api_combat_outcome { builder.add_api_combat_outcome(x); }
+    if let Some(x) = args.api_combat { builder.add_api_combat(x); }
     builder.add_side_modal_id(args.side_modal_id);
     if let Some(x) = args.projectiles { builder.add_projectiles(x); }
     if let Some(x) = args.api_progress { builder.add_api_progress(x); }
@@ -6511,6 +6832,20 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u8>(Snapshot::VT_LOCAL_PLAYER_MOTION, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn api_combat(&self) -> Option<ApiGather<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiGather>>(Snapshot::VT_API_COMBAT, None)}
+  }
+  #[inline]
+  pub fn api_combat_outcome(&self) -> Option<ApiCombatOutcome<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiCombatOutcome>>(Snapshot::VT_API_COMBAT_OUTCOME, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6661,6 +6996,8 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<u64>("chat_page_fingerprint", Self::VT_CHAT_PAGE_FINGERPRINT, false)?
      .visit_field::<i32>("side_modal_id", Self::VT_SIDE_MODAL_ID, false)?
      .visit_field::<u8>("local_player_motion", Self::VT_LOCAL_PLAYER_MOTION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ApiGather>>("api_combat", Self::VT_API_COMBAT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ApiCombatOutcome>>("api_combat_outcome", Self::VT_API_COMBAT_OUTCOME, false)?
      .finish();
     Ok(())
   }
@@ -6808,6 +7145,8 @@ pub struct SnapshotArgs<'a> {
     pub chat_page_fingerprint: u64,
     pub side_modal_id: i32,
     pub local_player_motion: u8,
+    pub api_combat: Option<::flatbuffers::WIPOffset<ApiGather<'a>>>,
+    pub api_combat_outcome: Option<::flatbuffers::WIPOffset<ApiCombatOutcome<'a>>>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6955,6 +7294,8 @@ impl<'a> Default for SnapshotArgs<'a> {
       chat_page_fingerprint: 0,
       side_modal_id: -1,
       local_player_motion: 0,
+      api_combat: None,
+      api_combat_outcome: None,
     }
   }
 }
@@ -7533,6 +7874,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u8>(Snapshot::VT_LOCAL_PLAYER_MOTION, local_player_motion, 0);
   }
   #[inline]
+  pub fn add_api_combat(&mut self, api_combat: ::flatbuffers::WIPOffset<ApiGather<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiGather>>(Snapshot::VT_API_COMBAT, api_combat);
+  }
+  #[inline]
+  pub fn add_api_combat_outcome(&mut self, api_combat_outcome: ::flatbuffers::WIPOffset<ApiCombatOutcome<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiCombatOutcome>>(Snapshot::VT_API_COMBAT_OUTCOME, api_combat_outcome);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7692,6 +8041,8 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("chat_page_fingerprint", &self.chat_page_fingerprint());
       ds.field("side_modal_id", &self.side_modal_id());
       ds.field("local_player_motion", &self.local_player_motion());
+      ds.field("api_combat", &self.api_combat());
+      ds.field("api_combat_outcome", &self.api_combat_outcome());
       ds.finish()
   }
 }
@@ -8357,6 +8708,425 @@ impl ::core::fmt::Debug for AvoidRect<'_> {
       ds.finish()
   }
 }
+pub enum CombatFightOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct CombatFight<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for CombatFight<'a> {
+  type Inner = CombatFight<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> CombatFight<'a> {
+  pub const VT_TARGET: ::flatbuffers::VOffsetT = 4;
+  pub const VT_NPC_NAMES: ::flatbuffers::VOffsetT = 6;
+  pub const VT_NPC_IDS: ::flatbuffers::VOffsetT = 8;
+  pub const VT_ATTACKERS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_PICK: ::flatbuffers::VOffsetT = 12;
+  pub const VT_NOT_TARGETING_OTHERS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_AREA: ::flatbuffers::VOffsetT = 16;
+  pub const VT_RADIUS: ::flatbuffers::VOffsetT = 18;
+  pub const VT_LOST_RADIUS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_STYLE: ::flatbuffers::VOffsetT = 22;
+  pub const VT_MELEE_MODE: ::flatbuffers::VOffsetT = 24;
+  pub const VT_RANGED_MODE: ::flatbuffers::VOffsetT = 26;
+  pub const VT_SPELLS: ::flatbuffers::VOffsetT = 28;
+  pub const VT_HAS_SPELLS: ::flatbuffers::VOffsetT = 30;
+  pub const VT_FALLBACK_SPELLS: ::flatbuffers::VOffsetT = 32;
+  pub const VT_PRAYER: ::flatbuffers::VOffsetT = 34;
+  pub const VT_FOOD: ::flatbuffers::VOffsetT = 36;
+  pub const VT_POTIONS: ::flatbuffers::VOffsetT = 38;
+  pub const VT_RETALIATE: ::flatbuffers::VOffsetT = 40;
+  pub const VT_BUDGET_TICKS: ::flatbuffers::VOffsetT = 42;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    CombatFight { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args CombatFightArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<CombatFight<'bldr>> {
+    let mut builder = CombatFightBuilder::new(_fbb);
+    if let Some(x) = args.spells { builder.add_spells(x); }
+    if let Some(x) = args.area { builder.add_area(x); }
+    if let Some(x) = args.npc_ids { builder.add_npc_ids(x); }
+    if let Some(x) = args.npc_names { builder.add_npc_names(x); }
+    builder.add_budget_ticks(args.budget_ticks);
+    builder.add_retaliate(args.retaliate);
+    builder.add_potions(args.potions);
+    builder.add_food(args.food);
+    builder.add_prayer(args.prayer);
+    builder.add_fallback_spells(args.fallback_spells);
+    builder.add_has_spells(args.has_spells);
+    builder.add_ranged_mode(args.ranged_mode);
+    builder.add_melee_mode(args.melee_mode);
+    builder.add_style(args.style);
+    builder.add_lost_radius(args.lost_radius);
+    builder.add_radius(args.radius);
+    builder.add_not_targeting_others(args.not_targeting_others);
+    builder.add_pick(args.pick);
+    builder.add_attackers(args.attackers);
+    builder.add_target(args.target);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn target(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_TARGET, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn npc_names(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(CombatFight::VT_NPC_NAMES, None)}
+  }
+  #[inline]
+  pub fn npc_ids(&self) -> Option<::flatbuffers::Vector<'a, i32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, i32>>>(CombatFight::VT_NPC_IDS, None)}
+  }
+  #[inline]
+  pub fn attackers(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_ATTACKERS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn pick(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_PICK, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn not_targeting_others(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_NOT_TARGETING_OTHERS, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn area(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AvoidRect<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AvoidRect>>>>(CombatFight::VT_AREA, None)}
+  }
+  #[inline]
+  pub fn radius(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_RADIUS, Some(12)).unwrap()}
+  }
+  #[inline]
+  pub fn lost_radius(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_LOST_RADIUS, Some(20)).unwrap()}
+  }
+  #[inline]
+  pub fn style(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_STYLE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn melee_mode(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_MELEE_MODE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn ranged_mode(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(CombatFight::VT_RANGED_MODE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn spells(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(CombatFight::VT_SPELLS, None)}
+  }
+  #[inline]
+  pub fn has_spells(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_HAS_SPELLS, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn fallback_spells(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_FALLBACK_SPELLS, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn prayer(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_PRAYER, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn food(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_FOOD, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn potions(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_POTIONS, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn retaliate(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_RETALIATE, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn budget_ticks(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(CombatFight::VT_BUDGET_TICKS, Some(1500)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for CombatFight<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u8>("target", Self::VT_TARGET, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("npc_names", Self::VT_NPC_NAMES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, i32>>>("npc_ids", Self::VT_NPC_IDS, false)?
+     .visit_field::<u8>("attackers", Self::VT_ATTACKERS, false)?
+     .visit_field::<u8>("pick", Self::VT_PICK, false)?
+     .visit_field::<bool>("not_targeting_others", Self::VT_NOT_TARGETING_OTHERS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<AvoidRect>>>>("area", Self::VT_AREA, false)?
+     .visit_field::<u8>("radius", Self::VT_RADIUS, false)?
+     .visit_field::<u8>("lost_radius", Self::VT_LOST_RADIUS, false)?
+     .visit_field::<u8>("style", Self::VT_STYLE, false)?
+     .visit_field::<u8>("melee_mode", Self::VT_MELEE_MODE, false)?
+     .visit_field::<u8>("ranged_mode", Self::VT_RANGED_MODE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("spells", Self::VT_SPELLS, false)?
+     .visit_field::<bool>("has_spells", Self::VT_HAS_SPELLS, false)?
+     .visit_field::<bool>("fallback_spells", Self::VT_FALLBACK_SPELLS, false)?
+     .visit_field::<bool>("prayer", Self::VT_PRAYER, false)?
+     .visit_field::<bool>("food", Self::VT_FOOD, false)?
+     .visit_field::<bool>("potions", Self::VT_POTIONS, false)?
+     .visit_field::<bool>("retaliate", Self::VT_RETALIATE, false)?
+     .visit_field::<u16>("budget_ticks", Self::VT_BUDGET_TICKS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct CombatFightArgs<'a> {
+    pub target: u8,
+    pub npc_names: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub npc_ids: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, i32>>>,
+    pub attackers: u8,
+    pub pick: u8,
+    pub not_targeting_others: bool,
+    pub area: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AvoidRect<'a>>>>>,
+    pub radius: u8,
+    pub lost_radius: u8,
+    pub style: u8,
+    pub melee_mode: u8,
+    pub ranged_mode: u8,
+    pub spells: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub has_spells: bool,
+    pub fallback_spells: bool,
+    pub prayer: bool,
+    pub food: bool,
+    pub potions: bool,
+    pub retaliate: bool,
+    pub budget_ticks: u16,
+}
+impl<'a> Default for CombatFightArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    CombatFightArgs {
+      target: 0,
+      npc_names: None,
+      npc_ids: None,
+      attackers: 0,
+      pick: 0,
+      not_targeting_others: true,
+      area: None,
+      radius: 12,
+      lost_radius: 20,
+      style: 0,
+      melee_mode: 0,
+      ranged_mode: 0,
+      spells: None,
+      has_spells: false,
+      fallback_spells: false,
+      prayer: true,
+      food: true,
+      potions: true,
+      retaliate: true,
+      budget_ticks: 1500,
+    }
+  }
+}
+
+pub struct CombatFightBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CombatFightBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_target(&mut self, target: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_TARGET, target, 0);
+  }
+  #[inline]
+  pub fn add_npc_names(&mut self, npc_names: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CombatFight::VT_NPC_NAMES, npc_names);
+  }
+  #[inline]
+  pub fn add_npc_ids(&mut self, npc_ids: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , i32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CombatFight::VT_NPC_IDS, npc_ids);
+  }
+  #[inline]
+  pub fn add_attackers(&mut self, attackers: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_ATTACKERS, attackers, 0);
+  }
+  #[inline]
+  pub fn add_pick(&mut self, pick: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_PICK, pick, 0);
+  }
+  #[inline]
+  pub fn add_not_targeting_others(&mut self, not_targeting_others: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_NOT_TARGETING_OTHERS, not_targeting_others, true);
+  }
+  #[inline]
+  pub fn add_area(&mut self, area: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<AvoidRect<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CombatFight::VT_AREA, area);
+  }
+  #[inline]
+  pub fn add_radius(&mut self, radius: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_RADIUS, radius, 12);
+  }
+  #[inline]
+  pub fn add_lost_radius(&mut self, lost_radius: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_LOST_RADIUS, lost_radius, 20);
+  }
+  #[inline]
+  pub fn add_style(&mut self, style: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_STYLE, style, 0);
+  }
+  #[inline]
+  pub fn add_melee_mode(&mut self, melee_mode: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_MELEE_MODE, melee_mode, 0);
+  }
+  #[inline]
+  pub fn add_ranged_mode(&mut self, ranged_mode: u8) {
+    self.fbb_.push_slot::<u8>(CombatFight::VT_RANGED_MODE, ranged_mode, 0);
+  }
+  #[inline]
+  pub fn add_spells(&mut self, spells: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CombatFight::VT_SPELLS, spells);
+  }
+  #[inline]
+  pub fn add_has_spells(&mut self, has_spells: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_HAS_SPELLS, has_spells, false);
+  }
+  #[inline]
+  pub fn add_fallback_spells(&mut self, fallback_spells: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_FALLBACK_SPELLS, fallback_spells, false);
+  }
+  #[inline]
+  pub fn add_prayer(&mut self, prayer: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_PRAYER, prayer, true);
+  }
+  #[inline]
+  pub fn add_food(&mut self, food: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_FOOD, food, true);
+  }
+  #[inline]
+  pub fn add_potions(&mut self, potions: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_POTIONS, potions, true);
+  }
+  #[inline]
+  pub fn add_retaliate(&mut self, retaliate: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_RETALIATE, retaliate, true);
+  }
+  #[inline]
+  pub fn add_budget_ticks(&mut self, budget_ticks: u16) {
+    self.fbb_.push_slot::<u16>(CombatFight::VT_BUDGET_TICKS, budget_ticks, 1500);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CombatFightBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    CombatFightBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<CombatFight<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for CombatFight<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("CombatFight");
+      ds.field("target", &self.target());
+      ds.field("npc_names", &self.npc_names());
+      ds.field("npc_ids", &self.npc_ids());
+      ds.field("attackers", &self.attackers());
+      ds.field("pick", &self.pick());
+      ds.field("not_targeting_others", &self.not_targeting_others());
+      ds.field("area", &self.area());
+      ds.field("radius", &self.radius());
+      ds.field("lost_radius", &self.lost_radius());
+      ds.field("style", &self.style());
+      ds.field("melee_mode", &self.melee_mode());
+      ds.field("ranged_mode", &self.ranged_mode());
+      ds.field("spells", &self.spells());
+      ds.field("has_spells", &self.has_spells());
+      ds.field("fallback_spells", &self.fallback_spells());
+      ds.field("prayer", &self.prayer());
+      ds.field("food", &self.food());
+      ds.field("potions", &self.potions());
+      ds.field("retaliate", &self.retaliate());
+      ds.field("budget_ticks", &self.budget_ticks());
+      ds.finish()
+  }
+}
 pub enum InteractOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -8415,6 +9185,7 @@ impl<'a> Interact<'a> {
   pub const VT_RUN_ENERGY_MIN: ::flatbuffers::VOffsetT = 82;
   pub const VT_SETTINGS: ::flatbuffers::VOffsetT = 84;
   pub const VT_CROSS: ::flatbuffers::VOffsetT = 86;
+  pub const VT_COMBAT: ::flatbuffers::VOffsetT = 88;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -8435,6 +9206,7 @@ impl<'a> Interact<'a> {
     if let Some(x) = args.xf { builder.add_xf(x); }
     builder.add_request_id(args.request_id);
     if let Some(x) = args.bank_generation { builder.add_bank_generation(x); }
+    if let Some(x) = args.combat { builder.add_combat(x); }
     if let Some(x) = args.cross { builder.add_cross(x); }
     if let Some(x) = args.settings { builder.add_settings(x); }
     builder.add_run_energy_min(args.run_energy_min);
@@ -8766,6 +9538,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(Interact::VT_CROSS, None)}
   }
+  #[inline]
+  pub fn combat(&self) -> Option<CombatFight<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CombatFight>>(Interact::VT_COMBAT, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -8816,6 +9595,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<i32>("run_energy_min", Self::VT_RUN_ENERGY_MIN, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SettingRow>>>>("settings", Self::VT_SETTINGS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("cross", Self::VT_CROSS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
      .finish();
     Ok(())
   }
@@ -8863,6 +9643,7 @@ pub struct InteractArgs<'a> {
     pub run_energy_min: i32,
     pub settings: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>>>,
     pub cross: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -8910,6 +9691,7 @@ impl<'a> Default for InteractArgs<'a> {
       run_energy_min: 0,
       settings: None,
       cross: None,
+      combat: None,
     }
   }
 }
@@ -9088,6 +9870,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Interact::VT_CROSS, cross);
   }
   #[inline]
+  pub fn add_combat(&mut self, combat: ::flatbuffers::WIPOffset<CombatFight<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CombatFight>>(Interact::VT_COMBAT, combat);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -9147,6 +9933,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("run_energy_min", &self.run_energy_min());
       ds.field("settings", &self.settings());
       ds.field("cross", &self.cross());
+      ds.field("combat", &self.combat());
       ds.finish()
   }
 }

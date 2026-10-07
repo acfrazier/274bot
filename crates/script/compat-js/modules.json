@@ -12,6 +12,10 @@
     "shim": "tile.js"
   },
   {
+    "module": "geometry/Area.js",
+    "shim": "area.js"
+  },
+  {
     "module": "api/query/Query.js",
     "shim": "query.js"
   },
