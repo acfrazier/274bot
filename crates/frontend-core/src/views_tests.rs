@@ -796,6 +796,34 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
 }
 
 #[test]
+fn draft_path_status_is_projected_to_one_short_status_row() {
+    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+    use std::sync::Arc;
+
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([StatusField {
+            key: "draft_status",
+            label: "Path status",
+            value: StatusValue::Text(Arc::from("Untested draft Path")),
+        }]),
+        failure: None,
+    };
+    assert_eq!(
+        script_status_rows(&status).collect::<Vec<_>>(),
+        vec![("Path status", "Untested draft Path")]
+    );
+}
+
+#[test]
 fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot() {
     use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
     let assessment = Arc::new(RouteAssessment {
