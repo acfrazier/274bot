@@ -19548,7 +19548,6 @@ export default class T extends LoopingBot {{
                     request_id: 42,
                     bank_index: 0,
                     kind: 1,
-                    ..Default::default()
                 };
         }
         TickFixEvidence::Stat => {
