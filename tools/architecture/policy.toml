@@ -41,8 +41,8 @@ reason = "host owns native slot/tick APIs and consumes the read/act/settle surfa
 [[allow]]
 from = "host"
 to = "client"
-kinds = ["normal"]
-reason = "host drives one Client per slot; rendering stays in the client, not in host."
+kinds = ["normal", "dev"]
+reason = "host drives one Client per slot; rendering stays in the client, not in host. dev-only: real WebSocket test connector under client test-support for the idle WSS park regression; client test-support is never enabled in the normal graph."
 
 [[allow]]
 from = "host"
