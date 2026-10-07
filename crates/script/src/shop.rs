@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_progress_can_complete_after_shop_closes() {
+    fn snapshot_progress_cannot_complete_after_shop_closes() {
         let mut rt = shop(Kind::Buy, "Feather", 10, Phase::WaitBatch);
         rt.batch_baseline = 4;
         let mut clock = armed(SETTLE_MS);
@@ -1090,7 +1090,8 @@ mod tests {
         };
         assert_eq!(
             step(&mut rt, &mut clock, &closed),
-            (Some(json!(10)), vec![])
+            (Some(json!(0)), vec![]),
+            "a closed shop cannot authorize fresh transfer progress"
         );
     }
 
