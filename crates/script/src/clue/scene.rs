@@ -76,9 +76,8 @@ pub(super) fn posted_i32(row: &Value, key: &str) -> Option<i32> {
 }
 
 /// One packed-coord square: `SQUARE` tiles per map square on both axes.
-/// Same packed contract as the landed `nav::canlight::unpack_packed_coord`;
-/// the script crate does not take a `nav` runtime dependency, so the
-/// arithmetic lives here.
+/// Same packed contract as the landed `nav::canlight::unpack_packed_coord`,
+/// kept local so this hot path stays a const and needs no nav lookup.
 pub(super) const SQUARE: i32 = 64;
 
 /// Planes `0..=3`.
