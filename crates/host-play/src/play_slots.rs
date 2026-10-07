@@ -104,7 +104,8 @@ const THREAD_STACK: usize = 1024 * 1024;
 /// Per-slot nav latch key: the `(player gen, here)` pair the pump last
 /// stepped. Follow advances at most once per key. Hold or a dispatched
 /// exclusive batch suppresses that key's step but still advances the latch,
-/// so follow resumes on the next player key.
+/// so follow resumes on the next player key. An unarmed check does not consume
+/// the key: an asynchronously published route can still step on that key.
 pub(crate) type NavStepKey = (u64, Option<(i32, i32, i32)>);
 
 pub(crate) fn nav_step_due<F>(
@@ -120,8 +121,15 @@ where
     if *last == Some(key) {
         return false;
     }
+    if hold || exclusive {
+        *last = Some(key);
+        return false;
+    }
+    if key.1.is_none() || !route_armed() {
+        return false;
+    }
     *last = Some(key);
-    key.1.is_some() && !hold && !exclusive && route_armed()
+    true
 }
 /// Retire one failed lifetime's script state without replaying its poisoned
 /// mutex on the UI thread. `stop` is still attempted to tear down a usable
