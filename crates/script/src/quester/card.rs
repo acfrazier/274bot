@@ -1,7 +1,7 @@
 //! Compiled card `Quester`: Start snapshots the shared Path registry.
 #[cfg(test)]
 use super::compile::INDEX_JSON;
-use super::queue::{Queue, QueueSettings};
+use super::queue::{Queue, QueueSettings, ReleasePathStatus};
 use super::registry::{self, BUNDLED_INDEX};
 use super::runner::QueuedQuester;
 use crate::native::{
@@ -36,6 +36,8 @@ struct QuesterSettings {
     #[serde(default)]
     skip: Vec<String>,
     #[serde(default)]
+    include_draft_guides: bool,
+    #[serde(default)]
     partner_account: Option<String>,
     #[serde(default)]
     gang: Option<String>,
@@ -63,7 +65,11 @@ pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
     Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
         super::pair::PairQuest::from_path(&entry.id).is_some()
             && !settings.skip.contains(&entry.id)
-            && (settings.quests.is_empty() || settings.quests.contains(&entry.id))
+            && (settings.quests.contains(&entry.id)
+                || (settings.quests.is_empty()
+                    && (entry.status != Some(ReleasePathStatus::Draft)
+                        || settings.include_draft_guides
+                        || settings.order_override.contains(&entry.id))))
     }))
 }
 
@@ -86,13 +92,21 @@ fn settings_schema() -> &'static [SettingDef] {
                 "quests",
                 "[]",
                 "Quests",
-                "Empty selects all released quests.",
+                "Empty selects all released quests except drafts unless Include draft guides when no quests are picked is enabled.",
+            ),
+            setting(
+                "include_draft_guides",
+                "boolean",
+                "false",
+                "Include draft guides when no quests are picked",
+                "Include all draft Paths in the empty-selection queue. Drafts listed in Order override or explicitly selected in Quests run even when this is off.",
+                &[],
             ),
             path_setting(
                 "order_override",
                 "[]",
                 "Order override",
-                "Prioritize these selected quest ids; remaining quests retain release order.",
+                "Prioritize selected quest ids; with an empty quest selection, listing a draft here includes it.",
             ),
             path_setting("skip", "[]", "Skip", "Do not run these released quest ids."),
             setting(
@@ -315,6 +329,7 @@ fn prepare(
     };
     let queue_settings = QueueSettings {
         quests: settings.quests,
+        include_draft_guides: settings.include_draft_guides,
         order_override: settings.order_override,
         skip: settings.skip,
         partner_account: settings.partner_account.and_then(|account| {
@@ -463,6 +478,7 @@ mod tests {
             ids,
             [
                 "quests",
+                "include_draft_guides",
                 "order_override",
                 "skip",
                 "partner_account",
@@ -472,7 +488,7 @@ mod tests {
                 "allow_teleports",
                 "allow_wilderness",
                 "allow_danger_zones",
-            ]
+            ],
         );
         assert_eq!(
             CARD.per_account_settings,
@@ -480,6 +496,14 @@ mod tests {
         );
         let paths = released_setting_paths();
         assert!(!paths.is_empty());
+        for id in ["druid", "fluffs", "junglepotion", "seaslug", "totem"] {
+            assert!(
+                paths
+                    .iter()
+                    .any(|(path, label)| path.as_str() == id && label.ends_with("[draft]")),
+                "{id} should be visibly marked as a draft"
+            );
+        }
         let quests = settings_schema()
             .iter()
             .find(|setting| setting.id == "quests")
@@ -540,6 +564,30 @@ mod tests {
             "obsolete single-quest setting must be rejected"
         );
     }
+    #[test]
+    fn include_draft_guides_defaults_off_and_roundtrips_with_card_settings() {
+        let definition = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "include_draft_guides")
+            .unwrap();
+        assert_eq!(definition.ty, "boolean");
+        assert_eq!(definition.default.as_deref(), Some("false"));
+        assert_eq!(
+            definition.label.as_deref(),
+            Some("Include draft guides when no quests are picked")
+        );
+
+        let defaults = decode_settings(&SettingsBag::new()).unwrap();
+        assert!(!defaults.include_draft_guides);
+
+        let mut bag = SettingsBag::new();
+        bag.insert("include_draft_guides".into(), serde_json::json!(true));
+        let persisted: SettingsBag =
+            serde_json::from_value(serde_json::to_value(&bag).unwrap()).unwrap();
+        assert_eq!(persisted, bag);
+        assert!(decode_settings(&persisted).unwrap().include_draft_guides);
+    }
+
     #[test]
     fn max_deaths_defaults_to_two_and_matches_the_gatherer_bounds() {
         let empty = SettingsBag::new();
