@@ -983,6 +983,13 @@ pub fn default_pack_path() -> PathBuf {
     }
 }
 
+/// A client cache directory for tests that holds no jag files on any
+/// machine: this crate's own source tree. `/tmp` is not one; a host may keep
+/// a client cache there (the Windows test host has one in `C:\tmp`), and a
+/// synthetic client would then load its interfaces and configs.
+#[cfg(test)]
+pub(crate) const NO_CACHE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+
 #[cfg(test)]
 #[path = "scenario_tests.rs"]
 mod tests;

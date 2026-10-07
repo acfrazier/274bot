@@ -356,10 +356,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         "js-scripts.json must list File cards only, not catalog paths"
     );
     assert!(
-        entries[0]["path"]
-            .as_str()
-            .unwrap()
-            .contains("local/BoneBurier.ts"),
+        Path::new(entries[0]["path"].as_str().unwrap()).ends_with("local/BoneBurier.ts"),
         "persisted path is the operator file copy"
     );
 

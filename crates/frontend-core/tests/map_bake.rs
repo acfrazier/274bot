@@ -335,6 +335,25 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
     assert_eq!(producer.image_runs(), 1);
 }
 
+/// Sets a directory's modification time. Windows opens a directory handle
+/// only with backup semantics, and changing its times needs attribute-write
+/// access, which a plain `File::open` asks for on neither count.
+fn set_dir_modified(dir: &Path, time: std::time::SystemTime) {
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    #[cfg(not(windows))]
+    options.read(true);
+    options.open(dir).unwrap().set_modified(time).unwrap();
+}
+
 #[test]
 fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
     let scratch = Scratch::new("over-cap");
@@ -345,10 +364,10 @@ fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
         .unwrap();
     // The admitted terrain is the least recently used entry, and a newer
     // unrelated entry puts the cache over its cap (a sparse file: no disk).
-    std::fs::File::open(&terrain)
-        .unwrap()
-        .set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(3600))
-        .unwrap();
+    set_dir_modified(
+        &terrain,
+        std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(3600),
+    );
     let unrelated = terrain.parent().unwrap().join("unrelated-older-bake");
     std::fs::create_dir_all(&unrelated).unwrap();
     std::fs::File::create(unrelated.join("tile.png"))

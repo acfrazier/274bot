@@ -90,7 +90,7 @@ fn native_seed_client() -> Client {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -1616,7 +1616,7 @@ fn bank_fletcher_seed_close_uses_native_modal_path() {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -1927,7 +1927,7 @@ fn script_trade_companion_blocks_when_trade_open_without_accept_id() {
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -3399,7 +3399,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -9873,7 +9873,7 @@ fn pair_companion_client() -> client::client::Client {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -9961,7 +9961,7 @@ fn pair_companion_close_bank_uses_native_modal_path() {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
@@ -10216,7 +10216,7 @@ fn synthetic_client() -> Client {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: crate::NO_CACHE_DIR.into(),
         members: true,
         lowmem: false,
     });
