@@ -340,6 +340,10 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Catalog scripts in JavaScript or TypeScript get checked type declarations
   for the rs2b0t script API, so editors and the compiler catch wrong
   arguments.
+- Scripts can use `Area` from the rs2b0t API (rectangular and circular
+  areas with `contains` and `getRandomTile`), whether imported from
+  `@rs2b0t/api` or from the geometry module. It used to stop the script with
+  "not implemented".
 - Load scripts can start, watch and stop the Gatherer, and read quest
   progress (which quests exist, their current stage and whether they're
   done). A bundled example gathers and then checks progress.
