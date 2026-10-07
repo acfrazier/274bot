@@ -49,6 +49,7 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
                     }]),
                     strict: true,
                     chat_only: false,
+                    gap_ticks: None,
                 }),
                 &mut tick.cx,
             )
@@ -149,26 +150,27 @@ fn continuation_waits_boundedly_without_talking_or_walking() {
 }
 
 #[test]
-fn oddenstein_handin_mes_lines_rearm_the_shorter_closed_chat_gap() {
+fn oddenstein_handin_mes_lines_rearm_the_authored_closed_chat_gap() {
     // Sourced from content
     // (area_draynor/scripts/professor_oddenstein.rs2 hand-in): `if_close`
     // at T, then four `mes` lines at T, T+2, T+5, T+8 (`p_delay` 1/2/2/1)
     // before the next chat page opens at T+10, with no inventory, position
     // or animation change in between. Each `mes` line is a game chat
     // message (`type_ == 0`, `username == None`), observed here with a
-    // one-tick lag. This replaces the unsourced
-    // `dialogue_drains_a_page_after_six_closed_game_ticks` fixture, whose
-    // six-quiet-tick timings match no content case: the real hand-in needs
-    // ten ticks of gap, which only the chat-message re-arm covers. The gap
-    // must survive on those lines alone: it fails at both 8 and 4 ticks
-    // without a chat-message re-arm, and passes at 4 with one.
+    // one-tick lag. The authored four-tick gap is re-armed by those lines.
     let mut snapshot = ready();
     snapshot.seed_chat_modal(100, vec!["Have you found anything yet?".into()]);
     snapshot.seed_chat_options(vec![], 101);
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
-            .begin::<dialogue::Dialogue>(continuation(Default::default()), &mut tick.cx)
+            .begin::<dialogue::Dialogue>(
+                continuation(dialogue::DialogueOptions {
+                    gap_ticks: Some(4),
+                    ..Default::default()
+                }),
+                &mut tick.cx,
+            )
             .unwrap()
     });
     assert!(with_tick(&snapshot, &mut ledger, 2, |tick| tick
@@ -234,14 +236,15 @@ fn oddenstein_handin_mes_lines_rearm_the_shorter_closed_chat_gap() {
     );
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in [14, 15, 16, 17, 18] {
+    // On close at tick 14, the four-tick quiet gap completes at tick 18.
+    for game_tick in [14, 15, 16, 17] {
         assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
             .actions
             .poll(&handle, &mut tick.cx))
         .is_pending());
     }
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 19, |tick| tick
+        with_tick(&snapshot, &mut ledger, 18, |tick| tick
             .actions
             .poll(&handle, &mut tick.cx)),
         Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
@@ -249,10 +252,9 @@ fn oddenstein_handin_mes_lines_rearm_the_shorter_closed_chat_gap() {
 }
 
 #[test]
-fn plain_conversation_end_completes_four_quiet_ticks_after_close() {
-    // A quiet conversation end completes DIALOG_GAP_TICKS after the gap
-    // starts (tick 4 here, so tick 8). Before the fix it waited eight ticks
-    // and completed at tick 12 instead.
+fn plain_conversation_end_completes_one_quiet_tick_after_close() {
+    // The closed chat is observed at tick 3, and the default one-tick quiet
+    // gap completes at tick 4.
     let mut snapshot = ready();
     snapshot.seed_chat_modal(100, vec!["First page".into()]);
     snapshot.seed_chat_options(vec![], 101);
@@ -268,18 +270,115 @@ fn plain_conversation_end_completes_four_quiet_ticks_after_close() {
     .is_pending());
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for game_tick in 3..8 {
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 4, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx)),
+        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn authored_gap_waits_for_harolds_reopened_page() {
+    // Harold Blurberry's death-guard equipment-room script
+    // (`death_guard_equiproom.rs2:289-297`) closes chat before ten closed
+    // ticks of delay and then opens another page without a re-arm signal.
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(100, vec!["Continue?".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<dialogue::Dialogue>(
+                continuation(dialogue::DialogueOptions {
+                    gap_ticks: Some(10),
+                    ..Default::default()
+                }),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
+    for game_tick in 4..=12 {
         assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
             .actions
             .poll(&handle, &mut tick.cx))
         .is_pending());
     }
+    snapshot.seed_chat_modal(100, vec!["The next page.".into()]);
+    snapshot.seed_chat_options(vec![], 101);
+    assert!(with_tick(&snapshot, &mut ledger, 13, |tick| tick
+        .actions
+        .poll(&handle, &mut tick.cx))
+    .is_pending());
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 8, |tick| tick
-            .actions
-            .poll(&handle, &mut tick.cx)),
-        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
     ));
+}
+
+#[test]
+fn default_gap_would_end_harold_early() {
+    // Harold Blurberry's death-guard equipment-room script
+    // (`death_guard_equiproom.rs2:289-297`) closes chat before ten closed
+    // ticks of delay and then opens another page without a re-arm signal.
+    // The delayed page reopens at tick 13; both gaps complete before it.
+    for gap_ticks in [None, Some(4)] {
+        let mut snapshot = ready();
+        snapshot.seed_chat_modal(100, vec!["Continue?".into()]);
+        snapshot.seed_chat_options(vec![], 101);
+        let mut ledger = None;
+        let options = dialogue::DialogueOptions {
+            gap_ticks,
+            ..Default::default()
+        };
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<dialogue::Dialogue>(continuation(options), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending());
+        let completion_tick = if gap_ticks.is_none() { 4 } else { 7 };
+        for game_tick in 4..completion_tick {
+            assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx))
+            .is_pending());
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, completion_tick, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+        ));
+        assert!(completion_tick < 13, "Harold's page reopens at tick 13");
+    }
 }
 
 #[test]
@@ -817,14 +916,10 @@ fn acquisition_child_identity_is_borrowed_until_the_child_settles() {
     assert_eq!(run.child_step_id().unwrap().0.as_ref(), "policy-child");
     let identity = run.child_step_id().unwrap().0.as_ptr();
     assert_eq!(run.child_step_id().unwrap().0.as_ptr(), identity);
-    assert!(with_tick(&snapshot, &mut None, 1, |tick| {
-        with_step(tick, |cx| run.poll(cx))
-    })
-    .is_pending());
-    assert_eq!(run.child_step_id().unwrap().0.as_ptr(), identity);
-    assert!(run.in_flight_outcome().is_some());
+    // The child's Ready tick also evaluates its settle and ends the pass on
+    // the same snapshot (TICK-FIX #5, E-Q15).
     assert!(matches!(
-        with_tick(&snapshot, &mut None, 2, |tick| {
+        with_tick(&snapshot, &mut None, 1, |tick| {
             with_step(tick, |cx| run.poll(cx))
         }),
         Poll::Ready(Ok(_))
@@ -933,12 +1028,9 @@ fn use_on_omitted_dialogue_refuses_an_observed_menu_without_answering() {
             ],
             -1,
         );
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
+        // The adopted page is driven on its adopt tick (TICK-FIX #14).
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Err(ActionError::Failed(reason)))
@@ -1117,17 +1209,9 @@ fn use_on_until_drains_an_initial_continue_only_page_with_the_shared_driver() {
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())
         });
+        // The shared driver is begun and continues the page on the same poll
+        // (TICK-FIX #14), before any count round.
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
-        assert!(
-            ledger
-                .as_ref()
-                .is_none_or(|ledger| ledger.outbox.is_empty()),
-            "begin the shared dialogue driver before dispatching the next count round"
-        );
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
@@ -1135,11 +1219,12 @@ fn use_on_until_drains_an_initial_continue_only_page_with_the_shared_driver() {
             emitted(&ledger),
             InteractReq::ContinueDialog { .. }
         ));
-        accept_last(&mut ledger, 4, true);
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        accept_last(&mut ledger, 3, true);
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         let mut dispatched = false;
-        for tick in 4..=16 {
+        for tick in 3..=16 {
             assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             })
@@ -1466,13 +1551,11 @@ fn operation_omission_refuses_a_menu_after_acceptance_without_answering() {
                     }));
                     continue;
                 }
-                assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                })
-                .is_pending());
+                // Adopted and refused on the tick the menu is observed
+                // (TICK-FIX #14).
                 assert!(
                     matches!(
-                        with_tick(&snapshot, &mut ledger, 5, |tick| {
+                        with_tick(&snapshot, &mut ledger, 4, |tick| {
                             with_step(tick, |cx| run.poll(cx))
                         }),
                         Poll::Ready(Err(ActionError::Failed(reason)))
@@ -1958,11 +2041,9 @@ fn adopted_talk_menu_uses_only_authored_answers_without_talk_to() {
                 let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
                     with_step(tick, |cx| plan.begin(cx).unwrap())
                 });
-                assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-                    with_step(tick, |cx| run.poll(cx))
-                })
-                .is_pending());
-                let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+                // The adopted page is answered (or refused) on the tick the
+                // Dialogue begins (TICK-FIX #14).
+                let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
                     with_step(tick, |cx| run.poll(cx))
                 });
                 if configured {

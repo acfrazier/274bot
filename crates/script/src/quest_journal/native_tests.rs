@@ -111,21 +111,20 @@ fn journal_owns_click_capture_close_and_releases_after_observed_close() {
     with_tick(&snapshot, &mut ledger, 2, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
     });
+    // The capture tick also sends the CloseModal (TICK-FIX #6, E-Q6): the
+    // click spent tick 2's event, so tick 3's is free.
     with_tick(&snapshot, &mut ledger, 3, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
     });
+    assert!(matches!(
+        acknowledge(&mut ledger, 3),
+        HostEffect::Interaction(InteractReq::CloseModal)
+    ));
     with_tick(&snapshot, &mut ledger, 4, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
     });
-    assert!(matches!(
-        acknowledge(&mut ledger, 4),
-        HostEffect::Interaction(InteractReq::CloseModal)
-    ));
-    with_tick(&snapshot, &mut ledger, 5, |t| {
-        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
-    });
     snapshot.seed_main_modal(-1, vec![]);
-    let read = with_tick(&snapshot, &mut ledger, 6, |t| {
+    let read = with_tick(&snapshot, &mut ledger, 5, |t| {
         match t.actions.poll(&handle, &mut t.cx) {
             Poll::Ready(Ok(read)) => read,
             other => panic!("expected journal read, got {other:?}"),
@@ -133,7 +132,7 @@ fn journal_owns_click_capture_close_and_releases_after_observed_close() {
     });
     assert_eq!(read.lines.as_ref(), &[Arc::<str>::from("@str@First body")]);
     assert_eq!(read.acquired.tick, 3);
-    assert_eq!(read.closed.tick, 6);
+    assert_eq!(read.closed.tick, 5);
     assert!(ledger
         .as_mut()
         .unwrap()
@@ -241,11 +240,8 @@ fn journal_adopts_matching_open_page_without_click() {
             .unwrap()
     });
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    // The capture and its CloseModal share tick 2 (TICK-FIX #6, E-Q6).
     with_tick(&snapshot, &mut ledger, 2, |t| {
-        assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
-    });
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
-    with_tick(&snapshot, &mut ledger, 3, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending())
     });
     assert!(matches!(
@@ -257,9 +253,9 @@ fn journal_adopts_matching_open_page_without_click() {
             .map(|action| &action.effect),
         Some(HostEffect::Interaction(InteractReq::CloseModal))
     ));
-    acknowledge(&mut ledger, 3);
+    acknowledge(&mut ledger, 2);
     snapshot.seed_main_modal(-1, vec![]);
-    let read = with_tick(&snapshot, &mut ledger, 4, |t| {
+    let read = with_tick(&snapshot, &mut ledger, 3, |t| {
         match t.actions.poll(&handle, &mut t.cx) {
             Poll::Ready(Ok(read)) => read,
             other => panic!("expected journal read, got {other:?}"),
@@ -270,7 +266,7 @@ fn journal_adopts_matching_open_page_without_click() {
         &[Arc::<str>::from("@str@Already open")]
     );
     assert_eq!(read.acquired.tick, 2);
-    assert_eq!(read.closed.tick, 4);
+    assert_eq!(read.closed.tick, 3);
 }
 
 #[test]

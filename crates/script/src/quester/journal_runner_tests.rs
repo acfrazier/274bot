@@ -97,6 +97,22 @@ fn drive(
 ) -> ScriptFlow {
     with_tick(snapshot, ledger, tick, |t| script.tick(t).unwrap())
 }
+/// One tick whose interaction event is already spent before the runner
+/// polls, as by an earlier action on the same observed tick. A begun journal
+/// then waits for its click, and a capture waits for its close (TICK-FIX #6
+/// sends both on the begin/capture tick when the event is free), so these
+/// tests can still reach the Busy and lost-before-close paths.
+fn drive_spent(
+    script: &mut Quester,
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    tick: u64,
+) -> ScriptFlow {
+    with_tick(snapshot, ledger, tick, |t| {
+        assert!(t.cx.budget.event(false), "the tick's event was free");
+        script.tick(t).unwrap()
+    })
+}
 fn ack(ledger: &mut Ledger, tick: u64) -> HostEffect {
     let ledger = ledger.as_mut().unwrap();
     let action = ledger.outbox.remove(0);
@@ -187,6 +203,16 @@ impl StepRun for OwnedActionStep {
     }
 }
 
+/// A step that stays in flight: an instantly complete wait would now settle
+/// and reread on its begin tick (TICK-FIX #5/#6), leaving no live step.
+struct IdlePlan;
+
+impl super::super::compile::StepPlan for IdlePlan {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(OwnedActionStep { handle: None }))
+    }
+}
+
 fn random_event() -> DetectedRandom {
     DetectedRandom {
         kind: api::random::RandomKind::Dialog,
@@ -199,6 +225,7 @@ fn random_event() -> DetectedRandom {
 #[test]
 fn random_event_revokes_active_step_owner_and_rereads_progress() {
     let (mut script, mut snapshot) = fixture(true);
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(IdlePlan);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
     finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
@@ -802,7 +829,7 @@ fn unknown_skip_never_dispatches_and_wait_is_bounded() {
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
     assert!(
-        script.step.is_none(),
+        script.step.is_none() && script.begun.is_empty(),
         "unknown inventory must not start a wait/action"
     );
     for tick in 2..20 {
@@ -811,7 +838,7 @@ fn unknown_skip_never_dispatches_and_wait_is_bounded() {
     assert!(!script.parked);
     snapshot.seed_inventory(vec![], 28);
     drive(&mut script, &snapshot, &mut ledger, 20);
-    assert!(script.step.is_some());
+    assert!(!script.begun.is_empty(), "the known skip begins the step");
     let (mut script, snapshot) = fixture(false);
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].skip_if =
         Arc::new(InventoryUnknown);
@@ -820,6 +847,41 @@ fn unknown_skip_never_dispatches_and_wait_is_bounded() {
     }
     assert!(script.parked);
     assert_eq!(script.park_reason, "skip predicate evidence unavailable");
+}
+
+/// TICK-FIX #6 (E-Q5): a progress read clicks its quest row on the tick the
+/// journal is begun, not a tick later.
+#[test]
+fn journal_read_clicks_its_row_on_the_begin_tick() {
+    let (mut script, snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(script.journal_opened());
+    assert!(ledger.as_ref().is_some_and(|ledger| matches!(
+        ledger.outbox.first().map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::shim::InteractReq::IfButton { .. }
+        ))
+    )));
+}
+
+/// TICK-FIX #4/#6 (E-Q2/E-Q3): the read's close tick selects the advancing
+/// step, begins and polls it; it completes, and its reread clicks the quest
+/// row on that same tick.
+#[test]
+fn advancing_step_rereads_on_its_completion_tick() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(script.settling && script.needs_read);
+    assert!(ledger.as_ref().is_some_and(|ledger| matches!(
+        ledger.outbox.first().map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::shim::InteractReq::IfButton { .. }
+        ))
+    )));
 }
 
 #[test]
@@ -886,10 +948,12 @@ fn explicit_read_is_boundary_latched_and_colour_only_never_opens_journal() {
     drive(&mut script, &snapshot, &mut ledger, 1);
     script.read_journal().unwrap();
     assert!(script.read_requested && !script.needs_read);
-    drive(&mut script, &snapshot, &mut ledger, 2);
-    drive(&mut script, &snapshot, &mut ledger, 3);
-    assert!(script.read_requested);
-    drive(&mut script, &snapshot, &mut ledger, 4);
+    // The latched read waits for a step boundary; the always-ready wait
+    // reaches one within a tick or two now that a completed step settles on
+    // its own tick (TICK-FIX #5).
+    for tick in 2..=4 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
     assert!(!script.read_requested);
     assert!(!script.journal_opened());
     assert!(script.last_journal().is_none());
@@ -921,10 +985,10 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
     drive(&mut script, &snapshot, &mut ledger, 7);
     finish_read(&mut script, &mut snapshot, &mut ledger, 8, "next branch");
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
-    assert!(script.settling && script.step.is_none());
-    drive(&mut script, &snapshot, &mut ledger, 12);
+    // The fresh stage settles the root step on the read's close tick, and the
+    // terminal stage completes the run (TICK-FIX #5/#6).
     assert_eq!(
-        drive(&mut script, &snapshot, &mut ledger, 13),
+        drive(&mut script, &snapshot, &mut ledger, 12),
         ScriptFlow::Complete
     );
 }
@@ -979,7 +1043,9 @@ fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
 fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
-    drive(&mut script, &snapshot, &mut ledger, 1);
+    // The begin tick's event is spent, so the click waits for tick 2, where a
+    // foreign modal makes the Click phase Busy.
+    drive_spent(&mut script, &snapshot, &mut ledger, 1);
     snapshot.seed_main_modal(123, vec![]);
     drive(&mut script, &snapshot, &mut ledger, 2);
     assert!(!script.parked, "first in-flight Busy must not park");
@@ -996,7 +1062,7 @@ fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
     let mut ledger = None;
     for tick in 1..40 {
         snapshot.seed_main_modal(-1, vec![]);
-        drive(&mut script, &snapshot, &mut ledger, tick * 2 - 1);
+        drive_spent(&mut script, &snapshot, &mut ledger, tick * 2 - 1);
         snapshot.seed_main_modal(123, vec![]);
         drive(&mut script, &snapshot, &mut ledger, tick * 2);
         if script.parked {
@@ -1011,7 +1077,7 @@ fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
 fn repeated_busy_transactions_report_retry_limit_and_cause() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
-    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive_spent(&mut script, &snapshot, &mut ledger, 1);
 
     snapshot.seed_main_modal(123, vec![]);
     drive(&mut script, &snapshot, &mut ledger, 2);
@@ -1019,7 +1085,7 @@ fn repeated_busy_transactions_report_retry_limit_and_cause() {
     for tick in 3..=5 {
         drive(&mut script, &snapshot, &mut ledger, tick);
     }
-    drive(&mut script, &snapshot, &mut ledger, 6);
+    drive_spent(&mut script, &snapshot, &mut ledger, 6);
     assert_eq!(script.journal_attempts, 2);
 
     snapshot.seed_main_modal(123, vec![]);
@@ -1028,7 +1094,7 @@ fn repeated_busy_transactions_report_retry_limit_and_cause() {
     for tick in 8..=10 {
         drive(&mut script, &snapshot, &mut ledger, tick);
     }
-    drive(&mut script, &snapshot, &mut ledger, 11);
+    drive_spent(&mut script, &snapshot, &mut ledger, 11);
     assert_eq!(script.journal_attempts, 3);
 
     snapshot.seed_main_modal(123, vec![]);
@@ -1048,7 +1114,9 @@ fn ownership_lost_before_close_retries_without_closing_another_modal() {
     drive(&mut script, &snapshot, &mut ledger, 2);
     ack(&mut ledger, 2);
     journal(&mut snapshot, "seeded branch");
-    drive(&mut script, &snapshot, &mut ledger, 3);
+    // A spent capture tick leaves the close for the next poll, where the page
+    // is already gone (lost before close).
+    drive_spent(&mut script, &snapshot, &mut ledger, 3);
     snapshot.seed_main_modal(-1, vec![]);
     drive(&mut script, &snapshot, &mut ledger, 4);
     assert!(!script.parked);
@@ -1124,7 +1192,7 @@ fn transient_journal_retry_requires_continuously_closed_observed_ticks() {
     drive(&mut script, &snapshot, &mut ledger, 2);
     ack(&mut ledger, 2);
     journal(&mut snapshot, "seeded branch");
-    drive(&mut script, &snapshot, &mut ledger, 3);
+    drive_spent(&mut script, &snapshot, &mut ledger, 3);
     snapshot.seed_main_modal(-1, vec![]);
     drive(&mut script, &snapshot, &mut ledger, 4);
     for tick in [5, 5, 5] {
@@ -1155,8 +1223,14 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     let mut clicks = 0;
+    let mut captured = false;
     for tick in 1..80 {
-        drive(&mut script, &snapshot, &mut ledger, tick);
+        // Each capture tick is spent, so the page vanishes before the close.
+        if std::mem::take(&mut captured) {
+            drive_spent(&mut script, &snapshot, &mut ledger, tick);
+        } else {
+            drive(&mut script, &snapshot, &mut ledger, tick);
+        }
         if ledger
             .as_ref()
             .is_some_and(|ledger| !ledger.outbox.is_empty())
@@ -1170,6 +1244,7 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
             );
             clicks += 1;
             journal(&mut snapshot, "seeded branch");
+            captured = true;
         } else {
             snapshot.seed_main_modal(-1, vec![]);
         }
@@ -1213,7 +1288,7 @@ fn quiet_gate_wait_names_open_chat_when_it_parks() {
     drive(&mut script, &snapshot, &mut ledger, 2);
     ack(&mut ledger, 2);
     journal(&mut snapshot, "seeded branch");
-    drive(&mut script, &snapshot, &mut ledger, 3);
+    drive_spent(&mut script, &snapshot, &mut ledger, 3);
     snapshot.seed_main_modal(-1, vec![]);
     drive(&mut script, &snapshot, &mut ledger, 4);
     assert!(script.journal_retry_pending);
@@ -1417,17 +1492,28 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         snapshot.seed_inventory(held(output), 28);
-        // The handoff dialogue completes at tick 13 with the four-tick gap
-        // (tick 17 with the old eight-tick gap), so the drain ends there and
-        // every later drive shifts by the same four ticks. Relative timing
-        // is unchanged: post-dialogue drive, journal re-read, next-step
-        // assert.
-        for tick in 8..=13 {
+        // The handoff dialogue completes one quiet tick after the close, and
+        // the advancing step rereads on that same tick (TICK-FIX #6): drive
+        // until the journal's row click is out, then finish that read.
+        let mut tick = 8;
+        while !ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.first().is_some_and(|action| {
+                matches!(
+                    action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                )
+            })
+        }) {
+            assert!(tick < 20, "{step}: the handoff must reread progress");
             drive(&mut script, &snapshot, &mut ledger, tick);
+            tick += 1;
         }
-        drive(&mut script, &snapshot, &mut ledger, 14);
-        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 15, after);
-        drive(&mut script, &snapshot, &mut ledger, 19);
+        assert_eq!(
+            tick, 10,
+            "{step}: reread on the dialogue's completion tick 9"
+        );
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, tick, after);
+        drive(&mut script, &snapshot, &mut ledger, tick + 4);
         assert_eq!(
             script.current_step().unwrap().id.0.as_ref(),
             next,
@@ -2208,7 +2294,9 @@ fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot,
     });
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
         Arc::new(ProgressOutcomePlan { progress, stamp });
-    drive(&mut script, &snapshot, &mut ledger, 1);
+    // A spent tick begins the step without its same-tick poll (TICK-FIX #4),
+    // so the stamps below stay relative to a later poll tick.
+    drive_spent(&mut script, &snapshot, &mut ledger, 1);
     assert!(
         script.step.is_some(),
         "the runner must begin the authored step"
@@ -2231,7 +2319,9 @@ fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
         } else {
             2
         };
-        drive(&mut script, &snapshot, &mut ledger, poll_tick);
+        // Spent, so the completion stays in its settle window this tick
+        // instead of settling and handing over at once (TICK-FIX #5).
+        drive_spent(&mut script, &snapshot, &mut ledger, poll_tick);
         assert!(
             script.settling,
             "fresh progress correlated with its final outcome must settle: {stamp:?}, {:?}",
@@ -2495,8 +2585,9 @@ fn a_continue_page_that_keeps_reopening_parks_within_the_drain_window() {
     }
     assert!(script.parked);
     assert!(
-        (2..=30).contains(&continues),
-        "bounded by the 30 s window, not the 120-page driver cap: {continues}"
+        (2..=50).contains(&continues),
+        "bounded by the 30 s window (one Continue per observed page, so at most \
+         one per tick), not the 120-page driver cap: {continues}"
     );
     let message = script.blocked_failure().message;
     assert!(

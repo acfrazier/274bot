@@ -1940,12 +1940,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
     }
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
-    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(
-        effect,
-        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
-    ));
-    accept_trip_operation(&mut slot, &authority, request_id, now);
+    // The trip's own open started this session in Item mode (`bank.rs2:18-19`
+    // resets `%bankcert`), so the first withdraw needs no Item press
+    // (TICK-FIX #11).
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     assert!(matches!(
         effect,
@@ -2041,12 +2038,8 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     .unwrap();
     slot.configure_compiled(pending, slot.native_run().unwrap());
     slot.resume();
-    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(
-        effect,
-        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
-    ));
-    accept_trip_operation(&mut slot, &authority, request_id, now);
+    // The resumed trip is still in the session its own open started, which
+    // nothing switched to Note, so it presses no Item (TICK-FIX #11).
     // The latched stock-limited plan must finish after this one-cast edit.
     for rune in spell.runes.iter().skip(1) {
         let expected_withdrawal = rune.count

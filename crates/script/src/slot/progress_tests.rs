@@ -272,15 +272,14 @@ fn adopted_journal_closes_without_another_button() {
     show_journal(&mut snapshot, "Bring eggs: 7 eggs");
     journal_fixture(&mut slot, 5);
     drive(&mut slot, &snapshot, 1, false);
+    // The adopted page is captured and closed on the same tick (TICK-FIX #6).
     drive(&mut slot, &snapshot, 2, false);
-    assert!(!slot.has_native_actions());
-    drive(&mut slot, &snapshot, 3, false);
     assert!(matches!(
-        ack(&mut slot, 3),
+        ack(&mut slot, 2),
         HostEffect::Interaction(InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
-    drive(&mut slot, &snapshot, 4, false);
+    drive(&mut slot, &snapshot, 3, false);
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing adopted result");
     };

@@ -151,8 +151,10 @@
             "args": {
               "npc": "alrena",
               "anchor": { "tile": [2573, 3333, 0], "source": "289 maps/m40_52.jm2:7329; pack/npc.pack:alrena; scripts/quests/quest_elena/scripts/alrena.rs2:8-28" },
-              "leash": 8, "prefer": []
+              "leash": 8, "prefer": [],
+              "gap_ticks": 3
             },
+            "comment": "gap_ticks 3: alrena.rs2:17-26 closes the chat (if_close) then p_delay(2) before the intervening mes (3 engine ticks; mes re-arms before later dialogue).",
             "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:2"] } } },
             "settle": { "All": [
               { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "elena", "any": ["elena:2"] } } },

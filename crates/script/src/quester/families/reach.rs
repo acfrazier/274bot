@@ -27,6 +27,26 @@ fn door_wall_reachable(
     })
 }
 
+/// A door or gate on `tile` that still offers Open. An unobserved scene
+/// counts as shut.
+fn door_shut_at(cx: &ActionContext<'_>, tile: WorldTile) -> bool {
+    cx.snapshot().locs().is_none_or(|locs| {
+        locs.value.iter().any(|loc| {
+            loc.tile == tile
+                && loc.name.as_deref().is_some_and(|name| {
+                    let name = name.to_ascii_lowercase();
+                    name.contains("door") || name.contains("gate")
+                })
+                && !api::query::door_is_open(loc.actions.iter().flatten().map(String::as_str))
+                && loc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|op| op.eq_ignore_ascii_case("open"))
+        })
+    })
+}
+
 #[derive(Clone)]
 pub struct ReachArgs {
     pub kind: ReachKind,
@@ -68,8 +88,14 @@ pub enum ReachKind {
 enum Phase {
     Seek,
     Click,
-    WaitDoor,
-    WaitWalk { door: Option<(i32, WorldTile)> },
+    /// The Open click on this door tile went out; walk once it is no longer
+    /// shut, or at the `DOOR_WAIT_MS` timeout.
+    WaitDoor {
+        door: WorldTile,
+    },
+    WaitWalk {
+        door: Option<(i32, WorldTile)>,
+    },
 }
 
 pub struct Reach {
@@ -186,10 +212,15 @@ impl NativeMachine for Reach {
                 }
                 Poll::Ready(Ok(true))
             }
-            Phase::WaitDoor => {
-                if cx.active_now().as_millis() as u64 >= self.deadline_ms
-                    && self.walk_to_target(cx).is_err()
-                {
+            Phase::WaitDoor { door } => {
+                // The engine's `open_door` deletes the shut door and adds the
+                // open leaf (moving its collision) in the op's own execution
+                // (`content/scripts/doors/scripts/doors.rs2:6-20`): once the
+                // clicked tile no longer shows a shut door, walk. 5 s is only
+                // the timeout (TICK-FIX #8, C-REACH-WAITDOOR).
+                let through = !door_shut_at(cx, door)
+                    || cx.active_now().as_millis() as u64 >= self.deadline_ms;
+                if through && self.walk_to_target(cx).is_err() {
                     return Poll::Ready(Ok(false));
                 }
                 Poll::Pending
@@ -513,7 +544,7 @@ impl Reach {
             action: op,
             id: Some(id),
         })?;
-        self.phase = Phase::WaitDoor;
+        self.phase = Phase::WaitDoor { door: tile };
         self.deadline_ms = cx.active_now().as_millis() as u64 + DOOR_WAIT_MS;
         Ok(())
     }

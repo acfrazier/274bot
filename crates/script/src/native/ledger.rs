@@ -123,6 +123,11 @@ pub(crate) struct Ledger {
     pub batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    /// The open bank session (login run, snapshot session generation) known
+    /// to be in Item withdraw mode: a native machine opened it (the server
+    /// resets `%bankcert` on open) or pressed Item in it. It outlives one
+    /// machine so a later verb in the same session skips the press.
+    pub bank_item_session: Option<(RunKey, u64)>,
 }
 
 impl Default for Ledger {
@@ -143,6 +148,7 @@ impl Default for Ledger {
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
+            bank_item_session: None,
         }
     }
 }
@@ -216,6 +222,7 @@ impl Ledger {
         self.outbox.clear();
         self.assess_receipt = None;
         self.assess_request = None;
+        self.bank_item_session = None;
     }
 
     pub fn complete_assess_walk(&mut self, authority: &HostAuthority, receipt: AssessReceipt) {

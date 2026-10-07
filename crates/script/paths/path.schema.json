@@ -1854,6 +1854,16 @@
           "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.\nAdopted pages always require authored answers, even when this is false.",
           "default": false
         },
+        "gap_ticks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Quiet ticks after the chat closes before the conversation counts as\nover (default 1). Author it only where the NPC's script closes the chat\nand delays before its next page, citing the content lines: the client\nsees the same close at a script's end."
+        },
         "expect_combat": {
           "anyOf": [
             {
@@ -2169,6 +2179,16 @@
           "type": "boolean",
           "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
           "default": false
+        },
+        "gap_ticks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Quiet ticks after the chat closes before the conversation counts as\nover (default 1). Author it only where the NPC's script closes the chat\nand delays before its next page, citing the content lines: the client\nsees the same close at a script's end."
         }
       },
       "description": "Answer selection rules shared by talk and operation-started dialogues."
