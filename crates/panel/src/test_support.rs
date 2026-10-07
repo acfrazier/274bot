@@ -99,6 +99,45 @@ pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
     lock_unpoisoned(&crate::IMGUI_CTX_TEST_GUARD)
 }
 
+/// A headless device on this machine's adapter, `None` when there is none
+/// (the GPU tests then skip).
+pub(crate) fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+    headless_gpu_with_info().map(|(device, queue, _)| (device, queue))
+}
+
+/// [`headless_gpu`] plus the adapter it chose. Backends are tried in the
+/// panel's own order ([`crate::window::backend_attempts`]): on Windows
+/// Vulkan before D3D12, because enumerating D3D12 adapters can stall on a
+/// cold discrete-GPU driver on a hybrid laptop. Asking every backend at
+/// once hung the Windows test host's panel lane for hours there, and the
+/// stalled driver load held up unrelated tests in the same process.
+pub(crate) fn headless_gpu_with_info() -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
+    crate::window::backend_attempts()
+        .into_iter()
+        .find_map(|backends| {
+            let instance = crate::window::instance_for(backends);
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                }))
+                .ok()?;
+            let info = adapter.get_info();
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: Some("274 panel test"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::default(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::default(),
+                }))
+                .ok()?;
+            Some((device, queue, info))
+        })
+}
+
 /// An OS window frame for the M-003 fit glue. Size and position writes land
 /// the way a window manager applies them (outer = inner + chrome), and each
 /// kind of write is counted. `drag_to` / `user_resize` are the operator.

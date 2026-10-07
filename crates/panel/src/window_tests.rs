@@ -5,36 +5,15 @@ use super::work_area::{
     cocoa_visible_frame_to_physical, fit_frame_to_work_area, win32_work_rect_to_physical, WorkArea,
 };
 use super::*;
+use crate::test_support::headless_gpu;
 use crate::theme::PANEL_FONT_SIZE;
-
-/// Headless wgpu device/queue for the renderer-backed test. `None` when
-/// no adapter exists (headless CI) — the texture test then skips.
-fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("274 panel window test"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::default(),
-    }))
-    .ok()?;
-    Some((device, queue))
-}
 
 /// The `Gpu` texture-id manager must delegate register/update/unregister
 /// to the renderer's texture store (the surface `game_view` and later
 /// screenshot tasks rely on).
 #[test]
 fn gpu_texture_register_update_unregister_delegates_to_renderer_store() {
-    let Some((device, queue)) = headless_device() else {
+    let Some((device, queue)) = headless_gpu() else {
         return; // no adapter: nothing to delegate to
     };
     let _guard = crate::test_support::imgui_context_guard();
@@ -773,7 +752,7 @@ fn promoted_flax_shots() -> Mutex<ShotState> {
 /// overwrite the stale prefill instead of allocating.
 #[test]
 fn occluded_acquisition_captures_composed_frame_without_present() {
-    let Some((device, queue)) = headless_device() else {
+    let Some((device, queue)) = headless_gpu() else {
         return; // no adapter: no GPU path to assert
     };
     let _guard = crate::test_support::imgui_context_guard();
@@ -893,7 +872,7 @@ fn occluded_acquisition_captures_composed_frame_without_present() {
 /// would raise a validation error from the one-off allocation.
 #[test]
 fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
-    let Some((device, queue)) = headless_device() else {
+    let Some((device, queue)) = headless_gpu() else {
         return;
     };
     let _guard = crate::test_support::imgui_context_guard();
@@ -981,7 +960,7 @@ fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
 /// source draws into the acquired image directly, with no blit.
 #[test]
 fn visible_acquisition_captures_composed_frame_and_writes_the_image() {
-    let Some((device, queue)) = headless_device() else {
+    let Some((device, queue)) = headless_gpu() else {
         return;
     };
     let _guard = crate::test_support::imgui_context_guard();
