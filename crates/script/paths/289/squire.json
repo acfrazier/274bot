@@ -192,9 +192,10 @@
               }
             },
             "obj": "pot_flour",
-            "qty": 1,
-            "est_gp": 20
+            "qty": 3,
+            "est_gp": 60
           },
+          "comment": "Batch three to match the berry batch: each burnt-pie retry consumes one flour (dough.rs2:43-49 mixes 1 flour + 1 water, leaving an empty pot), and redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256). Wydin stocks exactly three flour (port_sarim.inv:113), so one visit fills the batch; held spares skip this step via has_item.",
           "skip_if": {
             "Any": [
               {
@@ -302,10 +303,10 @@
             },
             "radius": 12,
             "wait_if_missing": true,
-            "until": { "obj": "redberries", "qty": 1 },
+            "until": { "obj": "redberries", "qty": 3 },
             "settle_ms": 300000
           },
-          "comment": "Gobdip's source: three static redberry spawns that respawn on the default 100-tick timer, so each burnt-pie retry (redberry pie burns about half the time at Cooking 10, cooking_generic.dbrow:201-208) costs time instead of draining Wydin's one-stock shop (port_sarim.inv:118), which failed at once with 'shop lacks requested item'. Sources: content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:160-175.",
+          "comment": "Batch three for burnt-pie retries (Gobdip's source: three static spawns on the default 100-tick timer, m51_52.jm2:6256,6257,6260; not Wydin's one-stock shop, port_sarim.inv:118, which failed at once with 'shop lacks requested item'). Redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256 success), so one set per pass sends every burn back to Varrock SE. Three covers at least one success in three cooks about 88% of the time, and held spares skip the patch walk via has_item; 0.488^9 is about 0.16%, so first pass + 8 restarts still parks only the truly starved tail.",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
@@ -674,7 +675,7 @@
             "radius": 3,
             "settle_ms": 15000
           },
-          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the parent 'pie' step's goal (a held redberry_pie) is then still false, so the acquire restarts this recipe and 'empty-burnt-pie' runs first (at most 8 restarts, then the step parks).",
+          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the parent 'pie' step's goal (a held redberry_pie) is then still false, so the acquire restarts this recipe and 'empty-burnt-pie' runs first (at most 8 restarts, then the step parks). Rimmington stays the oven: the only lower-burn range is the Lumbridge cook-o-matic (successchance_cookomatic 108,462, about 55% at Cooking 10), but content turns the cook away before Cook's Assistant is complete (quest_cook.rs2 oplocu cooksquestrange), which this path cannot assume. Every other oven burns the same 98,452, so walking decides: Rimmington pairs range (2970,3209) with sink in one kitchen, sits about 44 tiles from Wydin's flour and 65 from Thurgo. Varrock palace (dish, sink, and oven together, near the patch) pays about 293 to Wydin and 353 to Thurgo per pie; Port Sarim's range/sink pair pays about 93 to Thurgo with unverified interiors.",
           "advances": false,
           "skip_if": {
             "Fact": {
