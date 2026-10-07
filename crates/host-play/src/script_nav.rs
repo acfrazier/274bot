@@ -291,6 +291,12 @@ pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey
     )
 }
 
+/// How a user lets a script walk cross the zones its refusal names. WalkTo
+/// carries its own one-walk hint (`walk_map/actions.rs`); compat scripts get
+/// the `crossZones` hint from [`compat_zone_no_route_line`].
+const SCRIPT_DANGER_HINT: &str =
+    "to allow it, set Danger routing to Always in Nav config, or allow danger zones for this script in Script prefs";
+
 pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
     let names = keys
         .iter()
@@ -1562,7 +1568,7 @@ fn spawn_route_worker(
                             .graph
                             .zones
                             .as_ref()
-                            .map(|table| blocked_zone_detail(table, keys))
+                            .map(|table| format!("{}; {SCRIPT_DANGER_HINT}", blocked_zone_detail(table, keys)))
                     })
                     .or_else(|| {
                         request
