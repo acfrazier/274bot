@@ -1093,7 +1093,7 @@ impl FollowRun {
         };
         let at = approach.at;
         let ready = if let Some(takeoff) = edge.takeoff {
-            here == takeoff && loc_transport_ready(snapshot, edge, here) == Some(true)
+            here == takeoff && loc_transport_ready(snapshot, edge, here) != Some(false)
         } else {
             loc_transport_ready(snapshot, edge, here)
                 .unwrap_or(here.level == at.level && cheb(here, at) <= 1)

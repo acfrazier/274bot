@@ -1,38 +1,35 @@
-//! Live: the Al Kharid border toll and the Shantay-pass edges — item-
-//! gated gate crossings on the baked nav pack. The pack must carry the
-//! two Al Kharid toll gates (`border_gate_toll_left`/`_right`, loc
-//! 2882/2883, at the m51_50 (4,27)/(4,28) placements = (3268,3227)/
-//! (3268,3228)) as Door edges with the 10-coin toll on `item_req`, and
-//! the Shantay henge doorway (loc 4031, m51_48 (38,44) = (3302,3116))
-//! as exactly **two** Door edges, one per `shantay_pass.rs2`
-//! `[oploc1,shantay_pass_henge_doorway]` branch — the gated hop into
-//! the desert (`at` the placement, `to` (3304,3115) — the
-//! `[queue,shantay_pass_enter]` landing — one Shantay pass on
-//! `item_req`) and the free desert exit (`at` (3302,3115) on the desert
-//! side, `to` (3303,3118) — the `coordz <= loc_coord`
-//! `p_telejump(movecoord(coord,0,0,3))` landing — no `item_req`). Only
-//! the gated hop carries the pass: the desert exit is **not** a plain
-//! walk, it is an `op_loc` interaction with the henge. If the pack
-//! predates the toll edges the test FAILS (exit 1) with a rebake hint.
+//! Pack and live checks for Al Kharid toll crossings and both Shantay henge
+//! branches on the rebaked 289 nav pack. Al Kharid's toll gates expose the
+//! 10-coin `consumed_req` and content-proven Prince Ali Rescue waiver.
+//! The Shantay doorway (loc 4031, m51_48 (38,44) = (3302,3116)) carries
+//! exactly two content-derived Door edges: the paid desert hop consumes one
+//! pass from `consumed_req`, while the free exit pins its takeoff to its
+//! `at` stand and lands at the same stand's +3z telejump destination. Neither
+//! branch is a plain walk; both interact with the henge.
 //!
-//! Run with the engine up and the rebaked nav pack at the standard path:
-//! `LIVE=1 cargo test -p e2e --test nav_toll -- --ignored --test-threads=1 --nocapture`
+//! Run on Engine A at the normal 600ms tick with the rebaked pack and isolated
+//! cache paths: `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<prefix> ENGINE_DIR=<engine>
+//! BOT_NAV_SNAPSHOT_ROOT=<evidence-cache> NAV_PACK=<rebaked-pack> isohome cargo
+//! test -p e2e --test nav_toll -- --ignored --test-threads=1 --nocapture`
 //!
-//! `nav_shantay_follow` is the live twin of the `script_nav_shantay`
-//! scenario: desert → pass without a pass in the inventory, then pass →
-//! desert with the pass given.
+//! `nav_shantay_follow` is the execute twin of `script_nav_shantay`: an exact
+//! WalkTo from Irena to the bank chest uses the free exit, then an exact
+//! WalkTo back to Irena uses the paid branch with a Shantay pass.
 
 mod common;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
-use common::{fail, live, mint_seed, options, profiles, wait_ingame};
-use host_play::run_with_io;
+use common::{fail, live, mint_seed, profiles, wait_ingame};
+use host_play::{run_with_template, ProfileOptions, SharedClientTemplate};
+use nav::router::{find_with, FindOptions, Leg};
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
-use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
+use nav::WorldState;
+use scenario::{default_pack_path, Proof, RunnerStatus, ScenarioRunner, StepKind};
 
 /// The left toll gate placement (m51_50 local (4,27) = (3268,3227)).
 const TOLL_LEFT: WorldTile = WorldTile {
@@ -60,33 +57,71 @@ const SHANTAY_TO: WorldTile = WorldTile {
     z: 3115,
     level: 0,
 };
-/// The free desert exit's stand (`at` one tile south of the placement).
+/// The free desert exit's stand, one tile south of the placement.
 const SHANTAY_DESERT_AT: WorldTile = WorldTile {
     x: 3302,
     z: 3115,
     level: 0,
 };
-/// The free desert exit's landing (the desert-side
-/// `p_telejump(movecoord(coord,0,0,3))` from (3303,3115)).
+/// The free desert exit's landing: the script's +3z telejump from its stand.
 const SHANTAY_DESERT_TO: WorldTile = WorldTile {
-    x: 3303,
+    x: 3302,
     z: 3118,
     level: 0,
 };
+const SHANTAY_DESERT_START: WorldTile = WorldTile {
+    x: 3302,
+    z: 3114,
+    level: 0,
+};
+const SHANTAY_BANK_CHEST: WorldTile = WorldTile {
+    x: 3308,
+    z: 3120,
+    level: 0,
+};
+
+const ENGINE_A_GAME_PORT: u16 = 44594;
+const ENGINE_A_HTTP_PORT: u16 = 1080;
+
+fn engine_a_template() -> Arc<SharedClientTemplate> {
+    let engine_dir = std::env::var_os("ENGINE_DIR")
+        .map(PathBuf::from)
+        .expect("set ENGINE_DIR to the Engine A root for live tests");
+    let unpack_dir = std::env::var_os("BOT_NAV_SNAPSHOT_ROOT")
+        .map(PathBuf::from)
+        .expect("set BOT_NAV_SNAPSHOT_ROOT to an evidence directory");
+    let nav_pack = std::env::var_os("NAV_PACK")
+        .map(PathBuf::from)
+        .expect("set NAV_PACK to the freshly baked 289 navigation pack");
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .expect("isohome must set an isolated HOME");
+    ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(ENGINE_A_GAME_PORT),
+        http_port: Some(ENGINE_A_HTTP_PORT),
+        engine_dir: Some(engine_dir.clone()),
+        cache_dir: Some(engine_dir.join("data/pack/client")),
+        unpack_dir: Some(unpack_dir),
+        nav_pack: Some(nav_pack),
+        vault_path: Some(home.join("nav-shantay-live-vault")),
+        ..ProfileOptions::default()
+    }
+    .resolve(None)
+    .expect("resolve explicit Engine A local-289 profile")
+    .prepare_template()
+    .expect("prepare Engine A local-289 template")
+}
 
 #[test]
-#[ignore = "requires a local 274 engine, nav pack, and LIVE=1"]
+#[ignore = "requires a freshly baked 289 nav pack and LIVE=1"]
 fn nav_toll() {
     if !live() {
         return;
     }
-
-    // Single slot with the mainland hop (lands the Lumbridge courtyard).
-    let seed = [("test", "test")];
-    let mut opts = options();
-    opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {});
-    wait_ingame(&play, 1, Duration::from_secs(150), "nav_toll");
 
     let world = NavWorld::load_pack(&default_pack_path())
         .unwrap_or_else(|e| fail(&format!("nav pack must load for toll routing: {e:?}")));
@@ -120,15 +155,19 @@ fn nav_toll() {
                 e.at
             ));
         }
-        if !e.item_req.iter().any(|(id, n)| *id == 995 && *n >= 10) {
+        let paid = e.consumed_req.iter().any(|(id, n)| *id == 995 && *n == 10);
+        let waived = e.consumed_req.is_empty()
+            && e.quest_req.len() == 1
+            && e.quest_req[0] == "Prince Ali Rescue";
+        if !paid && !waived {
             fail(&format!(
-                "nav_toll: toll-gate edge {e:?} lacks the 10-coin toll"
+                "nav_toll: toll-gate edge {e:?} lacks its content-derived coin fare or quest waiver"
             ));
         }
     }
 
     // The Shantay henge carries exactly two edges: the gated desert hop
-    // (the only one with the pass) and the free desert exit.
+    // (the only one that consumes a pass) and the free desert exit.
     let henge: Vec<_> = world
         .graph
         .edges
@@ -146,11 +185,11 @@ fn nav_toll() {
     }
     let gated = henge
         .iter()
-        .find(|e| !e.item_req.is_empty())
-        .unwrap_or_else(|| fail("nav_toll: no Shantay henge edge carries the pass"));
+        .find(|e| !e.consumed_req.is_empty())
+        .unwrap_or_else(|| fail("nav_toll: no Shantay henge edge consumes the pass"));
     let free = henge
         .iter()
-        .find(|e| e.item_req.is_empty())
+        .find(|e| e.consumed_req.is_empty())
         .unwrap_or_else(|| fail("nav_toll: no free Shantay henge edge (desert exit)"));
     if gated.at != SHANTAY_AT || gated.to != SHANTAY_TO {
         fail(&format!(
@@ -158,8 +197,12 @@ fn nav_toll() {
             gated.at, gated.to
         ));
     }
-    if !gated.item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1) {
-        fail("nav_toll: Shantay gated hop lacks the Shantay pass on item_req");
+    if !gated
+        .consumed_req
+        .iter()
+        .any(|(id, n)| *id == 1854 && *n >= 1)
+    {
+        fail("nav_toll: Shantay gated hop does not consume a Shantay pass");
     }
     if free.at != SHANTAY_DESERT_AT || free.to != SHANTAY_DESERT_TO {
         fail(&format!(
@@ -167,6 +210,54 @@ fn nav_toll() {
              {SHANTAY_DESERT_TO:?}",
             free.at, free.to
         ));
+    }
+    if free.to
+        != (WorldTile {
+            x: free.at.x,
+            z: free.at.z + 3,
+            level: free.at.level,
+        })
+    {
+        fail("nav_toll: Shantay free exit does not land at its stand +3z");
+    }
+    if !world.collision.standable(free.at) {
+        fail("nav_toll: Shantay free-exit interaction stand is not standable");
+    }
+    if world.collision.standable(free.to) {
+        fail(&format!(
+            "nav_toll: Shantay's statue landing {:?} must not be a walkable stand",
+            free.to
+        ));
+    }
+    if free.takeoff != Some(SHANTAY_DESERT_AT) {
+        fail(&format!(
+            "nav_toll: Shantay free exit takeoff is {:?}, expected {SHANTAY_DESERT_AT:?}",
+            free.takeoff
+        ));
+    }
+
+    let members = WorldState::empty().with_map_members(true);
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        SHANTAY_DESERT_START,
+        SHANTAY_BANK_CHEST,
+        FindOptions::default(),
+        &members,
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_toll: no exact walk route from Irena to the Shantay bank chest: {e:?}"
+        ))
+    });
+    if !route.legs.iter().any(|leg| {
+        matches!(
+            leg,
+            Leg::Transport { edge }
+                if edge.loc_id == 4031 && edge.at == free.at && edge.to == free.to
+        )
+    }) {
+        fail("nav_toll: Irena-to-bank route does not use the free Shantay exit");
     }
 
     println!(
@@ -185,12 +276,12 @@ fn nav_toll() {
 }
 
 /// The execute twin: the `script_nav_shantay` scenario run headlessly,
-/// exactly like `panel-play --live script_nav_shantay`. One slot; the
-/// scenario drives the desert → pass leg with an empty inventory and the
-/// pass → desert leg after `give`-ing the pass. PASS is the runner's
-/// proof (`arrived` at the desert dest).
+/// exactly like `panel-play --live script_nav_shantay`. One slot; it walks
+/// Irena → chest through the free branch, then back to Irena through the
+/// paid branch after giving a Shantay pass. PASS is exact WalkTo arrival at
+/// the desert start.
 #[test]
-#[ignore = "requires a local 274 engine, nav pack, and LIVE=1"]
+#[ignore = "requires Engine A (289), nav pack, and LIVE=1"]
 fn nav_shantay_follow() {
     if !live() {
         return;
@@ -207,9 +298,12 @@ fn nav_shantay_follow() {
         r.set_shot_sink(Box::new(|_, _| {}));
         mint_seed(&mut r, n)
     };
-    let mut opts = options();
-    opts.mainland = mainland;
-    let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
+    let template = engine_a_template();
+    runner
+        .lock()
+        .unwrap()
+        .set_map_members(template.profile().map_members());
+    let play = run_with_template(template, mainland, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
         move |c, name, frame| {
             let hold = frame.hold;
@@ -220,7 +314,8 @@ fn nav_shantay_follow() {
                 r.companion_tick(index, c);
             }
         }
-    });
+    })
+    .expect("start Engine A local-289 Play");
     runner.lock().unwrap().set_obj_names(play.obj_names());
 
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_shantay_follow");
@@ -251,4 +346,105 @@ fn nav_shantay_follow() {
             }
         }
     }
+}
+
+fn run_shantay_walk_from(start: WorldTile, case: &str) {
+    if !live() {
+        return;
+    }
+    let mut scenario = scenario::get("nav_shantay").expect("nav_shantay scenario in registry");
+    scenario.steps.truncate(2);
+    let tele = format!("tele 0,51,48,{},{}", start.x - 3264, start.z - 3072);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(move |c, _| {
+            api::interact::cheat(c, "~clearinv");
+            api::interact::cheat(c, &tele);
+            true
+        }),
+    };
+    scenario.steps[0].wait.arm = Proof::Arrived {
+        x: start.x,
+        z: start.z,
+        level: 0,
+    };
+    scenario.proof = Proof::Arrived {
+        x: SHANTAY_BANK_CHEST.x,
+        z: SHANTAY_BANK_CHEST.z,
+        level: SHANTAY_BANK_CHEST.level,
+    };
+
+    let mainland = scenario.seed.mainland;
+    let n = scenario.seed.profiles.len();
+    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    let entries = {
+        let mut r = runner.lock().unwrap();
+        r.set_shot_sink(Box::new(|_, _| {}));
+        mint_seed(&mut r, n)
+    };
+    let template = engine_a_template();
+    runner
+        .lock()
+        .unwrap()
+        .set_map_members(template.profile().map_members());
+    let play = run_with_template(template, mainland, profiles(&entries), |_| (None, None), {
+        let runner = Arc::clone(&runner);
+        move |c, name, frame| {
+            let hold = frame.hold;
+            let mut r = runner.lock().unwrap();
+            if r.drives(name) {
+                r.tick_with_hold(c, hold);
+            }
+        }
+    })
+    .unwrap_or_else(|e| fail(&format!("{case}: start Engine A local-289 Play: {e:?}")));
+    runner.lock().unwrap().set_obj_names(play.obj_names());
+    wait_ingame(&play, 1, Duration::from_secs(150), case);
+
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        let (status, evidence) = {
+            let r = runner.lock().unwrap();
+            (r.status(), r.evidence().cloned())
+        };
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
+        match status {
+            RunnerStatus::Passed => {
+                println!("PASS: {case} {record}");
+                return;
+            }
+            RunnerStatus::Failed(msg) => {
+                eprintln!("FAIL: {case} {record}");
+                fail(&format!("{case}: {msg}"));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    fail(&format!(
+                        "{case}: no terminal status within 300s ({other:?})"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Engine A (289), nav pack, and LIVE=1"]
+fn nav_shantay_walk_from_x3303_starts() {
+    run_shantay_walk_from(
+        WorldTile {
+            x: 3304,
+            z: 3115,
+            level: 0,
+        },
+        "nav_shantay_walk_from_3304_3115",
+    );
+    run_shantay_walk_from(
+        WorldTile {
+            x: 3304,
+            z: 3112,
+            level: 0,
+        },
+        "nav_shantay_walk_from_3304_3112",
+    );
 }

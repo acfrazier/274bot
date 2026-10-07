@@ -409,6 +409,7 @@ fn with_tick<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&world.data),
                 reach: None,
+                reach_flood: None,
                 bank_memory: None,
                 collision: None,
                 hold: world.held,
@@ -1257,6 +1258,7 @@ fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u
         compiled: crate::CompiledTick {
             selected: Some(&world.data),
             reach: None,
+            reach_flood: None,
             bank_memory: None,
             collision: None,
             hold: world.held,

@@ -9575,12 +9575,53 @@ fn every_nav_scenario_uses_the_paint_preset() {
             !n.nsew_labels && !n.component_flood,
             "{name} must not force NSEW / flood"
         );
-        if name == "nav_door" {
-            assert!(n.engine_speed_ms.is_none(), "door-troll stays 600ms ticks");
+        if name == "nav_door" || name == "nav_shantay" {
+            assert!(
+                n.engine_speed_ms.is_none(),
+                "{name} keeps Engine A at 600ms without sending ::speed"
+            );
         } else {
             assert_eq!(n.engine_speed_ms, Some(300), "{name} halves the tickrate");
         }
     }
+}
+
+#[test]
+fn nav_shantay_walks_exactly_through_both_henge_branches() {
+    let s = get("nav_shantay").expect("nav_shantay");
+    assert_eq!(s.steps.len(), 4);
+    for (index, expected) in [
+        (
+            1,
+            WorldTile {
+                x: 3308,
+                z: 3120,
+                level: 0,
+            },
+        ),
+        (
+            3,
+            WorldTile {
+                x: 3302,
+                z: 3114,
+                level: 0,
+            },
+        ),
+    ] {
+        let step = &s.steps[index];
+        let StepKind::Walk { dest } = &step.kind else {
+            panic!("step {index} must be exact WalkTo");
+        };
+        assert_eq!(*dest, expected);
+        let Proof::Arrived { x, z, level } = &step.wait.arm else {
+            panic!("step {index} must prove exact arrival");
+        };
+        assert_eq!((*x, *z, *level), (expected.x, expected.z, expected.level));
+    }
+    assert!(
+        s.settings.nav.engine_speed_ms.is_none(),
+        "the live Shantay route must keep the 600ms engine speed without ::speed"
+    );
 }
 
 #[test]

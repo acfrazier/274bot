@@ -593,6 +593,7 @@ pub(super) fn wire_runtime(
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::scene_v8::install(runtime).map_err(|e| format!("scene v8: {e}"))?;
+    super::area::install(runtime).map_err(|e| format!("area: {e}"))?;
     super::distance::install(runtime).map_err(|e| format!("distance: {e}"))?;
     super::reach_query::install(runtime).map_err(|e| format!("reach query: {e}"))?;
     super::melee_weapons_v8::install(runtime).map_err(|e| format!("melee weapons v8: {e}"))?;
@@ -712,6 +713,7 @@ const SNAPSHOT_KEYS = new Set([
   'route_inspect_replaced_id','route_inspect_replaced_prev_id',
   'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
   'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index','gather',
+  'combat',
 ]);
 const V2_OPS = {
   'held': ['name','action'],
@@ -893,6 +895,18 @@ const api = {
     },
     stop() {
       const out = machineNow('gather-stop', {});
+      return out.kind === 'done' ? helperOk(null) : helperErr(out.reason);
+    },
+  },
+  combat: {
+    fight(request) {
+      if (request == null || typeof request !== 'object' || Array.isArray(request)) {
+        return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+      }
+      return runMachine('combat', request, {});
+    },
+    stop() {
+      const out = machineNow('combat-stop', {});
       return out.kind === 'done' ? helperOk(null) : helperErr(out.reason);
     },
   },

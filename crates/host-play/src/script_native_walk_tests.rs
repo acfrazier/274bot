@@ -3861,6 +3861,9 @@ fn s2b_admission_per_bot_layouts() {
     // its rows (design-bank-snapshot §4 F6) as their own field, so the byte
     // packs into each holder's existing padding. Carrying a padded
     // `BankRows` there instead measured 3488 (S5 round 1).
+    // COMBAT-SESSION: SlotScript +48 B, all in the snapshot fingerprint's
+    // `api_combat` page identity (32) and retained terminal token (16), the
+    // same pair Gather keeps; the live seat itself stays boxed and absent.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -3873,7 +3876,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2944, 4024, 512, 264)
+        (2944, 4072, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

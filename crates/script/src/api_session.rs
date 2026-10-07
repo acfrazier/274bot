@@ -1,4 +1,4 @@
-//! Native Gatherer session families for JS API v2.
+//! Native Gatherer and combat session families for JS API v2.
 //!
 //! The `GatherSession` row owns the isolate-local admission record. Its Drop
 //! clears Busy on every terminal and abort path, including ordinary Done.
@@ -23,6 +23,29 @@ thread_local! {
     /// Stop intent must outlive the sync `gather.stop()` call and follow the
     /// live GatherSession row across reconnect scene epochs.
     static GATHER: RefCell<Option<GatherRecord>> = const { RefCell::new(None) };
+    /// The live combat session's admission and Stop intent, as for gather.
+    static COMBAT: RefCell<Option<GatherRecord>> = const { RefCell::new(None) };
+}
+
+/// Whether a combat session is admitted on this isolate. Gather and Hunt
+/// starts are `busy` while it is.
+pub(crate) fn combat_live() -> bool {
+    COMBAT.with(|state| state.borrow().is_some())
+}
+
+/// Whether any Hunt run row is live; a combat start is `busy` while one is.
+fn hunt_live() -> bool {
+    use crate::hunt::Hunt;
+    use crate::machine::live;
+    live(<Hunt<crate::hunt_fight::FightKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::HoldKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::RetreatKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::WalkSpotKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_lair::Enter> as Family>::NAME)
+        || live(<Hunt<crate::hunt_leave::Leave> as Family>::NAME)
+        || live(<Hunt<crate::hunt_key::Key> as Family>::NAME)
+        || live(<Hunt<crate::hunt_cell::Cell> as Family>::NAME)
+        || live(<Hunt<crate::hunt_bank::Bank> as Family>::NAME)
 }
 
 struct GatherRecord {
@@ -67,7 +90,7 @@ impl Family for GatherSession {
     type Output = GatherEnd;
 
     fn begin(settings: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
-        if GATHER.with(|state| state.borrow().is_some()) {
+        if GATHER.with(|state| state.borrow().is_some()) || combat_live() {
             return Begin::Refuse("busy".into());
         }
         if let Some(reason) = settings_error(&settings) {
@@ -205,6 +228,158 @@ impl Family for GatherStop {
             Ok(None) => Begin::Done(Value::Null),
             Ok(Some(token)) => {
                 cx.emit(InteractReq::GatherStop { request_id: token });
+                Begin::Done(Value::Null)
+            }
+        }
+    }
+
+    fn step(&mut self, _: &mut Cx<'_>) -> Step<Self::Output> {
+        Step::Wait
+    }
+}
+
+/// One awaited combat session, correlated with host pages by a public
+/// safe-integer token. Mirrors [`GatherSession`]: an unacknowledged start and
+/// a lost Stop are carried into each new scene epoch.
+pub(crate) struct CombatSession {
+    token: u64,
+    request: Arc<crate::api_combat::CombatSessionRequest>,
+    emitted_epoch: u64,
+    acknowledged: bool,
+}
+
+impl Family for CombatSession {
+    const NAME: &'static str = "combat";
+    type Args = Value;
+    type Output = crate::api_combat::CombatEnd;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        if combat_live() || GATHER.with(|state| state.borrow().is_some()) || hunt_live() {
+            return Begin::Refuse("busy".into());
+        }
+        let request = match crate::api_combat::CombatSessionRequest::from_value(&args) {
+            Ok(request) => Arc::new(request),
+            Err(reason) => return Begin::Refuse(reason),
+        };
+        let Some(token) = allocate_token(&NEXT_TOKEN) else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        let epoch = observed::with(observed::Scene::epoch);
+        cx.emit(InteractReq::CombatFight {
+            request_id: token,
+            request: Arc::clone(&request),
+        });
+        COMBAT.with(|state| {
+            *state.borrow_mut() = Some(GatherRecord {
+                token: NonZeroU64::new(token).expect("nonzero session token"),
+                stop_requested: false,
+                stop_epoch: epoch,
+            });
+        });
+        Begin::Run(Self {
+            token,
+            request,
+            emitted_epoch: epoch,
+            acknowledged: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let (epoch, outcome, acknowledged) = observed::with(|scene| {
+            let since_login = scene.since_login();
+            let outcome = since_login
+                .api_combat_outcome()
+                .filter(|page| page.request_id == self.token)
+                .map(|page| page.end.clone());
+            let acknowledged = since_login
+                .api_combat()
+                .is_some_and(|page| page.request_id == self.token);
+            (scene.epoch(), outcome, acknowledged)
+        });
+        if let Some(outcome) = outcome {
+            return Step::Done(outcome);
+        }
+        self.acknowledged |= acknowledged;
+        if !self.acknowledged && epoch != self.emitted_epoch {
+            cx.emit(InteractReq::CombatFight {
+                request_id: self.token,
+                request: Arc::clone(&self.request),
+            });
+            self.emitted_epoch = epoch;
+        }
+        let carry_stop = COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state
+                .as_mut()
+                .filter(|record| record.token.get() == self.token)
+            else {
+                return false;
+            };
+            if record.stop_requested && record.stop_epoch != epoch {
+                record.stop_epoch = epoch;
+                true
+            } else {
+                false
+            }
+        });
+        if carry_stop {
+            cx.emit(InteractReq::CombatStop {
+                request_id: self.token,
+            });
+        }
+        Step::Wait
+    }
+
+    /// Supersede/terminate releases the host seat. Reset emits nothing: the
+    /// host destroys that session at the boundary.
+    fn release(&self) -> Option<InteractReq> {
+        Some(InteractReq::CombatStop {
+            request_id: self.token,
+        })
+    }
+}
+
+impl Drop for CombatSession {
+    fn drop(&mut self) {
+        COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            if state
+                .as_ref()
+                .is_some_and(|record| record.token.get() == self.token)
+            {
+                *state = None;
+            }
+        });
+    }
+}
+
+/// Synchronous combat Stop; the intent rides the live row across reconnects.
+pub(crate) struct CombatStop;
+
+impl Family for CombatStop {
+    const NAME: &'static str = "combat-stop";
+    type Args = StopArgs;
+    type Output = Value;
+
+    fn begin(_: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        let epoch = observed::with(observed::Scene::epoch);
+        let stopped = COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state.as_mut() else {
+                return Err("no-session");
+            };
+            if record.stop_requested {
+                return Ok(None);
+            }
+            record.stop_requested = true;
+            record.stop_epoch = epoch;
+            Ok(Some(record.token.get()))
+        });
+        match stopped {
+            Err(reason) => Begin::Refuse(reason.into()),
+            Ok(None) => Begin::Done(Value::Null),
+            Ok(Some(token)) => {
+                cx.emit(InteractReq::CombatStop { request_id: token });
                 Begin::Done(Value::Null)
             }
         }

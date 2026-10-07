@@ -41,6 +41,7 @@ export { Quests } from '*api/ui/questlog/Quests.js';
 export { Traversal } from '*api/walking/Traversal.js';
 export { DirectNavigator } from '*api/walking/DirectNavigator.js';
 export { default as Tile } from '*geometry/Tile.js';
+export { Area } from '*geometry/Area.js';
 export { Npc, Npcs } from '*api/npcs/Npcs.js';
 export { Player, Players } from '*api/players/Players.js';
 export { Loc, Locs } from '*api/locs/Locs.js';
@@ -62,7 +63,6 @@ export const AXE_BAR_FOR: never;
 export const AXE_SHOP_COSTS: never;
 export const AXE_SMITH_LEVEL: never;
 export class AcquireTask { constructor(...args: unknown[]); execute(...args: unknown[]): never; validate(...args: unknown[]): never; }
-export class Area { static circular(...args: unknown[]): never; contains(...args: unknown[]): never; getRandomTile(...args: unknown[]): never; static rectangular(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const BOB_VENDOR: never;
 export const BROKEN_AXE: never;
 export class BranchTask { failure(...args: unknown[]): never; success(...args: unknown[]): never; validate(...args: unknown[]): never; constructor(...args: unknown[]); }
@@ -4027,6 +4027,22 @@ export function towardDest(door?: WorldTile, here?: WorldTile, dest?: WorldTile)
  * @see docs/reference/nav-doors.md
  */
 export function walkOpening(dest: Tile, radius: number, obstacles: string[], log?: (m: string) => void, opts?: WalkOpeningOptions): Promise<boolean>;
+
+}
+
+declare module '*geometry/Area.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+import Tile from "*geometry/Tile.js";
+/**
+ * A region of the map, rectangular or circular.
+ * @see docs/reference/api-game.md#world-primitives
+ */
+export abstract class Area {
+    abstract contains(tile: WorldTile): boolean;
+    abstract getRandomTile(): Tile;
+    static rectangular(a: WorldTile, b: WorldTile): Area;
+    static circular(center: WorldTile, radius: number): Area;
+}
 
 }
 

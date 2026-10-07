@@ -3,6 +3,7 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+pub mod api_combat;
 #[cfg(feature = "load")]
 pub mod api_gather;
 #[cfg(feature = "load")]
@@ -19,6 +20,8 @@ pub mod canvas;
 #[cfg(feature = "load")]
 pub mod channel;
 pub mod combat;
+#[cfg(feature = "load")]
+mod combat_session;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;

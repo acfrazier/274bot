@@ -1432,6 +1432,7 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
             wear_position_3: 0,
             tradeable: true,
             stack_variant: false,
+            category: None,
         }
     }
     let mut data =

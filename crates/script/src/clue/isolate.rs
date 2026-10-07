@@ -246,13 +246,17 @@
 //! `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)` — is stripped
 //! before the walk that row would otherwise make. A casket never arms it. The
 //! stripped list is the frozen `strippedGear`: the posted worn rows whose
-//! display name the frozen matcher folds are unequipped with the landed
-//! `unequip` verb — the worn row's own `Remove`, because `wear` resolves
-//! inventory rows alone — and listed, the two hard-trail dagger ids `1231` /
-//! `1215` are unequipped but left off it, and every posted pack row whose name
-//! the matcher folds is deposited before the row's own arms run: the names the
-//! unequip put in the pack, the dagger ids that are never listed, and a
-//! restricted item the player carried without wearing it. The list outlives a
+//! selected item category is restricted under the monk's rule
+//! (`monk_of_entrana.rs2:26-50`, mirrored by `restricted_item`: the 23
+//! armour/weapon categories on worn and pack, `cannon_parts` on pack alone)
+//! are unequipped in posted order with the landed `unequip` verb — the worn
+//! row's own `Remove`, because `wear` resolves inventory rows alone — and
+//! listed by display name for reclaim, with no dagger-ID exception (`1231` /
+//! `1215` are `weapon_stab` and are listed and restored), and every posted
+//! pack row with a positive count whose selected category is restricted
+//! (pack-side rule) is deposited before the row's own arms run: the names the
+//! unequip put in the pack and a restricted item the player carried without
+//! wearing it. The list outlives a
 //! step, a dead token and the connection-boundary reset; only the restore or a
 //! fresh task instance (Stop/Start) empties it, and `ownsEquipment` is that
 //! list and nothing else.
@@ -308,8 +312,9 @@ use acquire::*;
 #[cfg(test)]
 use combat::{keeper_type, key_step};
 pub(crate) use combat::{Delegation, Outcome};
+pub(crate) use entrana::BANK_APPROACH_FAILED;
 #[cfg(test)]
-use entrana::{entrana_coord, entrana_restricted_gear};
+use entrana::{entrana_coord, pick_pack_restricted, pick_worn};
 pub(crate) use family::Clue;
 use puzzle::*;
 use scene::*;
@@ -1529,13 +1534,11 @@ impl ClueRuntime {
                 "radius": ARRIVE_RADIUS,
             });
         }
-        // The Entrana strip sits in front of every `Steady` arm this row owns
-        // and with them in front of the walk they would make: an identified row
-        // whose own selected `trail_coord` decodes inside the cap box is stripped
-        // — and its restricted names banked — before the search, dig or talk arm
-        // it belongs to ever runs. Every other row falls straight through, and a
-        // strip this step already settled never re-enters.
-        if let Some(step) = self.strip(row, input) {
+        // The Entrana strip precedes every `Steady` arm and the walk this row
+        // would otherwise make. Its selected coordinate chooses the box row;
+        // the selected item categories choose the restricted inventory and
+        // worn rows before search, dig, talk, or walking.
+        if let Some(step) = self.strip(row, input, selected) {
             return step;
         }
         if search_tile(row).is_some() {
@@ -1734,18 +1737,24 @@ const ABANDON: &str = "abandon";
 /// out for it. A different held row — or the adapter's `retry` — clears it.
 const ABANDONED: &str = "abandoned";
 
-/// One live Entrana bank approach, shared by the strip's deposit and the
-/// restore's claim: whether this attempt's `walk-nearest-bank` has gone out.
-/// Session state on the live token, like `shop` — never a second scheduler and
-/// never a nested bank machine.
+/// One live Entrana bank approach, shared by the strip's deposits and the
+/// claims: one legacy nearest-bank walk, the last exact approach stand, and
+/// at most one in-flight booth-open request. Session state on the live token,
+/// like `shop` — never a second scheduler or a nested bank machine.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct BankApproach {
-    /// This attempt's walk has been sent: the calls after it read the posted
-    /// booth page instead of walking again.
-    walked: bool,
-    /// The interface has been observed open on this attempt: the strip's exit
-    /// and the restore's wear pass both owe it a close before their own verb,
-    /// so nothing is worn back on behind an open bank.
+    /// The approach starts once. Legacy pages use one nearest-bank route;
+    /// native pages begin at their projected exact stand instead.
+    started: bool,
+    /// The exact operable stand last sent for this booth. An unchanged
+    /// destination waits instead of re-emitting the same walk.
+    approach_dest: Option<Tile>,
+    /// The booth open stays latched through unchanged closed-bank evidence.
+    /// After success and an observed close, restore may start another claim cycle.
+    open_issued: bool,
+    /// The interface was observed open on this bank cycle: the strip exit or
+    /// restore wear pass owes it a close before its own verb, so nothing is
+    /// worn back on behind an open bank.
     opened: bool,
 }
 

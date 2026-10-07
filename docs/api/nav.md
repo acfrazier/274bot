@@ -818,8 +818,9 @@ existing Resume behavior.
 
 The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” defaults to ON. It gates only
-the pause of the script that owns the cancelled walk; it never gates intent
-detection, cancellation, or the posted outcome. With it OFF, cancellation
+the pause of the script that owns the cancelled walk, or a live `api.gather`
+or `api.combat` session that manual movement ended with no walk in flight; it
+never gates intent detection, cancellation, or the posted outcome. With it OFF, cancellation
 still occurs and scripts remain able to observe their normal end state,
 including compat `false` and the v2 `user-input` reason. A native script may
 make a new decision after an explicit Resume, but the cancelled request, host

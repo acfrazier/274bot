@@ -1370,6 +1370,7 @@ fn compiled_ctx<'a>(
         compiled: crate::CompiledTick {
             selected,
             reach: None,
+            reach_flood: None,
             bank_memory: None,
             collision: None,
             hold: false,
@@ -1593,7 +1594,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     let data =
         api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-    // The Entrana-box proof row, and a worn name the frozen matcher folds.
+    // The Entrana-box proof row, and a worn helm in the restricted `armour_helmet` category (monk rule, pack and worn).
     const ENTRANA: i32 = 3579;
     const HELM: i32 = 1163;
     let mut slot = SlotScript::new();

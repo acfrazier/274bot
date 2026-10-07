@@ -94,7 +94,7 @@
           "kind": "bank",
           "version": 1,
           "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberry_pie", "qty": 1 }], "partial_ok": true },
-          "comment": "Nothing sells a redberry pie and none spawns (AIOQuester knightssword/supplies.ts), but a banked one skips the whole bake. Skipped when the bank is known to hold none.",
+          "comment": "Full redberry_pie is item 2325, category_129 (content pack/obj.pack:2326; scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.obj:21-39). The full content .inv census has no shop stock: its sole stock row is the Cooking skill-guide display (scripts/player/configs/skill_guide.inv:92; skill_guide.dbrow:787-794; scripts/player/scripts/skill_guide.rs2:41-48), and the JM2 OBJ census has no 2325 ground spawn. A banked pie is therefore the shortcut; otherwise this Path needs its Cooking-10 fallback. Gather Varrock piedish/redberries (maps/m50_54.jm2:11770; maps/m51_52.jm2:6256-6260; pack/obj.pack:1952,2314), buy pot_flour at Wydin (port_sarim.inv:113 stocks 3) and bucket_empty at Rimmington (rimmington.inv:29 stocks 2), then fill and cook (pies.struct:13-17; cooking_generic.dbrow:201-212; pies.rs2:13-17,25-29).",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
@@ -123,7 +123,7 @@
             "radius": 3,
             "wait_if_missing": true
           },
-          "comment": "The only free-to-play pie dish source is this spawn; the recipe collects it while the bot is still at Reldo.",
+          "comment": "The fallback takes the Varrock palace kitchen pie-dish spawn beside Reldo (maps/m50_54.jm2:11770 has object id 2313; pack/obj.pack:2314 names it piedish; pies.obj:198-213).",
           "advances": false,
           "skip_if": {
             "Any": [
@@ -188,13 +188,14 @@
                   3204,
                   0
                 ],
-                "source": "C maps/m47_50.jm2:10005 (wydin spawn 3014,3204; shop floor tile east of him); areas/area_port_sarim/configs/port_sarim.inv:105-121 (wydinstore stock1 pot_flour, stock6 redberries); port_sarim.npc:155-185 (op3=Trade)"
+                "source": "C maps/m47_50.jm2:10005 (Wydin spawn 3014,3204; shop floor tile east of him); areas/area_port_sarim/configs/port_sarim.inv:113,118 (pot_flour x3, redberries x1); port_sarim.npc:155-185 (op3=Trade)"
               }
             },
             "obj": "pot_flour",
-            "qty": 1,
-            "est_gp": 20
+            "qty": 3,
+            "est_gp": 60
           },
+          "comment": "Batch three to match the berry batch: each burnt-pie retry consumes one flour (dough.rs2:43-49 mixes 1 flour + 1 water, leaving an empty pot), and redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256). Wydin stocks exactly three flour (port_sarim.inv:113), so one visit fills the batch; held spares skip this step via has_item.",
           "skip_if": {
             "Any": [
               {
@@ -302,15 +303,19 @@
             },
             "radius": 12,
             "wait_if_missing": true,
-            "until": { "obj": "redberries", "qty": 1 },
+            "until": { "obj": "redberries", "qty": 3 },
             "settle_ms": 300000
           },
-          "comment": "Gobdip's source: three static redberry spawns that respawn on the default 100-tick timer, so each burnt-pie retry (redberry pie burns about half the time at Cooking 10, cooking_generic.dbrow:201-208) costs time instead of draining Wydin's one-stock shop (port_sarim.inv:118), which failed at once with 'shop lacks requested item'. Sources: content/maps/m51_52.jm2:6256,6257,6260; engine/src/engine/GameMap.ts:160-175.",
+          "comment": "Batch three for burnt-pie retries (Gobdip's source: three static spawns on the default 100-tick timer, m51_52.jm2:6256,6257,6260; not Wydin's one-stock shop, port_sarim.inv:118, which failed at once with 'shop lacks requested item'). Redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256 success), so one set per pass sends every burn back to Varrock SE. Three covers at least one success in three cooks about 88% of the time, and held spares skip the patch walk via has_item; 0.488^9 is about 0.16%, so first pass + 8 restarts still parks only the truly starved tail. Spares held away from the patch skip this take too and the retry runs locally; a partial batch still within take range tops up instead of walking away from the spawns. Content: the ground spawns are object id 1951 (pack/obj.pack:1952) loaded as static respawning objects (engine/src/engine/GameMap.ts:160-175); a failed bake returns the pie dish (pies.rs2:31-34; pies.obj:139-142), and Cooking 10 gates filling and cooking (pies.struct:13-17; cooking_generic.dbrow:201-212).",
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+                { "Not": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 12 } } } }
+              ] }
             ]
           },
           "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
@@ -328,7 +333,7 @@
                   3216,
                   0
                 ],
-                "source": "C maps/m46_50.jm2:7414 (generalshopkeeper6 spawn); areas/area_rimmington/configs/rimmington.inv:18-36 (generalshop6 stock4 bucket_empty); rimmington.npc:29-40 (op3=Trade)"
+                "source": "C maps/m46_50.jm2:7414 (generalshopkeeper6 spawn); areas/area_rimmington/configs/rimmington.inv:29 (generalshop6 bucket_empty x2); rimmington.npc:29-40 (op3=Trade)"
               }
             },
             "obj": "bucket_empty",
@@ -674,7 +679,7 @@
             "radius": 3,
             "settle_ms": 15000
           },
-          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the parent 'pie' step's goal (a held redberry_pie) is then still false, so the acquire restarts this recipe and 'empty-burnt-pie' runs first (at most 8 restarts, then the step parks).",
+          "comment": "Oven only (fires refuse). Success roll 98..452/256 scales with Cooking 10..99: about half the pies burn at level 10, one in twelve at level 40. No product is declared so a burnt pie still settles here; the parent 'pie' step's goal (a held redberry_pie) is then still false, so the acquire restarts this recipe and 'empty-burnt-pie' runs first (at most 8 restarts, then the step parks). Rimmington stays the oven: the only lower-burn range is the Lumbridge cook-o-matic (successchance_cookomatic 108,462, about 55% at Cooking 10), but content turns the cook away before Cook's Assistant is complete (quest_cook.rs2 oplocu cooksquestrange), which this path cannot assume. Every other oven burns the same 98,452, so walking decides: Rimmington pairs range (2970,3209) with sink in one kitchen, sits about 44 tiles from Wydin's flour and 65 from Thurgo. Varrock palace (dish, sink, and oven together, near the patch) pays about 293 to Wydin and 353 to Thurgo per pie; Port Sarim's range/sink pair pays about 93 to Thurgo with unverified interiors.",
           "advances": false,
           "skip_if": {
             "Fact": {
@@ -1155,7 +1160,7 @@
           "args": {
             "retaliate": false
           },
-          "comment": "A returned swing would cancel the walk (AIO dungeon.ts:66-67 lesson); the walks rely on the best-effort walk guard instead (see ice-walk-4), so at Base40 the crossings are unprotected and nothing hits back.",
+          "comment": "Keep auto-retaliate off throughout the dungeon crossing and exit: content scripts/skill_combat/scripts/npc/npc_combat_melee.rs2:27-48 queues playerhit_n_retaliate even for a zero-damage swing, while scripts/skill_combat/scripts/player/auto_retaliate.rs2:7-25 issues p_opnpc(2) only when option_nodef is on, the NPC still exists and the player is not busy. Turning it off prevents an attack/chase from replacing the escape walk, not incoming hits. The crossed pirate/hobgoblin/ice warrior have vislevels 26/28/57 and hunt ranges 1/1/5 (scripts/_unpack/225/all.npc:3135-3150,3237-3271,4343-4376); cowardly hunt selects visible eligible players up to twice NPC level (scripts/_unpack/225/all.hunt:37-45; engine/src/engine/entity/Npc.ts:996-1023). Base40 players remain targetable, and Prayer 40 is below Protect from Melee's 43 (scripts/skill_prayer/configs/prayers.dbrow:121-128).",
           "skip_if": {
             "Any": [
               {
@@ -1334,7 +1339,7 @@
               "pirate_aggressive@2997,9569,0"
             ]
           },
-          "comment": "Named crossing: the first pirate zone touches this waypoint. C maps/m46_149.jm2:8152-8162 (pirate_aggressive spawns, level 26, hunt radius 6, aggressive up to combat 52)",
+          "comment": "Pirate crossing: pirate_aggressive is Attack, vislevel=26, huntrange=1, huntmode=cowardly; when visible and otherwise eligible a Base40 player is within its outside-Wilderness combat ceiling of 52 (C maps/m46_149.jm2:8152-8162; all.npc:4343-4376; all.hunt:36-45; engine/src/engine/entity/Npc.ts:999,1014-1015).",
           "skip_if": {
             "Any": [
               {
@@ -1423,7 +1428,7 @@
               "pirate_aggressive@2995,9576,0"
             ]
           },
-          "comment": "C maps/m46_149.jm2:8152-8162 (pirate_aggressive spawns, level 26, hunt radius 6, aggressive up to combat 52)",
+          "comment": "Same Pirate type: vislevel 26 and huntrange 1, with cowardly hunt. A visible Base40 player is below its combat-52 ceiling outside Wilderness (C maps/m46_149.jm2:8152-8162; all.npc:4343-4376; all.hunt:36-45; engine/src/engine/entity/Npc.ts:999,1014-1015).",
           "skip_if": {
             "Any": [
               {
@@ -1505,7 +1510,7 @@
               "pirate_aggressive@2999,9584,0"
             ]
           },
-          "comment": "All six pirate zones are named (the 8-zone cap); the six hobgoblin zones contain the destination, which the router admits without naming. C maps/m47_149.jm2:6627-6632 (hobgoblin_unarmed spawns, level 28, wander 15, aggressive up to combat 56)",
+          "comment": "All six pirate zones are named (the 8-zone cap); the six hobgoblin zones contain the destination, which the router admits without naming. Hobgoblin is Attack, vislevel=28, huntrange=1, huntmode=cowardly; visible Base40 is below its combat-56 ceiling outside Wilderness (C maps/m47_149.jm2:6627-6632; all.npc:3135-3150; all.hunt:36-45; engine/src/engine/entity/Npc.ts:999,1014-1015).",
           "skip_if": {
             "Any": [
               {
@@ -1574,7 +1579,7 @@
             ],
             "guard": "protect"
           },
-          "comment": "guard 'protect' asks for Protect from Melee, which needs Prayer 43 (C skill_prayer/configs/prayers.dbrow:121-128). The guard is best-effort: it admits any base Prayer >= 37, warns once ('Prayer 43 needed for Protect from Melee' under Walk protection) when the level is short, keeps walking unprotected and never eats (combat/guard.rs:130-150,295-304; docs/api/script.md:889-899). At the Base40 fixture this leg is an unprotected crossing. C maps/m47_149.jm2:6627-6632 (hobgoblin_unarmed spawns, level 28, wander 15, aggressive up to combat 56)",
+          "comment": "guard protect asks for Protect from Melee, requiring Prayer 43 (skill_prayer/configs/prayers.dbrow:121-128). The best-effort guard accepts Prayer >=37, warns below43, keeps walking unprotected and never eats (combat/guard.rs:130-150,295-304; docs/api/script.md:889-899). At Base40 this leg is unprotected; hobgoblin_unarmed is Attack, vislevel=28, huntrange=1, huntmode=cowardly, so a visible Base40 player can still be targeted (all.npc:3135-3150; all.hunt:36-45; engine/src/engine/entity/Npc.ts:999,1014-1015).",
           "skip_if": {
             "Any": [
               {
@@ -1648,7 +1653,7 @@
             ],
             "guard": "protect"
           },
-          "comment": "Same best-effort guard as ice-walk-4: unprotected at Base40 through four ice-warrior zones (the two eastern hobgoblin zones still cover the cave mouth). C maps/m47_149.jm2:6634-6639 (icewarrior spawns, level 57, hunt radius 6, aggressive up to combat 114)",
+          "comment": "Same best-effort guard as ice-walk-4; Prayer 40 cannot protect on this Base40 crossing. Icewarrior is Attack, vislevel=57, huntrange=5, huntmode=cowardly; a visible Base40 player remains below the outside-Wilderness combat ceiling 114, while the two eastern hobgoblin zones still cover the cave mouth (C maps/m47_149.jm2:6627-6639; all.npc:3237-3271; all.hunt:36-45; engine/src/engine/entity/Npc.ts:999,1014-1015).",
           "skip_if": {
             "Any": [
               {

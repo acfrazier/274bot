@@ -113,6 +113,9 @@ pub struct GameItem {
     pub wear_position: i32,
     pub wear_position_2: i32,
     pub wear_position_3: i32,
+    /// Selected content category assigned to this item; absent when the object is uncategorized.
+    #[serde(default)]
+    pub category: Option<String>,
     /// The engine's decoded trade flag: `tradeable=no`, a nonzero
     /// `dummyitem`, or the note of an untradeable item clears it.
     pub tradeable: bool,

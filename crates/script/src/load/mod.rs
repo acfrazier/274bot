@@ -12,6 +12,8 @@
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
 #[cfg(feature = "load")]
+mod area;
+#[cfg(feature = "load")]
 mod bank_locations_v8;
 #[cfg(feature = "load")]
 mod bank_tasks_v8;
