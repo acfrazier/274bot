@@ -664,6 +664,11 @@ stages; it is not a claim of one Dijkstra kernel. Refusal diagnosis repeats
 the strict call before its all-zone witness, and a named retry keeps the
 same staged routing. Both the top-level retry count and actual kernels are
 recorded, including reverse-proof shortcuts.
+Enforcing admission grants a crossing only when all of its zones are
+granted. Granted zones are the request's named or all-zone exemptions. A
+request that names grants (Path `cross`) also has the zones engaged at the
+route's endpoint granted, the router's endpoint completion
+(`risk::Grants::request`). The named retry's witness keys never are.
 
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
 `FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path

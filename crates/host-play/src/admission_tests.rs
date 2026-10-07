@@ -1939,3 +1939,249 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
     assert!(alice.route.is_none(), "an enforcing refusal stops the walk");
     assert_eq!(alice.refusal, refused.refusal);
 }
+
+fn unknown_poison(hp: u8) -> RiskInput {
+    RiskInput {
+        poison: PoisonState::Unknown { since: 0 },
+        ..input(hp)
+    }
+}
+
+/// SURVIVABLE-DEST-GRANTS: a `cross` walk names its transit grant and relies
+/// on the router's endpoint completion for the zone it ends in. That
+/// destination zone is granted, not judged, so Unknown poison (no S2c
+/// observer yet) does not refuse the walk the Path authored.
+#[test]
+fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
+    let world = known_corridor(&[5, 20]);
+    let (from, to) = (tile(0, 1), tile(20, 1));
+    let state = WorldState::default();
+    let grants = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+    let options = FindOptions {
+        zones: grants,
+        ..FindOptions::default()
+    };
+    let admission = Admission {
+        grants,
+        ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
+    };
+    let result = route(
+        &world,
+        &admission,
+        options,
+        |opts| real_search(&world, from, to, opts, &state, &[]),
+        || real_witness(&world, from, to, options, &state, &[]),
+    );
+    assert_eq!(result.refusal, None);
+    assert_eq!(routed(&result).dest, to);
+    let assessment = result.assessment.as_ref().unwrap();
+    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+    assert_eq!(
+        assessment.plan.crossings.len(),
+        2,
+        "the named transit crossing and the destination crossing"
+    );
+    assert_eq!(
+        assessment.input.poison,
+        PoisonState::Unknown { since: 0 },
+        "admission grants the zone; it never claims the poison clear"
+    );
+}
+
+/// The destination grant is the route endpoint's zones only. A crossing of an
+/// unnamed zone on the way, separate from or merged into the destination's
+/// crossing, is still judged and refused while poison is Unknown.
+#[test]
+fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
+    let state = WorldState::default();
+    let (from, to) = (tile(0, 1), tile(20, 1));
+    for (spawns, shape) in [([5, 12, 20], "separate"), ([5, 18, 20], "merged")] {
+        let world = known_corridor(&spawns);
+        // The router never hands admission this route under these grants; a
+        // route that crosses the unnamed zone must still be judged if it does.
+        let crossing = match real_search(
+            &world,
+            from,
+            to,
+            FindOptions {
+                zones: ZoneExempt::all(),
+                ..FindOptions::default()
+            },
+            &state,
+            &[],
+        ) {
+            crate::RouteOutcome::Routed(route) => route,
+            _ => panic!("{shape}: the open corridor routes under all()"),
+        };
+        assert_eq!(crossing.dest, to);
+        let named = Admission {
+            grants: ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+            ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
+        };
+        let assessment = assess(&crossing, &world, &named);
+        assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+        assert!(
+            !permits(&crossing, &world, &named, &assessment),
+            "{shape}: the unnamed zone at {} is judged",
+            spawns[1]
+        );
+        let both = Admission {
+            grants: ZoneExempt::named(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]).unwrap(),
+            ..named
+        };
+        assert!(
+            permits(&crossing, &world, &both, &assessment),
+            "{shape}: naming it as well grants every crossing"
+        );
+        let held = Admission {
+            enforce: false,
+            ..named
+        };
+        assert!(permits(&crossing, &world, &held, &assessment));
+    }
+}
+
+fn path_step<'a>(value: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+    match value {
+        serde_json::Value::Object(map) if map.get("id").and_then(|v| v.as_str()) == Some(id) => {
+            Some(value)
+        }
+        serde_json::Value::Object(map) => map.values().find_map(|child| path_step(child, id)),
+        serde_json::Value::Array(items) => items.iter().find_map(|child| path_step(child, id)),
+        _ => None,
+    }
+}
+
+/// One squire Path walk step through the native request seam and its
+/// approach tiles, at combat 40 with Unknown poison and `cross` enforcing.
+fn real_squire_walk(
+    world: &Arc<NavWorld>,
+    squire: &serde_json::Value,
+    step: &str,
+    from: WorldTile,
+) -> (WorldTile, ZoneExempt, RouteAdmission) {
+    let args = &path_step(squire, step).expect("squire step")["args"];
+    let at = |index: usize| i32::try_from(args["tile"][index].as_i64().unwrap()).unwrap();
+    let to = WorldTile {
+        x: at(0),
+        z: at(1),
+        level: at(2),
+    };
+    let cross: Vec<Arc<str>> = args["cross"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| Arc::from(name.as_str().unwrap()))
+        .collect();
+    assert!(!cross.is_empty(), "{step} names its crossings");
+    let state = WorldState {
+        combat_level: Some(40),
+        ..WorldState::default()
+    };
+    let (opts, _) = crate::resolve_route_exclusions(
+        FindOptions::default(),
+        world,
+        from,
+        to,
+        &state,
+        crate::ScriptRouteExclusions {
+            cross,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let globals = crate::WalkGlobals::default();
+    let admission = Admission {
+        policy: globals.risk_policy(Default::default(), Default::default()),
+        // A nonempty `cross` arms enforcement while the default is held.
+        enforce: true,
+        grants: opts.zones,
+        allow: WalkAllow::default(),
+        input: RiskInput {
+            pos: from,
+            combat: Some(40),
+            hp_max: 40,
+            ..unknown_poison(40)
+        },
+        generation: 1,
+        compat_v1: false,
+        escape: None,
+    };
+    let request = crate::ScriptRouteRequest {
+        admission,
+        generation: 1,
+        request_id: 1,
+        world: Arc::clone(world),
+        from,
+        to,
+        radius: i32::try_from(args["radius"].as_i64().unwrap()).unwrap(),
+        loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
+        opts,
+        state: Some(state),
+        bank_origin: api::bank_memory::Origin::Unknown,
+        bank: Vec::new(),
+        live_candidates: None,
+        exclusions: None,
+        completion: Default::default(),
+    };
+    (to, opts.zones, request.calculate_admitted().0)
+}
+
+/// The headed Knight's Sword stall (DIAG-SURVIVABLE-POISON): squire's own
+/// `ice-walk-1-entry` step from the ice-dungeon ladder, then the rest of the
+/// ice chain from each previous stand, all with Unknown poison.
+/// `ice-walk-1-entry` (radius-1 stand inside a hobgoblin zone) and
+/// `ice-walk-3-to-hobgoblins` (six pirates fill the 8-key cap; the
+/// hobgoblin destination is unnamed) are admitted only by the endpoint grant.
+#[test]
+#[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
+fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison() {
+    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
+    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+    let squire: serde_json::Value =
+        serde_json::from_str(include_str!("../../script/paths/289/squire.json")).unwrap();
+    let mut from = WorldTile {
+        x: 3009,
+        z: 9550,
+        level: 0,
+    };
+    for (step, endpoint_granted) in [
+        ("ice-walk-1-entry", true),
+        ("ice-walk-2-pirates", false),
+        ("ice-walk-3-to-hobgoblins", true),
+        ("ice-walk-4-hobgoblins", false),
+        ("ice-walk-5-blurite-rock", false),
+        ("leave-ice-5", false),
+        ("leave-ice-4", false),
+        ("leave-ice-3", false),
+        ("leave-ice-2", false),
+        ("leave-ice-1", false),
+    ] {
+        let (to, grants, admitted) = real_squire_walk(&world, &squire, step, from);
+        let route = routed(&admitted);
+        let assessment = admitted.assessment.as_ref().expect("a routed assessment");
+        assert_eq!(
+            admitted.refusal, None,
+            "{step} from {from:?} to {:?}: {}",
+            route.dest, assessment.reason
+        );
+        assert!((route.dest.x - to.x).abs() <= 1 && (route.dest.z - to.z).abs() <= 1);
+        assert_eq!(assessment.input.poison, PoisonState::Unknown { since: 0 });
+        let named_only = assessment.plan.crossings.is_empty()
+            || risk::admission_passes(
+                route,
+                assessment,
+                world.graph.zones.as_ref().unwrap(),
+                &tables(&world).unwrap().combat,
+                WalkAllow::default(),
+                risk::Grants::named(grants),
+            )
+            .unwrap_or(false);
+        assert_eq!(
+            !named_only, endpoint_granted,
+            "{step}: whether only the endpoint grant admits it"
+        );
+        from = route.dest;
+    }
+}
