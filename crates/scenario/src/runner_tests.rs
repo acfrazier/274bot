@@ -3057,3 +3057,74 @@ fn maze_episode_exact_return_rejects_whoops_fallback_when_baseline_is_fountain()
     assert!(message.contains("entry=Some"), "{message}");
     assert!(message.contains("shrine=true"), "{message}");
 }
+
+fn fresh_tutorial_scenario() -> Scenario {
+    Scenario {
+        name: "fresh-tutorial",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "reseed tutorial after relog and verify fresh value",
+            kind: StepKind::Repeat {
+                send: Box::new(|_, _| true),
+            },
+            wait: crate::Wait {
+                arm: Proof::FreshTutorial,
+                budget_ticks: 200,
+            },
+        }],
+        proof: Proof::IngameScene2,
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+#[test]
+fn fresh_tutorial_needs_a_reply_newer_than_the_step_start_baseline() {
+    let mut c = seeded_client();
+    // A pre-step `1000` line latches into the first snapshot; the runner
+    // baselines it at step start, so it must not satisfy the wait.
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(fresh_tutorial_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "a stale pre-step line at the baseline must not satisfy FreshTutorial: {:?}",
+        runner.status()
+    );
+    // Same-tick resend without a new reply still waits.
+    tick_dirty(&mut runner, &mut c, false);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "the reseed send tick must not advance on the stale head: {:?}",
+        runner.status()
+    );
+    // A strictly newer `1000` reply in the same session satisfies.
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    tick_dirty(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::with_world(fresh_tutorial_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(
+        runner.fresh_tutorial_baseline.is_some(),
+        "the step-start snapshot must latch a baseline"
+    );
+    c.ingame = false;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    runner.tick(&mut c);
+    assert_eq!(
+        runner.fresh_tutorial_baseline, None,
+        "leaving the session clears the step-local tutorial baseline"
+    );
+}

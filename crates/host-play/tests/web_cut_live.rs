@@ -213,6 +213,34 @@ fn login_fresh(
         "inventory tab after tutorial-skip relog",
         |s| s.ingame() && s.attached() && s.scene_state() == 2 && inventory_tab_available(s),
     );
+    // Fresh-account post-relog reseed: the kit-close queue has already run
+    // in the new session. The slash-equipped scenario wields a bronze
+    // scimitar below, which needs `tutorial > 400` for the combat tab.
+    let baseline = scenario::tutorial::chat_baseline(&snapshot);
+    let reseed = scenario::tutorial::PostRelogTutorial::new(baseline);
+    reseed.send_reseed(&mut client);
+    let deadline = Instant::now() + scenario::tutorial::TUTORIAL_POST_RELOG_DEADLINE;
+    loop {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        match reseed.check(&snapshot) {
+            Ok(true) => {
+                println!("{}", scenario::tutorial::confirmation_log());
+                break;
+            }
+            Ok(false) => {
+                if Instant::now() >= deadline {
+                    panic!(
+                        "[WEB-CUT-LIVE-FAIL] tutorial reseed confirm: {}",
+                        reseed.failure_message()
+                    );
+                }
+            }
+            Err(error) => {
+                panic!("[WEB-CUT-LIVE-FAIL] tutorial reseed confirm: {error}");
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
     (client, snapshot, pump)
 }
 

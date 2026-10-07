@@ -157,7 +157,7 @@ pub(super) struct Cell {
     preparation_failure: Option<String>,
     /// Post-relog tutorial reseed (`setvar tutorial 1000` + fresh `getvar`
     /// confirm in the new session, after the kit-close queue has run).
-    tutorial_reseed: Option<api::interact::PostRelogTutorial>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
     /// Seed cheats sent in order once the pack is cleared.
     seed: &'static [&'static str],
     seeded: usize,
@@ -263,14 +263,14 @@ fn session_fixture_runner() -> scenario::ScenarioRunner {
                 name: "skip tutorial and verify the server value",
                 kind: StepKind::Perform {
                     send: Box::new(|client, _| {
-                        let _ = interact::cheat(client, api::interact::TUTORIAL_SETVAR);
-                        let _ = interact::cheat(client, api::interact::TUTORIAL_GETVAR);
+                        let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                        let _ = interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Chat {
-                        needle: api::interact::TUTORIAL_CHAT_NEEDLE,
+                        needle: scenario::tutorial::TUTORIAL_CHAT_NEEDLE,
                     },
                     budget_ticks: 200,
                 },
@@ -627,8 +627,8 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
                 // already run in the new session, so this `setvar` sticks.
                 // Baseline is captured before sending, so only a strictly
                 // newer same-session `getvar` reply can satisfy the wait.
-                let baseline = api::interact::chat_baseline(&snapshot);
-                let reseed = api::interact::PostRelogTutorial::new(baseline);
+                let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                let reseed = scenario::tutorial::PostRelogTutorial::new(baseline);
                 reseed.send_reseed(client);
                 cell.tutorial_reseed = Some(reseed);
                 cell.last_action = now;
@@ -641,7 +641,7 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
                     .expect("tutorial reseed armed before waiting");
                 match reseed.check(&snapshot) {
                     Ok(true) => {
-                        println!("{}", api::interact::confirmation_log());
+                        println!("{}", scenario::tutorial::confirmation_log());
                         cell.phase = Prep::Teleport;
                         cell.last_action = now;
                     }

@@ -45,6 +45,8 @@ enum Prep {
     WaitTutorial,
     Relog,
     WaitRelog,
+    ReseedTutorial,
+    WaitReseedConfirm,
     Seed,
     WaitSeed,
     DrainDialogs,
@@ -90,6 +92,7 @@ struct SlotLive {
     saw_logout: bool,
     bank_ack_done: bool,
     bank_ack_generation: Option<u64>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 impl SlotLive {
@@ -372,8 +375,8 @@ impl SlotLive {
                 if !Self::send_ok(hold) {
                     return Ok(());
                 }
-                interact::cheat(client, api::interact::TUTORIAL_SETVAR);
-                interact::cheat(client, api::interact::TUTORIAL_GETVAR);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
                 self.last_action = now;
                 self.prep = Prep::WaitTutorial;
             }
@@ -436,8 +439,36 @@ impl SlotLive {
                                 "account": self.account,
                             })
                         );
+                        self.prep = Prep::ReseedTutorial;
+                    }
+                }
+            }
+            Prep::ReseedTutorial => {
+                if !Self::send_ok(hold) {
+                    return Ok(());
+                }
+                // Fresh-account post-relog reseed: the kit-close queue has
+                // already run in the new session. The Duel slot wields a
+                // bronze scimitar below, which needs `tutorial > 400`.
+                let baseline = scenario::tutorial::chat_baseline(&self.snapshot);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
+                self.tutorial_reseed = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                self.last_action = now;
+                self.prep = Prep::WaitReseedConfirm;
+            }
+            Prep::WaitReseedConfirm => {
+                let reseed = self
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed");
+                match reseed.check(&self.snapshot) {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
                         self.prep = Prep::Seed;
                     }
+                    Ok(false) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Prep::Seed => {
@@ -973,6 +1004,7 @@ fn new_slot(
         saw_logout: false,
         bank_ack_done: false,
         bank_ack_generation: None,
+        tutorial_reseed: None,
     })
 }
 

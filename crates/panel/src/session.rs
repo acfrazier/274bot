@@ -1176,15 +1176,15 @@ pub(crate) fn external_loader_fixture() -> scenario::Scenario {
                 name: "prepare twenty-five carried bones",
                 kind: StepKind::Perform {
                     send: Box::new(|c, _| {
-                        cheat(c, api::interact::TUTORIAL_SETVAR);
-                        cheat(c, api::interact::TUTORIAL_GETVAR);
+                        cheat(c, scenario::tutorial::TUTORIAL_SETVAR);
+                        cheat(c, scenario::tutorial::TUTORIAL_GETVAR);
                         cheat(c, "give bones 25");
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Chat {
-                        needle: api::interact::TUTORIAL_CHAT_NEEDLE,
+                        needle: scenario::tutorial::TUTORIAL_CHAT_NEEDLE,
                     },
                     budget_ticks: 200,
                 },
@@ -1201,15 +1201,15 @@ pub(crate) fn external_loader_fixture() -> scenario::Scenario {
                 name: "reseed tutorial after relog and verify fresh value",
                 kind: StepKind::Repeat {
                     send: Box::new(|c, _| {
-                        cheat(c, api::interact::TUTORIAL_SETVAR);
-                        cheat(c, api::interact::TUTORIAL_GETVAR);
+                        cheat(c, scenario::tutorial::TUTORIAL_SETVAR);
+                        cheat(c, scenario::tutorial::TUTORIAL_GETVAR);
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::Chat {
-                        needle: api::interact::TUTORIAL_CHAT_NEEDLE,
-                    },
+                    // Fresh reply newer than the post-relog baseline the
+                    // runner latched at step start, like the host-play cells.
+                    arm: Proof::FreshTutorial,
                     budget_ticks: 200,
                 },
             },

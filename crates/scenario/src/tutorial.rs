@@ -12,11 +12,16 @@
 //! session and require a **fresh same-session** `get tutorial: 1000` reply
 //! before the cell continues. The wait has a fixed wall-clock deadline and
 //! a clear failure message.
+//!
+//! This lives in the harness `scenario` crate (not the shipping `api`
+//! crate): every caller already has the `scenario` edge (`scenario` itself,
+//! `panel` normal, `host-play` dev plus `live-harness`), while production
+//! `api` must not carry live-fixture state.
 
 use std::time::{Duration, Instant};
 
-use crate::interact::{cheat, Driver};
-use crate::snapshot::GameSnapshot;
+use api::interact::{cheat, Driver};
+use api::snapshot::GameSnapshot;
 
 /// Completed-tutorial value every fresh live account reseeds to.
 pub const TUTORIAL_COMPLETE: i32 = 1000;
@@ -24,7 +29,11 @@ pub const TUTORIAL_COMPLETE: i32 = 1000;
 pub const TUTORIAL_SETVAR: &str = "setvar tutorial 1000";
 /// Cheat whose reply proves the assigned value.
 pub const TUTORIAL_GETVAR: &str = "getvar tutorial";
-/// Chat needle a `Proof::Chat` waits for when it must see the same proof.
+/// Chat needle a pre-relog island-exit seed waits for. Post-relog waits must
+/// use [`Proof::FreshTutorial`](crate::Proof::FreshTutorial) (a reply newer
+/// than the post-relog baseline), never this needle alone: a chat line
+/// latched before the relog can satisfy a plain `contains` in the same tick
+/// the reseed is sent.
 pub const TUTORIAL_CHAT_NEEDLE: &str = "get tutorial: 1000";
 /// Fixed wall-clock bound for the post-relog confirmation.
 ///
@@ -205,7 +214,7 @@ impl PostRelogTutorial {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::ChatLineView;
+    use api::snapshot::ChatLineView;
 
     fn line(text: &str, sequence: i32) -> ChatLineView {
         ChatLineView {

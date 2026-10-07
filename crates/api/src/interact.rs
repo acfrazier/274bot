@@ -13,8 +13,6 @@ use crate::snapshot::{
     PlayerView, ReadContext, SceneView, ToggleControlsView, WidgetView, WorldTile,
 };
 
-mod tutorial;
-pub use tutorial::*;
 mod driver;
 pub use driver::*;
 

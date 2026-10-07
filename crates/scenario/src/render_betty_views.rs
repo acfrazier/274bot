@@ -326,6 +326,10 @@ mod tests {
                 "{name} reseeds tutorial after relog before tele"
             );
             assert!(
+                matches!(scenario.steps[2].wait.arm, Proof::FreshTutorial),
+                "{name} reseed must require a fresh post-relog reply, not a stale Chat contains"
+            );
+            assert!(
                 matches!(scenario.steps[3].kind, StepKind::Perform { .. }),
                 "{name} tele must follow the shared live seed"
             );
