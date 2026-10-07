@@ -113,8 +113,10 @@ mod tests {
     use crate::quester::compile::{
         compile_uncached_for_test, decode_cook, PredicateContext, RUNE_MYSTERIES_JSON, SHEEP_JSON,
     };
+    use crate::quester::families::tests::with_tick_bank;
     use crate::quester::path::{PathDocument, PredicateDocument};
     use crate::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+    use api::bank_memory::{BankMemory, Origin};
     use api::game_data::SelectedGameData;
     use api::obj_names::ItemDefView;
     use api::quest_facts::QuestCatalog;
@@ -188,7 +190,7 @@ mod tests {
         snapshot: &GameSnapshot,
         quests: &QuestCatalog,
         progress: &[QuestProgress],
-        bank: &crate::quester::bank_memo::BankMemo,
+        bank: &BankMemory,
     ) -> Choice {
         Probe {
             path,
@@ -229,7 +231,6 @@ mod tests {
             budget: &mut budget,
             eligible: true,
         };
-        let bank = crate::quester::bank_memo::BankMemo::default();
         let pred = PredicateContext {
             cx: &cx,
             pairs: None,
@@ -238,7 +239,6 @@ mod tests {
             required_after: stamp(),
             chat_since: 0,
             outcome: None,
-            bank: &bank,
         };
         let SelectionDecision::Selected(picked) = select(&compiled, 0, 0, &pred) else {
             panic!("never-skip start must select");
@@ -272,17 +272,15 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![], 28);
-        for (stage, scan, acquire) in [
+        for (stage, _scan, acquire) in [
             ("romeojuliet:20", "scan-message-bank", "replace-message"),
             ("romeojuliet:50", "scan-potion-bank", "take-berries"),
         ] {
             let sequence = sequence_for_stage(&path, stage).unwrap();
-            let mut bank = crate::quester::bank_memo::BankMemo::default();
             let mut ledger = None;
-            let selected_id =
-                |bank: &crate::quester::bank_memo::BankMemo,
-                 ledger: &mut Option<Box<crate::native::ledger::Ledger>>| {
-                    crate::quester::families::tests::with_tick(&snapshot, ledger, 1, |tick| {
+            let decide =
+                |bank: &BankMemory, ledger: &mut Option<Box<crate::native::ledger::Ledger>>| {
+                    with_tick_bank(&snapshot, Some(bank), ledger, 1, |tick| {
                         let pred = PredicateContext {
                             cx: &tick.cx,
                             pairs: tick.pairs,
@@ -291,21 +289,32 @@ mod tests {
                             required_after: stamp(),
                             chat_since: 0,
                             outcome: None,
-                            bank,
                         };
-                        let SelectionDecision::Selected(picked) = select(&path, sequence, 0, &pred)
-                        else {
-                            panic!("observed inventory and bank state must select a step");
-                        };
-                        picked.step.id.0.to_string()
+                        match select(&path, sequence, 0, &pred) {
+                            SelectionDecision::Selected(picked) => {
+                                Some(picked.step.id.0.to_string())
+                            }
+                            SelectionDecision::Unknown(_) => None,
+                            SelectionDecision::Exhausted => {
+                                panic!("romeo stage must resolve to a step")
+                            }
+                        }
                     })
                 };
-            assert_eq!(selected_id(&bank, &mut ledger), scan);
-            bank.update(&crate::native_bank::BankReceipt {
-                counts: vec![],
-                complete: true,
-            });
-            assert_eq!(selected_id(&bank, &mut ledger), acquire);
+            assert_eq!(
+                decide(&BankMemory::default(), &mut ledger),
+                None,
+                "an Unknown bank leaves the scan step undecided for the runner's provisioning scan"
+            );
+            assert_eq!(
+                decide(&BankMemory::seeded(&[], Origin::Session), &mut ledger),
+                Some(acquire.to_string())
+            );
+            assert_eq!(
+                decide(&BankMemory::seeded(&[], Origin::Hint), &mut ledger),
+                Some(acquire.to_string()),
+                "a hint counts as known: the authored scan is skipped"
+            );
         }
     }
 
@@ -323,7 +332,7 @@ mod tests {
                 ("runemysteries:package_delivered", Truth::False, None),
             ],
         );
-        let unknown_bank = crate::quester::bank_memo::BankMemo::default();
+        let unknown_bank = BankMemory::default();
         let known_bank = known_empty_bank();
 
         let talisman = inventory_snapshot(&data, &[("air_talisman", 1)]);
@@ -360,8 +369,8 @@ mod tests {
                 std::slice::from_ref(&pending),
                 &unknown_bank,
             ),
-            chosen("scan-bank"),
-            "a bank scan remains available when no quest item is held"
+            Choice::Unknown(FactKey::new("scan-bank")),
+            "an Unknown bank leaves the scan step undecided for the runner's provisioning scan"
         );
         assert_eq!(
             choice_for_stage(

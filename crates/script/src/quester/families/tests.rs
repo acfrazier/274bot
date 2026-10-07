@@ -106,6 +106,26 @@ pub(crate) fn with_tick_bank<R>(
     )
 }
 
+pub(crate) fn with_tick_output_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        output,
+        bank,
+        f,
+    )
+}
+
 fn with_tick_output_reach<R>(
     snapshot: &GameSnapshot,
     reach: Option<&api::query::ReachQueryView>,
@@ -1087,13 +1107,11 @@ fn with_step_banks<R>(
 ) -> R {
     let quests = api::quest_facts::QuestCatalog::empty();
     let required_after = t.cx.evidence();
-    let bank = crate::quester::bank_memo::BankMemo::default();
     f(&mut StepContext {
         tick: t,
         quests: &quests,
         progress: &[],
         required_after,
-        bank: &bank,
         banks,
         choices: &crate::quester::choices::QuestChoices::default(),
     })
@@ -1116,7 +1134,6 @@ fn path_bank_context<'a>(
         recipes: base.recipes,
         bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
         bank_required: required,
-        bank_items: base.bank_items,
         loadouts: base.loadouts,
         keep_ids: base.keep_ids,
     }
@@ -1602,7 +1619,6 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         recipes: &recipes,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
@@ -2357,7 +2373,6 @@ fn compile_context_test_with_keep<R>(
         recipes: &Default::default(),
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids,
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
@@ -2452,7 +2467,6 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
                     required_after: t.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &crate::quester::bank_memo::BankMemo::default(),
                 }),
                 Truth::True
             );
@@ -3304,14 +3318,12 @@ fn with_sheep_step<R>(
     let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let evidence = tick.cx.evidence();
     let progress = [counted_sheep_progress(&selected, evidence, remaining)];
-    let bank = crate::quester::bank_memo::BankMemo::default();
     let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
     f(&mut StepContext {
         tick,
         quests: &quests,
         progress: &progress,
         required_after: evidence,
-        bank: &bank,
         banks: &banks,
         choices: &crate::quester::choices::QuestChoices::default(),
     })
@@ -3414,11 +3426,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
         let path =
             crate::quester::compile::compile_uncached_for_test(&document, cx.selected, cx.quests)
                 .unwrap();
-        let mut bank = crate::quester::bank_memo::BankMemo::default();
-        bank.update(&crate::native_bank::BankReceipt {
-            counts: vec![],
-            complete: true,
-        });
+        let bank = api::bank_memory::BankMemory::seeded(&[], api::bank_memory::Origin::Session);
         for (id, name, count, expected) in [
             (1737, "Wool", 19, "shear"),
             (1737, "Wool", 20, "spin"),
@@ -3448,7 +3456,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                 ],
                 28,
             );
-            with_tick(&snapshot, &mut None, 1, |tick| {
+            with_tick_bank(&snapshot, Some(&bank), &mut None, 1, |tick| {
                 let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
                 let context = PredicateContext {
                     cx: &tick.cx,
@@ -3458,7 +3466,6 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                     required_after: tick.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &bank,
                 };
                 let crate::quester::select::SelectionDecision::Selected(selection) =
                     crate::quester::select::select(&path, 1, 0, &context)
@@ -3580,7 +3587,6 @@ fn public_chat_cannot_settle_or_set_message_state() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(message.evaluate(&pred), Truth::False);
             assert_eq!(state.evaluate(&pred), Truth::False);
@@ -3698,7 +3704,6 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             for index in [1, 2] {
                 assert_eq!(
@@ -3761,7 +3766,6 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(loaded.evaluate(&pred), Truth::False);
         });
@@ -3800,7 +3804,6 @@ fn progress_predicates_require_known_same_run_evidence() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
             assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
@@ -3834,7 +3837,6 @@ fn progress_predicates_require_known_same_run_evidence() {
                 },
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&known), Truth::True);
             assert_eq!(flag.evaluate(&known), Truth::True);
@@ -4004,7 +4006,6 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
                 required_after: evidence,
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(not_set.evaluate(&known), Truth::False);
             assert_eq!(exact.evaluate(&known), Truth::True);
@@ -4642,7 +4643,6 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
                 required_after: cx.required_after,
                 chat_since: 0,
                 outcome: Some(&outcome),
-                bank: cx.bank,
             })
         };
         assert_eq!(
@@ -5264,7 +5264,6 @@ fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameSnapshot) ->
             required_after: tick.cx.evidence(),
             chat_since: 0,
             outcome: None,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             pairs: None,
         })
     })
@@ -6053,7 +6052,6 @@ fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
                     required_after: t.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &crate::quester::bank_memo::BankMemo::default(),
                 };
                 assert_eq!(plain.evaluate(&context), expected, "{world:?}");
                 assert_eq!(negated.evaluate(&context), !expected, "not {world:?}");
@@ -6069,7 +6067,6 @@ fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(plain.evaluate(&context), Truth::Unknown);
         });

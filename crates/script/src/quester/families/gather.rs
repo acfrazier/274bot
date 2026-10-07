@@ -619,7 +619,6 @@ mod tests {
             recipes: &recipes,
             bank: None,
             bank_required: false,
-            bank_items: &[],
             keep_ids: &[],
             loadouts: &loadouts,
         };
@@ -720,7 +719,6 @@ mod tests {
         f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
     ) -> R {
         let quests = api::quest_facts::QuestCatalog::empty();
-        let bank = crate::quester::bank_memo::BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let choices = crate::quester::choices::QuestChoices::default();
         let required_after = tick.cx.evidence();
@@ -729,7 +727,6 @@ mod tests {
             quests: &quests,
             progress: &[],
             required_after,
-            bank: &bank,
             banks: &banks,
             choices: &choices,
         })

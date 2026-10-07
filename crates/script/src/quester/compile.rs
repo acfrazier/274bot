@@ -38,7 +38,6 @@ pub struct CompileContext<'a> {
     /// `None` uses the shared eligible-bank cost selector at step start.
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
-    pub bank_items: &'a [i32],
     pub keep_ids: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
 }
@@ -234,7 +233,6 @@ pub struct CompiledProvisioning {
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
     pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
-    pub memo_ids: Arc<[i32]>,
 }
 
 pub struct CompiledSequence {
@@ -257,6 +255,9 @@ pub struct CompiledStep {
     pub plan: Arc<dyn StepPlan>,
 }
 
+/// The frame a predicate reads. Bank facts come from `cx.snapshot().stock()`:
+/// the account's bank memory rides on the frame borrow
+/// (design-bank-snapshot §1.2).
 pub struct PredicateContext<'a, 'frame> {
     pub cx: &'a ActionContext<'frame>,
     pub quests: &'a QuestCatalog,
@@ -265,14 +266,12 @@ pub struct PredicateContext<'a, 'frame> {
     pub chat_since: i32,
     pub outcome: Option<&'a StepOutcome>,
     pub pairs: Option<&'a dyn super::pair::QuestPairPort>,
-    pub bank: &'a super::bank_memo::BankMemo,
 }
 pub struct StepContext<'a, 'frame> {
     pub tick: &'a mut NativeTick<'frame>,
     pub quests: &'a QuestCatalog,
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
-    pub bank: &'a super::bank_memo::BankMemo,
     pub banks: &'a Arc<api::named_banks::NamedBankFacts>,
     /// Runtime account choices; never captured by a shared compiled plan.
     pub choices: &'a super::choices::QuestChoices,
@@ -287,10 +286,11 @@ pub struct StepOutcome {
 }
 pub trait PredicatePlan: Send + Sync {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth;
+    /// Whether an `Unknown` answer can be resolved by observing the bank: the
+    /// runner then runs one provisioning scan while the memory is `Unknown`.
     fn requires_bank(&self) -> bool {
         false
     }
-    fn bank_item_ids(&self, _ids: &mut Vec<i32>) {}
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
@@ -828,33 +828,20 @@ pub(super) fn compile_uncached(
             latch_index: u8::MAX,
         });
     let keep_ids = protected_item_ids(selected, &tools, &loadouts);
-    let mut bank_items = Vec::new();
     let mut base_spillover_keep = keep_ids.clone();
     for item in compiled_items.iter() {
-        push_unique_id(&mut bank_items, item.id);
         push_unique_id(&mut base_spillover_keep, item.id);
     }
     for (peak_items, consumed_ids) in recipe_peaks.values() {
         for item in peak_items.iter() {
-            push_unique_id(&mut bank_items, item.item.id);
             push_unique_id(&mut base_spillover_keep, item.item.id);
         }
         for id in consumed_ids.iter().copied() {
             push_unique_id(&mut base_spillover_keep, id);
         }
     }
-    for item in &tools {
-        push_unique_id(&mut bank_items, item.id);
-    }
     if let Some(coin) = &coin {
-        push_unique_id(&mut bank_items, coin.item.id);
         push_unique_id(&mut base_spillover_keep, coin.item.id);
-    }
-    for carry in loadout_carry.values().flat_map(|carry| carry.iter()) {
-        push_unique_id(&mut bank_items, carry.item.id);
-    }
-    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
-        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
     }
     let base_spillover_keep = Arc::from(base_spillover_keep);
     let keep_ids = Arc::from(keep_ids);
@@ -889,7 +876,6 @@ pub(super) fn compile_uncached(
         recipes: &empty_recipes,
         bank,
         bank_required,
-        bank_items: &bank_items,
         loadouts: &loadouts,
         keep_ids: &keep_ids,
     };
@@ -975,26 +961,6 @@ pub(super) fn compile_uncached(
             steps,
         });
     }
-    let mut predicate_bank_ids = Vec::new();
-    for predicate in recipes
-        .values()
-        .flat_map(|steps| steps.iter().map(|step| &step.skip_if))
-        .chain(prelude.iter().map(|step| &step.skip_if))
-        .chain(
-            sequences
-                .iter()
-                .flat_map(|sequence| sequence.steps.iter().map(|step| &step.skip_if)),
-        )
-        .chain(progress_reader.iter().map(|step| &step.skip_if))
-    {
-        predicate.bank_item_ids(&mut predicate_bank_ids);
-    }
-    for id in predicate_bank_ids {
-        push_unique_id(&mut bank_items, id);
-    }
-    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
-        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
-    }
     for plan in recipes
         .values()
         .flat_map(|steps| steps.iter())
@@ -1046,7 +1012,6 @@ pub(super) fn compile_uncached(
         loadout_carry,
         base_spillover_keep,
         recipes: provisioning_recipes,
-        memo_ids: Arc::from(bank_items),
     };
     Ok(CompiledPath {
         id: document.id.clone(),
@@ -2610,7 +2575,6 @@ mod tests {
         let mut snapshot = api::snapshot::GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![], 28);
-        let bank = super::super::bank_memo::BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let mut ledger = None;
         families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -2620,7 +2584,6 @@ mod tests {
                 quests: &quests,
                 progress: &[],
                 required_after,
-                bank: &bank,
                 banks: &banks,
                 choices: &super::super::choices::QuestChoices::default(),
             };

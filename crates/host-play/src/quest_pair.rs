@@ -2298,7 +2298,6 @@ mod tests {
                 recipes: &recipes,
                 bank: None,
                 bank_required: false,
-                bank_items: &[],
                 keep_ids: &[],
                 loadouts: &loadouts,
             };
