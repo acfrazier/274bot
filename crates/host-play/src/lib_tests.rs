@@ -19471,6 +19471,74 @@ export default class T extends LoopingBot {
     rig.slot().lock().unwrap().stop();
 }
 
+#[test]
+fn tick_fix_stat_and_chat_are_evidence_wake_families() {
+    let mut dirty = host::DirtyFamilies::default();
+    assert!(!crate::play_slots::script_evidence_dirty(dirty));
+    dirty.stat = true;
+    assert!(crate::play_slots::script_evidence_dirty(dirty), "UPDATE_STAT must wake machines");
+    dirty.stat = false;
+    dirty.chat = true;
+    assert!(crate::play_slots::script_evidence_dirty(dirty), "chat packets must wake machines");
+    dirty.chat = false;
+    dirty.camera = true;
+    assert!(!crate::play_slots::script_evidence_dirty(dirty), "screen-only frames do not pump scripts");
+}
+
+#[test]
+fn tick_fix_host_completions_publish_and_wake_without_player_info() {
+    for inspect in [true, false] {
+        let condition = if inspect {
+            "globalThis.__rs2b0t_host.snapshot.route_inspect_seq === 7"
+        } else {
+            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
+        };
+        let mut rig = ReconnectRig::with_source(
+            format!(r#"
+import {{ Execution }} from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayUntil(() => {condition}, 60000);
+        globalThis.__settledTick = globalThis.__rs2b0t_host.snapshot.tick;
+        await Execution.delayTicks(1);
+        globalThis.__later = true;
+    }}
+}}
+"#),
+            open_world(64, 64),
+            (3, 3, 0),
+        );
+        rig.frame(1, true);
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            let bot = navs.entry("alice".into()).or_default();
+            if inspect {
+                bot.inspect.latest = Some(route_inspect::InspectTerminal {
+                    seq: 7, generation: 1, request_id: 23, ok: true,
+                    reason: String::new(), bank_planned: false, ticks: 0.0,
+                    hops: Vec::new(),
+                });
+            } else {
+                bot.bank_pick.posted = script::isolate_fb::BankSelectionInput {
+                    generation: 1, request_id: 42, bank_index: 0, kind: 1,
+                    ..Default::default()
+                };
+            }
+        }
+        rig.frame(1, false);
+        assert_eq!(
+            rig.slot().lock().unwrap()
+                .probe("[globalThis.__settledTick ?? 0, globalThis.__later ?? false, globalThis.__loops]").unwrap(),
+            serde_json::json!([1, false, 1]),
+            "{} completion must publish and settle within the existing tick", if inspect { "route-inspect" } else { "bank selection" },
+        );
+        rig.frame(2, true);
+        assert_eq!(rig.slot().lock().unwrap().probe("globalThis.__later ?? false").unwrap(), true);
+        rig.slot().lock().unwrap().stop();
+    }
+}
+
 type SnapshotPumpFrames = Arc<Mutex<Vec<(u64, bool, Result<u64, script::native::ActionError>)>>>;
 
 struct SnapshotPumpMachine(SnapshotPumpFrames);

@@ -47,6 +47,11 @@ use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
 
+/// Snapshot families whose new evidence can settle a parked machine.
+pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
+    dirty.iface || dirty.inv
+}
+
 /// Facts delivered before frontend follow and script observation/dispatch.
 /// `hold` retains the guardian/readiness gate; it does not suppress intent.
 /// Each queued manual step counts even if the client later refuses its send.
