@@ -476,17 +476,118 @@ queue(shantay_pass_enter, 0, 0);
         "==== MAP ====\n0 38 44: h1 u50\n==== LOC ====\n0 38 44: 4031 10 0\n",
     );
     let defs = loc_defs(&[(4031, 1, 1)]);
-    let wc = bake_collision(&fx, &defs, &HashSet::from([4031]));
+    let origin = WorldTile {
+        x: 3264,
+        z: 3072,
+        level: 0,
+    };
+    let (width, height) = (64, 64);
+    let plane = width * height;
+    // A blocked two-row band makes the henge the only route to the chest.
+    let mut flags = vec![client::dash3d::CollisionFlag::WR_GRND as u32; 4 * plane];
+    let start = WorldTile {
+        x: 3302,
+        z: 3114,
+        level: 0,
+    };
+    let free_at = WorldTile {
+        x: 3302,
+        z: 3115,
+        level: 0,
+    };
+    let free_to = WorldTile {
+        x: 3302,
+        z: 3118,
+        level: 0,
+    };
+    let destination = WorldTile {
+        x: 3308,
+        z: 3120,
+        level: 0,
+    };
+    {
+        let mut open = |tile: WorldTile| {
+            let index = tile.level as usize * plane
+                + (tile.z - origin.z) as usize * width
+                + (tile.x - origin.x) as usize;
+            flags[index] = 0;
+        };
+        for tile in [start, free_at] {
+            open(tile);
+        }
+        for x in 3303..=3308 {
+            open(WorldTile {
+                x,
+                z: 3118,
+                level: 0,
+            });
+        }
+        for z in 3118..=3120 {
+            open(WorldTile {
+                x: 3308,
+                z,
+                level: 0,
+            });
+        }
+    }
+    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    let wc = WorldCollision {
+        origin,
+        width,
+        height,
+        walk,
+        blocked,
+        flags: Some(flags),
+    };
     let graph = derive_transports(fx.path(), &defs, &wc);
     let henge: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 4031).collect();
     assert_eq!(henge.len(), 2, "{henge:?}");
+    let free = henge
+        .iter()
+        .copied()
+        .find(|e| e.consumed_req.is_empty())
+        .expect("the free desert exit");
+    assert_eq!(free.at, free_at);
+    assert_eq!(free.to, free_to);
+    assert_eq!(
+        free.to,
+        WorldTile {
+            x: free.at.x,
+            z: free.at.z + 3,
+            level: free.at.level,
+        },
+        "the packed landing matches the content's player-relative +3z telejump"
+    );
+    assert!(
+        wc.standable(free.at),
+        "the free-exit stand must be standable"
+    );
+
     let mut f2p = crate::world_state::WorldState::empty();
     f2p.inv.insert(1854, 1);
-    for e in henge {
+    for e in &henge {
         assert!(e.members_req, "{e:?}");
         assert!(!f2p.allows(e), "F2P cannot pass the Shantay doorway");
         assert!(f2p.clone().with_map_members(true).allows(e));
     }
+    let members = crate::world_state::WorldState::empty().with_map_members(true);
+    let route = crate::router::find_with(
+        &wc,
+        &graph,
+        start,
+        destination,
+        crate::router::FindOptions::default(),
+        &members,
+    )
+    .expect("an exact Irena-to-bank route crosses the free henge exit");
+    assert!(
+        route.legs.iter().any(|leg| matches!(
+            leg,
+            crate::router::Leg::Transport { edge }
+                if edge.loc_id == 4031 && edge.at == free.at && edge.to == free.to
+        )),
+        "the r=0 route must use the standable +3z Shantay edge: {route:?}"
+    );
 }
 
 fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
@@ -1857,14 +1958,14 @@ mes(\"...And teleport out of the wilderness.\");
 /// landing of the `[queue,shantay_pass_enter]` `p_teleport
 /// (0_51_48_40_46)` + `p_telejump(movecoord(coord,0,0,-3))`,
 /// `consumed_req` one Shantay pass (obj 1854)) and the free desert exit
-/// (`at` (3302,3115) one tile south of the placement, `to`
-/// (3303,3118), the `coordz(coord) <= coordz(loc_coord)`
-/// `p_telejump(movecoord(coord,0,0,3))` landing, no item requirement).
+/// (`at` (3302,3115), one tile south of the placement, with `to` derived
+/// from `at` by +3z to match the desert branch's
+/// `p_telejump(movecoord(coord,0,0,3))`, no item requirement).
 /// Only the northbound hop consumes the pass.
 #[test]
 #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_emits_alkharid_toll_and_shantay_north() {
-    for (root, graph, _wc) in qualification_worlds() {
+    for (root, graph, wc) in qualification_worlds() {
         let _ = root;
         // Each gate has two crossing directions, each with paid and
         // journal-completed alternatives derived from the border guard script.
@@ -2001,10 +2102,24 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
         assert_eq!(
             free.to,
             WorldTile {
-                x: 3303,
+                x: 3302,
                 z: 3118,
                 level: 0,
             }
+        );
+        assert_eq!(
+            free.to,
+            WorldTile {
+                x: free.at.x,
+                z: free.at.z + 3,
+                level: free.at.level,
+            },
+            "the desert content telejumps +3z from the player's stand"
+        );
+        assert!(
+            wc.standable(free.at),
+            "the desert-side interaction stand must be standable: {:?}",
+            free.at
         );
         assert!(free.consumed_req.is_empty(), "the desert exit is free");
         assert_eq!(free.option, 1, "Go-through op");
@@ -7918,10 +8033,9 @@ fn n1_zanaris_missing_script_increments_skip_without_shed_edge() {
 }
 
 /// The Shantay henge doorway (loc 4031, the `shantay_pass.rs2`
-/// `[oploc1,shantay_pass_henge_doorway]` branches) packs exactly two edges
-/// per placement next to the Al Kharid toll gates: the gated hop into the
-/// desert `at` the placement (one consumed Shantay pass) and the free desert
-/// exit `at` one tile south of it.
+/// `[oploc1,shantay_pass_henge_doorway]` branches) packs exactly two edges:
+/// the gated hop at the placement into the desert, and the free exit from
+/// the stand one tile south of it.
 #[test]
 fn shantay_henge_packs_the_consumed_entry_and_free_exit() {
     let fx = Fixture::new();
@@ -7972,8 +8086,21 @@ fn shantay_henge_packs_the_consumed_entry_and_free_exit() {
                 z: 3115,
                 level: 0
             },
-            SHANTAY_SOUTH_TO
+            WorldTile {
+                x: 3302,
+                z: 3118,
+                level: 0
+            }
         )
+    );
+    assert_eq!(
+        free.to,
+        WorldTile {
+            x: free.at.x,
+            z: free.at.z + 3,
+            level: free.at.level,
+        },
+        "p_telejump movecoord(coord,0,0,3) derives the landing from the stand"
     );
     for e in henge {
         assert_eq!(e.option, 1, "Go-through op");
