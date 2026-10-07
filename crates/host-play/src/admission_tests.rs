@@ -7,9 +7,9 @@ use client::dash3d::CollisionFlag;
 use nav::collision::{pack_walk, WorldCollision};
 use nav::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav::router::{Leg, RouteError};
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav::transport::TransportGraph;
 #[cfg(feature = "test-support")]
-use nav::transport::{WildernessRules, WildernessZone};
+use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
 use nav::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
 use nav::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
