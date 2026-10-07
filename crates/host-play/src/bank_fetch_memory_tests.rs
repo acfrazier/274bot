@@ -218,38 +218,29 @@ fn a_toll_the_memory_lacks_is_no_path_unless_the_memory_is_a_hint() {
         ])
     );
 
-    // The trip: the player reaches the access tile and the fixture bank
-    // opens without coins.
+    // The player is at the access tile and the fixture bank is open without
+    // coins. The same pump settles Walk/Open, then truthfully refuses Withdraw.
     let BankStep::Walk { x, z, level } = walk else {
         unreachable!()
     };
     let (mut client, open) = fixture(x, z, true);
     let entry = arms.lock().unwrap().get("alice").cloned().unwrap();
     let mut walk_arm = entry.lock().unwrap();
-    for front in [
-        Some(BankStep::Open),
-        Some(BankStep::Withdraw {
-            id: COINS,
-            count: 10,
-        }),
-        None,
-    ] {
-        step_walk_arm_bank_fetch(
+    assert!(
+        !step_walk_arm_bank_fetch(
             &mut client,
             &open,
             &mut walk_arm,
             Some(&world),
             Some((x, z, level)),
             false,
-        );
-        assert_eq!(
-            walk_arm
-                .bank_fetch
-                .as_ref()
-                .and_then(|pending| pending.steps.front().cloned()),
-            front
-        );
-    }
+        ),
+        "the missing-coin refusal emits no effect"
+    );
+    assert!(
+        walk_arm.bank_fetch.is_none(),
+        "satisfied Walk/Open steps do not delay the truthful Withdraw refusal"
+    );
     assert!(
         walk_arm.route.is_none(),
         "the refused Withdraw ends the session and its route"
@@ -268,8 +259,9 @@ fn a_toll_the_memory_lacks_is_no_path_unless_the_memory_is_a_hint() {
 }
 
 /// A `Hint` overlay plans a whole-stack `Withdraw` (the overlaid row is
-/// exactly the shortage). The open bank holds more, so the step settles
-/// through Withdraw-X with exactly the planned amount (D3).
+/// exactly the shortage). The open bank holds more, so one production pump
+/// drains the satisfied Walk/Open steps, rewrites Withdraw, and sends one
+/// Withdraw-X effect.
 #[test]
 fn a_hint_whole_stack_withdraw_settles_through_withdraw_x() {
     let world = toll_world(KNIFE, 7);
@@ -310,20 +302,19 @@ fn a_hint_whole_stack_withdraw_settles_through_withdraw_x() {
     let entry = arms.lock().unwrap().get("alice").cloned().unwrap();
     let mut walk_arm = entry.lock().unwrap();
     let here = Some((x, z, level));
-    // Walk lands on the access tile, Open on the loaded bank.
-    for _ in 0..2 {
-        step_walk_arm_bank_fetch(&mut client, &open, &mut walk_arm, Some(&world), here, false);
-    }
     let out_before = client.out.pos;
-    step_walk_arm_bank_fetch(&mut client, &open, &mut walk_arm, Some(&world), here, false);
-    assert_eq!(client.out.pos, out_before, "the rewrite sends nothing");
-    let steps: Vec<BankStep> = walk_arm
+    assert!(
+        step_walk_arm_bank_fetch(&mut client, &open, &mut walk_arm, Some(&world), here, false),
+        "satisfied Walk/Open steps and the Withdraw-X rewrite drain to one send"
+    );
+    let out_after = client.out.pos;
+    assert!(out_after > out_before, "the Withdraw-X effect was emitted");
+    let pending = walk_arm
         .bank_fetch
         .as_ref()
-        .map(|pending| pending.steps.iter().cloned().collect())
-        .unwrap_or_default();
+        .expect("the amount remains pending");
     assert_eq!(
-        steps,
+        pending.steps.iter().cloned().collect::<Vec<_>>(),
         vec![
             BankStep::WithdrawX { id: KNIFE },
             BankStep::WithdrawXAmount {
@@ -332,11 +323,24 @@ fn a_hint_whole_stack_withdraw_settles_through_withdraw_x() {
             },
             BankStep::Close,
         ],
-        "20 banked knives give exactly 7 only through the amount dialog"
+        "the pump stops at the first emitted effect"
     );
     assert!(
-        step_walk_arm_bank_fetch(&mut client, &open, &mut walk_arm, Some(&world), here, false),
-        "Withdraw-X is sent on the next pump"
+        pending.progress.flight.as_ref().is_some_and(|flight| {
+            matches!(
+                &flight.target,
+                FlightTarget::Obj { id, .. } if *id == KNIFE
+            )
+        }),
+        "the in-flight acknowledgement remains correlated to the requested obj"
+    );
+    assert!(
+        !step_walk_arm_bank_fetch(&mut client, &open, &mut walk_arm, Some(&world), here, false),
+        "an unchanged snapshot does not acknowledge or resend Withdraw-X"
+    );
+    assert_eq!(
+        client.out.pos, out_after,
+        "the pending effect is not duplicated on the same snapshot"
     );
 }
 

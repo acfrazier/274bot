@@ -13760,6 +13760,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
     client.apply_p_countdialog();
     client.bump_gens(ServerProt::P_COUNTDIALOG);
     snapshot.rebuild(&client);
+    client.out.pos = 0;
     step_bank_fetch_on_bot(
         &mut client,
         &snapshot,
@@ -13772,6 +13773,13 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         bot.bank_fetch.as_ref().unwrap().steps.front(),
         Some(&BankStep::WithdrawXAmount { id: 2, count: 7 })
     );
+    assert_eq!(
+        count_packet(&client),
+        Some(7),
+        "the exact shortage is sent in the Withdraw-X acknowledgement pump"
+    );
+    let sent = client.out.pos;
+    assert!(sent > 0, "the count effect reached the driver");
     client.out.pos = 0;
     step_bank_fetch_on_bot(
         &mut client,
@@ -13782,11 +13790,11 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         false,
     );
     assert_eq!(
-        count_packet(&client),
-        Some(7),
-        "not the full bank stack of 20"
+        client.out.pos, 0,
+        "an unchanged snapshot does not resend the in-flight amount"
     );
-    let sent = client.out.pos;
+    assert_eq!(count_packet(&client), None);
+    client.out.pos = 0;
     client.dialog_input_open = false;
     client.set_iface_mut(
         601,
@@ -13817,7 +13825,12 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
             Some((0, 3, 0)),
             false,
         );
-        assert_eq!(client.out.pos, sent, "a sent amount must not be repeated");
+        assert_eq!(count_packet(&client), None, "a sent amount is not repeated");
+        if received < 7 {
+            assert_eq!(client.out.pos, 0, "an incomplete withdrawal still waits");
+        } else {
+            assert!(client.out.pos > 0, "the landed withdrawal closes in this pump");
+        }
         let expected = if received == 7 {
             BankStep::Close
         } else {
