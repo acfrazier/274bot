@@ -1386,6 +1386,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         seed_dialogue_combat(&mut snapshot, false);
         let mut player = snapshot.local_player().unwrap().clone();
         player.player.actor.tile = here;
+        player.player.network = here;
         snapshot.seed_local_player(player);
         snapshot.seed_inventory(held(input), 28);
         snapshot.seed_quest_statuses(

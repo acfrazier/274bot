@@ -1475,9 +1475,14 @@ impl StepRun for TalkRun {
         }
         if !self.started {
             if let Some(tile) = self.tile {
-                let here = cx.tick.cx.snapshot().here();
+                let here = cx
+                    .tick
+                    .cx
+                    .snapshot()
+                    .local_player()
+                    .map(|player| player.value.player.network);
                 let near =
-                    here.is_some_and(|obs| reach::within(obs.value, tile, i32::from(self.leash)));
+                    here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
                 if !near {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
                         reach::walk_request(tile, self.leash, None, cx.required_after),
@@ -2171,8 +2176,13 @@ impl StepRun for InteractRun {
                 .tile
                 .filter(|_| !available || matches!(self.kind, reach::ReachKind::Held { .. }))
             {
-                let here = cx.tick.cx.snapshot().here();
-                if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
+                let here = cx
+                    .tick
+                    .cx
+                    .snapshot()
+                    .local_player()
+                    .map(|player| player.value.player.network);
+                if !here.is_some_and(|here| reach::within(here, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
                         reach::walk_request(
                             tile,

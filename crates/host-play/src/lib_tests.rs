@@ -13817,6 +13817,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         }
         client.bump_gens(ServerProt::UPDATE_INV_FULL);
         snapshot.rebuild(&client);
+        let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
         step_bank_fetch_on_bot(
             &mut client,
             &snapshot,
@@ -13829,8 +13830,15 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         if received < 7 {
             assert_eq!(client.out.pos, 0, "an incomplete withdrawal still waits");
         } else {
-            assert!(
-                client.out.pos > 0,
+            let mut packets = Vec::new();
+            assert!(api::interact::Driver::trace_packets(
+                &client,
+                *checkpoint,
+                &mut |opcode| packets.push(opcode),
+            ));
+            assert_eq!(
+                packets,
+                [client::io::ClientProt::CLOSE_MODAL.id as u8],
                 "the landed withdrawal closes in this pump"
             );
         }

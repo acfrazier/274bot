@@ -1227,9 +1227,6 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             }
             StepEnd::Rewritten => {}
         }
-        if wrote {
-            return true;
-        }
     }
     if let Some(pending) = bot.bank_fetch.take_if(|pending| pending.steps.is_empty()) {
         let session_dest = pending.dest;
