@@ -2960,18 +2960,27 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
         ],
         -1,
     );
+    // The finish Dialogue begun on a ready page answers on its begin tick
+    // (TICK-FIX #14, C-DIALOGUE-ADOPT).
     assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Dialogue(_))));
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
-
-    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 4 })
     ));
+
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
     snapshot.seed_chat_modal(4883, vec!["The demon is weakened.".into()]);
     snapshot.seed_chat_options(vec![], 4899);
+    // A new chat root acknowledges the answer with its page complete: the
+    // Continue goes out on the ack tick (TICK-FIX #14, engine resume).
     assert!(with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+            component_id: None
+        })
+    ));
     assert!(with_step_context(&snapshot, &mut ledger, 6, |cx| run.poll(cx)).is_pending());
     assert!(with_step_context(&snapshot, &mut ledger, 7, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
@@ -2983,13 +2992,11 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
 
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    for tick in 8..13 {
-        assert!(
-            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
-            "finish must wait for the shared four-tick dialogue gap"
-        );
-    }
-    let completed = with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx));
+    assert!(
+        with_step_context(&snapshot, &mut ledger, 8, |cx| run.poll(cx)).is_pending(),
+        "finish observes the closed chat and starts the end gap on that tick"
+    );
+    let completed = with_step_context(&snapshot, &mut ledger, 9, |cx| run.poll(cx));
     let Poll::Ready(Ok(outcome)) = completed else {
         panic!("only a completed shared continuation may settle finish");
     };
@@ -3064,6 +3071,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
                 choose: "Rule answer".into(),
             }],
             strict: true,
+            gap_ticks: None,
         })
         .unwrap()
     };
@@ -3089,12 +3097,14 @@ fn combat_finish_uses_strict_current_page_line_rules() {
     );
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     let mut ledger = None;
+    // The ready finish page is answered on the tick its Dialogue begins
+    // (TICK-FIX #14).
     assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
-    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option: 2 })
     ));
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
 
     let mut unmatched = finish_test_run(&data, 100);
     unmatched.finish.as_mut().unwrap().options = make_options();
@@ -3117,13 +3127,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
     );
     super::super::tests::seed_dialogue_combat(&mut unmatched_snapshot, false);
     let mut unmatched_ledger = None;
-    assert!(
-        with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 1, |cx| {
-            unmatched.poll(cx)
-        })
-        .is_pending()
-    );
-    let failed = with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 2, |cx| {
+    let failed = with_step_context(&unmatched_snapshot, &mut unmatched_ledger, 1, |cx| {
         unmatched.poll(cx)
     });
     assert!(matches!(
@@ -3228,10 +3232,9 @@ fn combat_finish_strict_menu_refusals_block_consistently() {
         );
         super::super::tests::seed_dialogue_combat(&mut snapshot, false);
         let mut ledger = None;
-        assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)).is_pending());
         assert!(
             matches!(
-                with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)),
+                with_step_context(&snapshot, &mut ledger, 1, |cx| run.poll(cx)),
                 Poll::Ready(Err(ActionError::Blocked(reason)))
                     if reason.contains("combat finish dialogue failed")
             ),

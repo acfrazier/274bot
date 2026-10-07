@@ -290,7 +290,7 @@ pub(super) fn frame_context<'a>(
         sequence: ctx.tick,
     };
     let now = Instant::now();
-    runtime.budget.observe(ctx.tick);
+    runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
     ActionContext {
         evidence,
         pin,

@@ -150,6 +150,12 @@ impl NativeMachine for Walk {
                 return Poll::Ready(Ok(receipt.clone()));
             }
         }
+        // An arrival on a new level or in a rebuilt build area is reported on
+        // the next tick: this tick's locs can still be the old ones, and the
+        // owner's next click would choose from them.
+        if cx.entered_scene() {
+            return Poll::Pending;
+        }
 
         if frame.arrived(self.key) {
             return Poll::Ready(Ok(WalkReceipt {

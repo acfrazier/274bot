@@ -160,138 +160,145 @@ impl NativeMachine for JournalMachine {
         let Some(pair) = snapshot.main_modal() else {
             return Poll::Pending;
         };
-        match self.phase {
-            Phase::Click => {
-                if pair.value.root != -1
-                    || !pair.value.texts.is_empty()
-                    || snapshot.chat_modal().is_none_or(|chat| {
-                        chat.value.root != -1 || chat.value.continue_component_id >= 0
-                    })
-                {
-                    return Poll::Ready(Err(ActionError::Busy));
-                }
-                match cx.emit(InteractReq::IfButton {
-                    component_id: self.component,
-                }) {
-                    Ok(request) => {
-                        self.phase = Phase::Acquire { request };
-                        self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+        // A capture falls through to the Close arm on the same poll: the
+        // click that produced the page spent an earlier tick's event, so the
+        // CloseModal goes out on the capture tick (TICK-FIX #6, E-Q6).
+        loop {
+            match self.phase {
+                Phase::Click => {
+                    if pair.value.root != -1
+                        || !pair.value.texts.is_empty()
+                        || snapshot.chat_modal().is_none_or(|chat| {
+                            chat.value.root != -1 || chat.value.continue_component_id >= 0
+                        })
+                    {
+                        return Poll::Ready(Err(ActionError::Busy));
                     }
-                    Err(ActionError::BudgetExhausted) => {}
-                    Err(error) => return Poll::Ready(Err(error)),
+                    match cx.emit(InteractReq::IfButton {
+                        component_id: self.component,
+                    }) {
+                        Ok(request) => {
+                            self.phase = Phase::Acquire { request };
+                            self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                        }
+                        Err(ActionError::BudgetExhausted) => {}
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
                 }
-            }
-            Phase::Acquire { request } => {
-                let Some(receipt) = cx.interaction_receipt(request) else {
-                    return Poll::Pending;
-                };
-                if !receipt.accepted {
-                    return Poll::Ready(Err(failure("journal click refused")));
-                }
-                if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
-                    return Poll::Pending;
-                }
-                if pair.value.root == -1 {
-                    return Poll::Pending;
-                }
-                if pair.value.root != ROOT_289 {
-                    return Poll::Ready(Err(failure("journal root changed")));
-                }
-                let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
-                    return Poll::Pending;
-                };
-                if !title_matches(page.value.title, &self.title) {
-                    return Poll::Ready(Err(failure("journal title changed")));
-                }
-                self.lines = page.value.lines().map(Arc::<str>::from).collect();
-                self.acquired = Some(page.stamp);
-                self.phase = Phase::Close;
-                self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
-            }
-            Phase::Adopt { before } => {
-                if snapshot
-                    .chat_modal()
-                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
-                {
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                }
-                let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                };
-                if !strictly_later(page.stamp, before)
-                    || !title_matches(page.value.title, &self.title)
-                {
-                    if !strictly_later(page.stamp, before) {
+                Phase::Acquire { request } => {
+                    let Some(receipt) = cx.interaction_receipt(request) else {
+                        return Poll::Pending;
+                    };
+                    if !receipt.accepted {
+                        return Poll::Ready(Err(failure("journal click refused")));
+                    }
+                    if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
                         return Poll::Pending;
                     }
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                }
-                self.lines = page.value.lines().map(Arc::<str>::from).collect();
-                self.acquired = Some(page.stamp);
-                self.phase = Phase::Close;
-                self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
-            }
-            Phase::Close => {
-                if snapshot
-                    .chat_modal()
-                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
-                {
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                }
-                let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                };
-                if !title_matches(page.value.title, &self.title)
-                    || !page.value.lines().eq(self.lines.iter().map(AsRef::as_ref))
-                {
-                    return Poll::Ready(Err(failure("journal ownership lost before close")));
-                }
-                match cx.emit(InteractReq::CloseModal) {
-                    Ok(request) => {
-                        self.phase = Phase::Closing { request };
-                        self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                    if pair.value.root == -1 {
+                        return Poll::Pending;
                     }
-                    Err(ActionError::BudgetExhausted) => {}
-                    Err(error) => return Poll::Ready(Err(error)),
-                }
-            }
-            Phase::Closing { request } => {
-                let Some(receipt) = cx.interaction_receipt(request) else {
-                    return Poll::Pending;
-                };
-                if !receipt.accepted {
-                    return Poll::Ready(Err(failure("journal close refused")));
-                }
-                if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
-                    return Poll::Pending;
-                }
-                if snapshot
-                    .chat_modal()
-                    .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
-                {
-                    return Poll::Ready(Err(failure("journal ownership lost while closing")));
-                }
-                if pair.value.root == -1 && pair.value.texts.is_empty() {
-                    let closed = pair.stamp;
-                    if let Some(lease) = self.lease.take() {
-                        cx.end_quiet_read(lease);
+                    if pair.value.root != ROOT_289 {
+                        return Poll::Ready(Err(failure("journal root changed")));
                     }
-                    return Poll::Ready(Ok(JournalRead {
-                        quest: self.quest.clone(),
-                        root: ROOT_289,
-                        lines: Arc::clone(&self.lines),
-                        colour: Some(self.colour),
-                        acquired: self.acquired.expect("captured before close"),
-                        closed,
-                        pin: Arc::clone(&self.pin),
-                    }));
+                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                        return Poll::Pending;
+                    };
+                    if !title_matches(page.value.title, &self.title) {
+                        return Poll::Ready(Err(failure("journal title changed")));
+                    }
+                    self.lines = page.value.lines().map(Arc::<str>::from).collect();
+                    self.acquired = Some(page.stamp);
+                    self.phase = Phase::Close;
+                    self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                    continue;
                 }
-                if pair.value.root != ROOT_289 {
-                    return Poll::Ready(Err(failure("journal ownership lost while closing")));
+                Phase::Adopt { before } => {
+                    if snapshot
+                        .chat_modal()
+                        .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                    {
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    }
+                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    };
+                    if !strictly_later(page.stamp, before)
+                        || !title_matches(page.value.title, &self.title)
+                    {
+                        if !strictly_later(page.stamp, before) {
+                            return Poll::Pending;
+                        }
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    }
+                    self.lines = page.value.lines().map(Arc::<str>::from).collect();
+                    self.acquired = Some(page.stamp);
+                    self.phase = Phase::Close;
+                    self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                    continue;
+                }
+                Phase::Close => {
+                    if snapshot
+                        .chat_modal()
+                        .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                    {
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    }
+                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    };
+                    if !title_matches(page.value.title, &self.title)
+                        || !page.value.lines().eq(self.lines.iter().map(AsRef::as_ref))
+                    {
+                        return Poll::Ready(Err(failure("journal ownership lost before close")));
+                    }
+                    match cx.emit(InteractReq::CloseModal) {
+                        Ok(request) => {
+                            self.phase = Phase::Closing { request };
+                            self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                        }
+                        Err(ActionError::BudgetExhausted) => {}
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+                Phase::Closing { request } => {
+                    let Some(receipt) = cx.interaction_receipt(request) else {
+                        return Poll::Pending;
+                    };
+                    if !receipt.accepted {
+                        return Poll::Ready(Err(failure("journal close refused")));
+                    }
+                    if !pair.stamp.meets(receipt.evidence) || pair.stamp == receipt.evidence {
+                        return Poll::Pending;
+                    }
+                    if snapshot
+                        .chat_modal()
+                        .is_none_or(|chat| chat.value.root != -1 || !chat.value.texts.is_empty())
+                    {
+                        return Poll::Ready(Err(failure("journal ownership lost while closing")));
+                    }
+                    if pair.value.root == -1 && pair.value.texts.is_empty() {
+                        let closed = pair.stamp;
+                        if let Some(lease) = self.lease.take() {
+                            cx.end_quiet_read(lease);
+                        }
+                        return Poll::Ready(Ok(JournalRead {
+                            quest: self.quest.clone(),
+                            root: ROOT_289,
+                            lines: Arc::clone(&self.lines),
+                            colour: Some(self.colour),
+                            acquired: self.acquired.expect("captured before close"),
+                            closed,
+                            pin: Arc::clone(&self.pin),
+                        }));
+                    }
+                    if pair.value.root != ROOT_289 {
+                        return Poll::Ready(Err(failure("journal ownership lost while closing")));
+                    }
                 }
             }
+            return Poll::Pending;
         }
-        Poll::Pending
     }
 
     fn cancel(&mut self) {

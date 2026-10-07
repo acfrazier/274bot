@@ -5498,9 +5498,10 @@
                   "source": "C maps/m49_47.jm2:4690 (al_shabim 832)"
                 },
                 "leash": 8,
-                "prefer": []
+                "prefer": [],
+                "gap_ticks": 3
               },
-              "comment": "al_shabim.rs2:11-14,42-74: with the prototype dart in the pack at stage 15: takes dart, plans and key, gives six bronze darts and the Tenti pineapple, sets stage 16. Needs two free pack slots.",
+              "comment": "al_shabim.rs2:11-14,42-74: with the prototype dart in the pack at stage 15: takes dart, plans and key, gives six bronze darts and the Tenti pineapple, sets stage 16. Needs two free pack slots. gap_ticks 3: al_shabim.rs2:53-57 closes the chat (if_close) then p_delay(2) before the next page (3 engine ticks; inv_del immediately after close can re-arm).",
               "skip_if": {
                 "Not": {
                   "Fact": {

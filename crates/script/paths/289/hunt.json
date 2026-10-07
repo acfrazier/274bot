@@ -128,8 +128,10 @@
             },
             "leash": 8,
             "prefer": ["Could you offer me employment on your plantation?", "No, the crate isn't full yet.", "Thank you, I'll be on my way"],
-            "strict": true
+            "strict": true,
+            "gap_ticks": 4
           },
+          "comment": "gap_ticks 4: luthas.rs2:17-27 closes the chat (if_close) then p_delay(3) before the next page (4 engine ticks; mes and inv_add at the close tick can re-arm).",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
@@ -497,8 +499,10 @@
             },
             "leash": 8,
             "prefer": ["Could you offer me employment on your plantation?", "No, the crate isn't full yet.", "Thank you, I'll be on my way"],
-            "strict": true
+            "strict": true,
+            "gap_ticks": 4
           },
+          "comment": "gap_ticks 4: luthas.rs2:17-27 closes the chat (if_close) then p_delay(3) before the next page (4 engine ticks; mes and inv_add at the close tick can re-arm).",
           "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
           "settle": { "All": [] }
         },
@@ -914,8 +918,10 @@
             },
             "leash": 8,
             "prefer": ["Thank you, I'll be on my way"],
-            "strict": true
+            "strict": true,
+            "gap_ticks": 4
           },
+          "comment": "gap_ticks 4: luthas.rs2:17-27 closes the chat (if_close) then p_delay(3) before the next page (4 engine ticks; mes and inv_add at the close tick can re-arm).",
           "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
           "settle": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } }
         }

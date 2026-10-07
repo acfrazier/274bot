@@ -10,13 +10,22 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::task::Poll;
 
-pub const DIALOG_GAP_TICKS: u64 = 4;
+/// Quiet ticks after the chat is observed closed before a conversation counts
+/// as over, unless the step authors `gap_ticks`. The engine closes chat with
+/// the same `IfClose` at script end (`Player.ts:2223-2229`) and at a script's
+/// own `if_close` before a `p_delay` and a later page, so the client cannot
+/// tell them apart; script end is the normal case, and a Path step whose NPC
+/// closes and reopens the chat authors its engine hole (`gap_ticks`).
+pub const DIALOG_GAP_TICKS: u64 = 1;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
-pub const CONTINUE_TICKS: u64 = 1;
-pub const CHOICE_TICKS: u64 = 2;
+/// Ticks before acting on a page that changed text on the same root (a same-
+/// root choice page, a book or scroll forward) or offered no input: its text
+/// can still be arriving in later frames of the server tick under the
+/// client's 5-packets-per-frame read. A Continue or a new root needs none.
+pub const PAGE_SETTLE_TICKS: u64 = 1;
 
 /// The native dialogue acknowledgement shared with the v1 adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +82,9 @@ pub struct DialogueOptions {
     /// Chat continue clicks only: a Main document or modal ends the driver
     /// without a click, so it is left to its owner.
     pub chat_only: bool,
+    /// Authored end gap in quiet ticks after the chat closes; `None` uses
+    /// [`DIALOG_GAP_TICKS`].
+    pub gap_ticks: Option<u16>,
 }
 
 impl Default for DialogueOptions {
@@ -87,6 +99,7 @@ impl Default for DialogueOptions {
             line_rules: Arc::clone(&RULES),
             strict: false,
             chat_only: false,
+            gap_ticks: None,
         }
     }
 }
@@ -382,9 +395,15 @@ impl NativeMachine for Dialogue {
                     .ack_page
                     .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
-                    self.phase = Phase::WaitContinueTick;
-                    self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-                    return Poll::Pending;
+                    // The engine resumes the paused script in the ack packet's
+                    // own cycle (`ResumePauseButtonHandler.ts:7-13`) and writes
+                    // the next `~chatnpc`/`~chatplayer` page in that execution
+                    // (`chat.rs2:271-321`): no tick is owed before driving it.
+                    // A Continue does not read the page's text, so a page still
+                    // mid-update under the client's 5-packets-per-frame read
+                    // is safe to press. A closed chat starts the end gap now.
+                    self.phase = Phase::Drive;
+                    return self.drive(cx, &obs);
                 }
                 if now >= self.deadline_ms {
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
@@ -396,8 +415,20 @@ impl NativeMachine for Dialogue {
                     .ack_page
                     .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
+                    // The choice resumes the same paused script in the ack
+                    // packet's cycle (`IfButtonHandler.ts:26-29`). A new chat
+                    // root means the page's `if_openchat` has been applied, and
+                    // every `p_choiceN`/`~chat*` proc writes its texts before it
+                    // (`chat.rs2:1-14,271-321`); a closed chat starts the end
+                    // gap: drive now. A same-root text change may still be
+                    // missing option rows under the client's 5-packets-per-
+                    // frame read, so it waits one tick before answering.
+                    if !obs.ready || obs.modal != self.ack_page.modal {
+                        self.phase = Phase::Drive;
+                        return self.drive(cx, &obs);
+                    }
                     self.phase = Phase::WaitChoiceTicks;
-                    self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
+                    self.due_tick = obs.tick.saturating_add(PAGE_SETTLE_TICKS);
                     return Poll::Pending;
                 }
                 if now >= self.deadline_ms {
@@ -448,7 +479,7 @@ impl NativeMachine for Dialogue {
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
                         self.gap_rearms_left -= 1;
-                        self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+                        self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                     }
                     if obs.tick >= self.due_tick {
                         if self.gap_rearms_left > 0
@@ -460,7 +491,7 @@ impl NativeMachine for Dialogue {
                             // Scripted work can close chat before its final page.
                             // Spend the same finite budget, only at a gap expiry.
                             self.gap_rearms_left -= 1;
-                            self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+                            self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                             return Poll::Pending;
                         }
                         Poll::Ready(Ok(DialogueOutcome::Completed))
@@ -482,6 +513,15 @@ impl NativeMachine for Dialogue {
 }
 
 impl Dialogue {
+    /// Quiet ticks this conversation waits after the chat closes, and after
+    /// each re-arm signal.
+    fn gap_ticks(&self) -> u64 {
+        self.args
+            .options
+            .gap_ticks
+            .map_or(DIALOG_GAP_TICKS, u64::from)
+    }
+
     fn npc_id(&self) -> Option<i32> {
         match &self.args.target {
             DialogueTarget::Npc { id, .. } => Some(*id),
@@ -643,7 +683,7 @@ impl Dialogue {
                     .acknowledged(obs.root, forward_visible, obs.page_fingerprint())
                 {
                     self.phase = Phase::WaitMainForwardTick;
-                    self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+                    self.due_tick = obs.tick.saturating_add(PAGE_SETTLE_TICKS);
                     Poll::Pending
                 } else if now >= self.deadline_ms {
                     Poll::Ready(Ok(DialogueOutcome::Failed))
@@ -669,7 +709,7 @@ impl Dialogue {
                         .acknowledged(obs.root, false, obs.page_fingerprint())
                 {
                     self.phase = Phase::WaitMainCloseTick;
-                    self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+                    self.due_tick = obs.tick.saturating_add(PAGE_SETTLE_TICKS);
                     Poll::Pending
                 } else if obs.root != self.ack_page.modal || now >= self.deadline_ms {
                     Poll::Ready(Ok(DialogueOutcome::Failed))
@@ -767,7 +807,7 @@ impl Dialogue {
             self.gap_inventory = inventory_fingerprint(cx);
             self.gap_position = cx.snapshot().here().map(|here| here.value);
             self.gap_chat_mark = reach::last_chat_seq(cx);
-            self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+            self.due_tick = obs.tick.saturating_add(self.gap_ticks());
             return Poll::Pending;
         }
         if obs.r#continue {
@@ -815,7 +855,7 @@ impl Dialogue {
         }
         self.steps += 1;
         self.phase = Phase::WaitContinueTick;
-        self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+        self.due_tick = obs.tick.saturating_add(PAGE_SETTLE_TICKS);
         Poll::Pending
     }
 }

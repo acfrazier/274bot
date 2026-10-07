@@ -89,6 +89,9 @@ pub struct Provisioner {
     attempts: u32,
     status: Status,
     revision: u64,
+    /// Bank trips started so far (wrapping), so the runner can trace a trip
+    /// that began and ended within one poll.
+    bank_starts: u32,
 }
 
 impl Default for Provisioner {
@@ -109,6 +112,7 @@ impl Provisioner {
             attempts: 0,
             status: Status::default(),
             revision: 0,
+            bank_starts: 0,
         }
     }
 
@@ -142,7 +146,18 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
-        self.poll_prepare(cx, plan, active_loadout, current_stage)
+        let prepared = self.poll_prepare(cx, plan, active_loadout, current_stage);
+        // A bank trip or recipe started by this plan acts on this tick when
+        // starting it spent nothing (TICK-FIX #4/#7, E-Q7/E-Q8a).
+        if prepared.is_pending() && cx.tick.cx.may_continue_this_tick() {
+            if self.bank_run.is_some() {
+                return self.poll_bank(cx);
+            }
+            if self.acquire_run.is_some() {
+                return self.poll_acquire(cx);
+            }
+        }
+        prepared
     }
 
     pub fn cancel(&mut self) {
@@ -188,6 +203,10 @@ impl Provisioner {
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
         self.bank_run.as_ref().map(|_| self.status.phase)
+    }
+
+    pub(super) fn bank_starts(&self) -> u32 {
+        self.bank_starts
     }
 
     pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
@@ -693,6 +712,7 @@ impl Provisioner {
             cx,
         ));
         self.attempts = self.attempts.saturating_add(1);
+        self.bank_starts = self.bank_starts.wrapping_add(1);
         self.set_status(phase, item, need, pack, bank, bank_known(cx));
     }
 
@@ -1870,11 +1890,11 @@ mod tests {
 
     #[test]
     fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
-        let (path, quests, snapshot, axe_id) = woodcutting_tool_fixture();
+        let (path, quests, mut snapshot, axe_id) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let banks = Arc::new(NamedBankFacts::empty());
+        let banks = pickable(&mut snapshot);
         assert!(poll_once(
             &mut provisioner,
             &snapshot,
@@ -1907,11 +1927,11 @@ mod tests {
     /// `Unknown` bank's is.
     #[test]
     fn hint_lacking_every_gather_tool_costs_the_verifying_scan() {
-        let (path, quests, snapshot, _) = woodcutting_tool_fixture();
+        let (path, quests, mut snapshot, _) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[], Origin::Hint);
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let banks = Arc::new(NamedBankFacts::empty());
+        let banks = pickable(&mut snapshot);
         assert!(poll_once(
             &mut provisioner,
             &snapshot,
@@ -2102,25 +2122,14 @@ mod tests {
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let quests = quest_catalog();
 
-        assert!(poll_once(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            1,
-            &plan,
-            None,
-            &memo,
-            &banks,
-            &quests,
-        )
-        .is_pending());
-        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
+        // The recipe is polled on the tick planning starts it (TICK-FIX #7,
+        // E-Q7): an empty recipe is acquired on that same poll.
         assert!(matches!(
             poll_once(
                 &mut provisioner,
                 &snapshot,
                 &mut ledger,
-                2,
+                1,
                 &plan,
                 None,
                 &memo,
@@ -2129,6 +2138,7 @@ mod tests {
             ),
             Poll::Ready(Ok(ProvisionEvent::Acquired))
         ));
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
     }
 
     #[test]
@@ -2235,7 +2245,7 @@ mod tests {
                 }]),
             );
             for held in [false, true] {
-                let snapshot = ready_snapshot(if held {
+                let mut snapshot = ready_snapshot(if held {
                     vec![
                         item_view(10, "Coins", coin_qty, ItemContainer::Inventory),
                         item_view(42, "Food", carry_qty, ItemContainer::Inventory),
@@ -2246,7 +2256,7 @@ mod tests {
                 let mut provisioner = Provisioner::new();
                 let mut ledger = None;
                 let memo = BankMemory::default();
-                let banks = Arc::new(NamedBankFacts::empty());
+                let banks = pickable(&mut snapshot);
                 let quests = quest_catalog();
                 let result = poll_once(
                     &mut provisioner,
@@ -2324,8 +2334,8 @@ mod tests {
                 consumed_ids: Arc::from([]),
             },
         );
-        let snapshot = ready_snapshot(Vec::new());
-        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut snapshot = ready_snapshot(Vec::new());
+        let banks = pickable(&mut snapshot);
         let quests = quest_catalog();
         let early = FactKey::new("quest:0");
         let gated = FactKey::new("quest:1");
@@ -2380,20 +2390,34 @@ mod tests {
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
         let memo = known_empty(42);
-        assert!(poll_once_at(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            1,
-            &plan,
-            None,
-            Some(&gated),
-            &memo,
-            &banks,
-            &quests,
-        )
-        .is_pending());
+        // The empty recipe starts and finishes on the same poll (TICK-FIX #7).
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                Some(&gated),
+                &memo,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Acquired))
+        ));
         assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
+    }
+
+    /// A catalog bank and a player position, so a trip started by planning
+    /// keeps its host pick pending: the trip is polled on its start tick
+    /// (TICK-FIX #4/#7), and Select needs both to queue the pick.
+    fn pickable(snapshot: &mut GameSnapshot) -> Arc<NamedBankFacts> {
+        snapshot.seed_local_player(local_player(tile(3200, 3200)));
+        Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+            "Test bank",
+            tile(3210, 3210),
+        )]))
     }
 
     /// A fixture bank the provisioner can open offline: the player stands on
@@ -2821,18 +2845,21 @@ mod tests {
         // block in place and no second bank trip.
         tick += 1;
         memory.track(&snapshot, tick);
-        assert!(poll_once(
-            &mut provisioner,
-            &snapshot,
-            &mut ledger,
-            tick,
-            &plan,
-            None,
-            &memory,
-            &banks,
-            &quests,
-        )
-        .is_pending());
+        // The empty recipe starts and finishes on that poll (TICK-FIX #7).
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Acquired))
+        ));
         assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
         assert!(
             provisioner.bank_run.is_none(),
