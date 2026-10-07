@@ -293,6 +293,7 @@ fn mining_snapshot(
         x: spot.origin.x + 1,
         ..spot.origin
     };
+    player.player.network = player.player.actor.tile;
     frame.seed_local_player(player);
     frame.seed_world(WorldStateView {
         map_base_x: spot.origin.x - 52,
@@ -412,6 +413,7 @@ fn depleted_auto_groups_share_the_original_gameplay_wait_cap() {
     };
     let mut player = frame.local_player().unwrap().clone();
     player.player.actor.tile = here;
+    player.player.network = here;
     frame.seed_local_player(player);
     frame.seed_world(WorldStateView {
         map_base_x: here.x - 52,
@@ -874,6 +876,7 @@ fn observed_ent_replacing_the_only_live_tree_cancels_chopping_with_a_walk() {
     frame.seed_locs(locs);
     let mut player = frame.local_player().unwrap().clone();
     player.player.actor.tile = tile;
+    player.player.network = tile;
     frame.seed_local_player(player);
     tick(&mut slot, &frame, 1);
     let action = slot.take_native_action().expect("initial chop");
@@ -921,6 +924,7 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
     let mut frame = snapshot(&[]);
     let mut player = frame.local_player().unwrap().clone();
     player.player.actor.tile = WorldTile { z: 3149, ..tile };
+    player.player.network = player.player.actor.tile;
     frame.seed_local_player(player);
     frame.seed_world(WorldStateView {
         map_base_x: tile.x - 52,
@@ -1089,6 +1093,7 @@ fn gather_progress_must_not_hide_a_later_idle_stall() {
         x: target.tile.x + 1,
         ..target.tile
     };
+    player.player.network = player.player.actor.tile;
     player.player.actor.animation = -1;
     frame.seed_local_player(player);
     frame.seed_locs(vec![target]);
@@ -1720,6 +1725,7 @@ fn accept_trip_operation(
 fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
     let mut player = frame.local_player().unwrap().clone();
     player.player.actor.tile = here;
+    player.player.network = here;
     frame.seed_local_player(player);
     let mut world = *frame.world();
     world.level = here.level;
@@ -2275,6 +2281,7 @@ fn lifecycle_death_frame(
         .expect("fixture has a local player")
         .clone();
     player.player.actor.tile = tile;
+    player.player.network = tile;
     frame.seed_local_player(player);
     lifecycle_hitpoints(&mut frame, hp_effective, hp_base);
     frame.seed_chat_lines(vec![api::snapshot::ChatLineView {
