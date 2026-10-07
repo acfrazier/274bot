@@ -586,6 +586,9 @@
                   "$ref": "#/$defs/fact.npc_present.v1"
                 },
                 {
+                  "$ref": "#/$defs/fact.npc_near.v1"
+                },
+                {
                   "$ref": "#/$defs/fact.loc_present.v1"
                 },
                 {
@@ -912,6 +915,45 @@
         },
         "args": {
           "$ref": "#/$defs/NpcArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "NpcNearArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Symbolic NPC config name."
+        },
+        "radius": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Inclusive Chebyshev radius from the player, on the same level."
+        }
+      },
+      "required": [
+        "npc",
+        "radius"
+      ]
+    },
+    "fact.npc_near.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "npc_near"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NpcNearArg"
         }
       },
       "required": [
@@ -2031,6 +2073,18 @@
           ],
           "description": "Repeat this operation until the observed inventory reaches the required count."
         },
+        "wait_until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Before each operation round, wait for this predicate to be true.\nUnknown evidence also waits. The fixed settle deadline bounds this wait.",
+          "default": null
+        },
         "reachable_only": {
           "type": "boolean",
           "description": "Only choose a loc candidate the live reach view proves reachable.",
@@ -2501,6 +2555,11 @@
           "type": "integer",
           "description": "Maximum ticks to wait; must be at least 1.",
           "minimum": 1
+        },
+        "park_on_timeout": {
+          "type": "boolean",
+          "description": "Park immediately on expiry instead of retrying the step.",
+          "default": false
         }
       },
       "required": [
