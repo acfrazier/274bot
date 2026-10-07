@@ -235,6 +235,11 @@ fn bank_pick_timeout_and_reset_reject_late_completion_without_blocking_pump() {
                 pick.reset();
             } else {
                 let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
+                for _ in 0..128 {
+                    pick.poll(deadline - Duration::from_nanos(1));
+                    assert!(pick.current.is_some());
+                    assert_eq!(pick.posted.kind, 0);
+                }
                 pick.poll(deadline);
                 assert_eq!(pick.posted.kind, PickKind::AirFallback as u8);
                 assert_eq!(pick.posted.bank_index, 0);
@@ -546,6 +551,14 @@ fn bank_pick_walk_timeout_discards_the_winner_and_attempts_only_the_air_fallback
         let mut all = navs.lock().unwrap();
         let pick = &mut all.get_mut("test").unwrap().bank_pick;
         let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
+        for _ in 0..128 {
+            pick.poll(deadline - Duration::from_nanos(1));
+            assert!(!pick.current.as_ref().unwrap().job.route_only);
+            assert!(
+                pick.pending.is_none(),
+                "the ranking worker is already active"
+            );
+        }
         pick.poll(deadline);
         assert!(pick.current.as_ref().unwrap().job.route_only);
     }
@@ -1770,6 +1783,11 @@ fn native_bank_pick_timeout_is_only_candidate_order_not_wall_arrival() {
         let mut all = navs.lock().unwrap();
         let pick = &mut all.get_mut("test").unwrap().bank_pick;
         let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
+        for _ in 0..128 {
+            pick.poll(deadline - Duration::from_nanos(1));
+            assert!(pick.current.is_some());
+            assert!(pick.take_native_receipt().is_none());
+        }
         pick.poll(deadline);
         let selected = pick.take_native_receipt().unwrap().1.selected;
         assert!(all["test"].route.is_none(), "a pick never arms movement");

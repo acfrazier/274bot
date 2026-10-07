@@ -1718,6 +1718,10 @@ fn spawn_slot_thread(
                                     // Follow can finish on this PLAYER_INFO edge
                                     // after the first observation. Deliver its
                                     // receipt now, without another game tick.
+                                    // This is still a partial PI-frame scene:
+                                    // later zone packets may change a loc. Same-call
+                                    // consumers must not treat arrival as a tick-end
+                                    // fence for their next scene interaction.
                                     let completion = observe(
                                         c,
                                         false,

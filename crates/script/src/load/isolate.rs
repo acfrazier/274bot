@@ -666,8 +666,7 @@ impl LoadIsolate {
     pub(crate) fn record_snapshot_evidence_change(&self, changed: bool) {
         if changed {
             let mut state = self.teardown.lock().unwrap();
-            state.snapshot_evidence_sequence =
-                state.snapshot_evidence_sequence.wrapping_add(1);
+            state.snapshot_evidence_sequence = state.snapshot_evidence_sequence.wrapping_add(1);
         }
     }
 

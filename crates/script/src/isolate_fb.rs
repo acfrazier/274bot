@@ -1963,11 +1963,7 @@ impl DeltaMask {
     }
     /// Whether this delta carries an actual evidence change. The tick and
     /// unchanged forced `hold`/`banks` retransmissions do not advance it.
-    fn has_evidence_change(
-        &self,
-        last: &SnapshotFingerprint,
-        next: &SnapshotFingerprint,
-    ) -> bool {
+    fn has_evidence_change(&self, last: &SnapshotFingerprint, next: &SnapshotFingerprint) -> bool {
         self.here
             || self.ingame
             || self.inv
@@ -2135,12 +2131,8 @@ impl IsolateBuf {
         native: NativeFactsInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
-        let (bytes, fingerprint, _) = self.encode_snapshot_delta_with_native_and_evidence(
-            last,
-            input,
-            native,
-            force_banks,
-        );
+        let (bytes, fingerprint, _) =
+            self.encode_snapshot_delta_with_native_and_evidence(last, input, native, force_banks);
         (bytes, fingerprint)
     }
 
@@ -5533,8 +5525,10 @@ pub(crate) mod tests {
             NativeFactsInput::default(),
             true,
         );
-        assert!(changed, "a real bank-list change counts even when banks are forced");
-
+        assert!(
+            changed,
+            "a real bank-list change counts even when banks are forced"
+        );
 
         input.bank_open = true;
         let (_, _, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
@@ -5543,7 +5537,10 @@ pub(crate) mod tests {
             NativeFactsInput::default(),
             true,
         );
-        assert!(changed, "a real bank field change counts even when banks are forced");
+        assert!(
+            changed,
+            "a real bank field change counts even when banks are forced"
+        );
     }
 
     /// `side_modal_id` is an appended delta scalar: present on the

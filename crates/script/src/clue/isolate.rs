@@ -2015,12 +2015,8 @@ pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Va
         "next" => {
             let input = hydrate(input);
             RUNTIME.with(|rt| {
-                rt.borrow_mut().next(
-                    selected,
-                    &input,
-                    DeathObservation::Compatibility,
-                    None,
-                )
+                rt.borrow_mut()
+                    .next(selected, &input, DeathObservation::Compatibility, None)
             })
         }
         // The machine-state seats. None is a step over a page and none takes a

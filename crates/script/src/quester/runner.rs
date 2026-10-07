@@ -2486,6 +2486,12 @@ impl Script for Quester {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
+            // A receipt can settle on a wake after this tick's event was sent.
+            // Later wakes must not begin another step with that spent budget.
+            if tick.cx.interaction_event_spent() {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             let (selected, skipped_to) = {
                 let path = &self.path;
                 let seq_index = self.seq_index;
@@ -2702,6 +2708,15 @@ impl Script for Quester {
                 {
                     self.pair_begin_since.get_or_insert(tick.cx.active_now());
                     self.waiting = Some(("Partner phase begin", Arc::clone(&self.path.id.0)));
+                    self.clear_last_error();
+                    self.dirty = true;
+                }
+                Err(ActionError::BudgetExhausted) => {
+                    // Admission can also exhaust the budget inside a composed
+                    // begin. This is scheduling pressure, not a failed attempt;
+                    // the spent-event gate retries on the next observed tick.
+                    self.pair_begin_since = None;
+                    self.waiting = None;
                     self.clear_last_error();
                     self.dirty = true;
                 }
@@ -4240,6 +4255,108 @@ mod tests {
             script.step.is_some(),
             "selection and begin run on the settle tick, not one tick later"
         );
+    }
+
+    #[test]
+    fn same_tick_receipt_and_settle_do_not_fail_the_next_step_begin() {
+        use super::super::families::tests::{with_tick, with_tick_snapshots};
+        use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
+        use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let sequence = &mut document.roles[0].sequences[0];
+        sequence.order = SequenceOrder::Ordered;
+        sequence.steps = [("retaliate-off", false), ("retaliate-on", true)]
+            .into_iter()
+            .map(|(id, retaliate)| StepDocument {
+                id: FactKey::new(id),
+                kind: "setting".into(),
+                version: 1,
+                args: serde_json::json!({ "retaliate": retaliate }),
+                comment: None,
+                advances: Some(false),
+                skip_if: PredicateDocument::Any(vec![]),
+                settle: PredicateDocument::All(vec![]),
+            })
+            .collect();
+        let (mut script, mut before) = status_fixture(document);
+        before.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 0,
+        }]);
+        let mut after = GameSnapshot::new();
+        after.seed_ingame(2);
+        after.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        after.seed_varps(vec![VarpView {
+            index: crate::combat::OPTION_NODEF,
+            value: 1,
+        }]);
+        // Existing genuine failures are retained, but pumps must not add a fifth.
+        script.attempts = 4;
+        let mut ledger = None;
+        with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
+            script.tick(tick).unwrap();
+            assert!(script.step.is_some());
+            assert!(tick.cx.interaction_event_spent());
+            let authority = tick.cx.ledger.as_ref().unwrap().outbox[0].authority();
+            let evidence = tick.cx.evidence();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
+            #[cfg(feature = "load")]
+            {
+                tick.frame.snapshot = Some(after);
+            }
+            script.tick(tick).unwrap();
+            assert!(
+                script.settling,
+                "the real setting receipt is ready on tick 1"
+            );
+            script.tick(tick).unwrap();
+            assert!(
+                !script.settling,
+                "the trivial settle is also ready on tick 1"
+            );
+            assert_eq!(script.cursor, 1);
+            for _ in 0..16 {
+                script.tick(tick).unwrap();
+                assert!(!script.parked);
+                assert!(script.step.is_none());
+                assert_eq!(script.attempts, 4);
+                assert_eq!(script.fail_streak, 0);
+                assert!(script.last_error.is_none());
+            }
+            assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        });
+        with_tick(&after, &mut ledger, 2, |tick| {
+            script.tick(tick).unwrap();
+            assert!(script.step.is_some(), "the second setting begins next tick");
+            assert_eq!(script.step_index, 1);
+            let queued = &tick.cx.ledger.as_ref().unwrap().outbox;
+            assert_eq!(queued.len(), 1);
+            assert!(matches!(
+                queued[0].effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::SetRetaliate {
+                    on: true
+                })
+            ));
+        });
+        assert_eq!(script.attempts, 4);
+        assert!(!script.parked);
     }
 
     pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {

@@ -29,6 +29,26 @@ pub(crate) fn with_tick<R>(
 ) -> R {
     with_tick_output(snapshot, ledger, tick, &mut Output, f)
 }
+/// Two observations sharing one tick context, ledger and event budget.
+pub(crate) fn with_tick_snapshots<R>(
+    snapshot: &GameSnapshot,
+    next_snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        next_snapshot,
+        f,
+    )
+}
 pub(crate) fn with_tick_output<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
@@ -44,7 +64,8 @@ pub(crate) fn with_tick_output<R>(
         tick,
         output,
         None,
-        f,
+        snapshot,
+        |native, _| f(native),
     )
 }
 
@@ -63,7 +84,8 @@ pub(crate) fn with_tick_reach<R>(
         tick,
         &mut Output,
         None,
-        f,
+        snapshot,
+        |native, _| f(native),
     )
 }
 
@@ -83,7 +105,8 @@ pub(crate) fn with_tick_world<R>(
         tick,
         &mut Output,
         None,
-        f,
+        snapshot,
+        |native, _| f(native),
     )
 }
 
@@ -102,7 +125,8 @@ pub(crate) fn with_tick_bank<R>(
         tick,
         &mut Output,
         bank,
-        f,
+        snapshot,
+        |native, _| f(native),
     )
 }
 
@@ -122,12 +146,12 @@ pub(crate) fn with_tick_output_bank<R>(
         tick,
         output,
         bank,
-        f,
+        snapshot,
+        |native, _| f(native),
     )
 }
 
-// The world type (members-world) and the bank memory (bank S3/S4) both reach
-// the view through this one builder; the arg count is allowed.
+// The world type, bank memory and same-tick observation updates use one builder.
 #[allow(clippy::too_many_arguments)]
 fn with_tick_output_reach<R>(
     snapshot: &GameSnapshot,
@@ -137,7 +161,8 @@ fn with_tick_output_reach<R>(
     tick: u64,
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
-    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+    next_snapshot: &GameSnapshot,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot) -> R,
 ) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let pin = data.selected_pin().unwrap();
@@ -190,7 +215,7 @@ fn with_tick_output_reach<R>(
             },
         },
     };
-    f(&mut native)
+    f(&mut native, next_snapshot)
 }
 fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bool) {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();

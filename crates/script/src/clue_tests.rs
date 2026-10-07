@@ -136,13 +136,7 @@ fn call(data: &SelectedGameData, token: u64, held: Value, extra: Value) -> Value
     dispatch(Some(data), &payload("next", Some(token), held, extra))
 }
 
-fn call_native(
-    data: &SelectedGameData,
-    token: u64,
-    tick: u64,
-    held: Value,
-    extra: Value,
-) -> Value {
+fn call_native(data: &SelectedGameData, token: u64, tick: u64, held: Value, extra: Value) -> Value {
     next_native(
         Some(data),
         &payload("next", Some(token), held, extra),

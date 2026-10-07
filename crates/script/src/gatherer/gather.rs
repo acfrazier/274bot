@@ -645,11 +645,8 @@ mod tests {
         snapshot.seed_locs(vec![loc(id, tile)]);
         snapshot.seed_npcs(vec![]);
         let mut ledger = None;
-        let handle = crate::quester::families::tests::with_tick(
-            &snapshot,
-            &mut ledger,
-            1,
-            |tick| {
+        let handle =
+            crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
                 tick.actions
                     .begin::<GatherRun>(
                         GatherRunArgs {
@@ -661,16 +658,13 @@ mod tests {
                         &mut tick.cx,
                     )
                     .unwrap()
-            },
-        );
+            });
 
         for _ in 0..=(2 * DEFAULT_STALL_TICKS + 2) {
-            let result = crate::quester::families::tests::with_tick(
-                &snapshot,
-                &mut ledger,
-                2,
-                |tick| tick.actions.poll(&handle, &mut tick.cx),
-            );
+            let result =
+                crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                });
             assert!(
                 matches!(result, Poll::Pending),
                 "same-tick re-polls must not spend the stall budget: {result:?}"
@@ -684,14 +678,14 @@ mod tests {
                 tick_id,
                 |tick| tick.actions.poll(&handle, &mut tick.cx),
             );
-            assert!(matches!(result, Poll::Pending), "tick {tick_id}: {result:?}");
+            assert!(
+                matches!(result, Poll::Pending),
+                "tick {tick_id}: {result:?}"
+            );
         }
-        let retry = crate::quester::families::tests::with_tick(
-            &snapshot,
-            &mut ledger,
-            9,
-            |tick| tick.actions.poll(&handle, &mut tick.cx),
-        );
+        let retry = crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
         assert!(matches!(retry, Poll::Pending), "tick 9 retry: {retry:?}");
 
         for tick_id in 10..=16 {
@@ -701,14 +695,14 @@ mod tests {
                 tick_id,
                 |tick| tick.actions.poll(&handle, &mut tick.cx),
             );
-            assert!(matches!(result, Poll::Pending), "tick {tick_id}: {result:?}");
+            assert!(
+                matches!(result, Poll::Pending),
+                "tick {tick_id}: {result:?}"
+            );
         }
-        let idle = crate::quester::families::tests::with_tick(
-            &snapshot,
-            &mut ledger,
-            17,
-            |tick| tick.actions.poll(&handle, &mut tick.cx),
-        );
+        let idle = crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 17, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
         let Poll::Ready(Ok(result)) = idle else {
             panic!("eight distinct quiet ticks after retry must end Idle: {idle:?}");
         };
