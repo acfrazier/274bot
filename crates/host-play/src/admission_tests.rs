@@ -7,9 +7,9 @@ use client::dash3d::CollisionFlag;
 use nav::collision::{pack_walk, WorldCollision};
 use nav::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav::router::{Leg, RouteError};
-use nav::transport::{
-    TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
-};
+use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+#[cfg(feature = "test-support")]
+use nav::transport::{WildernessRules, WildernessZone};
 use nav::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
 use nav::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
@@ -37,6 +37,7 @@ fn ice_kind(combat: &CombatTables) -> ZoneKind {
     ZoneKind::new("ice-warrior", "Ice warrior", npc.id, 57, false, false)
 }
 
+#[cfg(feature = "test-support")]
 fn missing_kind() -> ZoneKind {
     ZoneKind::new(
         "missing-kind",
@@ -115,6 +116,7 @@ fn known_corridor(spawns: &[i32]) -> NavWorld {
     )
 }
 
+#[cfg(feature = "test-support")]
 fn unknown_corridor(spawn: i32) -> NavWorld {
     fixture_world(
         selected_combat(),
@@ -1608,6 +1610,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     summarize("long_2048_tiles_64_legs_7_crossings", samples, 0);
 }
 
+#[cfg(feature = "test-support")]
 fn transport_edge(kind: TransportKind, from: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
         kind,
