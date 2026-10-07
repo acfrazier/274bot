@@ -206,6 +206,11 @@ impl Provisioner {
         self.carry_drawn
     }
 
+    /// A bank or acquisition run is live and may own an open dialogue.
+    pub(super) fn run_live(&self) -> bool {
+        self.bank_run.is_some() || (self.acquire_run.is_some() && !self.acquire_finished)
+    }
+
     pub fn needs_progress_read(&self) -> bool {
         self.acquire_run
             .as_ref()
@@ -578,9 +583,13 @@ impl Provisioner {
             return Poll::Pending;
         }
         if let (Some(recipe_need), Some(recipe)) = (needs.acquire, active_recipe) {
+            // A provisioning need has no step settle to restart against, so
+            // this run makes one pass.
             let acquire = AcquirePlan {
                 recipe: Arc::clone(&recipe_need.recipe),
                 steps: Arc::clone(&recipe.steps),
+                goal: None,
+                max_restarts: 0,
             };
             match acquire.begin(cx) {
                 Ok(run) => {

@@ -70,6 +70,9 @@ pub struct DialogueOptions {
     pub choose: Option<i32>,
     pub line_rules: Arc<[LineRule]>,
     pub strict: bool,
+    /// Chat continue clicks only: a Main document or modal ends the driver
+    /// without a click, so it is left to its owner.
+    pub chat_only: bool,
 }
 
 impl Default for DialogueOptions {
@@ -83,14 +86,26 @@ impl Default for DialogueOptions {
             choose: None,
             line_rules: Arc::clone(&RULES),
             strict: false,
+            chat_only: false,
         }
     }
 }
 
 impl DialogueOptions {
-    pub(super) fn continue_only() -> Self {
+    pub(crate) fn continue_only() -> Self {
         Self {
             strict: true,
+            ..Self::default()
+        }
+    }
+
+    /// Continue clicks on Chat pages only: a menu fails strict, and a Main
+    /// scroll, book or modal ends the driver untouched. For recovery callers
+    /// that own no conversation (the journal read's drain).
+    pub(crate) fn chat_continue_only() -> Self {
+        Self {
+            strict: true,
+            chat_only: true,
             ..Self::default()
         }
     }
@@ -273,6 +288,10 @@ impl NativeMachine for Dialogue {
             }
             Surface::Chat if main_active => {
                 if !chat_active {
+                    // A chat-only caller never adopts what the page opened.
+                    if self.args.options.chat_only {
+                        return Poll::Ready(Ok(DialogueOutcome::Completed));
+                    }
                     // A selected document continues on the Main surface.
                     // Any other Main modal can only be new here (one open at
                     // begin fails), so once our own accepted advance opened
@@ -305,7 +324,9 @@ impl NativeMachine for Dialogue {
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 if main_active {
-                    if matches!(&self.args.target, DialogueTarget::Continuation) {
+                    if matches!(&self.args.target, DialogueTarget::Continuation)
+                        && !self.args.options.chat_only
+                    {
                         self.surface = Surface::Main;
                         return self.poll_main(cx, &main, now);
                     }

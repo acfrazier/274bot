@@ -910,6 +910,7 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
             settle: Arc::clone(&step.settle),
             plan: Arc::clone(&step.plan),
         }]),
+        ..super::super::families::AcquirePlan::default()
     });
     step.advances = false;
     let mut ledger = None;
@@ -2368,4 +2369,181 @@ fn ordinary_recovery_keeps_completed_admission_but_pause_and_new_run_do_not() {
         !script.pair_admitted,
         "a different run/session must acquire a fresh reciprocal admission"
     );
+}
+
+/// The death `scout-secret-way` page: a zone trigger's player chat (`chat3`,
+/// 289 root 979) with a continue and no owner once the walk has settled.
+fn seed_player_chat(snapshot: &mut GameSnapshot, line: &str) {
+    snapshot.seed_chat_modal(979, vec!["Ci7 0".into(), line.into()]);
+    snapshot.seed_chat_options(vec![], 981);
+}
+
+fn close_chat(snapshot: &mut GameSnapshot) {
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+}
+
+fn is_continue(effect: &HostEffect) -> bool {
+    matches!(
+        effect,
+        HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+    )
+}
+
+#[test]
+fn unowned_chat_continue_is_drained_then_the_journal_is_read() {
+    let (mut script, mut snapshot) = fixture(true);
+    seed_player_chat(&mut snapshot, "I think this is far enough.");
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        is_continue(&ack(&mut ledger, 1)),
+        "no step owns the page, so the read clicks its continue instead of waiting"
+    );
+    close_chat(&mut snapshot);
+    let mut tick = 2;
+    while ledger.as_ref().unwrap().outbox.is_empty() {
+        assert!(tick < 20 && !script.parked, "the read must resume");
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        tick += 1;
+    }
+    let tick = tick - 1;
+    assert!(matches!(
+        ack(&mut ledger, tick),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, tick + 1);
+    drive(&mut script, &snapshot, &mut ledger, tick + 2);
+    assert!(matches!(
+        ack(&mut ledger, tick + 2),
+        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, tick + 3);
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+    assert_eq!(script.journal_drains, 0, "adoption resets the drain budget");
+}
+
+#[test]
+fn a_live_step_keeps_its_latched_continue_busy_and_unclicked() {
+    let (mut script, mut snapshot) = fixture(true);
+    script.step = Some(Box::new(OwnedActionStep { handle: None }));
+    seed_player_chat(&mut snapshot, "A page the step's dialogue owns.");
+    let mut ledger = None;
+    for tick in 1..=8 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "tick {tick}: the owner advances its page; the read neither continues nor clicks"
+        );
+    }
+    assert!(script.journal_drain.is_none());
+    assert!(!script.parked);
+}
+
+#[test]
+fn a_continue_page_that_ignores_clicks_parks_after_the_drain_cap() {
+    let (mut script, mut snapshot) = fixture(true);
+    seed_player_chat(&mut snapshot, "A page that will not advance.");
+    let mut ledger = None;
+    let mut continues = 0;
+    for tick in 1..120 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            assert!(is_continue(&ack(&mut ledger, tick)));
+            continues += 1;
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked);
+    assert_eq!(
+        continues, 3,
+        "one continue per drain, three drains per read"
+    );
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "journal blocked by modal root 979 (Ci7 0): the chat continue reopened after 3 drains"
+    );
+}
+
+#[test]
+fn a_continue_page_that_keeps_reopening_parks_within_the_drain_window() {
+    let (mut script, mut snapshot) = fixture(true);
+    seed_player_chat(&mut snapshot, "page 0");
+    let mut ledger = None;
+    let mut continues = 0;
+    for tick in 1..200 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            assert!(is_continue(&ack(&mut ledger, tick)));
+            continues += 1;
+            seed_player_chat(&mut snapshot, &format!("page {continues}"));
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked);
+    assert!(
+        (2..=30).contains(&continues),
+        "bounded by the 30 s window, not the 120-page driver cap: {continues}"
+    );
+    let message = script.blocked_failure().message;
+    assert!(
+        message.starts_with("journal blocked by modal root 979 (Ci7 0)")
+            && message.ends_with("the chat continue kept reopening for 30 s"),
+        "{message}"
+    );
+}
+
+/// REVIEW-QUESTER-CI7-FIXES P2: the drain owns no conversation, so it clicks
+/// Chat continue only. When its accepted continue opens a selected scroll on
+/// Main, the drain ends and leaves the document to its owner: no `CloseModal`
+/// and no `IfButton` while the document is open.
+#[test]
+fn the_drain_leaves_a_scroll_its_continue_opened() {
+    let ids = *api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .dialogue_ui()
+        .unwrap();
+    let (mut script, mut snapshot) = fixture(true);
+    seed_player_chat(&mut snapshot, "A page whose continue opens a scroll.");
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(is_continue(&ack(&mut ledger, 1)));
+    close_chat(&mut snapshot);
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    for tick in 2..60 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        while ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            let effect = ack(&mut ledger, tick);
+            assert!(
+                !matches!(
+                    effect,
+                    HostEffect::Interaction(
+                        crate::shim::InteractReq::CloseModal
+                            | crate::shim::InteractReq::IfButton { .. }
+                    )
+                ),
+                "tick {tick}: the drain closed or clicked the scroll"
+            );
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.journal_drain.is_none(), "the drain ended");
 }
