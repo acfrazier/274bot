@@ -4,9 +4,9 @@
 //! sequence of run steps (each an action send plus the evidence it must
 //! produce within a tick budget), and a proof predicate over the terminal
 //! `GameSnapshot` — the same observable state scripts and the host read.
-//! The headed runner (`panel-play --live script_<name>`) and the headless
-//! runner (`crates/e2e` under `LIVE=1`) drive the same
-//! [`ScenarioRunner`], so both pass/fail identically. The PASS/FAIL
+//! The headed runners (`panel-play` and `tui-play --live script_<name>`) and
+//! the headless runner (`crates/e2e` under `LIVE=1`) drive the same
+//! [`ScenarioRunner`] and share pass/fail behavior. The PASS/FAIL
 //! contract replaces the old "5 Running polls" `LiveScript` stub: a
 //! scenario proves real game state, not that a poll loop ran.
 //!
@@ -20,6 +20,7 @@ mod catalog;
 pub mod evidence;
 pub mod fixture;
 pub mod proof;
+mod quest_fast;
 pub mod quester;
 mod render_betty_views;
 mod runner;
@@ -94,6 +95,9 @@ pub struct ScenarioSettings {
     pub nav: ScenarioNav,
     pub deadline: Duration,
     pub terminal_shot: Option<&'static str>,
+    /// A world-wide engine speed restored after this scenario reaches a
+    /// terminal state. Live quest-fast cells set this only on Engine Q.
+    pub teardown_world_speed_ms: Option<u32>,
     pub require_mainland_base: bool,
     /// Background cheats the runner fires while the scenario is running
     /// (377 sustain: energy, HP, stats). Empty for most scenarios.
@@ -368,6 +372,7 @@ impl Default for ScenarioSettings {
             nav: ScenarioNav::default(),
             deadline: DEFAULT_DEADLINE,
             terminal_shot: None,
+            teardown_world_speed_ms: None,
             require_mainland_base: false,
             sustains: Vec::new(),
             start_script: None,

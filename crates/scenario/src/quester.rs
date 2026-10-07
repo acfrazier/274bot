@@ -20,6 +20,87 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Runtime controls for the live `quester_path` cell. `::speed` changes the
+/// world-wide tick rate, so use it only with isolated Engine Q.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuesterFastSettings {
+    pub tick_ms: Option<u32>,
+    pub sustain_run: bool,
+}
+
+impl QuesterFastSettings {
+    pub fn from_env() -> Result<Self, String> {
+        let read = |name: &str| {
+            std::env::var_os(name)
+                .map(|value| {
+                    value
+                        .into_string()
+                        .map_err(|_| format!("{name} must be UTF-8"))
+                })
+                .transpose()
+        };
+        Self::parse(
+            read("QUESTER_TICK_MS")?.as_deref(),
+            read("QUESTER_SUSTAIN_RUN")?.as_deref(),
+        )
+    }
+
+    pub fn parse(tick_ms: Option<&str>, sustain_run: Option<&str>) -> Result<Self, String> {
+        let tick_ms = tick_ms
+            .map(|raw| -> Result<u32, String> {
+                let value = raw
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|error| format!("invalid QUESTER_TICK_MS {raw:?}: {error}"))?;
+                if value < 300 {
+                    return Err("QUESTER_TICK_MS must be at least 300".into());
+                }
+                Ok(value)
+            })
+            .transpose()?;
+        let sustain_run = match sustain_run.map(str::trim) {
+            None => tick_ms.is_some(),
+            Some("0") => false,
+            Some("1") => true,
+            Some(value) => {
+                return Err(format!("QUESTER_SUSTAIN_RUN must be 0 or 1, got {value:?}"))
+            }
+        };
+        Ok(Self {
+            tick_ms,
+            sustain_run,
+        })
+    }
+}
+
+/// Apply the opt-in live harness levers to one `quester_path` scenario.
+/// The shared runner confirms the speed change and restores 600ms on teardown.
+pub fn apply_quester_fast_settings(scenario: &mut Scenario, settings: QuesterFastSettings) {
+    if let Some(ms) = settings.tick_ms {
+        scenario.settings.nav.engine_speed_ms = Some(ms);
+        scenario.settings.teardown_world_speed_ms = Some(600);
+        scenario.steps.insert(
+            0,
+            Step {
+                name: "confirm quest world tick speed",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::WorldSpeedChanged { ms },
+                    budget_ticks: 80,
+                },
+            },
+        );
+    }
+    if settings.sustain_run {
+        scenario
+            .settings
+            .sustains
+            .extend(crate::nav_energy_sustains());
+    }
+}
+
 /// Qualification floor, not an eligibility gate or a claim of live PASS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum TestProfile {
@@ -1245,8 +1326,9 @@ fn find_anchor_tile(value: &Value) -> Result<Option<WorldTile>, String> {
     Ok(None)
 }
 
-/// Runtime-selected `quester_path` scenario used by `panel-play --live`.
+/// Runtime-selected `quester_path` scenario used by panel-play and tui-play.
 pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
+    let fast_settings = QuesterFastSettings::from_env()?;
     let quest = require_quester_path(std::env::var("QUESTER_PATH").ok())?;
     let deadline = quester_path_deadline()?;
     let folder = std::env::var_os("QUESTER_PATH_DIR").map(PathBuf::from);
@@ -1316,6 +1398,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
     fixture.scenario.settings.script_settings_overrides = Some(fixture.start_settings);
     fixture.scenario.settings.deadline = deadline;
     fixture.scenario.settings.terminal_shot = Some("quester_path");
+    apply_quester_fast_settings(&mut fixture.scenario, fast_settings);
     Ok(fixture.scenario)
 }
 
@@ -1357,6 +1440,63 @@ mod tests {
     use super::*;
     use api::selected::{ClientRevision, FactKey};
     use script::quester::path::QuestRequirementDocument;
+
+    #[test]
+    fn quester_fast_settings_parse_tick_and_sustain_controls() {
+        assert_eq!(
+            QuesterFastSettings::parse(None, None).unwrap(),
+            QuesterFastSettings {
+                tick_ms: None,
+                sustain_run: false,
+            }
+        );
+        assert_eq!(
+            QuesterFastSettings::parse(Some(" 300 "), None).unwrap(),
+            QuesterFastSettings {
+                tick_ms: Some(300),
+                sustain_run: true,
+            }
+        );
+        assert_eq!(
+            QuesterFastSettings::parse(Some("600"), Some("0")).unwrap(),
+            QuesterFastSettings {
+                tick_ms: Some(600),
+                sustain_run: false,
+            }
+        );
+        assert_eq!(
+            QuesterFastSettings::parse(None, Some("1")).unwrap(),
+            QuesterFastSettings {
+                tick_ms: None,
+                sustain_run: true,
+            }
+        );
+        assert!(QuesterFastSettings::parse(Some("299"), None).is_err());
+        assert!(QuesterFastSettings::parse(Some("bad"), None).is_err());
+        assert!(QuesterFastSettings::parse(None, Some("true")).is_err());
+    }
+
+    #[test]
+    fn quester_fast_settings_add_confirmation_energy_and_teardown() {
+        let mut scenario = fixture(&document()).unwrap().scenario;
+        let original_steps = scenario.steps.len();
+        apply_quester_fast_settings(
+            &mut scenario,
+            QuesterFastSettings {
+                tick_ms: Some(300),
+                sustain_run: true,
+            },
+        );
+        assert_eq!(scenario.settings.nav.engine_speed_ms, Some(300));
+        assert_eq!(scenario.settings.teardown_world_speed_ms, Some(600));
+        assert_eq!(scenario.steps.len(), original_steps + 1);
+        assert_eq!(
+            scenario.steps[0].wait.arm,
+            Proof::WorldSpeedChanged { ms: 300 }
+        );
+        assert_eq!(scenario.steps[0].name, "confirm quest world tick speed");
+        assert_eq!(scenario.settings.sustains, crate::nav_energy_sustains());
+    }
 
     fn document() -> PathDocument {
         let mut path: PathDocument =

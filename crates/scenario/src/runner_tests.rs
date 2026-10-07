@@ -821,6 +821,81 @@ fn poll_sustain_sends_the_cheat_when_energy_is_at_or_below_the_line() {
     );
 }
 
+fn fast_speed_scenario(arm: Proof, budget: u32) -> Scenario {
+    let mut scenario = stat_scenario(0, budget);
+    scenario.name = "quester-fast";
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|_, _| true),
+    };
+    scenario.steps[0].wait = wait(arm, budget);
+    scenario.proof = arm;
+    scenario.settings.nav.engine_speed_ms = Some(300);
+    scenario.settings.teardown_world_speed_ms = Some(600);
+    scenario
+}
+
+fn contains_outgoing_ascii(client: &Client, text: &str) -> bool {
+    client
+        .out
+        .data()
+        .windows(text.len())
+        .any(|window| window == text.as_bytes())
+}
+
+fn push_system_chat(client: &mut Client, text: &str) {
+    client.add_chat(0, text, "");
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+}
+
+#[test]
+fn world_speed_requires_fresh_confirmation_and_resets_after_pass() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    assert!(contains_outgoing_ascii(&client, "speed 300"));
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert!(!contains_outgoing_ascii(&client, "speed 600"));
+
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    runner.tick(&mut client);
+    assert!(contains_outgoing_ascii(&client, "speed 600"));
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn world_speed_resets_after_failed_run() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(Proof::Stat { id: 16, min: 999 }, 1));
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert!(contains_outgoing_ascii(&client, "speed 300"));
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    runner.tick(&mut client);
+    assert!(contains_outgoing_ascii(&client, "speed 600"));
+
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(message.contains("not seen within 1 ticks"), "{message}");
+        }
+        other => panic!("expected failed run after speed reset, got {other:?}"),
+    }
+}
+
 #[test]
 fn seeding_waits_for_ingame_scene2_and_mainland_base() {
     let mut c = Client::new(cfg());
