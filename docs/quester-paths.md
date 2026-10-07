@@ -119,7 +119,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `interact` | Explicit | One selected scene, ground-item, named, or held-item operation with optional repetition (`until` inventory-count goal) and shared dialogue handling. |
 | `use_on` | Explicit | Held-item operation onto one NPC, loc, item, or exact ground stack, with the same `until` goal and dialogue handling as `interact`. |
 | `acquire` | Default | Run a named `quest.acquire` recipe as a restartable cursor. |
-| `wait` | Default | Bounded wait for a predicate. |
+| `wait` | Default | Bounded wait for `until`, with `max_ticks`. Optional `park_on_timeout: true` parks immediately at expiry instead of consuming runner retries. |
 | `bank` | Default | Authored bank visit. |
 | `buy` | Default | Authored shop purchase. |
 | `make` | Explicit | Production action (for example cooking or crafting). |
@@ -144,6 +144,7 @@ Combinators are `All`, `Any`, and `Not`, with the envelope from §4.2. Every fac
 | `quest_colour`, `stage_in`, `flag` | Quest tab colour, journal stage, or journal flag. |
 | `in_combat`, `combat_end` | Combat flag or a finished fight. |
 | `npc_present`, `npc_absent`, `loc_present`, `ground_item_near` | Scene entities (ground goals accept an exact `at` tile). |
+| `npc_near` | `{ "npc": config, "radius": nonnegative integer }`: a visible NPC of that config is within the inclusive Chebyshev radius of the player on the same level. Reuses NPC-presence matching; unknown until both NPC-list and player-position evidence are observed. |
 | `modal_open` | Whether a main modal is posted. |
 | `skill_at_least`, `hp_fraction_below`, `prayer_points_at_least` | Observed stats. |
 | `bank_known`, `bank_has` | The account's bank memory: whether the bank is known (seen this session or from the saved record; `Unknown` until then), or whether it holds an item. |
@@ -195,6 +196,13 @@ Unknown recipe transformations retain a conservative peak when room can be made,
 - **Chat-to-scroll transitions.** An owned conversation can finish on the selected scroll (including the source-proven quest-completion scroll) or book interface after its chat closes. The shared dialogue driver requires a witnessed owned page or an accepted, fresh Continue/Answer receipt; an in-flight advance waits within the existing page bound. An unrelated interface, a refused answer, or a scroll without an owned conversation does not prove dialogue success.
 - **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 - **Versions.** Adding an optional Args field keeps the handler version. Renaming, removing, or retyping a field requires a new version; the generated schema will then expose the new contract.
+
+`interact.wait_until` optionally gates each new operation round with a predicate.
+False or unknown evidence waits without clicking; the fixed `settle_ms` deadline
+bounds the wait. With `until` inventory counting, a refused operation drains its
+dialogue and retries inside the same step, checking `wait_until` again. The
+Knight's Sword portrait search uses this to avoid Search while Sir Vyvin is
+adjacent; its preceding 200-tick wait parks immediately if he does not leave.
 
 ### 4.5 Fully annotated example — Cook's Assistant (schema-3 form)
 

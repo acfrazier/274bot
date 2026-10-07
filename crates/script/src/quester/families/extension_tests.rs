@@ -543,6 +543,7 @@ fn interact_until_rearms_after_adjacent_instant_progress() {
         until: Some((1, s2::QuantityPlan::Fixed(2))),
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     let reach_view = wall_door_reach_view();
     let mut ledger = None;
@@ -813,6 +814,7 @@ fn acquisition_child_identity_is_borrowed_until_the_child_settles() {
         until: Arc::new(AllPlan { items: vec![] }),
         deadline_tick: 10,
         chat_since: 0,
+        park_on_timeout: false,
     }));
     assert_eq!(run.child_step_id().unwrap().0.as_ref(), "policy-child");
     let identity = run.child_step_id().unwrap().0.as_ptr();
@@ -1180,6 +1182,7 @@ fn interact_until_reports_rejected_reach_without_waiting_for_settlement() {
         until: Some((1, s2::QuantityPlan::Fixed(2))),
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     let reach_view = wall_door_reach_view();
     let mut ledger = None;
@@ -2038,7 +2041,127 @@ fn loc_interact_plan(settle_ms: u64, until: Option<(i32, s2::QuantityPlan)>) -> 
         until,
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     }
+}
+
+#[test]
+fn interact_wait_until_gates_initial_and_refused_rounds() {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    struct Gate(Arc<AtomicU8>);
+    impl PredicatePlan for Gate {
+        fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+            match self.0.load(Ordering::Relaxed) {
+                0 => Truth::Unknown,
+                1 => Truth::False,
+                _ => Truth::True,
+            }
+        }
+    }
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    snapshot.seed_inventory(vec![held(1, "Ore", 0, 0, None)], 28);
+    let mut resource = loc(1000, "Rock", "Mine");
+    resource.tile = tile(5, 5);
+    resource.distance = 1;
+    snapshot.seed_locs(vec![resource]);
+    let gate = Arc::new(AtomicU8::new(0));
+    let mut plan = loc_interact_plan(120_000, Some((1, s2::QuantityPlan::Fixed(1))));
+    plan.wait_until = Some(Arc::new(Gate(Arc::clone(&gate))));
+    let reach_view = super::wall_door_reach_view();
+    let mut ledger = None;
+    let mut run = with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    for tick in 2..=3 {
+        gate.store((tick - 2) as u8, Ordering::Relaxed);
+        assert!(
+            with_tick_reach(&snapshot, &reach_view, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending()
+        );
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+    gate.store(2, Ordering::Relaxed);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    accept_last(&mut ledger, 5, true);
+    let first_request = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .authority()
+        .request_id();
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    gate.store(1, Ordering::Relaxed);
+    for tick in 6..=30 {
+        let mut player = local_player(tile(5, 5));
+        player.player.actor.animation = if tick == 6 { 1 } else { -1 };
+        snapshot.seed_local_player(player);
+        assert!(
+            with_tick_reach(&snapshot, &reach_view, &mut ledger, tick, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending()
+        );
+        assert_eq!(
+            ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "no repeated op while blocked"
+        );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority()
+                .request_id(),
+            first_request
+        );
+    }
+    gate.store(2, Ordering::Relaxed);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 31, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    assert_ne!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .authority()
+            .request_id(),
+        first_request,
+        "same step retries after clearance"
+    );
+    accept_last(&mut ledger, 32, true);
+    snapshot.seed_inventory(vec![held(1, "Ore", 0, 1, None)], 28);
+    assert!(matches!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 32, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Ok(_))
+    ));
 }
 
 #[test]

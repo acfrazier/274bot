@@ -2247,12 +2247,12 @@
               "version": 1,
               "args": {
                 "tile": [
-                  2984,
-                  3340,
+                  2985,
+                  3335,
                   2
                 ],
-                "source": "C ladders+stairs/scripts/stairs.rs2:7 (White Knights' Castle east stairs 1_46_52_40_9 -> 2_46_52_40_12 = 2984,3340,2); maps/m46_52.jm2:11362 (vyvincupboardshut 2984,3336,2)",
-                "radius": 1
+                "source": "C maps/m46_52.jm2:11362 (2271 shape 10 angle 1); general_use/configs/cupboards.loc:66-85 (length 2, east approach rotated south): exact farther south stand",
+                "radius": 0
               },
               "skip_if": {
                 "Any": [
@@ -2271,11 +2271,11 @@
                       "version": 1,
                       "args": {
                         "tile": [
-                          2984,
-                          3336,
+                          2985,
+                          3335,
                           2
                         ],
-                        "radius": 6
+                        "radius": 0
                       }
                     }
                   }
@@ -2287,11 +2287,11 @@
                   "version": 1,
                   "args": {
                     "tile": [
-                      2984,
-                      3340,
+                      2985,
+                      3335,
                       2
                     ],
-                    "radius": 2
+                    "radius": 0
                   }
                 }
               }
@@ -2307,11 +2307,11 @@
                 "op": "Open",
                 "anchor": {
                   "tile": [
-                    2984,
+                    2985,
                     3335,
                     2
                   ],
-                  "source": "C maps/m46_52.jm2:11362; general_use/configs/cupboards.loc:66-75 (forceapproach=east, rotated: the approach is from the south); cupboards.rs2:1,41-50"
+                  "source": "C maps/m46_52.jm2:11362; general_use/configs/cupboards.loc:66-85 (force approach from the south); 2985,3335,2 is the farther valid south stand, two tiles from Vyvin's spawn at 2983,3335"
                 },
                 "radius": 3,
                 "wait_if_missing": true
@@ -2350,6 +2350,66 @@
               }
             },
             {
+              "id": "wait-vyvin-clear",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Not": {
+                    "Fact": {
+                      "kind": "npc_near",
+                      "version": 1,
+                      "args": {
+                        "npc": "sir_vyvin",
+                        "radius": 1
+                      }
+                    }
+                  }
+                },
+                "max_ticks": 200,
+                "park_on_timeout": true
+              },
+              "comment": "Do not search while Sir Vyvin is within the one-tile refusal radius; park if he does not clear within 200 ticks.",
+              "advances": false,
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "npc_near",
+                        "version": 1,
+                        "args": {
+                          "npc": "sir_vyvin",
+                          "radius": 1
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "npc_near",
+                    "version": 1,
+                    "args": {
+                      "npc": "sir_vyvin",
+                      "radius": 1
+                    }
+                  }
+                }
+              }
+            },
+            {
               "id": "search-vyvin-cupboard",
               "kind": "interact",
               "version": 1,
@@ -2360,17 +2420,33 @@
                 "op": "Search",
                 "anchor": {
                   "tile": [
-                    2984,
+                    2985,
                     3335,
                     2
                   ],
-                  "source": "C maps/m46_52.jm2:11362; general_use/configs/cupboards.loc:76-85; cupboards.rs2:17-31; quests/quest_squire/scripts/quest_squire.rs2:209-217"
+                  "source": "C maps/m46_52.jm2:11362; general_use/configs/cupboards.loc:76-85 (force approach from the south); 2985,3335,2 is the farther valid south stand, two tiles from Vyvin's spawn at 2983,3335; cupboards.rs2:17-31; quests/quest_squire/scripts/quest_squire.rs2:209-217"
                 },
                 "radius": 3,
                 "wait_if_missing": true,
-                "settle_ms": 10000
+                "until": {
+                  "obj": "knights_portrait",
+                  "qty": 1
+                },
+                "wait_until": {
+                  "Not": {
+                    "Fact": {
+                      "kind": "npc_near",
+                      "version": 1,
+                      "args": {
+                        "npc": "sir_vyvin",
+                        "radius": 1
+                      }
+                    }
+                  }
+                },
+                "settle_ms": 120000
               },
-              "comment": "Refused with two pages whenever Sir Vyvin (wander range 10, spawn 2983,3335) stands within one tile of the player (quest_squire.rs2:212-216); the step just retries. The open cupboard shuts again after 300 ticks.",
+              "comment": "Search only while Sir Vyvin is clear of the one-tile refusal radius. The per-round gate avoids futile retries after a refusal; the bounded settle allows time for him to wander away before the cupboard shuts again after 300 ticks.",
               "advances": false,
               "skip_if": {
                 "Fact": {
