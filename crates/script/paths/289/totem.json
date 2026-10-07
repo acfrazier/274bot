@@ -1,0 +1,394 @@
+{
+  "schema": 3,
+  "$schema": "../path.schema.json",
+  "id": "totem",
+  "display_name": "Tribal Totem",
+  "required": ["thieving:21"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "thieving:21",
+        "kind": { "Skill": { "skill": "thieving", "level": 21 } },
+        "at": "Start",
+        "source": "A data/quests.ts:559-569; C totem_journal.rs2 not-started Level 21 Thieving"
+      }
+    ],
+    "items": [
+      { "obj": "tribal_totem_label", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "tribal_totem", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": { "tile": [2655, 3283, 0], "source": "A defs/tribaltotem.ts:67" },
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "mansion": {
+        "boxes": [
+          [2627, 3322, 2643, 3325, 0],
+          [2627, 3320, 2628, 3321, 0],
+          [2631, 3320, 2633, 3321, 0],
+          [2637, 3320, 2639, 3321, 0],
+          [2630, 3318, 2640, 3325, 1]
+        ],
+        "source": "A defs/tribaltotem.ts:70-84"
+      }
+    },
+    "tools": ["obj:tribal_totem_label", "obj:tribal_totem"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:totem",
+      "progress": {
+        "colour": {
+          "not_started": "totem:0",
+          "in_progress": "totem:1",
+          "complete": "totem:5"
+        },
+        "rules": [
+          { "stage": "totem:5", "all": ["quest complete!"], "varp": 5 },
+          { "stage": "totem:4", "all": ["teleported myself inside"], "varp": 4 },
+          { "stage": "totem:3", "all": ["get wizard cromperty to teleport me inside"], "varp": 3 },
+          { "stage": "totem:2", "all": ["deliver the crate now"], "varp": 2 },
+          { "stage": "totem:1", "all": ["lord handelmorts mansion"], "varp": 1 },
+          { "stage": "totem:0", "all": ["i can start this quest by speaking to"], "varp": 0 }
+        ],
+        "flags": [
+          {
+            "flag": "combo",
+            "any": ["i worked out the combination for the door"]
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "return-totem",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "kangai_mau",
+            "anchor": { "tile": [2791, 3182, 0], "source": "A defs/tribaltotem.ts:39-44" },
+            "leash": 6,
+            "prefer": ["Ok, I will get it back.", "I'm in search of adventure!"]
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } }
+            }
+          },
+          "settle": {
+            "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "totem", "is": "complete" } }
+          }
+        },
+        {
+          "id": "reenter-cromperty",
+          "kind": "talk",
+          "version": 1,
+          "advances": true,
+          "args": {
+            "npc": "ardounge_wizard",
+            "anchor": { "tile": [2681, 3325, 0], "source": "A defs/tribaltotem.ts:46-51" },
+            "leash": 8,
+            "prefer": [
+              "So what have you invented?",
+              "Can I be teleported please?",
+              "Yes, that sounds good. Teleport me!"
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "stage_in",
+                    "version": 1,
+                    "args": { "quest": "totem", "any": ["totem:4"] }
+                  }
+                }
+              },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "mansion" } } }
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "totem:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "kangai_mau",
+                "anchor": { "tile": [2791, 3182, 0], "source": "A defs/tribaltotem.ts:39-44" },
+                "leash": 6,
+                "prefer": ["Ok, I will get it back.", "I'm in search of adventure!"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": { "quest": "totem", "any": ["totem:1"] }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "totem:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "take-label",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "horncrate" },
+                "op": "Investigate",
+                "anchor": { "tile": [2649, 3271, 0], "source": "A defs/tribaltotem.ts:62" },
+                "radius": 8,
+                "dialogue": "continue"
+              },
+              "skip_if": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem_label" } }
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem_label" } }
+              }
+            },
+            {
+              "id": "mark-crate",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "tribal_totem_label",
+                "target": { "loc": "teleportcrate" },
+                "anchor": { "tile": [2649, 3271, 0], "source": "A defs/tribaltotem.ts:62" },
+                "radius": 8,
+                "dialogue": "continue"
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": { "quest": "totem", "any": ["totem:2"] }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "totem:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "rpdt",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "rpdt_employee",
+                "anchor": { "tile": [2644, 3272, 0], "source": "A defs/tribaltotem.ts:53-58" },
+                "leash": 8,
+                "prefer": ["So, when are you going to deliver this crate?"]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": { "quest": "totem", "any": ["totem:3"] }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "totem:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "cromperty",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "ardounge_wizard",
+                "anchor": { "tile": [2681, 3325, 0], "source": "A defs/tribaltotem.ts:46-51" },
+                "leash": 8,
+                "prefer": [
+                  "So what have you invented?",
+                  "Can I be teleported please?",
+                  "Yes, that sounds good. Teleport me!"
+                ]
+              },
+              "skip_if": { "Any": [] },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": { "quest": "totem", "any": ["totem:4"] }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "totem:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "solve-combination",
+              "kind": "x:totem:solve_combination",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "combination": "KURT",
+                "door": "combodoor",
+                "anchor": { "tile": [2635, 3323, 0], "source": "A defs/tribaltotem.ts:63" },
+                "radius": 6
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": { "quest": "totem", "flag": "combo", "is": true }
+                }
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": { "quest": "totem", "flag": "combo", "is": true }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message",
+                      "version": 1,
+                      "args": { "any": ["combination seems correct"] }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "disarm-trap",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "totemtrapstairs" },
+                "op": "Investigate",
+                "anchor": { "tile": [2631, 3325, 0], "source": "A defs/tribaltotem.ts:65" },
+                "radius": 8,
+                "dialogue": "continue"
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } },
+                  { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+                ]
+              },
+              "settle": { "All": [] }
+            },
+            {
+              "id": "climb-stairs",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "totemtrapstairs" },
+                "op": "Climb-up",
+                "anchor": { "tile": [2631, 3325, 0], "source": "A defs/tribaltotem.ts:65" },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } },
+                  { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "on_level", "version": 1, "args": { "level": 1 } } }
+            },
+            {
+              "id": "open-chest",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "totemshutchest" },
+                "op": "Open",
+                "anchor": { "tile": [2638, 3323, 1], "source": "A defs/tribaltotem.ts:66" },
+                "radius": 8
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } } },
+                  { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "totemopenchest" } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "totemopenchest" } }
+              }
+            },
+            {
+              "id": "search-chest",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "totemopenchest" },
+                "op": "Search",
+                "anchor": { "tile": [2638, 3323, 1], "source": "A defs/tribaltotem.ts:66" },
+                "radius": 8,
+                "dialogue": "continue"
+              },
+              "skip_if": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } }
+              },
+              "settle": {
+                "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "tribal_totem" } }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "totem:5",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2806 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "druid",
+  "display_name": "Druidic Ritual",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 4,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "raw_bear_meat",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:meats"
+      },
+      {
+        "obj": "raw_rat_meat",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:meats"
+      },
+      {
+        "obj": "raw_chicken",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:meats"
+      },
+      {
+        "obj": "raw_beef",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:meats"
+      }
+    ],
+    "acquire": {
+      "acquire:meats": [
+        {
+          "id": "scan-ritual-meat-bank",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "scan",
+            "at": "nearest"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "bank_known",
+                  "version": 1,
+                  "args": {}
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_beef"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "withdraw-enchanted-bear",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "enchanted_bear_meat",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "enchanted_bear_meat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-raw-bear",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "raw_bear_meat",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "raw_bear_meat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-enchanted-rat",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "enchanted_rat_meat",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "enchanted_rat_meat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-raw-rat",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "raw_rat_meat",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "raw_rat_meat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-enchanted-chicken",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "enchanted_chicken",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "enchanted_chicken"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-raw-chicken",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "raw_chicken",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "raw_chicken"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-enchanted-cow",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "enchanted_beef",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "enchanted_beef"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "withdraw-raw-cow",
+          "kind": "bank",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "raw_beef",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              },
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "bank_has",
+                    "version": 1,
+                    "args": {
+                      "obj": "raw_beef"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "hunt-bear-for-meat",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "brownbear",
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true,
+              "fallback": "abort"
+            },
+            "stand": {
+              "tile": [
+                3159,
+                3233,
+                0
+              ],
+              "source": "A defs/druidicritual.ts:103-108"
+            },
+            "loadout": "melee",
+            "lost_radius": 12,
+            "kill_budget_ticks": 500,
+            "loot": [
+              "raw_bear_meat"
+            ],
+            "until": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "raw_bear_meat"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_bear_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "hunt-rat-for-meat",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "giantrat",
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true,
+              "fallback": "abort"
+            },
+            "stand": {
+              "tile": [
+                3206,
+                3175,
+                0
+              ],
+              "source": "A defs/druidicritual.ts:103-108"
+            },
+            "loadout": "melee",
+            "lost_radius": 12,
+            "kill_budget_ticks": 300,
+            "loot": [
+              "raw_rat_meat"
+            ],
+            "until": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "raw_rat_meat"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_rat_meat"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "hunt-chicken-for-meat",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "chicken",
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true,
+              "fallback": "abort"
+            },
+            "stand": {
+              "tile": [
+                3228,
+                3298,
+                0
+              ],
+              "source": "A defs/druidicritual.ts:103-108"
+            },
+            "loadout": "melee",
+            "lost_radius": 12,
+            "kill_budget_ticks": 300,
+            "loot": [
+              "raw_chicken"
+            ],
+            "until": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "raw_chicken"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_chicken"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "hunt-cow-for-meat",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "cow",
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true,
+              "fallback": "abort"
+            },
+            "stand": {
+              "tile": [
+                3243,
+                3295,
+                0
+              ],
+              "source": "A defs/druidicritual.ts:103-108"
+            },
+            "loadout": "melee",
+            "lost_radius": 12,
+            "kill_budget_ticks": 300,
+            "loot": [
+              "raw_beef"
+            ],
+            "until": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "raw_beef"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "raw_beef"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {
+      "melee": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "rune_scimitar"
+        },
+        "carry": [
+          {
+            "item": "4dose2attack",
+            "qty": 1
+          },
+          {
+            "item": "4dose2strength",
+            "qty": 1
+          },
+          {
+            "item": "4doseprayerrestore",
+            "qty": 2
+          },
+          {
+            "item": "lobster",
+            "qty": 12
+          }
+        ]
+      }
+    },
+    "areas": {
+      "taverley_dungeon": {
+        "boxes": [
+          [
+            2875,
+            9785,
+            2950,
+            9865,
+            0
+          ]
+        ],
+        "source": "A defs/druidicritual.ts:112-121"
+      },
+      "cauldron_room": {
+        "boxes": [
+          [
+            2890,
+            9827,
+            2896,
+            9835,
+            0
+          ]
+        ],
+        "source": "A defs/druidicritual.ts:186-188"
+      }
+    },
+    "tools": [
+      "obj:raw_bear_meat",
+      "obj:enchanted_bear_meat",
+      "obj:raw_rat_meat",
+      "obj:enchanted_rat_meat",
+      "obj:raw_chicken",
+      "obj:enchanted_chicken",
+      "obj:raw_beef",
+      "obj:enchanted_beef"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:druid",
+      "progress": {
+        "colour": {
+          "not_started": "druid:0",
+          "in_progress": "druid:1",
+          "complete": "druid:4"
+        },
+        "rules": [
+          {
+            "stage": "druid:4",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": null
+          },
+          {
+            "stage": "druid:3",
+            "all": [
+              "gave them to sanfew"
+            ],
+            "varp": 3
+          },
+          {
+            "stage": "druid:2",
+            "all": [
+              "sanfew told me for the ritual"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "druid:1",
+            "all": [
+              "i should speak to sanfew"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "druid:0",
+            "all": [
+              "i can start this quest"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "exit-dungeon-walk-to-ladder-for-missing-meat",
+          "kind": "walk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "tile": [
+              2884,
+              9797,
+              0
+            ],
+            "source": "A defs/druidicritual.ts:71-75,79-92",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "All": [
+                    {
+                      "Fact": {
+                        "kind": "stage_in",
+                        "version": 1,
+                        "args": {
+                          "quest": "druid",
+                          "any": [
+                            "druid:2"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "taverley_dungeon"
+                        }
+                      }
+                    },
+                    {
+                      "Not": {
+                        "All": [
+                          {
+                            "Any": [
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "raw_bear_meat"
+                                  }
+                                }
+                              },
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "enchanted_bear_meat"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Any": [
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "raw_rat_meat"
+                                  }
+                                }
+                              },
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "enchanted_rat_meat"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Any": [
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "raw_chicken"
+                                  }
+                                }
+                              },
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "enchanted_chicken"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Any": [
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "raw_beef"
+                                  }
+                                }
+                              },
+                              {
+                                "Fact": {
+                                  "kind": "has_item",
+                                  "version": 1,
+                                  "args": {
+                                    "obj": "enchanted_beef"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2884,
+                      9797,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2884,
+                  9797,
+                  0
+                ],
+                "radius": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "exit-dungeon-climb-up-for-missing-meat",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "name": "Ladder"
+            },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [
+                2884,
+                9797,
+                0
+              ],
+              "source": "A defs/druidicritual.ts:71-75,79-92"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "All": [
+                {
+                  "Fact": {
+                    "kind": "stage_in",
+                    "version": 1,
+                    "args": {
+                      "quest": "druid",
+                      "any": [
+                        "druid:2"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "taverley_dungeon"
+                    }
+                  }
+                },
+                {
+                  "Not": {
+                    "All": [
+                      {
+                        "Any": [
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "raw_bear_meat"
+                              }
+                            }
+                          },
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "enchanted_bear_meat"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "Any": [
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "raw_rat_meat"
+                              }
+                            }
+                          },
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "enchanted_rat_meat"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "Any": [
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "raw_chicken"
+                              }
+                            }
+                          },
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "enchanted_chicken"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "Any": [
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "raw_beef"
+                              }
+                            }
+                          },
+                          {
+                            "Fact": {
+                              "kind": "has_item",
+                              "version": 1,
+                              "args": {
+                                "obj": "enchanted_beef"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "taverley_dungeon"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "druid:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-with-kaqemeex",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "kaqemeex",
+                "anchor": {
+                  "tile": [
+                    2924,
+                    3486,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:56-61"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm in search of a quest.",
+                  "Ok, I will try and help."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "druid",
+                    "any": [
+                      "druid:1"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "druid:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-sanfew-for-the-ritual",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "sanfew",
+                "anchor": {
+                  "tile": [
+                    2897,
+                    3426,
+                    1
+                  ],
+                  "source": "A defs/druidicritual.ts:63-68"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I've been sent to help purify the Varrock stone circle.",
+                  "Ok, I'll do that then."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "druid",
+                    "any": [
+                      "druid:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "druid:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "equip-ritual-melee-kit",
+              "kind": "loadout",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "loadout": "melee",
+                "at": "nearest",
+                "allow_lower_tier": false,
+                "strip": false
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loadout_ready",
+                      "version": 1,
+                      "args": {
+                        "loadout": "melee"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "in_area",
+                          "version": 1,
+                          "args": {
+                            "area": "taverley_dungeon"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "equipment_only",
+                          "version": 1,
+                          "args": {
+                            "objs": [
+                              "rune_full_helm",
+                              "rune_chainbody",
+                              "rune_platelegs",
+                              "rune_kiteshield",
+                              "rune_scimitar"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "melee"
+                  }
+                }
+              }
+            },
+            {
+              "id": "collect-ritual-meats",
+              "kind": "acquire",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "recipe": "acquire:meats"
+              },
+              "skip_if": {
+                "All": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_beef"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "raw_beef"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "walk-to-dungeon-surface-ladder",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  2885,
+                  3397,
+                  0
+                ],
+                "source": "A defs/druidicritual.ts:70-85",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "taverley_dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2885,
+                          3397,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2885,
+                      3397,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "climb-into-taverley-dungeon",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-Down",
+                "anchor": {
+                  "tile": [
+                    2885,
+                    3397,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:70-85"
+                },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "taverley_dungeon"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "taverley_dungeon"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-prison-door",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  2888,
+                  9831,
+                  0
+                ],
+                "source": "A defs/druidicritual.ts:73-75,215-226",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "cauldron_room"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2888,
+                          9831,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2888,
+                      9831,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-prison-door",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Prison door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2888,
+                    9831,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:73-75; C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-20"
+                },
+                "radius": 5,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "cauldron_room"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "npc_present",
+                      "version": 1,
+                      "args": {
+                        "npc": "suit_of_armour"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_bear_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_rat_meat"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_chicken"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "enchanted_beef"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "cauldron_room"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "npc_present",
+                      "version": 1,
+                      "args": {
+                        "npc": "suit_of_armour"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "defeat-suit-of-armour",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "suit_of_armour",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true,
+                  "fallback": "abort"
+                },
+                "stand": {
+                  "tile": [
+                    2888,
+                    9831,
+                    0
+                  ],
+                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-20"
+                },
+                "loadout": "melee",
+                "lost_radius": 12,
+                "kill_budget_ticks": 500,
+                "win": {
+                  "Fact": {
+                    "kind": "npc_absent",
+                    "version": 1,
+                    "args": {
+                      "npc": "suit_of_armour"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_absent",
+                  "version": 1,
+                  "args": {
+                    "npc": "suit_of_armour"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_absent",
+                  "version": 1,
+                  "args": {
+                    "npc": "suit_of_armour"
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-prison-door-after-suit",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Prison door"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2888,
+                    9831,
+                    0
+                  ],
+                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-23"
+                },
+                "radius": 5,
+                "settle_ms": 30000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cauldron_room"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "cauldron_room"
+                  }
+                }
+              }
+            },
+            {
+              "id": "dip-bear-meat",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "raw_bear_meat",
+                "target": {
+                  "loc": "cauldron_of_thunder"
+                },
+                "anchor": {
+                  "tile": [
+                    2892,
+                    9831,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:73-77,266-292"
+                },
+                "radius": 6,
+                "product": "enchanted_bear_meat",
+                "settle_ms": 20000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "enchanted_bear_meat"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "raw_bear_meat"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_bear_meat"
+                  }
+                }
+              }
+            },
+            {
+              "id": "dip-rat-meat",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "raw_rat_meat",
+                "target": {
+                  "loc": "cauldron_of_thunder"
+                },
+                "anchor": {
+                  "tile": [
+                    2892,
+                    9831,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:73-77,266-292"
+                },
+                "radius": 6,
+                "product": "enchanted_rat_meat",
+                "settle_ms": 20000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "enchanted_rat_meat"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "raw_rat_meat"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_rat_meat"
+                  }
+                }
+              }
+            },
+            {
+              "id": "dip-chicken-meat",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "raw_chicken",
+                "target": {
+                  "loc": "cauldron_of_thunder"
+                },
+                "anchor": {
+                  "tile": [
+                    2892,
+                    9831,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:73-77,266-292"
+                },
+                "radius": 6,
+                "product": "enchanted_chicken",
+                "settle_ms": 20000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "enchanted_chicken"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "raw_chicken"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_chicken"
+                  }
+                }
+              }
+            },
+            {
+              "id": "dip-cow-meat",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "raw_beef",
+                "target": {
+                  "loc": "cauldron_of_thunder"
+                },
+                "anchor": {
+                  "tile": [
+                    2892,
+                    9831,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:73-77,266-292"
+                },
+                "radius": 6,
+                "product": "enchanted_beef",
+                "settle_ms": 20000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "enchanted_beef"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "raw_beef"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "enchanted_beef"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-to-dungeon-exit",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [
+                  2884,
+                  9797,
+                  0
+                ],
+                "source": "A defs/druidicritual.ts:71-75,79-92",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "taverley_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2884,
+                          9797,
+                          0
+                        ],
+                        "radius": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2884,
+                      9797,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "leave-taverley-dungeon",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "name": "Ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    2884,
+                    9797,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:71-75,79-92"
+                },
+                "radius": 2,
+                "wait_if_missing": true
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "taverley_dungeon"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "taverley_dungeon"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "hand-ingredients-to-sanfew",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "sanfew",
+                "anchor": {
+                  "tile": [
+                    2897,
+                    3426,
+                    1
+                  ],
+                  "source": "A defs/druidicritual.ts:63-68"
+                },
+                "leash": 8
+              },
+              "skip_if": {
+                "Not": {
+                  "All": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "enchanted_bear_meat"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "enchanted_rat_meat"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "enchanted_chicken"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "enchanted_beef"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "druid",
+                    "any": [
+                      "druid:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "druid:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "claim-herblore-reward",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "kaqemeex",
+                "anchor": {
+                  "tile": [
+                    2924,
+                    3486,
+                    0
+                  ],
+                  "source": "A defs/druidicritual.ts:56-61"
+                },
+                "leash": 8
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "druid",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "druid:4",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

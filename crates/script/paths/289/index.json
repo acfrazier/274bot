@@ -21,6 +21,11 @@
     { "id": "drunkmonk", "file": "drunkmonk.json" },
     { "id": "hazeelcult", "file": "hazeelcult.json" },
     { "id": "elena", "file": "elena.json" },
+    { "id": "druid", "file": "druid.json" },
+    { "id": "fluffs", "file": "fluffs.json" },
+    { "id": "junglepotion", "file": "junglepotion.json" },
+    { "id": "seaslug", "file": "seaslug.json" },
+    { "id": "totem", "file": "totem.json" },
     {
       "id": "hauntedmine",
       "name": "Haunted Mine",
