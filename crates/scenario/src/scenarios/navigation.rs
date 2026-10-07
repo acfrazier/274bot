@@ -915,43 +915,23 @@ pub(crate) fn nav_tele_scenario() -> Scenario {
     }
 }
 
-/// The Shantay henge desert stand (m51_48 local (38,38) = (3302,3110),
-/// south of the gate on the desert side `coordz <= loc z`).
+/// Irena's desert-side stand (m51_48 local (38,42) = (3302,3114)).
 const SHANTAY_DESERT_START: WorldTile = WorldTile {
     x: 3302,
-    z: 3110,
+    z: 3114,
     level: 0,
 };
-/// The Al Kharid-side stand (m51_48 local (40,47) = (3304,3119), north
-/// of the gate).
-const SHANTAY_PASS_START: WorldTile = WorldTile {
-    x: 3304,
-    z: 3119,
-    level: 0,
-};
-/// The Al Kharid-side follow dest (m51_48 local (36,48) = (3300,3120)).
+/// The Shantay bank chest's stand on the pass side (3308,3120).
 const SHANTAY_PASS_DEST: WorldTile = WorldTile {
-    x: 3300,
+    x: 3308,
     z: 3120,
     level: 0,
 };
-/// The desert follow dest (m51_48 local (39,36) = (3303,3108)).
-const SHANTAY_DESERT_DEST: WorldTile = WorldTile {
-    x: 3303,
-    z: 3108,
-    level: 0,
-};
 
-/// The `nav_shantay` scenario: both directions through the Shantay henge
-/// (loc 4031, `shantay_pass.rs2` `oploc1`), driven by `Traveller::follow`
-/// like every nav twin. The desert → pass leg follows with an empty
-/// inventory — the free desert exit edge (`coordz(coord) <=
-/// coordz(loc_coord)` telejump, no `item_req`) is the only Shantay edge
-/// the fail-closed WorldState relaxes. The pass → desert leg clears the
-/// backpack (`[debugproc,clearinv]` — the shared `test` slot may carry
-/// junk from prior live twins), `give`s one Shantay pass, and follows
-/// through the gated hop (consume pass + `[queue,shantay_pass_enter]`),
-/// the only edge into the desert. PASS is standing on the desert dest.
+/// The `nav_shantay` scenario exercises both henge branches with exact
+/// WalkTo arrival: from Irena, it walks to the Shantay bank chest with no
+/// pass, using the free desert exit; it then gets a pass and walks back to
+/// Irena through the paid branch. Both routes use the real loc and content.
 pub(crate) fn nav_shantay_scenario() -> Scenario {
     Scenario {
         name: "nav_shantay",
@@ -961,11 +941,11 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "clear the backpack and tele to the desert stand",
+                name: "clear the backpack and teleport to Irena",
                 kind: StepKind::Perform {
                     send: Box::new(|c, _| {
                         cheat(c, "~clearinv");
-                        cheat(c, "tele 0,51,48,38,38");
+                        cheat(c, "tele 0,51,48,38,42");
                         true
                     }),
                 },
@@ -979,8 +959,8 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                 },
             },
             Step {
-                name: "follow the free desert exit to Al Kharid",
-                kind: StepKind::Follow {
+                name: "WalkTo the bank chest through the free desert exit",
+                kind: StepKind::Walk {
                     dest: SHANTAY_PASS_DEST,
                 },
                 wait: Wait {
@@ -1009,9 +989,8 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                         true
                     }),
                 },
-                // The arm waits for the pass to actually land: the
-                // WorldState of the follow step then proves the packed
-                // gated edge's `item_req`, or the router fails closed.
+                // Wait for the pass to land so the following Walk's
+                // WorldState can prove its consumed-item requirement.
                 wait: Wait {
                     arm: Proof::Item {
                         name: "Shantay pass",
@@ -1021,28 +1000,14 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                 },
             },
             Step {
-                name: "tele to the Al Kharid stand",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| cheat(c, "tele 0,51,48,40,47").is_sent()),
+                name: "WalkTo back to Irena through the paid henge",
+                kind: StepKind::Walk {
+                    dest: SHANTAY_DESERT_START,
                 },
                 wait: Wait {
                     arm: Proof::Arrived {
-                        x: SHANTAY_PASS_START.x,
-                        z: SHANTAY_PASS_START.z,
-                        level: 0,
-                    },
-                    budget_ticks: 120,
-                },
-            },
-            Step {
-                name: "follow the pass-gated hop into the desert",
-                kind: StepKind::Follow {
-                    dest: SHANTAY_DESERT_DEST,
-                },
-                wait: Wait {
-                    arm: Proof::Arrived {
-                        x: SHANTAY_DESERT_DEST.x,
-                        z: SHANTAY_DESERT_DEST.z,
+                        x: SHANTAY_DESERT_START.x,
+                        z: SHANTAY_DESERT_START.z,
                         level: 0,
                     },
                     budget_ticks: 600,
@@ -1050,14 +1015,14 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
             },
         ],
         proof: Proof::Arrived {
-            x: SHANTAY_DESERT_DEST.x,
-            z: SHANTAY_DESERT_DEST.z,
+            x: SHANTAY_DESERT_START.x,
+            z: SHANTAY_DESERT_START.z,
             level: 0,
         },
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(420),
             terminal_shot: Some("nav_shantay terminal"),
             ..Default::default()

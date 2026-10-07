@@ -769,7 +769,8 @@ impl FollowRun {
                         edge.takeoff.unwrap_or(edge.at)
                     };
                     let needs_approach = if let Some(takeoff) = edge.takeoff {
-                        here != takeoff || loc_transport_ready(snapshot, edge, here) != Some(true)
+                        here != takeoff
+                            || loc_transport_ready(snapshot, edge, here).is_some_and(|ready| !ready)
                     } else if selected_npc_index.is_some() {
                         !find_transport_target_instance(snapshot, edge, selected_npc_index)
                             .is_some_and(|target| match target {
