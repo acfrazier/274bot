@@ -926,6 +926,7 @@ fn talk_and_interact_near_checks_use_network_position() {
         until: None,
         target_tile: None,
         reachable_only: false,
+        wait_until: None,
     };
     let mut run = with_tick(&snapshot, &mut ledger, 1, |t| {
         with_step(t, |cx| plan.begin(cx).unwrap())
