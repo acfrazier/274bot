@@ -5,9 +5,9 @@ use api::interact::Driver;
 pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
-/// off, mirroring `nav::router::FindOptions` — the `script` crate
-/// deliberately takes no `nav` dependency, so the host converts between
-/// the two at the hook boundary. `allow_bank_fetch` latches a host
+/// off, mirroring the three booleans of `nav::router::FindOptions`; the nav
+/// type also carries essence and zone-exemption state the host owns, so the
+/// host converts between the two at the hook boundary. `allow_bank_fetch` latches a host
 /// BankBudget session when true; JS `Banking.walk` still uses defaults
 /// (flag off).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
