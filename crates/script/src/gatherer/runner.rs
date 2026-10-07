@@ -486,32 +486,41 @@ impl Gatherer {
                         }
                     }
                 }
+                let withdrawals = self
+                    .scratch
+                    .withdrawals
+                    .as_ref()
+                    .expect("latched supply plan");
+                if withdrawals.is_empty() {
+                    self.advance_trip(TripStep::Close);
+                    self.begin_close(tick);
+                    return;
+                }
                 let args = bank::WithdrawArgs {
-                    withdrawals: Arc::clone(
-                        self.scratch
-                            .withdrawals
-                            .as_ref()
-                            .expect("latched supply plan"),
-                    ),
+                    withdrawals: Arc::clone(withdrawals),
                 };
                 match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Withdraw(handle),
                     Err(error) => self.action_failure(error),
                 }
             }
-            TripStep::Close => match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
-                Ok(handle) => self.active = Active::Close(handle),
-                Err(error) => self.action_failure(error),
-            },
+            TripStep::Close => self.begin_close(tick),
             TripStep::Validate => {
                 // V-resume derives the observed tool and, if possible, waits
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
                     self.advance_trip(TripStep::Return);
                     self.set_event("returning to work area");
+                    self.return_to_resources(tick);
                 }
             }
             TripStep::Return => self.return_to_resources(tick),
+        }
+    }
+    fn begin_close(&mut self, tick: &mut NativeTick<'_>) {
+        match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+            Ok(handle) => self.active = Active::Close(handle),
+            Err(error) => self.action_failure(error),
         }
     }
 
@@ -852,7 +861,7 @@ impl Gatherer {
     }
 
     fn action_failure(&mut self, error: ActionError) {
-        if matches!(error, ActionError::Held) {
+        if matches!(error, ActionError::Held | ActionError::BudgetExhausted) {
             return;
         }
         self.fail("action-error", format!("native action failed: {error:?}"));
@@ -1123,13 +1132,9 @@ impl Gatherer {
                 Poll::Ready(Ok(result)) => {
                     // These terminal observations emit no operation. Admit one
                     // new target from this same frame instead of idling a tick.
-                    if !matches!(result.end, GatherEnd::Depleted | GatherEnd::TargetGone) {
-                        self.fence.seal();
-                    }
                     self.handle_gather(result, tick);
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.action_failure(error);
                 }
             },
@@ -1146,11 +1151,9 @@ impl Gatherer {
                 match result {
                     Poll::Pending => self.active = Active::Drop(handle),
                     Poll::Ready(Ok(result)) => {
-                        self.fence.seal();
                         self.handle_drop(result, tick);
                     }
                     Poll::Ready(Err(error)) => {
-                        self.fence.seal();
                         self.action_failure(error);
                     }
                 }
@@ -1158,18 +1161,9 @@ impl Gatherer {
             Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Walk(handle),
                 Poll::Ready(Ok(result)) => {
-                    // Keep bank/recovery settlement fenced. A resource approach
-                    // can reselect immediately from its fresh arrival frame.
-                    if result.end != WalkEnd::Arrived
-                        || self.trip != TripStep::Idle
-                        || matches!(self.retained.recovery, RecoveryState::Pending { .. })
-                    {
-                        self.fence.seal();
-                    }
                     self.handle_walk(result, tick);
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
                         self.fail("return-failed", format!("return-failed:{error:?}"));
                     } else {
@@ -1180,7 +1174,6 @@ impl Gatherer {
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
                 Poll::Ready(Ok(settled)) => {
-                    self.fence.seal();
                     if settled {
                         self.needs_validate = true;
                         self.set_event("one operation settled");
@@ -1189,14 +1182,12 @@ impl Gatherer {
                     }
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.action_failure(error);
                 }
             },
             Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Select(handle),
                 Poll::Ready(Ok(selected)) => {
-                    self.fence.seal();
                     if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX {
                         self.bank_label =
                             Arc::from(format!("{}; NoCandidate", self.settings().bank));
@@ -1211,7 +1202,6 @@ impl Gatherer {
                     }
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.fail(
                         "bank-unavailable",
                         format!("bank selection failed: {error:?}"),
@@ -1221,18 +1211,15 @@ impl Gatherer {
             Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Open(handle),
                 Poll::Ready(Ok(())) => {
-                    self.fence.seal();
                     self.advance_trip(TripStep::Deposit);
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.fail("bank-unavailable", format!("bank open failed: {error:?}"));
                 }
             },
             Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Deposit(handle),
                 Poll::Ready(Ok(deposited)) => {
-                    self.fence.seal();
                     self.retained.deposited = self.retained.deposited.saturating_add(deposited);
                     if deposited > 0 && self.retained.recovery == RecoveryState::Idle {
                         self.retained.haul_since_death = true;
@@ -1242,7 +1229,6 @@ impl Gatherer {
                     self.set_event("deposit confirmed");
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.fail(
                         "bank-deposit-failed",
                         format!("bank deposit failed: {error:?}"),
@@ -1252,7 +1238,6 @@ impl Gatherer {
             Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Withdraw(handle),
                 Poll::Ready(Ok(true)) => {
-                    self.fence.seal();
                     self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
                         self.fail("supply-missing", format!("supply-missing:{item}"));
@@ -1262,11 +1247,9 @@ impl Gatherer {
                     self.set_event("withdrawal confirmed");
                 }
                 Poll::Ready(Ok(false)) => {
-                    self.fence.seal();
                     self.fail("bank-withdraw-failed", "supply withdrawal was incomplete");
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.fail(
                         "bank-withdraw-failed",
                         format!("supply withdrawal failed: {error:?}"),
@@ -1276,7 +1259,6 @@ impl Gatherer {
             Active::Close(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Close(handle),
                 Poll::Ready(Ok(_)) => {
-                    self.fence.seal();
                     if self.retained.recovery == (RecoveryState::Pending { step: 3 }) {
                         self.advance_trip(TripStep::Idle);
                         self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
@@ -1287,10 +1269,12 @@ impl Gatherer {
                     self.set_event("bank closed; validating equipment");
                 }
                 Poll::Ready(Err(error)) => {
-                    self.fence.seal();
                     self.action_failure(error);
                 }
             },
+        }
+        if tick.cx.interaction_event_spent() {
+            self.fence.seal();
         }
     }
 
@@ -1342,9 +1326,6 @@ impl Gatherer {
     }
 
     fn begin_idle(&mut self, tick: &mut NativeTick<'_>, handoff: bool) {
-        if self.fence.sealed {
-            return;
-        }
         if self.needs_validate {
             match self.validate(&mut tick.cx) {
                 Validation::Pending => return,
@@ -1370,6 +1351,9 @@ impl Gatherer {
                 stats.value,
                 snapshot.stock(),
             )) {
+                if self.trip != TripStep::Idle {
+                    self.begin_trip(tick);
+                }
                 return;
             }
         }
@@ -1380,6 +1364,9 @@ impl Gatherer {
         let snapshot = tick.cx.snapshot();
         if snapshot.stock().pack_full() == Some(true) {
             self.start_dispose(tick);
+            if self.trip != TripStep::Idle {
+                self.begin_trip(tick);
+            }
             return;
         }
         if self.begin_stray_modal(tick) {
@@ -1755,11 +1742,18 @@ impl Script for Gatherer {
                 None => ScriptFlow::Continue,
             });
         }
+        let bank_close_before_poll =
+            self.last_event.as_ref() == "bank closed; validating equipment";
         let handoff = !self.active_matches_none();
         if handoff {
             self.poll_active(tick);
         }
-        if self.active_matches_none() && !self.fence.sealed && self.failure.is_none() {
+        let bank_closed_this_tick = !bank_close_before_poll
+            && self.last_event.as_ref() == "bank closed; validating equipment";
+        if self.active_matches_none()
+            && !tick.cx.interaction_event_spent()
+            && self.failure.is_none()
+        {
             let disposal_due = tick.cx.snapshot().stock().pack_full() == Some(true);
             if let Some(revision) = self.apply_pending(disposal_due) {
                 tick.output.settings_applied(revision);
@@ -1767,6 +1761,11 @@ impl Script for Gatherer {
             // Even at expiry, re-observe first: a freshly regrown resource
             // takes precedence over waiting or widening.
             self.begin_idle(tick, handoff);
+        }
+        // Same-tick validation/return setup must not hide the close observation
+        // before this frame's status is published.
+        if bank_closed_this_tick {
+            self.set_event("bank closed; validating equipment");
         }
         if self.retained.recoveries != recoveries {
             self.set_event(&format!("recovered after death {}", self.retained.deaths));
@@ -1921,11 +1920,10 @@ mod tests {
     }
 
     #[test]
-    fn packet_fence_blocks_same_tick_reentry_and_resets_on_observation() {
+    fn packet_fence_caps_reserved_packets_and_resets_on_observation() {
         let mut fence = TickPacketFence::default();
         fence.observe(7);
-        assert!(fence.reserve(2));
-        fence.seal();
+        assert!(fence.reserve(5));
         assert!(!fence.reserve(1));
         fence.observe(8);
         assert!(fence.reserve(5));
@@ -1951,7 +1949,7 @@ mod tests {
         );
     }
     #[test]
-    fn bank_inside_auto_radius_returns_to_resource_observation_stand() {
+    fn gatherer_tickfix_validate_begins_resource_return_walk_same_tick() {
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::GameSnapshot;
 
@@ -1999,7 +1997,8 @@ mod tests {
             },
             radius: 40,
         });
-        gatherer.trip = TripStep::Return;
+        gatherer.trip = TripStep::Validate;
+        gatherer.needs_validate = false;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_local_player(local_player(WorldTile {
@@ -2008,7 +2007,9 @@ mod tests {
             level: 0,
         }));
         let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.begin_idle(tick, false)
+        });
         assert_eq!(gatherer.trip, TripStep::Return);
         assert_eq!(gatherer.trips, 0);
         let action = &ledger.as_ref().unwrap().outbox[0];
@@ -2344,6 +2345,94 @@ mod tests {
                 self.prepared.supply.bait.as_ref().unwrap().name
             )
         }
+    }
+
+    #[test]
+    fn gatherer_tickfix_admitted_bank_trip_begins_select_same_tick() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+
+        assert_eq!(gatherer.trip, TripStep::Select);
+        assert!(
+            matches!(gatherer.active, Active::Select(_)),
+            "supply admission must begin the bank selector immediately"
+        );
+    }
+
+    #[test]
+    fn gatherer_tickfix_bank_ready_without_event_begins_next_child_same_tick() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        gatherer.trip = TripStep::Open;
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
+            stand_tile: bank_tile,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Open(
+                tick.actions
+                    .begin::<bank::Open>(bank::OpenArgs { access }, &mut tick.cx)
+                    .unwrap(),
+            );
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+
+        assert_eq!(gatherer.trip, TripStep::Deposit);
+        assert!(
+            matches!(gatherer.active, Active::Deposit(_)),
+            "an observed Open completion with a free interaction budget must begin Deposit"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "beginning Deposit must not emit an operation"
+        );
+    }
+
+    #[test]
+    fn gatherer_tickfix_empty_withdraw_begins_close_without_withdraw() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.trip = TripStep::Withdraw;
+        gatherer.scratch.withdrawals = Some(Arc::<[bank::Withdrawal]>::from([]));
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+
+        assert_eq!(gatherer.trip, TripStep::Close);
+        assert!(
+            matches!(gatherer.active, Active::Close(_)),
+            "an empty withdrawal plan must skip its machine and begin Close"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "starting Close does not issue the close operation until a later poll"
+        );
     }
 
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
