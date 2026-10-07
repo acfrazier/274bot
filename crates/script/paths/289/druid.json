@@ -824,7 +824,7 @@
           "advances": false,
           "args": {
             "target": {
-              "npc": "giantrat",
+              "npc": ["giantrat", "giantrat1"],
               "not_targeting_others": true,
               "pick": "nearest"
             },
@@ -2066,7 +2066,17 @@
                   0
                 ],
                 "source": "A defs/druidicritual.ts:73-75,215-226",
-                "radius": 1
+                "radius": 1,
+                "cross": [
+                  "skeleton_unarmed@2882,9826,0",
+                  "skeleton_unarmed@2885,9819,0",
+                  "skeleton_unarmed@2885,9823,0",
+                  "skeleton_unarmed@2886,9812,0",
+                  "skeleton_unarmed@2886,9816,0",
+                  "skeleton_unarmed@2887,9821,0",
+                  "skeleton_armed@2884,9836,0",
+                  "poisonspider@2876,9806,0"
+                ]
               },
               "skip_if": {
                 "Any": [
@@ -2590,7 +2600,17 @@
                   0
                 ],
                 "source": "A defs/druidicritual.ts:71-75,79-92",
-                "radius": 1
+                "radius": 1,
+                "cross": [
+                  "skeleton_unarmed@2882,9826,0",
+                  "skeleton_unarmed@2885,9819,0",
+                  "skeleton_unarmed@2885,9823,0",
+                  "skeleton_unarmed@2886,9812,0",
+                  "skeleton_unarmed@2886,9816,0",
+                  "skeleton_unarmed@2887,9821,0",
+                  "skeleton_armed@2884,9836,0",
+                  "poisonspider@2876,9806,0"
+                ]
               },
               "skip_if": {
                 "Any": [
