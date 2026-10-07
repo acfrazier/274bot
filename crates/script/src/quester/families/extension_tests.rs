@@ -402,7 +402,10 @@ fn drives_harolds_last_page(options: dialogue::DialogueOptions, ale: bool) -> bo
     });
     let mut step = |snapshot: &GameSnapshot, ledger: &mut Option<Box<ledger::Ledger>>| {
         tick += 1;
-        with_tick(snapshot, ledger, tick, |t| t.actions.poll(&handle, &mut t.cx)).is_pending()
+        with_tick(snapshot, ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        })
+        .is_pending()
     };
     assert!(step(&snapshot, &mut ledger));
     assert!(matches!(
@@ -509,7 +512,10 @@ fn drives_traiborn_bone_loop(options: dialogue::DialogueOptions) -> bool {
     });
     let mut step = |snapshot: &GameSnapshot, ledger: &mut Option<Box<ledger::Ledger>>| {
         tick += 1;
-        with_tick(snapshot, ledger, tick, |t| t.actions.poll(&handle, &mut t.cx)).is_pending()
+        with_tick(snapshot, ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        })
+        .is_pending()
     };
     assert!(step(&snapshot, &mut ledger));
     chat_closed(&mut snapshot);

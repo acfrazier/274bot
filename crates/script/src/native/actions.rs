@@ -60,17 +60,17 @@ impl ActionContext<'_> {
     /// dispatches another `on_game_tick`.
     ///
     /// Nor does it continue on the tick that first shows the player on a new
-    /// level, in a rebuilt build area or after a teleport
-    /// ([`Self::entered_scene`]); the work starts on the next tick instead.
+    /// level or in a rebuilt build area ([`Self::entered_scene`]); the work
+    /// starts on the next tick instead.
     pub(crate) fn may_continue_this_tick(&self) -> bool {
         self.eligible && !self.interaction_event_spent() && !self.entered_scene()
     }
 
-    /// This observed tick is the first to show the player in a new scene
-    /// (`ledger::TickBudget::entered_scene`): its frame can still hold the
-    /// old locs, so a loc op chosen from it can name a loc the server has
-    /// since changed. Same-tick continuation and walk arrival wait for the
-    /// next tick.
+    /// This observed tick is the first to show the player on a new level or
+    /// in a rebuilt build area (`ledger::TickBudget::entered_scene`): its
+    /// frame can still hold the old locs, so a loc op chosen from it can name
+    /// a loc the server has since changed. Same-tick continuation and walk
+    /// arrival wait for the next tick.
     pub(crate) fn entered_scene(&self) -> bool {
         self.budget.entered_scene()
     }
