@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {
         let logical = WorldTile { x: 3200, z: 3200, level: 0 };
-        let rendered = WorldTile { x: 3199, ..logical };
+        let rendered = WorldTile { x: 3201, ..logical };
         let target = WorldTile { x: 3202, ..logical };
         let mut player = local_player(rendered);
         player.player.network = logical;
