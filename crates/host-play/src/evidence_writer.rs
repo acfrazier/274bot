@@ -462,8 +462,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
         return finish_with_sidecar(request, error, 0, convert_ms, encode_ms, write_ms, 0.0);
     }
     let sync_start = Instant::now();
-    let sync_error = std::fs::File::open(&request.png_path)
-        .and_then(|file| file.sync_all())
+    let sync_error = sync_file(&request.png_path)
         .err()
         .map(|error| error.to_string());
     let sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
@@ -488,6 +487,16 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
         write_ms,
         sync_ms,
     )
+}
+
+/// fsync a file just written. Opened for writing (never truncating): on
+/// Windows `FlushFileBuffers` needs a handle with write access, and a
+/// read-only `File::open` fails it with "Access is denied" (os error 5).
+fn sync_file(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .sync_all()
 }
 
 /// Complete one capture: patch the receipt's error key on failure, write
@@ -531,8 +540,7 @@ fn finish_with_sidecar(
                 .err()
                 .map(|error| error.to_string())
                 .or_else(|| {
-                    std::fs::File::open(&sidecar.path)
-                        .and_then(|file| file.sync_all())
+                    sync_file(&sidecar.path)
                         .err()
                         .map(|error| error.to_string())
                 }),
@@ -589,7 +597,7 @@ pub fn write_failure_sidecar(sidecar: EvidenceSidecar, error: &str) -> String {
                     sidecar.path.display()
                 );
             }
-            let _ = std::fs::File::open(&sidecar.path).and_then(|file| file.sync_all());
+            let _ = sync_file(&sidecar.path);
         }
         Err(error) => {
             return format!(
