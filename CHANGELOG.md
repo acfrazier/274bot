@@ -369,6 +369,82 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
   it already downloaded and checked, so later launches reach the game in
   seconds instead of downloading everything again.
 
+### Not in this release
+
+Things that were planned for 0.2.0, or that you might reasonably expect, but
+that aren't here yet. Where we know the target, it's noted.
+
+**Quester**
+
+- Guides ship for 25 of the game's 69 quests. The other 44 don't have one
+  yet: guides for them are planned for 0.2.0.1. Haunted Mine can't be run on
+  this server and stays listed as unavailable.
+- The guides are untested drafts. Most have been run at least part of the
+  way, and a few all the way through, but any of them may stop partway. When
+  that happens, the panel shows the step it was on.
+- A quest that's waiting or stopped can look idle in the Status card: the
+  reason is shown in the script section, not in Status yet.
+
+**Combat**
+
+- Fights hold protection prayers; prayer flicking isn't supported yet.
+- Fights are fought in the open: safespots, luring into corners and
+  face-tanking fallbacks aren't supported yet, and the bot doesn't pick a
+  standing spot by your weapon's attack range (planned for 0.2.1, with an
+  attack-range debug overlay).
+- The combat machine doesn't attack players. It does defend itself against
+  players who attack it.
+- Hunt fights give up after two minutes, and a retreat can end next to a
+  different monster that attacks.
+
+**Gatherer**
+
+- There's no "closest location" option: choose a named place, your start
+  tile, a custom area or Auto.
+- Tools aren't bought from shops. If neither you nor your bank has a usable
+  tool, gathering stops and names the tool it needs.
+- Some spots behind area unlocks (for example Miscellania) aren't offered.
+
+**Clues**
+
+- Some trail clue types don't complete yet, including key-keeper clues
+  without a key drop, locked chests, and clues in Kharazi and Tirannwn.
+
+**Navigation**
+
+- Accounts below combat level 51 have no land route past White Wolf
+  Mountain; take a boat instead.
+- WalkTo's list of town destinations is a fixed list.
+
+**Scripts**
+
+- Some rs2b0t script API members still stop the script with "not
+  implemented", among them `Game.castOnNpc`, `Shop.buyById`,
+  `ChatDialog.makeOne`, `Traversal.remaining`/`requestRepath`,
+  `EntityQuery.inside`/`nearestPreferLocal`, script events
+  (`events.on`/`off`, `registerScript`), the `InvItem` class and task-tree
+  classes, and several gathering, fishing and banking data helpers. Closing
+  these, checked against rs2b0t's own tests, is planned for 0.2.0.1 and 0.2.1.
+- Script errors don't yet tell "not possible right now" apart from "not
+  implemented".
+- Equipping an item while the bank is open isn't handled reliably; close
+  the bank first.
+- Some catalog scripts stay greyed out until they've been qualified,
+  including FlourCollector, the Zanaris cook and most Jive scripts other
+  than King Black Dragon trips.
+
+**Panel and TUI**
+
+- The script window doesn't resize with its contents.
+- Profiles can't be put in a custom order.
+- The TUI shows the map and fleet, not actual game pixels (planned for
+  0.2.2).
+
+**Game versions**
+
+- Revision 289 is the supported version. Revision 274 may work but isn't
+  tested.
+
 ### Fixed during development
 
 Fixes to problems that appeared and were fixed during 0.2.0 development.
