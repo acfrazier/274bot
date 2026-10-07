@@ -246,13 +246,17 @@
 //! `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)` — is stripped
 //! before the walk that row would otherwise make. A casket never arms it. The
 //! stripped list is the frozen `strippedGear`: the posted worn rows whose
-//! display name the frozen matcher folds are unequipped with the landed
-//! `unequip` verb — the worn row's own `Remove`, because `wear` resolves
-//! inventory rows alone — and listed, the two hard-trail dagger ids `1231` /
-//! `1215` are unequipped but left off it, and every posted pack row whose name
-//! the matcher folds is deposited before the row's own arms run: the names the
-//! unequip put in the pack, the dagger ids that are never listed, and a
-//! restricted item the player carried without wearing it. The list outlives a
+//! selected item category is restricted under the monk's rule
+//! (`monk_of_entrana.rs2:26-50`, mirrored by `restricted_item`: the 23
+//! armour/weapon categories on worn and pack, `cannon_parts` on pack alone)
+//! are unequipped in posted order with the landed `unequip` verb — the worn
+//! row's own `Remove`, because `wear` resolves inventory rows alone — and
+//! listed by display name for reclaim, with no dagger-ID exception (`1231` /
+//! `1215` are `weapon_stab` and are listed and restored), and every posted
+//! pack row with a positive count whose selected category is restricted
+//! (pack-side rule) is deposited before the row's own arms run: the names the
+//! unequip put in the pack and a restricted item the player carried without
+//! wearing it. The list outlives a
 //! step, a dead token and the connection-boundary reset; only the restore or a
 //! fresh task instance (Stop/Start) empties it, and `ownsEquipment` is that
 //! list and nothing else.

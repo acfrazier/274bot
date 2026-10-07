@@ -280,10 +280,10 @@ pub(super) fn wear_verb(name: &str, token: u64) -> Value {
     json!({ "kind": "wear", "token": token, "name": name })
 }
 
-/// The landed `deposit` step, one restricted name at a time: the frozen
-/// `Bank.depositAllMatching` cut to the regex-matching names this strip put in
-/// the pack — and to any other regex-matching row the pack holds — and never
-/// the ordinary loot deposit.
+/// The landed `deposit` step, one restricted name at a time: the first posted
+/// pack row with a positive count whose selected category is restricted under
+/// the monk's rule — whether this strip just unequipped it or the player
+/// already carried it — and never the ordinary loot deposit.
 pub(super) fn deposit_verb(name: &str, token: u64) -> Value {
     json!({ "kind": "deposit", "token": token, "name": name })
 }
