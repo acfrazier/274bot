@@ -30,6 +30,10 @@ pub struct CompiledTick<'a> {
     /// with. `None` when this build/`Play` has no pin: an identify that
     /// needs it then fails closed (`missing-selected-data`), never a guess.
     pub selected: Option<&'a api::game_data::SelectedGameData>,
+    /// The host's cached reach flood, borrowed without copying its tiles.
+    /// Rust-native clue machines use it only to project exact bank stands;
+    /// it is not part of the Load/FlatBuffer observation.
+    pub reach_flood: Option<&'a api::query::ReachFlood>,
     /// The host's cached reach observation, borrowed without copying its planes.
     pub reach: Option<&'a api::query::ReachQueryView>,
     /// The account's bank memory, borrowed from the slot's read guard for

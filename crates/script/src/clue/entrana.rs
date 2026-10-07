@@ -87,10 +87,9 @@ pub(super) const ENTRANA_GEAR_WORDS: [&str; 57] = [
 /// posted action slots are matched by the host and never by this machine.
 pub(super) const WITHDRAW_ONE: &str = "Withdraw-1";
 
-/// The caps' own name for a bank approach that did not come up — the frozen
-/// `walk to the bank failed — gear stays banked, will retry` line, logged with
-/// this token and never a machine kind.
-pub(super) const RESTORE_WALK_FAILED: &str = "restore-walk-failed";
+/// The native clue's one bank approach/open attempt failed its existing
+/// walk or readiness deadline. Sherlock maps this terminal reason to Blocked.
+pub(crate) const BANK_APPROACH_FAILED: &str = "bank-approach-failed";
 
 /// The caps' own name for a name that would not go back on — the frozen
 /// `could not re-equip … — will retry` line, logged with this token and never a
@@ -104,11 +103,10 @@ pub(super) const RESTORE_INCOMPLETE: &str = "restore-incomplete";
 pub(super) const STILL_HOLDING: &str =
     "still holding Entrana-banned gear after bank prep — will retry";
 
-/// The machine's own window for one Entrana bank approach or one strip: how
-/// long the walk to the nearest stand, the posted booth's own open and one
-/// deposit or claim have to settle before the attempt logs its named failure
-/// and re-arms. Armed per attempt, never once per trail, and freeze-honored
-/// like every other window here, so a frozen session never spends it.
+/// The Entrana strip/restore window after an observed bank is ready: how long
+/// a gear operation has to settle before its existing named failure path runs.
+/// Bank approach and open use the shared bank-open walk/readiness bounds below.
+/// Freeze-honored like every other window here.
 pub(super) const ENTRANA_WAIT_MS: u64 = 30_000;
 
 /// The frozen `ENTRANA_RESTRICTED_GEAR_RE` match over one posted display name:
@@ -364,8 +362,8 @@ pub(super) fn worn_name(input: &Value, name: &str) -> bool {
 
 /// The posted nearest Use-quickly booth: the identity the strip's and the
 /// restore's own `open-booth` click rides, exactly as the wrapper marshalled
-/// it. A page that posted no booth has nothing to open, and no tile is invented
-/// for one.
+/// it. Rust-native Sherlock may also post authoritative operability/stand facts;
+/// a missing `approach` key is the compatibility caller's legacy page.
 pub(super) struct Booth<'a> {
     pub(super) x: i32,
     pub(super) z: i32,
@@ -373,10 +371,19 @@ pub(super) struct Booth<'a> {
     pub(super) id: i32,
     pub(super) name: Option<&'a str>,
     pub(super) action: Option<&'a str>,
+    approach_present: bool,
+    approach: Option<BoothApproach>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BoothApproach {
+    can_operate: bool,
+    dest: Option<Tile>,
 }
 
 pub(super) fn nearest_booth(input: &Value) -> Option<Booth<'_>> {
     let row = input.get("nearest_booth")?;
+    let approach_page = row.get("approach");
     Some(Booth {
         x: posted_i32(row, "x")?,
         z: posted_i32(row, "z")?,
@@ -384,6 +391,13 @@ pub(super) fn nearest_booth(input: &Value) -> Option<Booth<'_>> {
         id: posted_i32(row, "id")?,
         name: row.get("name").and_then(Value::as_str),
         action: row.get("op").and_then(Value::as_str),
+        approach_present: approach_page.is_some(),
+        approach: approach_page.and_then(|facts| {
+            Some(BoothApproach {
+                can_operate: facts.get("can_operate")?.as_bool()?,
+                dest: facts.get("dest").and_then(posted_tile),
+            })
+        }),
     })
 }
 
@@ -449,6 +463,16 @@ pub(super) fn walk_nearest_bank_verb(token: u64) -> Value {
     json!({ "kind": "walk-nearest-bank", "token": token })
 }
 
+fn bank_stand_walk_verb(tile: Tile, token: u64) -> Value {
+    json!({
+        "kind": "walk",
+        "token": token,
+        "x": tile.x,
+        "z": tile.z,
+        "level": tile.level,
+    })
+}
+
 /// The landed `close` step: the open bank interface's own close, once the
 /// strip's deposit or the restore's claim is done with it.
 pub(super) fn close_verb(token: u64) -> Value {
@@ -484,12 +508,6 @@ pub(super) fn restore_incomplete(names: &str) -> String {
     format!("{RESTORE_INCOMPLETE}: could not re-equip {names} — will retry")
 }
 
-/// The frozen `walk to the bank failed — gear stays banked, will retry` line,
-/// named the way the caps do (`restore-walk-failed`): a log through
-/// `callback.log`, never a machine kind.
-pub(super) fn restore_walk_failed() -> String {
-    format!("{RESTORE_WALK_FAILED}: the bank did not come up — will retry")
-}
 impl ClueRuntime {
     /// The Entrana restore the collect's exit owes while `strippedGear` is
     /// non-empty: the frozen `restoreStrippedGear`, one verb per call over this
@@ -583,7 +601,9 @@ impl ClueRuntime {
                 // the nearest stand, the posted booth's own open, and then the
                 // claim itself.
                 if let Some(step) = self.bank_approach(&mut state.bank, input) {
-                    self.restore = Some(state);
+                    if step.get("kind").and_then(Value::as_str) != Some("aborted") {
+                        self.restore = Some(state);
+                    }
                     return Some(step);
                 }
                 // The frozen make-room deposit, between the open bank and the
@@ -745,7 +765,9 @@ impl ClueRuntime {
         // carrying rather than wearing.
         if let Some(name) = pick_pack_restricted(input) {
             if let Some(step) = self.bank_approach(&mut state.bank, input) {
-                self.strip = Some(state);
+                if step.get("kind").and_then(Value::as_str) != Some("aborted") {
+                    self.strip = Some(state);
+                }
                 return Some(step);
             }
             if self.clock.bound_reached() {
@@ -770,42 +792,74 @@ impl ClueRuntime {
         None
     }
 
-    /// One step of the shared Entrana bank approach: the walk to the nearest
-    /// stand, then the posted booth's own open, then the interface — which is
-    /// the `None` that lets the caller's own deposit or claim go out.
+    /// One bounded Entrana bank approach shared by strip and restore. This
+    /// clue is a page→verb machine, not BankOpen's `Cx` action-poll context;
+    /// nesting it would transfer token ownership into that scheduler.
+    /// Sherlock instead borrows its cached flood and projects the shared
+    /// `booth_approach` facts in Rust.
     ///
-    /// The approaching half is bounded by this machine's own `ENTRANA_WAIT_MS`
-    /// window, armed when the walk goes out: past it the approach logs the named
-    /// `restore-walk-failed` — the caps' own name for this bank trip — and
-    /// re-arms, so a stand the page never posts is a named failure rather than a
-    /// silent hang. Freeze-honored like every other window here.
+    /// Native pages walk their proved stand directly; compatibility pages
+    /// send one nearest-bank route. Each changed stand is walked once. Shared
+    /// bank-open walk/readiness bounds fail closed on missing approach facts or
+    /// a refused open; restore can issue another open only after success and
+    /// an observed close.
     pub(super) fn bank_approach(
         &mut self,
         bank: &mut BankApproach,
         input: &Value,
     ) -> Option<Value> {
         if bank_open(input) {
-            bank.opened = true;
+            if !bank.opened {
+                bank.opened = true;
+                self.clock.arm(ENTRANA_WAIT_MS);
+            }
             return None;
         }
-        if !bank.walked {
-            bank.walked = true;
-            self.clock.arm(ENTRANA_WAIT_MS);
-            return Some(walk_nearest_bank_verb(self.token));
+        // A closed bank after a proved open starts another restore claim
+        // cycle; unchanged closed evidence before success stays latched.
+        if bank.opened {
+            bank.opened = false;
+            bank.open_issued = false;
+            bank.approach_dest = None;
+            self.clock.arm(crate::bank_open::WALK_BOUND_MS);
         }
-        if let Some(booth) = nearest_booth(input) {
-            if booth_arrival(&booth, input) == Arrival::Arrived {
-                return Some(open_booth_verb(&booth, self.token));
+        let booth = nearest_booth(input);
+        if !bank.started {
+            bank.started = true;
+            self.clock.arm(crate::bank_open::WALK_BOUND_MS);
+            if !booth.as_ref().is_some_and(|booth| booth.approach_present) {
+                return Some(walk_nearest_bank_verb(self.token));
             }
         }
         if self.clock.bound_reached() {
-            *bank = BankApproach::default();
-            self.clock.arm(ENTRANA_WAIT_MS);
-            return Some(json!({
-                "kind": "callback.log",
-                "token": self.token,
-                "message": restore_walk_failed(),
-            }));
+            return Some(self.aborted(BANK_APPROACH_FAILED));
+        }
+        if bank.open_issued {
+            return Some(self.emit("wait"));
+        }
+        if let Some(booth) = booth {
+            if booth.approach_present {
+                if let Some(approach) = booth.approach {
+                    if approach.can_operate {
+                        bank.open_issued = true;
+                        self.clock.arm(crate::bank_open::BANK_READY_MS);
+                        return Some(open_booth_verb(&booth, self.token));
+                    }
+                    if let Some(dest) = approach.dest {
+                        if bank.approach_dest != Some(dest) {
+                            bank.approach_dest = Some(dest);
+                            return Some(bank_stand_walk_verb(dest, self.token));
+                        }
+                    }
+                }
+            } else if booth_arrival(&booth, input) == Arrival::Arrived {
+                // Older compatibility pages do not carry the native-only
+                // approach projection. Keep their existing admission rule,
+                // but still latch and bound the one open request.
+                bank.open_issued = true;
+                self.clock.arm(crate::bank_open::BANK_READY_MS);
+                return Some(open_booth_verb(&booth, self.token));
+            }
         }
         Some(self.emit("wait"))
     }

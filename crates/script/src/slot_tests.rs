@@ -1370,6 +1370,7 @@ fn compiled_ctx<'a>(
         compiled: crate::CompiledTick {
             selected,
             reach: None,
+            reach_flood: None,
             bank_memory: None,
             collision: None,
             hold: false,
