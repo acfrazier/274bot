@@ -182,6 +182,50 @@ mod tests {
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
 
+
+    #[test]
+    fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {
+        let logical = WorldTile { x: 3200, z: 3200, level: 0 };
+        let rendered = WorldTile { x: 3199, ..logical };
+        let target = WorldTile { x: 3202, ..logical };
+        let mut player = local_player(rendered);
+        player.player.network = logical;
+        player.player.actor.moving = true;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(player);
+        snapshot.seed_tile(logical);
+        let stamp = EvidenceStamp {
+            run: RunKey { slot: 1, run: 1, session: 1 },
+            tick: 1,
+            sequence: 1,
+        };
+        let mut reach = api::query::ReachQueryView::unavailable();
+        reach.available = true;
+        reach.base_x = logical.x;
+        reach.base_z = logical.z;
+        reach.level = logical.level;
+        reach.width = 3;
+        reach.height = 1;
+        reach.walkable = vec![7];
+        reach.reachable = vec![7];
+        reach.reachable_adj = vec![7];
+        reach.exact_rank = vec![0, 1, 2];
+        reach.adjacent_rank = vec![0, 0, 1];
+        let key = WalkKey { tile: target, radius: 2, allow_teleports: Some(false) };
+        let arrived = |snapshot: &GameSnapshot, reach: &api::query::ReachQueryView, key| {
+            let view = SnapshotView::new(Some(snapshot), stamp).with_reach(Some(reach));
+            assert_eq!(view.here().map(|here| here.value), Some(rendered));
+            Frame { snapshot: view, outcome: HostOutcome::empty(), loc_id: None, arrival: ArrivalKind::Reach }.arrived(key)
+        };
+        assert!(arrived(&snapshot, &reach, key));
+        assert!(!arrived(&snapshot, &reach, WalkKey { tile: WorldTile { level: 1, ..target }, ..key }));
+        reach.exact_rank[0] = 1;
+        assert!(!arrived(&snapshot, &reach, key), "another flood origin cannot prove arrival");
+        reach.exact_rank[0] = 0;
+        reach.available = false;
+        assert!(!arrived(&snapshot, &reach, key));
+    }
     #[test]
     fn area_arrival_uses_loaded_standability_without_reaching_the_centre() {
         let here = WorldTile {
