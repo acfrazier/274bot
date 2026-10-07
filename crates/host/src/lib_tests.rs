@@ -2607,6 +2607,43 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
 }
 
 #[test]
+fn park_wakes_for_websocket_leftover_with_quiet_fd() {
+    use client::io::client_stream::connect_ws_plain;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (tcp, _) = listener.accept().unwrap();
+        let mut ws = tungstenite::accept(tcp).unwrap();
+        ws.send(tungstenite::Message::Binary(vec![1, 2, 3, 4, 5, 6, 7]))
+            .unwrap();
+        let _ = ws.read(); // No later traffic: wait until the client closes.
+    });
+    let mut c = prepare_client(
+        cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new(),
+    );
+    let mut stream = connect_ws_plain("127.0.0.1", address.port()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while stream.available().unwrap() != 7 {
+        assert!(Instant::now() < deadline, "binary frame never arrived");
+        thread::yield_now();
+    }
+    let mut first_five = [0; 5];
+    stream.read_bytes(&mut first_five, 0, 5).unwrap();
+    assert_eq!(first_five, [1, 2, 3, 4, 5]);
+    assert_eq!(stream.available().unwrap(), 2);
+    assert!(!slot_io::wait_readable(&[stream_wait_handle(&stream)], Duration::ZERO)[0]);
+    c.stream = Some(stream);
+    let wake = park(&mut c, None, true, Duration::from_millis(30));
+    let suppressed = park(&mut c, None, false, Duration::from_millis(10));
+    c.stream.as_mut().unwrap().close();
+    server.join().unwrap();
+    assert_eq!(wake, ParkWake::Socket, "already-received WS bytes must wake without another server packet");
+    assert_eq!(suppressed, ParkWake::Timeout, "partial-packet stall suppression must still win");
+}
+
+#[test]
 fn park_prefers_socket_when_control_and_socket_both_ready() {
     use std::io::Write;
     use std::net::TcpListener;
