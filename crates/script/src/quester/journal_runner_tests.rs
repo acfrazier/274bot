@@ -2505,3 +2505,45 @@ fn a_continue_page_that_keeps_reopening_parks_within_the_drain_window() {
         "{message}"
     );
 }
+
+/// REVIEW-QUESTER-CI7-FIXES P2: the drain owns no conversation, so it clicks
+/// Chat continue only. When its accepted continue opens a selected scroll on
+/// Main, the drain ends and leaves the document to its owner: no `CloseModal`
+/// and no `IfButton` while the document is open.
+#[test]
+fn the_drain_leaves_a_scroll_its_continue_opened() {
+    let ids = *api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .dialogue_ui()
+        .unwrap();
+    let (mut script, mut snapshot) = fixture(true);
+    seed_player_chat(&mut snapshot, "A page whose continue opens a scroll.");
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(is_continue(&ack(&mut ledger, 1)));
+    close_chat(&mut snapshot);
+    snapshot.seed_main_modal(ids.scroll_root, vec![]);
+    for tick in 2..60 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        while ledger
+            .as_ref()
+            .is_some_and(|ledger| !ledger.outbox.is_empty())
+        {
+            let effect = ack(&mut ledger, tick);
+            assert!(
+                !matches!(
+                    effect,
+                    HostEffect::Interaction(
+                        crate::shim::InteractReq::CloseModal
+                            | crate::shim::InteractReq::IfButton { .. }
+                    )
+                ),
+                "tick {tick}: the drain closed or clicked the scroll"
+            );
+        }
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.journal_drain.is_none(), "the drain ended");
+}

@@ -1518,8 +1518,9 @@ impl Quester {
     /// and the latched-continue Busy rule holds: the owner advances it. With
     /// no live owner (a zone trigger's player chat, or the tail of a finished
     /// step's conversation) nothing else will click it, so the read drains it
-    /// with the shared continuation driver, continue clicks only (a menu fails
-    /// strict), and retries. A read spends at most `JOURNAL_CONTINUE_DRAINS`
+    /// with the shared continuation driver, Chat continue clicks only (a menu
+    /// fails strict; a Main scroll, book or modal the page opens ends the
+    /// drain untouched), and retries. A read spends at most `JOURNAL_CONTINUE_DRAINS`
     /// drains within `JOURNAL_DRAIN_WINDOW`; a page that keeps reopening then
     /// parks with its root and text. `None`: not drainable, so the caller waits.
     fn drain_unowned_continue(&mut self, tick: &mut NativeTick<'_>) -> Option<bool> {
@@ -1548,7 +1549,7 @@ impl Quester {
         }
         let args = DialogueArgs {
             target: DialogueTarget::Continuation,
-            options: DialogueOptions::continue_only(),
+            options: DialogueOptions::chat_continue_only(),
         };
         match tick.actions.begin::<Dialogue>(args, &mut tick.cx) {
             Ok(handle) => {
