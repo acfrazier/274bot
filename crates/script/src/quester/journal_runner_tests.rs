@@ -910,6 +910,7 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
             settle: Arc::clone(&step.settle),
             plan: Arc::clone(&step.plan),
         }]),
+        ..super::super::families::AcquirePlan::default()
     });
     step.advances = false;
     let mut ledger = None;

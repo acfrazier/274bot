@@ -78,6 +78,43 @@ impl Probe<'_> {
     pub fn choice(&self, stage: &str, cursor: usize, snapshot: &GameSnapshot) -> Choice {
         let sequence = sequence_for_stage(self.path, stage)
             .unwrap_or_else(|| panic!("{}: stage {stage} has no sequence", self.path.id.0));
+        self.with_predicates(snapshot, |pred| {
+            match select(self.path, sequence, cursor, pred) {
+                SelectionDecision::Selected(selection) => Choice::Step(selection.step.id.clone()),
+                SelectionDecision::Unknown(selection) => Choice::Unknown(selection.step.id.clone()),
+                SelectionDecision::Exhausted => Choice::Exhausted,
+            }
+        })
+    }
+
+    /// The child an `acquire` pass over `recipe` begins first against
+    /// `snapshot`: the first child whose `skip_if` is not proven true. A
+    /// restarted pass makes the same choice.
+    pub fn recipe_choice(&self, recipe: &str, snapshot: &GameSnapshot) -> Choice {
+        let steps = &self
+            .path
+            .provisioning
+            .recipes
+            .get(recipe)
+            .unwrap_or_else(|| panic!("{}: no recipe {recipe}", self.path.id.0))
+            .steps;
+        self.with_predicates(snapshot, |pred| {
+            for step in steps.iter() {
+                match step.skip_if.evaluate(pred) {
+                    Truth::True => {}
+                    Truth::False => return Choice::Step(step.id.clone()),
+                    Truth::Unknown => return Choice::Unknown(step.id.clone()),
+                }
+            }
+            Choice::Exhausted
+        })
+    }
+
+    fn with_predicates<R>(
+        &self,
+        snapshot: &GameSnapshot,
+        f: impl FnOnce(&PredicateContext<'_, '_>) -> R,
+    ) -> R {
         let pin = self.selected.selected_pin().expect("selected pin");
         let evidence = probe_stamp();
         let mut retained = RetainedMemory::default();
@@ -97,7 +134,7 @@ impl Probe<'_> {
             eligible: true,
             observed_walk_outcome_seq: 0,
         };
-        let pred = PredicateContext {
+        f(&PredicateContext {
             cx: &cx,
             quests: self.quests,
             progress: self.progress,
@@ -105,12 +142,7 @@ impl Probe<'_> {
             chat_since: 0,
             outcome: None,
             pairs: None,
-        };
-        match select(self.path, sequence, cursor, &pred) {
-            SelectionDecision::Selected(selection) => Choice::Step(selection.step.id.clone()),
-            SelectionDecision::Unknown(selection) => Choice::Unknown(selection.step.id.clone()),
-            SelectionDecision::Exhausted => Choice::Exhausted,
-        }
+        })
     }
 }
 

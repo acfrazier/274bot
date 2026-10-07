@@ -695,6 +695,13 @@ impl Quester {
                         "quester {quest}: stage {stage} recipe {recipe} child {child_step} failed: {reason}"
                     ),
                 ),
+                AcquisitionTraceOutcome::Restarted { restart, max, goal } => self.trace.record(
+                    output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} restart {restart}/{max} after child {child_step}: {goal} is still false"
+                    ),
+                ),
             },
             StepTraceEvent::CombatSubOperationEnd { target, end } => self.trace.record(
                 output,
@@ -4863,6 +4870,313 @@ mod tests {
                 "park context step=root-acquire-step child_recipe=test:child-failure child=child-failing-step",
             )
         }));
+    }
+
+    fn held_items(script: &Quester, aliases: &[&str]) -> Vec<api::snapshot::ItemView> {
+        aliases
+            .iter()
+            .zip(0..)
+            .map(|(alias, slot)| api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: script.selected.item_by_alias(alias).unwrap().id,
+                    name: Some((*alias).into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            })
+            .collect()
+    }
+
+    /// A two-child pie recipe shaped like Knight's Sword's: `dispose` runs
+    /// only on a held burnt pie, `cook` is skipped once the pie is held and
+    /// settles on any outcome (no product), and the root acquire's goal is a
+    /// held redberry pie.
+    fn pie_retry_document(
+        args: serde_json::Value,
+        dispose_skip: super::super::path::PredicateDocument,
+        cook_skip: super::super::path::PredicateDocument,
+    ) -> super::super::path::PathDocument {
+        use super::super::path::PredicateDocument;
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:retry".to_owned(),
+            vec![
+                test_step(
+                    "dispose",
+                    "wait",
+                    serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                    dispose_skip,
+                    PredicateDocument::All(vec![]),
+                ),
+                test_step(
+                    "cook",
+                    "wait",
+                    serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                    cook_skip,
+                    PredicateDocument::All(vec![]),
+                ),
+            ],
+        );
+        document.roles[0].sequences[0].steps = vec![test_step(
+            "root-acquire-step",
+            "acquire",
+            args,
+            pie_has("redberry_pie"),
+            pie_has("redberry_pie"),
+        )];
+        document
+    }
+
+    fn pie_has(obj: &str) -> super::super::path::PredicateDocument {
+        super::super::path::PredicateDocument::Fact {
+            kind: "has_item".to_owned(),
+            version: 1,
+            args: serde_json::json!({ "obj": obj }),
+        }
+    }
+
+    fn current_child(script: &Quester) -> Option<String> {
+        script
+            .step
+            .as_ref()
+            .and_then(|run| run.child_step_id())
+            .map(|id| id.0.to_string())
+    }
+
+    fn restart_lines(output: &TraceCapture) -> Vec<&str> {
+        output
+            .logs
+            .iter()
+            .map(|(_, line)| line.as_str())
+            .filter(|line| line.contains("recipe test:retry restart "))
+            .collect()
+    }
+
+    const ROOT_SETTLED: &str =
+        "quester cook: stage cook:0 step root-acquire-step (acquire) settled";
+
+    #[test]
+    fn acquire_restarts_recipe_after_lost_product_then_succeeds() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let (mut burnt, mut emptied, mut cooked) = (false, false, false);
+        for tick in 1..=80 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            assert_eq!(
+                script.fail_streak, 0,
+                "a lost product is not a step failure"
+            );
+            assert!(!script.parked);
+            let restarts = restart_lines(&output).len();
+            match (restarts, current_child(&script).as_deref()) {
+                // The first bake burns: the cook child settles on a burnt pie.
+                (0, Some("cook")) if !burnt => {
+                    snapshot.seed_inventory(held_items(&script, &["burnt_pie"]), 28);
+                    burnt = true;
+                }
+                (1, Some("dispose")) if !emptied => {
+                    snapshot.seed_inventory(Vec::new(), 28);
+                    emptied = true;
+                }
+                // The second bake cooks.
+                (1, Some("cook")) if emptied && !cooked => {
+                    snapshot.seed_inventory(held_items(&script, &["redberry_pie"]), 28);
+                    cooked = true;
+                }
+                _ => {}
+            }
+            if output.logs.iter().any(|(_, line)| line == ROOT_SETTLED) {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(
+            burnt && emptied && cooked,
+            "burn, dispose and re-cook all ran: {messages:#?}"
+        );
+        assert_eq!(
+            restart_lines(&output),
+            vec![
+                "quester cook: stage cook:0 recipe test:retry restart 1/8 after child cook: has_item({\"obj\":\"redberry_pie\"}) is still false"
+            ],
+            "{messages:#?}"
+        );
+        assert!(messages.contains(&ROOT_SETTLED), "{messages:#?}");
+        assert!(
+            !messages
+                .iter()
+                .any(|line| line.contains("step settle timeout")),
+            "{messages:#?}"
+        );
+    }
+
+    #[test]
+    fn acquire_restart_bound_parks_with_the_attempt_count() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry","max_restarts":2}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=80 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(script.parked, "the exhausted bound parks: {messages:#?}");
+        let reason = "test:retry gave up after 3 attempts: has_item({\"obj\":\"redberry_pie\"}) is still false";
+        let status = output.statuses.last().expect("parked status was published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(status_text(status, "step_id"), "root-acquire-step");
+        assert_eq!(status_text(status, "last_failure"), reason);
+        assert_eq!(status.failure.as_ref().unwrap().message.as_ref(), reason);
+        assert_eq!(restart_lines(&output).len(), 2, "{messages:#?}");
+        assert!(messages.iter().any(|line| line.contains("restart 2/2")));
+        assert!(
+            !messages
+                .iter()
+                .any(|line| line.contains("step settle timeout")),
+            "the bound parks before any parent settle window: {messages:#?}"
+        );
+    }
+
+    #[test]
+    fn acquire_that_succeeds_first_time_does_not_restart() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let mut cooked = false;
+        for tick in 1..=40 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if !cooked && current_child(&script).as_deref() == Some("cook") {
+                snapshot.seed_inventory(held_items(&script, &["redberry_pie"]), 28);
+                cooked = true;
+            }
+            if output.logs.iter().any(|(_, line)| line == ROOT_SETTLED) {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(cooked && messages.contains(&ROOT_SETTLED), "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
+        assert!(!script.parked);
+        assert_eq!(script.fail_streak, 0);
+        assert!(messages.contains(
+            &"quester cook: stage cook:0 recipe test:retry child dispose skipped: not has_item({\"obj\":\"burnt_pie\"}) evaluated true"
+        ));
+    }
+
+    /// A pass that began no child made no progress, so the goal miss goes to
+    /// the parent settle window instead of looping on skips.
+    #[test]
+    fn acquire_pass_that_only_skips_does_not_restart() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            PredicateDocument::Not(Box::new(pie_has("redberry_pie"))),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=60 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.fail_streak > 0 {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert_eq!(script.fail_streak, 1, "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
+        assert!(messages
+            .iter()
+            .any(|line| line
+                .contains("step root-acquire-step (acquire) failed: step settle timeout")));
+    }
+
+    /// The goal miss restarts only while the acquire step would still be
+    /// selected: once its `skip_if` holds, the runner's settle window decides.
+    #[test]
+    fn acquire_does_not_restart_once_its_skip_holds() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let mut document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        document.roles[0].sequences[0].steps[0].skip_if =
+            PredicateDocument::Any(vec![pie_has("redberry_pie"), pie_has("burnt_pie")]);
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let mut burnt = false;
+        for tick in 1..=60 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if !burnt && current_child(&script).as_deref() == Some("cook") {
+                snapshot.seed_inventory(held_items(&script, &["burnt_pie"]), 28);
+                burnt = true;
+            }
+            if script.fail_streak > 0 {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(burnt, "{messages:#?}");
+        assert_eq!(script.fail_streak, 1, "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
     }
 
     #[test]
