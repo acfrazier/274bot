@@ -1920,11 +1920,10 @@ mod tests {
     }
 
     #[test]
-    fn packet_fence_blocks_same_tick_reentry_and_resets_on_observation() {
+    fn packet_fence_caps_reserved_packets_and_resets_on_observation() {
         let mut fence = TickPacketFence::default();
         fence.observe(7);
-        assert!(fence.reserve(2));
-        fence.seal();
+        assert!(fence.reserve(5));
         assert!(!fence.reserve(1));
         fence.observe(8);
         assert!(fence.reserve(5));
@@ -1950,7 +1949,7 @@ mod tests {
         );
     }
     #[test]
-    fn bank_inside_auto_radius_returns_to_resource_observation_stand() {
+    fn gatherer_tickfix_validate_begins_resource_return_walk_same_tick() {
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::GameSnapshot;
 
@@ -1998,7 +1997,8 @@ mod tests {
             },
             radius: 40,
         });
-        gatherer.trip = TripStep::Return;
+        gatherer.trip = TripStep::Validate;
+        gatherer.needs_validate = false;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_local_player(local_player(WorldTile {
@@ -2007,7 +2007,7 @@ mod tests {
             level: 0,
         }));
         let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_idle(tick, false));
         assert_eq!(gatherer.trip, TripStep::Return);
         assert_eq!(gatherer.trips, 0);
         let action = &ledger.as_ref().unwrap().outbox[0];
@@ -2302,6 +2302,94 @@ mod tests {
                 self.prepared.supply.bait.as_ref().unwrap().name
             )
         }
+    }
+
+    #[test]
+    fn gatherer_tickfix_admitted_bank_trip_begins_select_same_tick() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        let mut ledger = None;
+
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+
+        assert_eq!(gatherer.trip, TripStep::Select);
+        assert!(
+            matches!(gatherer.active, Active::Select(_)),
+            "supply admission must begin the bank selector immediately"
+        );
+    }
+
+    #[test]
+    fn gatherer_tickfix_bank_ready_without_event_begins_next_child_same_tick() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        gatherer.trip = TripStep::Open;
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
+            stand_tile: bank_tile,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Open(
+                tick.actions
+                    .begin::<bank::Open>(bank::OpenArgs { access }, &mut tick.cx)
+                    .unwrap(),
+            );
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+
+        assert_eq!(gatherer.trip, TripStep::Deposit);
+        assert!(
+            matches!(gatherer.active, Active::Deposit(_)),
+            "an observed Open completion with a free interaction budget must begin Deposit"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "beginning Deposit must not emit an operation"
+        );
+    }
+
+    #[test]
+    fn gatherer_tickfix_empty_withdraw_begins_close_without_withdraw() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.trip = TripStep::Withdraw;
+        gatherer.scratch.withdrawals = Some(Arc::<[bank::Withdrawal]>::from([]));
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+
+        assert_eq!(gatherer.trip, TripStep::Close);
+        assert!(
+            matches!(gatherer.active, Active::Close(_)),
+            "an empty withdrawal plan must skip its machine and begin Close"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "starting Close does not issue the close operation until a later poll"
+        );
     }
 
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
