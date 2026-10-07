@@ -138,8 +138,9 @@ fn gobdip_redberries_recipe_collects_three_ground_spawns() {
     assert_redberries_from_ground_spawns(steps, 3);
 }
 
-/// Redberry pie burns about half the time at Cooking 10 and the pie recipe
-/// retries without limit, so its berries need the respawning source too.
+/// Redberry pie burns about half the time at Cooking 10 and the pie acquire
+/// restarts its recipe after a burn (8 times by default), so its berries need
+/// the respawning source too.
 #[test]
 fn squire_pie_recipe_takes_redberries_from_ground_spawns() {
     let value = read_path(&paths_dir().join("squire.json"));
@@ -147,6 +148,65 @@ fn squire_pie_recipe_takes_redberries_from_ground_spawns() {
         .as_array()
         .expect("Squire pie recipe");
     assert_redberries_from_ground_spawns(steps, 1);
+}
+
+/// What a Knight's Sword pie pass (first or restarted) begins with: a burnt
+/// pie is emptied before anything else, a banked pie (the live cell's
+/// `givebank redberry_pie 1`) replaces the bake, and a bank known to hold no
+/// pie goes straight to the bake.
+#[test]
+fn squire_pie_pass_empties_a_burnt_pie_then_prefers_a_banked_one() {
+    use api::bank_memory::{BankMemory, Origin};
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-squire-pie");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("squire.json")))
+            .expect("squire decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("squire compiles");
+    let pie = selected
+        .item_by_alias("redberry_pie")
+        .expect("redberry_pie")
+        .id;
+    let empty_bank = known_empty_bank();
+    let pie_bank = BankMemory::seeded(&[(pie, 1)], Origin::Session);
+    let banked = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &pie_bank,
+    };
+    let unbanked = Probe {
+        bank: &empty_bank,
+        ..banked
+    };
+    let rimmington = |items: &[(&str, i32)]| snapshot_with_items(2969, 3210, &selected, items);
+    let step = |id: &str| Choice::Step(FactKey::new(id));
+
+    assert_eq!(
+        banked.recipe_choice("acquire:pie", &rimmington(&[("burnt_pie", 1)])),
+        step("empty-burnt-pie")
+    );
+    assert_eq!(
+        banked.recipe_choice("acquire:pie", &rimmington(&[])),
+        step("withdraw-redberry-pie")
+    );
+    assert_eq!(
+        unbanked.recipe_choice("acquire:pie", &rimmington(&[])),
+        step("take-pie-dish")
+    );
+    assert_eq!(
+        unbanked.recipe_choice("acquire:pie", &rimmington(&[("redberry_pie", 1)])),
+        Choice::Exhausted
+    );
 }
 
 #[test]
@@ -1226,4 +1286,45 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
             .any(|step| step.id.0.starts_with("GAP-")),
         "no GAP wait remains in Monk's Friend"
     );
+}
+
+/// DIAG-CRYPT-GATE-NAV: nav has no edge through either Priest in Peril crypt
+/// gate, and Gate 2's west stand (3431,9897) is outside `monuments` and north
+/// of Gate 1's wall line, so Gate 1's Open approach from there targets the
+/// unreachable north side. Leaving from there walks to Gate 1's routable
+/// south doorstep first; the Open then runs from inside `monuments`.
+#[test]
+fn priestperil_leave_crypt_walks_to_gate_1_south_from_the_gate_2_west_stand() {
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-priestperil-gates");
+    let (selected, quests) = selected_and_quests();
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document: PathDocument =
+        serde_json::from_value(read_path(&paths_dir().join("priestperil.json")))
+            .expect("priestperil decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    let step = |id: &str| Choice::Step(FactKey::new(id));
+    let leave = |x, z| probe.recipe_choice("leave:crypt", &snapshot_at(x, z));
+
+    // East of Gate 2 the westbound Open runs first; it lands on 3431,9897.
+    assert_eq!(leave(3432, 9897), step("crypt-return-through-second-gate"));
+    assert_eq!(leave(3431, 9897), step("crypt-return-to-first-gate-south"));
+    assert_eq!(leave(3405, 9894), step("crypt-return-through-first-gate"));
+    assert_eq!(leave(3420, 9890), step("crypt-return-through-first-gate"));
+    // North of Gate 1 the gates are behind: walk on to the ladder.
+    assert_eq!(leave(3405, 9897), step("crypt-exit-approach"));
 }

@@ -4,6 +4,7 @@ use super::compile::{
     StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
+use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
 use super::queue::QueueStatus;
@@ -35,6 +36,11 @@ use std::time::Duration;
 // click). Adoption consumes a transaction too, but never adds a click.
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
+// Continue drains a single progress read may spend on chat pages no step
+// owns, and the active time they may take together. A page that reopens past
+// either parks with its root and text.
+const JOURNAL_CONTINUE_DRAINS: u8 = 3;
+const JOURNAL_DRAIN_WINDOW: Duration = Duration::from_secs(30);
 const QUEUE_QUEST_STATUS_WAIT: Duration = Duration::from_secs(30);
 // Pair admission uses the broker's ten-minute inactivity budget in active time.
 const PAIR_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -208,6 +214,18 @@ fn trace_root_event(
     );
 }
 
+/// `modal root R (first text)`: the open chat page a journal park names.
+fn chat_page_label(tick: &NativeTick<'_>) -> String {
+    let Some(chat) = tick.cx.snapshot().chat_modal() else {
+        return String::from("an unobserved chat page");
+    };
+    let mut label = format!("modal root {}", chat.value.root);
+    if let Some(text) = chat.value.texts.iter().find(|text| !text.is_empty()) {
+        let _ = write!(label, " ({text})");
+    }
+    label
+}
+
 fn trace_error_reason(error: &ActionError) -> &str {
     match error {
         ActionError::Unavailable(reason)
@@ -229,6 +247,11 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
+    /// Continuation driver for an unowned chat continue page that blocks the
+    /// journal read; see `drain_unowned_continue`.
+    journal_drain: Option<ActionHandle<Dialogue>>,
+    journal_drains: u8,
+    journal_drain_since: Option<Duration>,
     custom_reader: Option<Box<dyn StepRun>>,
     custom_read_after: Option<EvidenceStamp>,
     pair_admission: Option<Box<dyn StepRun>>,
@@ -550,6 +573,9 @@ impl Quester {
             stage: None,
             progress: None,
             journal: None,
+            journal_drain: None,
+            journal_drains: 0,
+            journal_drain_since: None,
             custom_reader: None,
             custom_read_after: None,
             pair_admission: None,
@@ -667,6 +693,13 @@ impl Quester {
                     api::hostlog::Level::Warn,
                     format_args!(
                         "quester {quest}: stage {stage} recipe {recipe} child {child_step} failed: {reason}"
+                    ),
+                ),
+                AcquisitionTraceOutcome::Restarted { restart, max, goal } => self.trace.record(
+                    output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {quest}: stage {stage} recipe {recipe} restart {restart}/{max} after child {child_step}: {goal} is still false"
                     ),
                 ),
             },
@@ -1377,6 +1410,7 @@ impl Quester {
         self.clear_prayers = None;
         self.last_outcome = None;
         self.journal = None;
+        self.journal_drain = None;
         self.custom_reader = None;
         self.custom_read_after = None;
         self.pair_admission = None;
@@ -1479,9 +1513,143 @@ impl Quester {
         self.wait_for_read(tick, reason)
     }
 
+    /// Journal `begin` is Busy on a chat continue page (`chat_page_open`).
+    /// While a step or provisioning run is live, that page is its dialogue's
+    /// and the latched-continue Busy rule holds: the owner advances it. With
+    /// no live owner (a zone trigger's player chat, or the tail of a finished
+    /// step's conversation) nothing else will click it, so the read drains it
+    /// with the shared continuation driver, Chat continue clicks only (a menu
+    /// fails strict; a Main scroll, book or modal the page opens ends the
+    /// drain untouched), and retries. A read spends at most `JOURNAL_CONTINUE_DRAINS`
+    /// drains within `JOURNAL_DRAIN_WINDOW`; a page that keeps reopening then
+    /// parks with its root and text. `None`: not drainable, so the caller waits.
+    fn drain_unowned_continue(&mut self, tick: &mut NativeTick<'_>) -> Option<bool> {
+        if self.step.is_some() || self.provisioner.run_live() {
+            return None;
+        }
+        let main_closed = tick
+            .cx
+            .snapshot()
+            .main_modal()
+            .is_some_and(|modal| modal.value.root == -1 && modal.value.texts.is_empty());
+        let continue_open = tick
+            .cx
+            .snapshot()
+            .chat_modal()
+            .is_some_and(|chat| chat.value.continue_component_id >= 0);
+        if !main_closed || !continue_open {
+            return None;
+        }
+        if self.journal_drains >= JOURNAL_CONTINUE_DRAINS {
+            self.park_on_reopening_continue(
+                tick,
+                format_args!("the chat continue reopened after {JOURNAL_CONTINUE_DRAINS} drains"),
+            );
+            return Some(false);
+        }
+        let args = DialogueArgs {
+            target: DialogueTarget::Continuation,
+            options: DialogueOptions::chat_continue_only(),
+        };
+        match tick.actions.begin::<Dialogue>(args, &mut tick.cx) {
+            Ok(handle) => {
+                let page = chat_page_label(tick);
+                self.trace.record(
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {}: journal read drains an unowned chat continue ({page})",
+                        self.path.id.0
+                    ),
+                );
+                self.journal_drain = Some(handle);
+                self.journal_drains += 1;
+                self.journal_drain_since.get_or_insert(tick.cx.active_now());
+                self.journal_quiet_since = None;
+                self.dirty = true;
+                // Never a completed read: the read retries once the page is gone.
+                self.poll_journal_drain(tick);
+                Some(false)
+            }
+            Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => None,
+            Err(error) => {
+                self.record_failure(error);
+                self.parked = true;
+                Some(false)
+            }
+        }
+    }
+
+    /// Polls the continue drain. `true` while it runs or after it parked the
+    /// read; `false` once it is gone, so the read retries on this tick.
+    fn poll_journal_drain(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(handle) = self.journal_drain.as_ref() else {
+            return false;
+        };
+        if self
+            .journal_drain_since
+            .is_some_and(|since| tick.cx.active_now().saturating_sub(since) >= JOURNAL_DRAIN_WINDOW)
+        {
+            // Dropping the handle revokes the driver before it clicks again.
+            self.journal_drain = None;
+            self.park_on_reopening_continue(
+                tick,
+                format_args!(
+                    "the chat continue kept reopening for {} s",
+                    JOURNAL_DRAIN_WINDOW.as_secs()
+                ),
+            );
+            return true;
+        }
+        let result = match tick.actions.poll(handle, &mut tick.cx) {
+            Poll::Pending => return true,
+            Poll::Ready(result) => result,
+        };
+        self.journal_drain = None;
+        self.dirty = true;
+        match result {
+            // A failed or interrupted drain spent its budget; the retried
+            // read drains again or parks on the cap.
+            Ok(_)
+            | Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::BudgetExhausted
+                | ActionError::Stale
+                | ActionError::Cancelled,
+            ) => false,
+            Err(error) => {
+                self.parked = true;
+                self.park_reason = "journal blocked by an unowned chat page";
+                let page = chat_page_label(tick);
+                self.set_last_error(
+                    QuesterFailureKind::Other,
+                    Arc::from(format!(
+                        "journal blocked by {page}: {}",
+                        trace_error_reason(&error)
+                    )),
+                );
+                true
+            }
+        }
+    }
+
+    fn park_on_reopening_continue(&mut self, tick: &NativeTick<'_>, cause: fmt::Arguments<'_>) {
+        self.parked = true;
+        self.park_reason = "journal blocked by a reopening chat continue";
+        let page = chat_page_label(tick);
+        self.set_last_error(
+            QuesterFailureKind::Other,
+            Arc::from(format!("journal blocked by {page}: {cause}")),
+        );
+    }
+
     fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
         if self.path.progress_reader.is_some() {
             return self.read_custom_stage(tick, retarget);
+        }
+        if self.poll_journal_drain(tick) {
+            return false;
         }
         let progress = if let Some(handle) = self.journal.as_ref() {
             match tick.actions.poll(handle, &mut tick.cx) {
@@ -1563,6 +1731,9 @@ impl Quester {
                     });
                     if !closed {
                         self.journal_quiet_since = None;
+                        if let Some(read) = self.drain_unowned_continue(tick) {
+                            return read;
+                        }
                         return self
                             .wait_for_journal_read(tick, "journal retry quiet period unavailable");
                     }
@@ -1596,6 +1767,9 @@ impl Quester {
                         self.dirty = true;
                     }
                     Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
+                        if let Some(read) = self.drain_unowned_continue(tick) {
+                            return read;
+                        }
                         return self
                             .wait_for_journal_read(tick, "journal blocked by an occupied modal");
                     }
@@ -1627,6 +1801,8 @@ impl Quester {
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
         };
         self.journal_attempts = 0;
+        self.journal_drains = 0;
+        self.journal_drain_since = None;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
         if self.progress.is_none() {
@@ -2768,9 +2944,12 @@ impl Script for Quester {
                 self.last_combat = None;
                 self.settling = false;
                 self.journal = None;
+                self.journal_drain = None;
                 self.progress = None;
                 self.unreadable_since = None;
                 self.journal_attempts = 0;
+                self.journal_drains = 0;
+                self.journal_drain_since = None;
                 self.journal_retry_pending = false;
                 self.journal_quiet_since = None;
                 self.selection_since = None;
@@ -2785,10 +2964,13 @@ impl Script for Quester {
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
+                self.journal_drain = None;
                 self.progress = None;
                 self.settling = false;
                 self.needs_read = true;
                 self.journal_attempts = 0;
+                self.journal_drains = 0;
+                self.journal_drain_since = None;
                 self.journal_retry_pending = false;
                 self.journal_quiet_since = None;
                 self.waiting = None;
@@ -2816,6 +2998,7 @@ impl Script for Quester {
             self.provisioner.cancel();
             self.clear_prayers = None;
             self.journal = None;
+            self.journal_drain = None;
             self.needs_read = true;
             self.last_outcome = None;
             self.last_combat = None;
@@ -2826,6 +3009,8 @@ impl Script for Quester {
             self.settle_deadline = Duration::ZERO;
             self.unreadable_since = None;
             self.journal_attempts = 0;
+            self.journal_drains = 0;
+            self.journal_drain_since = None;
             self.journal_retry_pending = false;
             self.journal_quiet_since = None;
             self.selection_since = None;
@@ -2846,6 +3031,7 @@ impl Script for Quester {
         self.step = None;
         self.provisioner.cancel();
         self.journal = None;
+        self.journal_drain = None;
         self.settling = false;
         self.dirty = true;
         self.waiting = None;
@@ -4685,6 +4871,313 @@ mod tests {
                 "park context step=root-acquire-step child_recipe=test:child-failure child=child-failing-step",
             )
         }));
+    }
+
+    fn held_items(script: &Quester, aliases: &[&str]) -> Vec<api::snapshot::ItemView> {
+        aliases
+            .iter()
+            .zip(0..)
+            .map(|(alias, slot)| api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: script.selected.item_by_alias(alias).unwrap().id,
+                    name: Some((*alias).into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            })
+            .collect()
+    }
+
+    /// A two-child pie recipe shaped like Knight's Sword's: `dispose` runs
+    /// only on a held burnt pie, `cook` is skipped once the pie is held and
+    /// settles on any outcome (no product), and the root acquire's goal is a
+    /// held redberry pie.
+    fn pie_retry_document(
+        args: serde_json::Value,
+        dispose_skip: super::super::path::PredicateDocument,
+        cook_skip: super::super::path::PredicateDocument,
+    ) -> super::super::path::PathDocument {
+        use super::super::path::PredicateDocument;
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:retry".to_owned(),
+            vec![
+                test_step(
+                    "dispose",
+                    "wait",
+                    serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                    dispose_skip,
+                    PredicateDocument::All(vec![]),
+                ),
+                test_step(
+                    "cook",
+                    "wait",
+                    serde_json::json!({"until":{"All":[]},"max_ticks":1}),
+                    cook_skip,
+                    PredicateDocument::All(vec![]),
+                ),
+            ],
+        );
+        document.roles[0].sequences[0].steps = vec![test_step(
+            "root-acquire-step",
+            "acquire",
+            args,
+            pie_has("redberry_pie"),
+            pie_has("redberry_pie"),
+        )];
+        document
+    }
+
+    fn pie_has(obj: &str) -> super::super::path::PredicateDocument {
+        super::super::path::PredicateDocument::Fact {
+            kind: "has_item".to_owned(),
+            version: 1,
+            args: serde_json::json!({ "obj": obj }),
+        }
+    }
+
+    fn current_child(script: &Quester) -> Option<String> {
+        script
+            .step
+            .as_ref()
+            .and_then(|run| run.child_step_id())
+            .map(|id| id.0.to_string())
+    }
+
+    fn restart_lines(output: &TraceCapture) -> Vec<&str> {
+        output
+            .logs
+            .iter()
+            .map(|(_, line)| line.as_str())
+            .filter(|line| line.contains("recipe test:retry restart "))
+            .collect()
+    }
+
+    const ROOT_SETTLED: &str =
+        "quester cook: stage cook:0 step root-acquire-step (acquire) settled";
+
+    #[test]
+    fn acquire_restarts_recipe_after_lost_product_then_succeeds() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let (mut burnt, mut emptied, mut cooked) = (false, false, false);
+        for tick in 1..=80 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            assert_eq!(
+                script.fail_streak, 0,
+                "a lost product is not a step failure"
+            );
+            assert!(!script.parked);
+            let restarts = restart_lines(&output).len();
+            match (restarts, current_child(&script).as_deref()) {
+                // The first bake burns: the cook child settles on a burnt pie.
+                (0, Some("cook")) if !burnt => {
+                    snapshot.seed_inventory(held_items(&script, &["burnt_pie"]), 28);
+                    burnt = true;
+                }
+                (1, Some("dispose")) if !emptied => {
+                    snapshot.seed_inventory(Vec::new(), 28);
+                    emptied = true;
+                }
+                // The second bake cooks.
+                (1, Some("cook")) if emptied && !cooked => {
+                    snapshot.seed_inventory(held_items(&script, &["redberry_pie"]), 28);
+                    cooked = true;
+                }
+                _ => {}
+            }
+            if output.logs.iter().any(|(_, line)| line == ROOT_SETTLED) {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(
+            burnt && emptied && cooked,
+            "burn, dispose and re-cook all ran: {messages:#?}"
+        );
+        assert_eq!(
+            restart_lines(&output),
+            vec![
+                "quester cook: stage cook:0 recipe test:retry restart 1/8 after child cook: has_item({\"obj\":\"redberry_pie\"}) is still false"
+            ],
+            "{messages:#?}"
+        );
+        assert!(messages.contains(&ROOT_SETTLED), "{messages:#?}");
+        assert!(
+            !messages
+                .iter()
+                .any(|line| line.contains("step settle timeout")),
+            "{messages:#?}"
+        );
+    }
+
+    #[test]
+    fn acquire_restart_bound_parks_with_the_attempt_count() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry","max_restarts":2}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=80 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(script.parked, "the exhausted bound parks: {messages:#?}");
+        let reason = "test:retry gave up after 3 attempts: has_item({\"obj\":\"redberry_pie\"}) is still false";
+        let status = output.statuses.last().expect("parked status was published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(status_text(status, "step_id"), "root-acquire-step");
+        assert_eq!(status_text(status, "last_failure"), reason);
+        assert_eq!(status.failure.as_ref().unwrap().message.as_ref(), reason);
+        assert_eq!(restart_lines(&output).len(), 2, "{messages:#?}");
+        assert!(messages.iter().any(|line| line.contains("restart 2/2")));
+        assert!(
+            !messages
+                .iter()
+                .any(|line| line.contains("step settle timeout")),
+            "the bound parks before any parent settle window: {messages:#?}"
+        );
+    }
+
+    #[test]
+    fn acquire_that_succeeds_first_time_does_not_restart() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let mut cooked = false;
+        for tick in 1..=40 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if !cooked && current_child(&script).as_deref() == Some("cook") {
+                snapshot.seed_inventory(held_items(&script, &["redberry_pie"]), 28);
+                cooked = true;
+            }
+            if output.logs.iter().any(|(_, line)| line == ROOT_SETTLED) {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(cooked && messages.contains(&ROOT_SETTLED), "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
+        assert!(!script.parked);
+        assert_eq!(script.fail_streak, 0);
+        assert!(messages.contains(
+            &"quester cook: stage cook:0 recipe test:retry child dispose skipped: not has_item({\"obj\":\"burnt_pie\"}) evaluated true"
+        ));
+    }
+
+    /// A pass that began no child made no progress, so the goal miss goes to
+    /// the parent settle window instead of looping on skips.
+    #[test]
+    fn acquire_pass_that_only_skips_does_not_restart() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            PredicateDocument::Not(Box::new(pie_has("redberry_pie"))),
+        );
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=60 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.fail_streak > 0 {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert_eq!(script.fail_streak, 1, "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
+        assert!(messages
+            .iter()
+            .any(|line| line
+                .contains("step root-acquire-step (acquire) failed: step settle timeout")));
+    }
+
+    /// The goal miss restarts only while the acquire step would still be
+    /// selected: once its `skip_if` holds, the runner's settle window decides.
+    #[test]
+    fn acquire_does_not_restart_once_its_skip_holds() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let mut document = pie_retry_document(
+            serde_json::json!({"recipe":"test:retry"}),
+            PredicateDocument::Not(Box::new(pie_has("burnt_pie"))),
+            pie_has("redberry_pie"),
+        );
+        document.roles[0].sequences[0].steps[0].skip_if =
+            PredicateDocument::Any(vec![pie_has("redberry_pie"), pie_has("burnt_pie")]);
+        let (mut script, mut snapshot) = status_fixture(document);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let mut burnt = false;
+        for tick in 1..=60 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if !burnt && current_child(&script).as_deref() == Some("cook") {
+                snapshot.seed_inventory(held_items(&script, &["burnt_pie"]), 28);
+                burnt = true;
+            }
+            if script.fail_streak > 0 {
+                break;
+            }
+        }
+        let messages: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(burnt, "{messages:#?}");
+        assert_eq!(script.fail_streak, 1, "{messages:#?}");
+        assert!(restart_lines(&output).is_empty(), "{messages:#?}");
     }
 
     #[test]

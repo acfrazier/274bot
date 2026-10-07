@@ -253,6 +253,14 @@
           "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mausoleum_east"}}}}
         },
         {
+          "id": "crypt-return-to-first-gate-south",
+          "kind": "walk", "version": 1,
+          "args": {"tile": [3405,9894,0], "source": "C maps/m53_154.jm2:4168 south side of gate", "radius": 0},
+          "comment": "Gate 2's west stand (3431,9897) lies outside 'monuments' and north of Gate 1's wall line, so the Open's own approach targets the gate's north side, which nav cannot reach (no edge through either quest gate). Walk to the south doorstep through the monuments hall first (DIAG-CRYPT-GATE-NAV).",
+          "skip_if": {"Not": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3431,9897,0], "radius": 2}}}},
+          "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "monuments"}}}
+        },
+        {
           "id": "crypt-return-through-first-gate",
           "kind": "interact", "version": 1, "advances": false,
           "args": {
@@ -1050,6 +1058,7 @@
           "args": {
             "recipe": "reach:monuments"
           },
+          "comment": "Already at Gate 2 counts as reached: its west stand (3430/3431,9897) is outside the monuments box (z<=9894; extending the box would overlap crypt_north) and outside mausoleum_east (x>=3432), and nav has no route back to Gate 1 from there (DIAG-PRIEST-CRYPT live 1, NoPath park). Gate pip_underground_door2 is m53_154.jm2:4379 local 39,41 = 3431,9897 (shape 0 angle 2, centrepiece rock at 3431,9896/9898); AIOQuester priestperil.ts:31 GATE2 = 3431,9897 and tryOpen works within 2 tiles.",
           "skip_if": {
             "Any": [
               {
@@ -1067,6 +1076,20 @@
                   "version": 1,
                   "args": {
                     "area": "mausoleum_east"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3431,
+                      9897,
+                      0
+                    ],
+                    "radius": 2
                   }
                 }
               }
@@ -1089,6 +1112,20 @@
                   "version": 1,
                   "args": {
                     "area": "mausoleum_east"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3431,
+                      9897,
+                      0
+                    ],
+                    "radius": 2
                   }
                 }
               }
@@ -2498,7 +2535,7 @@
       ],
       "source": "C maps/m50_53.jm2:9487 bank booth [3253,3419,0]; north approach"
     },
-    "coin_float": 0,
+    "coin_float": 100,
     "loadouts": {
       "melee": {
         "worn": {
@@ -2757,6 +2794,89 @@
             }
           },
           "comment": "Only equip before the two combat stages. Pack ownership prevents stage-consumed water, keys and essence from being globally re-provisioned. Bring eight lobsters and 100 coins; this gear loadout does not refill food."
+        },
+        {
+          "id": "priestperil-coin-float",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "quest_bank",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 100
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "owns_inventory: the generic provisioner never draws the header coin_float (provision.rs poll; docs/api/script.md 'Automatic coin funding is not provided'), and buy-salve-bucket (get-water-from-salve, stage 6) pays 2 gp for bucket_empty (varrock.inv stock4, 289.json cost 2) with held coins only. Squire's shape, not death's: no bank_known/Not bank_has skip, so an account with no coins anywhere is refused here at once ('need 100 Coins; held 0, banked 0') instead of looping on the shop at stage 6 (DIAG-QUESTER-CI7 §3). Skipped while 2 gp are held, once a bucket is held, and after stage 6.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "coins",
+                    "qty": 2
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "priestperil",
+                    "any": [
+                      "priestperil:7",
+                      "priestperil:8",
+                      "priestperil:10",
+                      "priestperil:60"
+                    ]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_murkywater"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_blessedwater"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "coins",
+                "qty": 2
+              }
+            }
+          }
         }
       ],
       "sequences": [

@@ -314,6 +314,11 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
                 max_ticks: 2,
             }),
         }]),
+        goal: None,
+        max_restarts: 0,
+        restarts: 0,
+        pass_began_child: false,
+        goal_chat_since: 0,
         current: Some(child),
         child_outcome: None,
         index: 0,
@@ -2090,6 +2095,7 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
                 max_ticks: 2,
             }),
         }]),
+        ..AcquirePlan::default()
     };
     let mut ledger = None;
     let mut run = with_tick(&s, &mut ledger, 5000, |t| {
