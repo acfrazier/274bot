@@ -185,6 +185,34 @@
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
             },
             {
+              "id": "walk-back-to-trufitus",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2809, 3086, 0],
+                "source": "A defs/junglepotion.ts:16",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "comment": "Return leg with the weed; mirrors walk-to-snake-weed with the same 8 named grants.",
+              "skip_if": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              }
+            },
+            {
               "id": "give-snake",
               "kind": "talk",
               "version": 1,
@@ -268,6 +296,34 @@
               "args": { "target": { "held": "unidentified_snake_weed" }, "op": "Identify" },
               "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "snake_weed" } } }
+            },
+            {
+              "id": "walk-back-to-trufitus-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2809, 3086, 0],
+                "source": "A defs/junglepotion.ts:16",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@2787,3013,0",
+                  "hobgoblin_unarmed@2791,3013,0",
+                  "hobgoblin_unarmed@2794,3013,0",
+                  "jungle_spider@2780,3029,0",
+                  "jungle_spider@2780,3031,0",
+                  "tribesman@2771,3014,0",
+                  "tribesman@2773,3017,0",
+                  "tribesman@2777,3068,0"
+                ]
+              },
+              "comment": "Return leg with the weed; mirrors walk-to-snake-weed-found with the same 8 named grants.",
+              "skip_if": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2809, 3086, 0], "radius": 2 } }
+              }
             },
             {
               "id": "give-snake-found",
@@ -739,6 +795,35 @@
               }
             },
             {
+              "id": "walk-to-cave-exit",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2830, 9521, 0],
+                "source": "A defs/junglepotion.ts:68",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Return leg to the exit rocks; mirrors walk-to-rogues-purse with the same 6 named grants.",
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } }
+              }
+            },
+            {
               "id": "leave-pothole",
               "kind": "interact",
               "version": 1,
@@ -859,6 +944,35 @@
               },
               "settle": {
                 "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unidentified_rogues_purse" } }
+              }
+            },
+            {
+              "id": "walk-to-cave-exit-found",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [2830, 9521, 0],
+                "source": "A defs/junglepotion.ts:68",
+                "radius": 1,
+                "cross": [
+                  "jogre@2826,9518,0",
+                  "jogre@2834,9499,0",
+                  "jogre@2834,9513,0",
+                  "jogre@2836,9522,0",
+                  "jogre@2838,9490,0",
+                  "jogre@2848,9483,0"
+                ]
+              },
+              "comment": "Return leg to the exit rocks; mirrors walk-to-rogues-purse-found with the same 6 named grants.",
+              "skip_if": {
+                "Any": [
+                  { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "caves" } } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } } }
+                ]
+              },
+              "settle": {
+                "Fact": { "kind": "near", "version": 1, "args": { "tile": [2830, 9521, 0], "radius": 2 } }
               }
             },
             {

@@ -1568,6 +1568,9 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
 /// PORT-S6-DRAFTS-FIX F4 (real pack): the dungeon and herb legs cross named
 /// danger zones, so the grant-carrying walks must resolve and route at low
 /// combat where the strict search refuses.
+/// PORT-S6-DRAFTS-R3 N1/N2: the same holds for the return legs (snake-weed
+/// site back to Trufitus, cave back to the exit rocks) and the druid
+/// missing-meat recovery walk, which now carry the outbound grants.
 #[test]
 #[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
 fn danger_cross_grants_route_low_combat_legs() {
@@ -1580,7 +1583,11 @@ fn danger_cross_grants_route_low_combat_legs() {
 
     let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
     let mut druid = read_path(&paths_dir().join("druid.json"));
-    for id in ["walk-to-prison-door", "walk-to-dungeon-exit"] {
+    for id in [
+        "walk-to-prison-door",
+        "walk-to-dungeon-exit",
+        "exit-dungeon-walk-to-ladder-for-missing-meat",
+    ] {
         let step = find_step_mut(&mut druid, id).expect("dungeon walk");
         let cross = step
             .pointer("/args/cross")
@@ -1631,6 +1638,53 @@ fn danger_cross_grants_route_low_combat_legs() {
                 "{id} grants {zone}"
             );
         }
+    }
+    // PORT-S6-DRAFTS-R3 N1: each return walk carries the same named zones
+    // as its outbound walk, ends at the return destination, and settles
+    // (plus skips) on nearness the way the outbound walks do.
+    for (outbound, ret) in [
+        ("walk-to-snake-weed", "walk-back-to-trufitus"),
+        ("walk-to-snake-weed-found", "walk-back-to-trufitus-found"),
+        ("walk-to-rogues-purse", "walk-to-cave-exit"),
+        ("walk-to-rogues-purse-found", "walk-to-cave-exit-found"),
+    ] {
+        let outward = find_step_mut(&mut jungle, outbound)
+            .expect("outbound walk")
+            .pointer("/args/cross")
+            .expect("cross list")
+            .clone();
+        let back = find_step_mut(&mut jungle, ret)
+            .expect("return walk")
+            .pointer("/args/cross")
+            .expect("cross list")
+            .clone();
+        assert_eq!(
+            back, outward,
+            "{ret} carries the same named zones as {outbound}"
+        );
+    }
+    for (id, tile) in [
+        ("walk-back-to-trufitus", json!([2809, 3086, 0])),
+        ("walk-back-to-trufitus-found", json!([2809, 3086, 0])),
+        ("walk-to-cave-exit", json!([2830, 9521, 0])),
+        ("walk-to-cave-exit-found", json!([2830, 9521, 0])),
+    ] {
+        let step = find_step_mut(&mut jungle, id).expect("return walk");
+        assert_eq!(
+            step.pointer("/args/tile").expect("walk tile"),
+            &tile,
+            "{id} ends at the return destination"
+        );
+        assert_eq!(
+            step.pointer("/settle/Fact/args/tile").expect("settle tile"),
+            &tile,
+            "{id} settles near the destination"
+        );
+        let skip = step.pointer("/skip_if").expect("skip").to_string();
+        assert!(
+            skip.contains("\"near\""),
+            "{id} skips when already near the destination: {skip}"
+        );
     }
 
     let pack = PathBuf::from(
@@ -1688,6 +1742,54 @@ fn danger_cross_grants_route_low_combat_legs() {
                 "jogre@2836,9522,0",
                 "jogre@2838,9490,0",
                 "jogre@2848,9483,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N1: snake-weed site back to the Trufitus stand.
+        (
+            (2761, 3015),
+            (2809, 3086),
+            3,
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "hobgoblin_unarmed@2791,3013,0",
+                "hobgoblin_unarmed@2794,3013,0",
+                "jungle_spider@2780,3029,0",
+                "jungle_spider@2780,3031,0",
+                "tribesman@2771,3014,0",
+                "tribesman@2773,3017,0",
+                "tribesman@2777,3068,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N1: cave back to the exit rocks.
+        (
+            (2850, 9477),
+            (2830, 9521),
+            3,
+            &[
+                "jogre@2826,9518,0",
+                "jogre@2834,9499,0",
+                "jogre@2834,9513,0",
+                "jogre@2836,9522,0",
+                "jogre@2838,9490,0",
+                "jogre@2848,9483,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N2: cauldron room back toward the ladder for a
+        // missing meat. The ladder tile itself is not standable, so the
+        // walk's radius-1 goals are the standable neighbours; probe one.
+        (
+            (2892, 9831),
+            (2884, 9798),
+            20,
+            &[
+                "skeleton_unarmed@2882,9826,0",
+                "skeleton_unarmed@2885,9819,0",
+                "skeleton_unarmed@2885,9823,0",
+                "skeleton_unarmed@2886,9812,0",
+                "skeleton_unarmed@2886,9816,0",
+                "skeleton_unarmed@2887,9821,0",
+                "skeleton_armed@2884,9836,0",
+                "poisonspider@2876,9806,0",
             ] as &[&str],
         ),
     ];
