@@ -191,6 +191,12 @@ fn default_nav_pack_path() -> PathBuf {
 fn death_plateau_throwers_has_a_standable_protected_crossing() {
     let pack = default_nav_pack_path();
     if !pack.exists() {
+        // CI and the platform gate build with BOT_NAV_BUILD=skip, which bakes
+        // no pack on purpose; every other build must have produced it.
+        if std::env::var("BOT_NAV_BUILD").as_deref() == Ok("skip") {
+            eprintln!("skip: death_plateau_throwers needs the baked 289 pack (BOT_NAV_BUILD=skip)");
+            return;
+        }
         panic!("W1 pack missing at {}", pack.display());
     }
     let world = nav::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
