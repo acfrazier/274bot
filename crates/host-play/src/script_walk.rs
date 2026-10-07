@@ -1165,8 +1165,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
 /// pump budget and does not re-send while the snapshot is unchanged; both
 /// live on the session ([`PendingBankFetch::progress`]), so a caller that
 /// re-wraps the session every pump (the panel/TUI `WalkArm`) keeps them.
-/// Clears the pending session when steps are exhausted, or on a truthful,
-/// logged failure. Returns whether the driver was written.
+/// Drains completed no-send steps up to the finite queue length plus one
+/// rewrite, stopping at the first true wait or emitted effect. Clears the
+/// pending session when steps are exhausted, or on a truthful, logged failure.
+/// Returns whether the driver was written.
 pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -1178,38 +1180,52 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     let Some(pending) = bot.bank_fetch.as_ref() else {
         return false;
     };
-    let Some(step) = pending.steps.front().cloned() else {
+    let Some(_) = pending.steps.front() else {
         bot.bank_fetch = None;
         return false;
     };
-    let (wrote, end) = match step {
-        BankStep::Walk { x, z, level } => step_walk(
-            snapshot,
-            bot,
-            world,
-            here,
-            map_members,
-            WorldTile { x, z, level },
-        ),
-        _ => {
-            let pending = bot
-                .bank_fetch
-                .as_mut()
-                .expect("the session holds the front step");
-            step_bank_action(driver, snapshot, pending, &step, here, world)
-        }
-    };
-    match end {
-        StepEnd::Waiting => {}
-        StepEnd::Abort(why) => {
-            abort_bank_fetch(bot, why);
-            return wrote;
-        }
-        StepEnd::Landed(how) => {
-            log_walk_arm_bot(|| format!("bank_fetch phase done {step:?} {how}"));
-            if let Some(pending) = bot.bank_fetch.as_mut() {
-                pending.pop_step();
+    // Each landed step consumes one queued step; Withdraw -> Withdraw-X is
+    // the only no-send expansion and needs one extra admission opportunity.
+    let drain_limit = pending.steps.len().saturating_add(1);
+    for _ in 0..drain_limit {
+        let Some(step) = bot
+            .bank_fetch
+            .as_ref()
+            .and_then(|pending| pending.steps.front())
+            .cloned()
+        else {
+            break;
+        };
+        let (wrote, end) = match step {
+            BankStep::Walk { x, z, level } => step_walk(
+                snapshot,
+                bot,
+                world,
+                here,
+                map_members,
+                WorldTile { x, z, level },
+            ),
+            _ => {
+                let pending = bot
+                    .bank_fetch
+                    .as_mut()
+                    .expect("the session holds the front step");
+                step_bank_action(driver, snapshot, pending, &step, here, world)
             }
+        };
+        match end {
+            StepEnd::Waiting => return wrote,
+            StepEnd::Abort(why) => {
+                abort_bank_fetch(bot, why);
+                return wrote;
+            }
+            StepEnd::Landed(how) => {
+                log_walk_arm_bot(|| format!("bank_fetch phase done {step:?} {how}"));
+                if let Some(pending) = bot.bank_fetch.as_mut() {
+                    pending.pop_step();
+                }
+            }
+            StepEnd::Rewritten => {}
         }
     }
     if let Some(pending) = bot.bank_fetch.take_if(|pending| pending.steps.is_empty()) {
@@ -1238,7 +1254,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
     }
-    wrote
+    false
 }
 
 /// The post-session route was found at arm time from where the player stood
@@ -1310,6 +1326,8 @@ fn resume_final_route(
 enum StepEnd {
     /// Still waiting for the snapshot to show it (or for the sub-route).
     Waiting,
+    /// A no-send step was rewritten into an immediately admissible sequence.
+    Rewritten,
     /// The snapshot shows it done; the detail goes in the log.
     Landed(&'static str),
     /// It cannot land: the session ends with this reason.
@@ -1526,7 +1544,7 @@ fn step_bank_action<D: Driver>(
             log_walk_arm_bot(|| {
                 format!("bank_fetch Withdraw id={id} count={count} settles through Withdraw-X")
             });
-            return (false, StepEnd::Waiting);
+            return (false, StepEnd::Rewritten);
         }
     }
     // Open also waits while a bank component is up but not yet loaded.

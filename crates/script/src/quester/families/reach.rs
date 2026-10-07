@@ -458,9 +458,12 @@ impl Reach {
             return self.walk_to_target(cx);
         }
         let snapshot = cx.snapshot();
-        if let Some(here) = snapshot.here() {
+        if let Some(here) = snapshot
+            .local_player()
+            .map(|player| player.value.player.network)
+        {
             let reach = snapshot.reach().map(|observed| observed.value);
-            if door_wall_reachable(here.value, door, reach) {
+            if door_wall_reachable(here, door, reach) {
                 return self.open_door(door.id, door.tile, cx);
             }
         }
@@ -488,12 +491,13 @@ impl Reach {
             return self.walk_to_target(cx);
         }
         let here = snapshot
-            .here()
+            .local_player()
+            .map(|player| player.value.player.network)
             .ok_or_else(|| ActionError::Failed(Arc::from("no player tile")))?;
         let reach = snapshot.reach().map(|observed| observed.value);
         let unavailable = api::query::ReachQueryView::unavailable();
-        if !api::query::is_arrived(here.value, tile, 1, || reach.unwrap_or(&unavailable))
-            && !door_wall_reachable(here.value, door, reach)
+        if !api::query::is_arrived(here, tile, 1, || reach.unwrap_or(&unavailable))
+            && !door_wall_reachable(here, door, reach)
         {
             return Err(ActionError::Failed(Arc::from(
                 "door approach not reachable",
@@ -1119,17 +1123,18 @@ fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
     )
 }
 
-/// The same live stand predicate used by native walks, including footprint
-/// approach masks and straight-wall operations that do not have a footprint.
+/// The same server-position stand predicate used by native walks, including
+/// footprint approach masks and straight-wall operations without a footprint.
 pub fn loc_arrived(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> bool {
     let snapshot = cx.snapshot();
-    snapshot.here().is_some_and(|here| {
+    snapshot.local_player().is_some_and(|player| {
+        let here = player.value.player.network;
         if loc_walk_id(loc).is_some() {
-            snapshot.walk_loc_arrived(here.value, loc.tile, 1, loc.id)
+            snapshot.walk_loc_arrived(here, loc.tile, 1, loc.id)
         } else {
             (loc.layer == api::snapshot::LocLayer::Wall
-                && door_wall_reachable(here.value, loc, snapshot.reach().map(|reach| reach.value)))
-                || snapshot.walk_arrived(here.value, loc.tile, 1)
+                && door_wall_reachable(here, loc, snapshot.reach().map(|reach| reach.value)))
+                || snapshot.walk_arrived(here, loc.tile, 1)
         }
     })
 }

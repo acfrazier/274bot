@@ -367,13 +367,14 @@ impl Gatherer {
 
     fn resource_return_arrived(&self, tick: &NativeTick<'_>) -> bool {
         self.target.as_ref().is_some_and(|target| {
-            tick.cx.snapshot().here().is_some_and(|here| {
-                here.value.level == target.tile.level
-                    && here
-                        .value
+            tick.cx.snapshot().local_player().is_some_and(|player| {
+                // Native walk arrival follows the path head, not the rendered pose.
+                let tile = player.value.player.network;
+                tile.level == target.tile.level
+                    && tile
                         .x
                         .abs_diff(target.tile.x)
-                        .max(here.value.z.abs_diff(target.tile.z))
+                        .max(tile.z.abs_diff(target.tile.z))
                         <= u32::from(RESOURCE_APPROACH_RADIUS)
             })
         })
@@ -2047,6 +2048,47 @@ mod tests {
             gatherer.failure.as_ref().unwrap().code.as_ref(),
             "return-failed"
         );
+
+        let stand = gatherer.target.as_ref().expect("return target").tile;
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            assert!(
+                !gatherer.resource_return_arrived(tick),
+                "bank location is not the resource observation stand"
+            );
+        });
+
+        // Reset the terminal failure for the independent successful-arrival case.
+        gatherer.failure = None;
+
+        // The path head is at the stand while the rendered actor still
+        // trails at the bank tile.
+        let rendered = snapshot.local_player().unwrap().player.actor.tile;
+        let mut player = local_player(rendered);
+        player.player.network = stand;
+        snapshot.seed_local_player(player);
+        assert_eq!(snapshot.local_player().unwrap().player.actor.tile, rendered);
+        assert_eq!(snapshot.local_player().unwrap().player.network, stand);
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                tick,
+            );
+        });
+        assert_eq!(
+            gatherer.trips, 1,
+            "network arrival must count despite the lagging rendered tile"
+        );
+        assert_eq!(gatherer.trip, TripStep::Idle);
+        assert!(gatherer.failure.is_none());
     }
 
     #[test]
