@@ -883,6 +883,153 @@ fn advancing_step_rereads_on_its_completion_tick() {
         ))
     )));
 }
+/// An advancing step that killed its target (combat receipt, end Killed).
+struct KillPlan;
+
+impl super::super::compile::StepPlan for KillPlan {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(KillRun))
+    }
+}
+
+struct KillRun;
+
+impl StepRun for KillRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let evidence = cx.tick.cx.evidence();
+        let report = crate::combat::CombatReport {
+            end: crate::combat::CombatEnd::Killed,
+            evidence,
+            engaged: Some(crate::combat::ActorRef {
+                kind: api::snapshot::ActorKind::Npc,
+                index: 7,
+            }),
+            engaged_npc_type: 1047,
+            ticks: 9,
+            swings: 3,
+            casts: 0,
+            damage_taken: 0,
+            food: 0,
+            prayer_doses: 0,
+            boost_doses: 0,
+            antifire_doses: 0,
+            hits_while_protected: 0,
+            protect_switches: 0,
+            intruders: 0,
+            ammo_pickups: 0,
+            restorations: 0,
+            locked_ticks: 0,
+            multi_op_plans: 0,
+            melee_mode_fallback: None,
+            flick_resets: 0,
+            flick_misses: 0,
+            flick_fallback: false,
+        };
+        Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence,
+            receipt: Some(Arc::new(super::super::families::combat::CombatReceipt {
+                report,
+                target_gone_restarts: 0,
+            })),
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
+fn dying_npc(index: usize) -> api::snapshot::NpcView {
+    api::snapshot::NpcView {
+        index,
+        r#type: Some(1047),
+        name: Some("Temple guardian".into()),
+        actions: vec![],
+        tile: api::WorldTile {
+            x: 3431,
+            z: 9897,
+            level: 0,
+        },
+        distance: 1,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 1,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 1,
+        size: 1,
+        network: api::WorldTile {
+            x: 3431,
+            z: 9897,
+            level: 0,
+        },
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+/// The content writes quest progress from the killed NPC's death queue after
+/// `npc_death` removes it (`npc_death.rs2:10-25`, Priest in Peril
+/// `temple_guardian.rs2:1-12`), so an advancing combat step's read waits for
+/// that NPC to leave the scene (bounded) instead of reading the old stage on
+/// the kill tick and then waiting out the settle window (live pip2p: 336).
+#[test]
+fn advancing_kill_reads_progress_once_the_killed_npc_is_gone() {
+    let (mut script, mut snapshot) = fixture(true);
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(KillPlan);
+    snapshot.seed_npcs(vec![dying_npc(7)]);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    // Tick 5 closed the first read, began the kill step and completed it.
+    assert!(script.settling && script.needs_read);
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "no read while the NPC dies"
+    );
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "no read while the NPC dies"
+    );
+    snapshot.seed_npcs(Vec::new());
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    assert!(matches!(
+        ack(&mut ledger, 7),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+}
+
+/// The wait is bounded: an NPC that lingers does not hold the read past
+/// `KILL_READ_BOUND_TICKS`.
+#[test]
+fn advancing_kill_read_wait_is_bounded() {
+    let (mut script, mut snapshot) = fixture(true);
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(KillPlan);
+    snapshot.seed_npcs(vec![dying_npc(7)]);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    for tick in 6..11 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+    drive(&mut script, &snapshot, &mut ledger, 11);
+    assert!(matches!(
+        ack(&mut ledger, 11),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+}
 
 #[test]
 fn advances_rereads_before_stage_settle_then_retargets_new_sequence() {

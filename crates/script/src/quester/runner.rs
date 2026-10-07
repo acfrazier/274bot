@@ -51,6 +51,37 @@ enum Provisioned {
     /// A bank receipt or a finished acquisition: re-plan.
     Landed,
 }
+/// Ticks an advancing combat step's progress read waits for its killed NPC to
+/// leave the scene. The content writes quest progress from the NPC's death
+/// queue after `npc_death` (`skill_combat/scripts/npc/npc_death.rs2:10-25`:
+/// `npc_arrivedelay` up to 2 ticks, the death anim, `npc_delay(1)`,
+/// `npc_del`), e.g. Priest in Peril's guardian dog sets `%priestperil` after
+/// it (`area_mausoleum/scripts/temple_guardian.rs2:1-12`), while the combat
+/// step completes on the observed zero health.
+const KILL_READ_BOUND_TICKS: u64 = 6;
+
+/// The NPC an advancing combat step killed, while it is still in the scene.
+fn killed_npc_in_scene(tick: &NativeTick<'_>, outcome: Option<&StepOutcome>) -> Option<u16> {
+    let receipt = outcome?
+        .receipt
+        .as_ref()?
+        .as_any()
+        .downcast_ref::<CombatReceipt>()?;
+    if receipt.report.end != crate::combat::CombatEnd::Killed {
+        return None;
+    }
+    let target = receipt.report.engaged?;
+    (target.kind == api::snapshot::ActorKind::Npc && npc_in_scene(tick, target.index))
+        .then_some(target.index)
+}
+
+fn npc_in_scene(tick: &NativeTick<'_>, index: u16) -> bool {
+    tick.cx
+        .snapshot()
+        .npcs()
+        .is_some_and(|npcs| npcs.value.iter().any(|npc| npc.index == usize::from(index)))
+}
+
 // Continue drains a single progress read may spend on chat pages no step
 // owns, and the active time they may take together. A page that reopens past
 // either parks with its root and text.
@@ -330,6 +361,9 @@ pub struct Quester {
     queue_fields: Arc<[StatusField]>,
     required_vs_live: Arc<[StatusField]>,
     tested_stats_warning: Arc<str>,
+    /// An advancing combat step that killed its target reads progress once
+    /// that NPC (index) has left the scene, or at the evidence tick bound.
+    read_after_kill: Option<(u16, u64)>,
     /// Every root step begun, in order. Several may begin within one tick,
     /// and the run trace folds repeated lines, so tests read this instead.
     #[cfg(test)]
@@ -656,6 +690,7 @@ impl Quester {
             queue_fields: Arc::from([]),
             required_vs_live: Arc::from([]),
             tested_stats_warning: Arc::from(""),
+            read_after_kill: None,
             #[cfg(test)]
             begun: Vec::new(),
         }
@@ -2257,6 +2292,14 @@ impl Quester {
             self.request_contradicted_read(tick);
         }
         if self.needs_read {
+            if let Some((index, until)) = self.read_after_kill {
+                // The quest progress lands with the killed NPC's removal.
+                if tick.cx.evidence().tick < until && npc_in_scene(tick, index) {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                self.read_after_kill = None;
+            }
             let retarget =
                 !self.settling && self.step.is_none() && !self.provisioner.needs_progress_read();
             if !self.read_stage(tick, retarget) {
@@ -2754,6 +2797,8 @@ impl Quester {
                 self.dirty = true;
                 if self.advances {
                     self.needs_read = true;
+                    self.read_after_kill = killed_npc_in_scene(tick, self.last_outcome.as_ref())
+                        .map(|index| (index, tick.cx.evidence().tick + KILL_READ_BOUND_TICKS));
                 }
                 self.step = None;
                 self.settling = true;
@@ -2882,6 +2927,7 @@ impl Script for Quester {
             self.waiting = None;
             self.pair_admitted = false;
             self.last_combat = None;
+            self.read_after_kill = None;
             self.needs_read = true;
             self.progress = None;
         }
