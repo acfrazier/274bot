@@ -98,6 +98,7 @@ impl ClueRuntime {
         name: &str,
         input: &Value,
         selected: Option<&SelectedGameData>,
+        observed_tick: Option<u64>,
     ) -> Value {
         if self.puzzle.as_ref().is_some_and(|puzzle| puzzle.latch) {
             // The arm's own latch guard: the `Steady` dispatch above already
@@ -143,7 +144,7 @@ impl ClueRuntime {
             } else if self.clock.bound_reached() {
                 // The settle bound ran out with the board unmoved: the click
                 // was refused or the engine dropped the stale slot.
-                return self.puzzle_stall();
+                return self.puzzle_stall(observed_tick);
             } else {
                 // Sent is not observed: wait, and read the board again next
                 // call rather than replaying anything.
@@ -163,16 +164,16 @@ impl ClueRuntime {
             // Unsolvable as read: a mixed picture set, a plan that does not
             // converge. The frozen branch retries from a fresh read and counts
             // a refusal.
-            return self.puzzle_stall();
+            return self.puzzle_stall(observed_tick);
         };
         let Some(&slot) = plan.first() else {
-            return self.puzzle_stall();
+            return self.puzzle_stall(observed_tick);
         };
         // The posted row the click rides: its own id, the slot it sits in and
         // the posted component, with this call's board generation. A slot the
         // page did not post a piece on is the frozen `clickPiece` refusal.
         let Some(row) = page.rows.iter().find(|row| row.slot == slot as i32) else {
-            return self.puzzle_stall();
+            return self.puzzle_stall(observed_tick);
         };
         let Some(generation) = page.generation else {
             // The page did not post the board's session: no click is sent on
@@ -181,7 +182,7 @@ impl ClueRuntime {
         };
         let mut want = live;
         if !clue_puzzle::apply_puzzle_move(&mut want, slot) {
-            return self.puzzle_stall();
+            return self.puzzle_stall(observed_tick);
         }
         if let Some(state) = self.puzzle.as_mut() {
             state.want = Some(want);
@@ -245,14 +246,21 @@ impl ClueRuntime {
         })
     }
 
-    /// One refused click, one settle bound that ran out unlanded, one board the
-    /// frozen solver has no plan for: the frozen loop's own `stalled++`, and
-    /// the exit close once it reaches the frozen limit.
-    pub(super) fn puzzle_stall(&mut self) -> Value {
+    /// One failed board plan or unsettled move spends at most one native stall
+    /// allowance per observed tick. The call still re-reads and processes its
+    /// own board, so a changed board is not held behind this counter.
+    pub(super) fn puzzle_stall(&mut self, observed_tick: Option<u64>) -> Value {
         let limit = match self.puzzle.as_mut() {
             Some(state) => {
                 state.want = None;
-                state.stall += 1;
+                match observed_tick {
+                    Some(tick) if state.last_stall_tick == Some(tick) => {}
+                    Some(tick) => {
+                        state.last_stall_tick = Some(tick);
+                        state.stall += 1;
+                    }
+                    None => state.stall += 1,
+                }
                 state.stall >= STALL_LIMIT
             }
             None => false,

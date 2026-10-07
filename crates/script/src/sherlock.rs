@@ -647,7 +647,12 @@ impl Sherlock {
             } else {
                 fields.remove("resume");
             }
-            let answer = crate::clue::next_native(selected, &page, death_observed);
+            let answer = crate::clue::next_native(
+                selected,
+                &page,
+                death_observed,
+                tick.cx.evidence().tick,
+            );
             resume = false;
             let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {

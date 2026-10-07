@@ -45,6 +45,7 @@ pub struct GatherRun {
     gained: u32,
     xp_gain: i32,
     quiet_ticks: u64,
+    last_quiet_tick: u64,
     retried: bool,
     tend: Option<OneOp>,
 }
@@ -111,6 +112,7 @@ impl NativeMachine for GatherRun {
             gained: 0,
             xp_gain: 0,
             quiet_ticks: 0,
+            last_quiet_tick: cx.evidence().tick,
             retried: false,
             tend: None,
         };
@@ -208,12 +210,14 @@ impl NativeMachine for GatherRun {
         let animated = snapshot
             .local_player()
             .is_some_and(|player| player.value.player.actor.animation != -1);
-        // A prior yield stays in the receipt, but only a new delta keeps this attempt alive.
+        let tick = cx.evidence().tick;
         let progressed = self.gained > previous_gained || self.xp_gain > previous_xp_gain;
         if progressed || animated {
             self.quiet_ticks = 0;
-        } else {
+            self.last_quiet_tick = tick;
+        } else if self.last_quiet_tick != tick {
             self.quiet_ticks = self.quiet_ticks.saturating_add(1);
+            self.last_quiet_tick = tick;
         }
         if self.quiet_ticks < self.args.stall_ticks {
             return Poll::Pending;
@@ -606,6 +610,109 @@ mod tests {
             assert!(super::super::settings::admit_quest_method("method", &method).is_err());
         });
         assert!(ledger.is_none());
+    }
+
+    #[test]
+    fn same_tick_repolls_do_not_consume_gather_quiet_ticks() {
+        let catalog = prepared_catalog();
+        let (method_index, entity) = catalog
+            .methods()
+            .iter()
+            .enumerate()
+            .find_map(|(index, method)| {
+                known_rows(&method.targets)
+                    .iter()
+                    .find(|target| {
+                        target.class == TargetClass::Resource
+                            && matches!(target.entity, EntityId::Loc(_))
+                            && matches!(target.respawn, Knowledge::Known(_))
+                    })
+                    .map(|target| (index, target.entity))
+            })
+            .expect("a loc resource method");
+        let EntityId::Loc(id) = entity else {
+            unreachable!()
+        };
+        let tile = WorldTile {
+            x: 3201,
+            z: 3202,
+            level: 0,
+        };
+        let mut plan = target(entity, -1, tile);
+        plan.method_index = method_index as u16;
+        plan.skill_stat = 14;
+        let mut snapshot = supply_snapshot(99, &[1265]);
+        snapshot.seed_locs(vec![loc(id, tile)]);
+        snapshot.seed_npcs(vec![]);
+        let mut ledger = None;
+        let handle = crate::quester::families::tests::with_tick(
+            &snapshot,
+            &mut ledger,
+            1,
+            |tick| {
+                tick.actions
+                    .begin::<GatherRun>(
+                        GatherRunArgs {
+                            target: plan,
+                            catalog: Arc::clone(&catalog),
+                            stall_ticks: DEFAULT_STALL_TICKS,
+                            quest_owned: false,
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap()
+            },
+        );
+
+        for _ in 0..=(2 * DEFAULT_STALL_TICKS + 2) {
+            let result = crate::quester::families::tests::with_tick(
+                &snapshot,
+                &mut ledger,
+                2,
+                |tick| tick.actions.poll(&handle, &mut tick.cx),
+            );
+            assert!(
+                matches!(result, Poll::Pending),
+                "same-tick re-polls must not spend the stall budget: {result:?}"
+            );
+        }
+
+        for tick_id in 3..=8 {
+            let result = crate::quester::families::tests::with_tick(
+                &snapshot,
+                &mut ledger,
+                tick_id,
+                |tick| tick.actions.poll(&handle, &mut tick.cx),
+            );
+            assert!(matches!(result, Poll::Pending), "tick {tick_id}: {result:?}");
+        }
+        let retry = crate::quester::families::tests::with_tick(
+            &snapshot,
+            &mut ledger,
+            9,
+            |tick| tick.actions.poll(&handle, &mut tick.cx),
+        );
+        assert!(matches!(retry, Poll::Pending), "tick 9 retry: {retry:?}");
+
+        for tick_id in 10..=16 {
+            let result = crate::quester::families::tests::with_tick(
+                &snapshot,
+                &mut ledger,
+                tick_id,
+                |tick| tick.actions.poll(&handle, &mut tick.cx),
+            );
+            assert!(matches!(result, Poll::Pending), "tick {tick_id}: {result:?}");
+        }
+        let idle = crate::quester::families::tests::with_tick(
+            &snapshot,
+            &mut ledger,
+            17,
+            |tick| tick.actions.poll(&handle, &mut tick.cx),
+        );
+        let Poll::Ready(Ok(result)) = idle else {
+            panic!("eight distinct quiet ticks after retry must end Idle: {idle:?}");
+        };
+        assert_eq!(result.end, GatherEnd::Idle);
     }
 
     fn fixture_method() -> GatherMethod {
