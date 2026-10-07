@@ -4488,7 +4488,8 @@ impl ProfilesUi {
     }
 
     /// The main panel's banner line (hidden behind Profiles in the default
-    /// layout) as it draws now.
+    /// layout) as it draws now. Its callers are the unix-only tests.
+    #[cfg(unix)]
     fn banner(&mut self) -> String {
         self.ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
