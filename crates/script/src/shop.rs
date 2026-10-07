@@ -538,37 +538,6 @@ impl Shop {
     }
 
     fn transfer_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
-        let container_available = match self.kind {
-            Kind::Buy => probe.shop_open && probe.has_stock,
-            _ => probe.shop_open && probe.player.is_some(),
-        };
-        if self.phase == Phase::ReadyBatch {
-            let held = count_of(probe.inv, &self.name);
-            let delta = match self.kind {
-                Kind::Buy => (held - self.held_now).max(0),
-                _ => (self.held_now - held).max(0),
-            };
-            self.transferred = self.transferred.saturating_add(delta);
-            self.held_now = held;
-            if self.transferred >= self.requested {
-                return self.done(true);
-            }
-            if !container_available {
-                return self.done(false);
-            }
-        }
-        if !container_available && self.phase == Phase::WaitBatch {
-            let delta = self.batch_delta(probe);
-            self.batch_delta = self.batch_delta.max(delta);
-            if self.batch_delta == 0 {
-                // A missing shop container is terminal, not a new timeout
-                // window. Only already-observed progress can settle here.
-                return self.done(false);
-            }
-            self.transferred = self.transferred.saturating_add(self.batch_delta);
-            self.batch_delta = 0;
-            return self.done(self.transferred >= self.requested);
-        }
         if !probe.shop_open {
             return self.done(false);
         }
@@ -582,6 +551,18 @@ impl Shop {
                 None => return self.done(false),
             },
         };
+        if self.phase == Phase::ReadyBatch {
+            let held = count_of(probe.inv, &self.name);
+            let delta = match self.kind {
+                Kind::Buy => (held - self.held_now).max(0),
+                _ => (self.held_now - held).max(0),
+            };
+            self.transferred = self.transferred.saturating_add(delta);
+            self.held_now = held;
+            if self.transferred >= self.requested {
+                return self.done(true);
+            }
+        }
         // A successful last click can remove the row entirely. Count the
         // posted backpack change before checking for a row to click again.
         let row = find_row(container, &self.name).cloned();
