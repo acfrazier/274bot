@@ -133,6 +133,15 @@ pub enum Proof {
     StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
+    /// A fresh post-relog `get tutorial: 1000` reply newer than the
+    /// post-relog chat baseline the runner latched when this step began
+    /// (or a post-relog chat-modal `tutorial 1000`, which login clears).
+    /// A plain [`Proof::Chat`] `contains` can be satisfied by a chat line
+    /// latched before the relog in the same tick the reseed is sent; this
+    /// arm cannot. The runner captures the baseline at step start and
+    /// checks [`crate::tutorial::tutorial_confirmed`]; a bare
+    /// [`Proof::check`] without that runner baseline fails closed.
+    FreshTutorial,
     /// The newest exact system-chat confirmation from `::speed`.
     WorldSpeedChanged { ms: u32 },
     /// Skill `id`'s XP rose by at least `min` since StartScript, or since
@@ -298,6 +307,10 @@ impl Proof {
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
+            Proof::FreshTutorial => format!(
+                "fresh_chat(contains \"{}\")",
+                crate::tutorial::TUTORIAL_CHAT_NEEDLE
+            ),
             Proof::WorldSpeedChanged { ms } => format!("world_speed_changed({ms}ms)"),
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::FreshStatXpGain { id, min } => {
@@ -590,6 +603,9 @@ impl Proof {
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
+            // Freshness needs the runner's post-relog baseline (see
+            // `ScenarioRunner::holds`); a bare snapshot check fails closed.
+            Proof::FreshTutorial => false,
             Proof::WorldSpeedChanged { ms } => {
                 latest_world_speed_confirmation(snap).is_some_and(|(actual, _)| actual == *ms)
             }
@@ -2175,6 +2191,22 @@ mod tests {
             sequence: 15,
         }]);
         assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+    }
+
+    #[test]
+    fn fresh_tutorial_fails_closed_without_a_runner_baseline() {
+        let s = snap(&mut seeded());
+        assert!(
+            !Proof::FreshTutorial.check(&s, None),
+            "a bare snapshot check cannot prove post-relog freshness"
+        );
+        assert_eq!(
+            Proof::FreshTutorial.name(),
+            format!(
+                "fresh_chat(contains \"{}\")",
+                crate::tutorial::TUTORIAL_CHAT_NEEDLE
+            )
+        );
     }
 
     #[test]

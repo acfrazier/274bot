@@ -26,6 +26,7 @@ mod render_betty_views;
 mod runner;
 mod scenarios;
 pub mod shot;
+pub mod tutorial;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};

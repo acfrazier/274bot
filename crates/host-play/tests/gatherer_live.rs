@@ -1671,7 +1671,7 @@ struct GatherSlot {
     witness: Witness,
     error: Option<String>,
     pause_plane_teleport_sent: bool,
-    tutorial_reseed: Option<api::interact::PostRelogTutorial>,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 impl GatherSlot {
     fn new(
@@ -3109,12 +3109,12 @@ impl GatherSlot {
                 }
             }
             Prep::TutSkip => {
-                send_cheat(client, api::interact::TUTORIAL_SETVAR)?;
-                send_cheat(client, api::interact::TUTORIAL_GETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
                 self.phase = Prep::WaitTutorial;
             }
             Prep::WaitTutorial => {
-                if api::interact::tutorial_confirmed(&self.snapshot, 0) {
+                if scenario::tutorial::tutorial_confirmed(&self.snapshot, 0) {
                     self.phase = Prep::Relog;
                 }
             }
@@ -3135,10 +3135,10 @@ impl GatherSlot {
             }
             Prep::ReseedTutorial => {
                 // Post-relog reseed after the kit-close queue has run.
-                let baseline = api::interact::chat_baseline(&self.snapshot);
-                send_cheat(client, api::interact::TUTORIAL_SETVAR)?;
-                send_cheat(client, api::interact::TUTORIAL_GETVAR)?;
-                self.tutorial_reseed = Some(api::interact::PostRelogTutorial::new(baseline));
+                let baseline = scenario::tutorial::chat_baseline(&self.snapshot);
+                send_cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                send_cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                self.tutorial_reseed = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
                 self.phase = Prep::WaitReseedConfirm;
             }
             Prep::WaitReseedConfirm => {
@@ -3148,7 +3148,7 @@ impl GatherSlot {
                     .expect("tutorial reseed armed");
                 match reseed.check(&self.snapshot) {
                     Ok(true) => {
-                        println!("{}", api::interact::confirmation_log());
+                        println!("{}", scenario::tutorial::confirmation_log());
                         self.phase = Prep::Seed;
                     }
                     Ok(false) => {}

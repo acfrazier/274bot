@@ -388,14 +388,14 @@ pub(crate) fn script_live_seed_steps() -> Vec<Step> {
             name: "stick tutorial skip",
             kind: StepKind::Perform {
                 send: Box::new(|c, _| {
-                    cheat(c, api::interact::TUTORIAL_SETVAR);
-                    cheat(c, api::interact::TUTORIAL_GETVAR);
+                    cheat(c, crate::tutorial::TUTORIAL_SETVAR);
+                    cheat(c, crate::tutorial::TUTORIAL_GETVAR);
                     true
                 }),
             },
             wait: Wait {
                 arm: Proof::Chat {
-                    needle: api::interact::TUTORIAL_CHAT_NEEDLE,
+                    needle: crate::tutorial::TUTORIAL_CHAT_NEEDLE,
                 },
                 budget_ticks: 200,
             },
@@ -412,15 +412,16 @@ pub(crate) fn script_live_seed_steps() -> Vec<Step> {
             name: "reseed tutorial after relog and verify fresh value",
             kind: StepKind::Repeat {
                 send: Box::new(|c, _| {
-                    cheat(c, api::interact::TUTORIAL_SETVAR);
-                    cheat(c, api::interact::TUTORIAL_GETVAR);
+                    cheat(c, crate::tutorial::TUTORIAL_SETVAR);
+                    cheat(c, crate::tutorial::TUTORIAL_GETVAR);
                     true
                 }),
             },
             wait: Wait {
-                arm: Proof::Chat {
-                    needle: api::interact::TUTORIAL_CHAT_NEEDLE,
-                },
+                // Fresh reply newer than the post-relog baseline the runner
+                // latched at step start. A plain `Chat contains` can match a
+                // pre-relog line in the same tick the reseed is sent.
+                arm: Proof::FreshTutorial,
                 budget_ticks: 200,
             },
         },

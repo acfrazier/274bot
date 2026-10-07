@@ -417,6 +417,12 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
+    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] step
+    /// only. Latched when the step begins (the post-relog snapshot, before
+    /// the reseed send goes out) and cleared at every step and session
+    /// boundary, so a chat line latched before the relog cannot satisfy the
+    /// post-relog reseed wait.
+    fresh_tutorial_baseline: Option<i32>,
     /// Native host-hold + snapshot facts for the current lamp witness step.
     /// This is deliberately not part of [`GameSnapshot`].
     lamp_episode: Option<LampEpisodeObservation>,
@@ -528,6 +534,7 @@ impl ScenarioRunner {
             evidence: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
+            fresh_tutorial_baseline: None,
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
@@ -854,10 +861,12 @@ impl ScenarioRunner {
         }
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
+            self.fresh_tutorial_baseline = None;
             self.lamp_episode = None;
             self.maze_episode = None;
         }
         self.retry_xp_baselines();
+        self.retry_tutorial_baseline();
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -1103,6 +1112,8 @@ impl ScenarioRunner {
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
+        self.fresh_tutorial_baseline = None;
+        self.capture_tutorial_baseline(self.current_step().wait.arm);
         self.lamp_episode = match self.current_step().kind {
             StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
                 reward_baseline: self.stat_xp(reward_stat),
@@ -1181,6 +1192,10 @@ impl ScenarioRunner {
                     crate::quest_fast::tick_speed_confirmed(&self.snapshot, baseline, ms)
                 }
                 None => Proof::WorldSpeedChanged { ms }.check(&self.snapshot, None),
+            },
+            Proof::FreshTutorial => match self.fresh_tutorial_baseline {
+                Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
+                None => false,
             },
             other => other.check_with_xp_context(
                 &self.snapshot,
@@ -1442,6 +1457,30 @@ impl ScenarioRunner {
             Phase::Proving => self.capture_xp_baseline(self.scenario.proof),
             _ => {}
         }
+    }
+
+    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`]
+    /// step: the newest chat `sequence` in the step-start snapshot, before
+    /// the reseed send goes out. A stale pre-relog `1000` line at or below
+    /// this sequence cannot satisfy the wait.
+    fn capture_tutorial_baseline(&mut self, proof: Proof) {
+        if !matches!(proof, Proof::FreshTutorial) {
+            return;
+        }
+        if self.fresh_tutorial_baseline.is_some() {
+            return;
+        }
+        self.fresh_tutorial_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+    }
+
+    fn retry_tutorial_baseline(&mut self) {
+        if !matches!(self.phase, Phase::Running) {
+            return;
+        }
+        if !self.snapshot.ingame() {
+            return;
+        }
+        self.capture_tutorial_baseline(self.current_step().wait.arm);
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {
