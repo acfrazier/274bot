@@ -313,8 +313,8 @@ mod tests {
             assert!(scenario.seed.mainland);
             assert_eq!(
                 scenario.steps.len(),
-                4,
-                "{name} needs tutskip+relog seed before tele and capture gate"
+                5,
+                "{name} needs tutskip+relog+reseed seed before tele and capture gate"
             );
             assert!(matches!(scenario.steps[1].kind, StepKind::Relog));
             assert!(matches!(
@@ -322,11 +322,15 @@ mod tests {
                 Proof::SideTabAvailable { index: 3 }
             ));
             assert!(
-                matches!(scenario.steps[2].kind, StepKind::Perform { .. }),
+                matches!(scenario.steps[2].kind, StepKind::Repeat { .. }),
+                "{name} reseeds tutorial after relog before tele"
+            );
+            assert!(
+                matches!(scenario.steps[3].kind, StepKind::Perform { .. }),
                 "{name} tele must follow the shared live seed"
             );
             assert!(
-                matches!(scenario.steps[3].kind, StepKind::DrainDialogs { .. }),
+                matches!(scenario.steps[4].kind, StepKind::DrainDialogs { .. }),
                 "{name} drains stray chat before RenderViewReady"
             );
             assert!(
@@ -348,7 +352,7 @@ mod tests {
             "terminal shot label drives PNG+JSON naming"
         );
         assert!(matches!(
-            betty0.steps[3].wait.arm,
+            betty0.steps[4].wait.arm,
             Proof::RenderViewReady {
                 x: 3012,
                 z: 3258,
@@ -357,12 +361,12 @@ mod tests {
                 orbit_pitch: 256,
             }
         ));
-        assert_eq!(betty0.proof.name(), betty0.steps[3].wait.arm.name());
+        assert_eq!(betty0.proof.name(), betty0.steps[4].wait.arm.name());
 
         let west512 = get("render_betty_views_west_bank_yaw512").expect("west bank yaw512");
         assert_eq!(west512.settings.terminal_shot, Some("west_bank_s8_yaw512"));
         assert!(matches!(
-            west512.steps[3].wait.arm,
+            west512.steps[4].wait.arm,
             Proof::RenderViewReady {
                 x: 2945,
                 z: 3368,
@@ -395,7 +399,7 @@ mod tests {
         for (name, shot, pitch) in cases {
             let scenario = get(name).unwrap_or_else(|| panic!("missing {name}"));
             assert_eq!(scenario.settings.terminal_shot, Some(shot));
-            match scenario.steps[3].wait.arm {
+            match scenario.steps[4].wait.arm {
                 Proof::RenderViewReady {
                     x,
                     z,
@@ -410,7 +414,7 @@ mod tests {
                 }
                 other => panic!("{name} expected RenderViewReady, got {other:?}"),
             }
-            assert_eq!(scenario.proof.name(), scenario.steps[3].wait.arm.name());
+            assert_eq!(scenario.proof.name(), scenario.steps[4].wait.arm.name());
         }
     }
 

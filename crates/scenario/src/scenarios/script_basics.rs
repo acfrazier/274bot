@@ -379,21 +379,23 @@ pub(crate) fn bone_burier_v2_scenario(name: &'static str, file_name: &'static st
     }
 }
 
-/// Shared live-script seed: stick `tutorial=1000`, relog so side tab 3 binds.
+/// Shared live-script seed: stick `tutorial=1000`, relog so side tab 3 binds,
+/// then reseed `tutorial=1000` in the new session (the character-design kit
+/// close queues `tutorial=1`, suppressing weapon tabs until `tutorial>400`).
 pub(crate) fn script_live_seed_steps() -> Vec<Step> {
     vec![
         Step {
             name: "stick tutorial skip",
             kind: StepKind::Perform {
                 send: Box::new(|c, _| {
-                    cheat(c, "setvar tutorial 1000");
-                    cheat(c, "getvar tutorial");
+                    cheat(c, api::interact::TUTORIAL_SETVAR);
+                    cheat(c, api::interact::TUTORIAL_GETVAR);
                     true
                 }),
             },
             wait: Wait {
                 arm: Proof::Chat {
-                    needle: "get tutorial: 1000",
+                    needle: api::interact::TUTORIAL_CHAT_NEEDLE,
                 },
                 budget_ticks: 200,
             },
@@ -404,6 +406,22 @@ pub(crate) fn script_live_seed_steps() -> Vec<Step> {
             wait: Wait {
                 arm: Proof::SideTabAvailable { index: 3 },
                 budget_ticks: 600,
+            },
+        },
+        Step {
+            name: "reseed tutorial after relog and verify fresh value",
+            kind: StepKind::Repeat {
+                send: Box::new(|c, _| {
+                    cheat(c, api::interact::TUTORIAL_SETVAR);
+                    cheat(c, api::interact::TUTORIAL_GETVAR);
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Chat {
+                    needle: api::interact::TUTORIAL_CHAT_NEEDLE,
+                },
+                budget_ticks: 200,
             },
         },
     ]

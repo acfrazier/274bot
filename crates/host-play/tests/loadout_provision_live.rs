@@ -432,14 +432,13 @@ impl LiveState {
                 }
             }
             Prep::TutSkip => {
-                interact::cheat(client, "setvar tutorial 1000");
-                interact::cheat(client, "getvar tutorial");
+                interact::cheat(client, api::interact::TUTORIAL_SETVAR);
+                interact::cheat(client, api::interact::TUTORIAL_GETVAR);
                 self.last_action = now;
                 self.prep = Prep::WaitTutorial;
             }
             Prep::WaitTutorial => {
-                if self.chat_has("get tutorial: 1000") {
-                    self.relog_session_before = Some(client.gens.session);
+                if self.chat_has(api::interact::TUTORIAL_CHAT_NEEDLE) {
                     self.relog_offline_seen = false;
                     println!(
                         "{}",

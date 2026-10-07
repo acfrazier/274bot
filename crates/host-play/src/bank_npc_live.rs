@@ -345,7 +345,7 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
             }
         }
         Phase::TutSkip if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
-            let _ = interact::cheat(client, "setvar tutorial 1000");
+            let _ = interact::cheat(client, api::interact::TUTORIAL_SETVAR);
             g.last_cheat = now;
             g.phase = Phase::Relog;
         }
@@ -1652,7 +1652,7 @@ fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) 
             TellerPrep::SkipTutorial
                 if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
             {
-                let _ = interact::cheat(client, "setvar tutorial 1000");
+                let _ = interact::cheat(client, api::interact::TUTORIAL_SETVAR);
                 live.last_action = now;
                 live.phase = TellerPrep::Logout;
             }
