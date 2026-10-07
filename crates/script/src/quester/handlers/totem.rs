@@ -2,8 +2,9 @@
 //!
 //! Interface layout is content `tribal_door2` (pack id 716). The word itself
 //! is Path data so a revision that only changes the answer changes the
-//! document. AIO reads the echoed letter after every click
-//! (`defs/tribaltotem.ts` `setDial`).
+//! document. Content echoes each dial letter after every click
+//! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
+//! enum(alphabet, $stage))`).
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt};
 use crate::quester::compile::{
