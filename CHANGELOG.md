@@ -353,6 +353,19 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Load scripts can start, watch and stop the Gatherer, and read quest
   progress (which quests exist, their current stage and whether they're
   done). A bundled example gathers and then checks progress.
+- Load scripts can run the bot's own fighter with `api.combat.fight(...)`:
+  melee, ranged or magic against chosen monsters or whatever is attacking
+  you, with the bot's eating, potion and prayer rules. `api.snapshot.combat`
+  shows the fight and `api.combat.stop()` ends it. Pausing, reconnecting or
+  moving the player yourself ends the fight, even before it has started. The
+  bot turns off only prayers it turned on; turning on a protection prayer can
+  switch off a different protection prayer you had on, and that one isn't
+  restored. A bundled example shows every fight type.
+- In a Load script, moving the player yourself now also ends a Gatherer
+  session that's gathering in place (not only while it walks), with a
+  `manual-movement` result. "Pause script on manual movement" applies to
+  Gatherer and combat sessions too; turning it off skips the pause, not the
+  stop.
 - Script gathering lookups page through long lists and report game data that
   is incomplete, instead of returning partial results silently.
 - A script setting that names a saved loadout refuses an unknown or ambiguous

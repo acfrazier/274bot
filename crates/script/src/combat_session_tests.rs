@@ -328,6 +328,7 @@ fn with_tick<R>(
             compiled: crate::CompiledTick {
                 selected: Some(&world.data),
                 reach: None,
+                reach_flood: None,
                 bank_memory: None,
                 collision: None,
                 hold: world.held,
