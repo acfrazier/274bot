@@ -3,9 +3,9 @@
 //! 10-coin `consumed_req` and content-proven Prince Ali Rescue waiver.
 //! The Shantay doorway (loc 4031, m51_48 (38,44) = (3302,3116)) carries
 //! exactly two content-derived Door edges: the paid desert hop consumes one
-//! pass from `consumed_req`, while the free exit derives `to` from its stand
-//! by the script's +3z telejump. Neither branch is a plain walk; both interact
-//! with the henge.
+//! pass from `consumed_req`, while the free exit pins its takeoff to its
+//! `at` stand and lands at the same stand's +3z telejump destination. Neither
+//! branch is a plain walk; both interact with the henge.
 //!
 //! Run on Engine A at the normal 600ms tick with the rebaked pack and isolated
 //! cache paths: `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<prefix> ENGINE_DIR=<engine>
@@ -29,7 +29,7 @@ use nav::router::{find_with, FindOptions, Leg};
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::WorldState;
-use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
+use scenario::{default_pack_path, Proof, RunnerStatus, ScenarioRunner, StepKind};
 
 /// The left toll gate placement (m51_50 local (4,27) = (3268,3227)).
 const TOLL_LEFT: WorldTile = WorldTile {
@@ -223,6 +223,18 @@ fn nav_toll() {
     if !world.collision.standable(free.at) {
         fail("nav_toll: Shantay free-exit interaction stand is not standable");
     }
+    if world.collision.standable(free.to) {
+        fail(&format!(
+            "nav_toll: Shantay's statue landing {:?} must not be a walkable stand",
+            free.to
+        ));
+    }
+    if free.takeoff != Some(SHANTAY_DESERT_AT) {
+        fail(&format!(
+            "nav_toll: Shantay free exit takeoff is {:?}, expected {SHANTAY_DESERT_AT:?}",
+            free.takeoff
+        ));
+    }
 
     let members = WorldState::empty().with_map_members(true);
     let route = find_with(
@@ -334,4 +346,105 @@ fn nav_shantay_follow() {
             }
         }
     }
+}
+
+fn run_shantay_walk_from(start: WorldTile, case: &str) {
+    if !live() {
+        return;
+    }
+    let mut scenario = scenario::get("nav_shantay").expect("nav_shantay scenario in registry");
+    scenario.steps.truncate(2);
+    let tele = format!("tele 0,51,48,{},{}", start.x - 3264, start.z - 3072);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(move |c, _| {
+            api::interact::cheat(c, "~clearinv");
+            api::interact::cheat(c, &tele);
+            true
+        }),
+    };
+    scenario.steps[0].wait.arm = Proof::Arrived {
+        x: start.x,
+        z: start.z,
+        level: 0,
+    };
+    scenario.proof = Proof::Arrived {
+        x: SHANTAY_BANK_CHEST.x,
+        z: SHANTAY_BANK_CHEST.z,
+        level: SHANTAY_BANK_CHEST.level,
+    };
+
+    let mainland = scenario.seed.mainland;
+    let n = scenario.seed.profiles.len();
+    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    let entries = {
+        let mut r = runner.lock().unwrap();
+        r.set_shot_sink(Box::new(|_, _| {}));
+        mint_seed(&mut r, n)
+    };
+    let template = engine_a_template();
+    runner
+        .lock()
+        .unwrap()
+        .set_map_members(template.profile().map_members());
+    let play = run_with_template(template, mainland, profiles(&entries), |_| (None, None), {
+        let runner = Arc::clone(&runner);
+        move |c, name, frame| {
+            let hold = frame.hold;
+            let mut r = runner.lock().unwrap();
+            if r.drives(name) {
+                r.tick_with_hold(c, hold);
+            }
+        }
+    })
+    .unwrap_or_else(|e| fail(&format!("{case}: start Engine A local-289 Play: {e:?}")));
+    runner.lock().unwrap().set_obj_names(play.obj_names());
+    wait_ingame(&play, 1, Duration::from_secs(150), case);
+
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        let (status, evidence) = {
+            let r = runner.lock().unwrap();
+            (r.status(), r.evidence().cloned())
+        };
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
+        match status {
+            RunnerStatus::Passed => {
+                println!("PASS: {case} {record}");
+                return;
+            }
+            RunnerStatus::Failed(msg) => {
+                eprintln!("FAIL: {case} {record}");
+                fail(&format!("{case}: {msg}"));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    fail(&format!(
+                        "{case}: no terminal status within 300s ({other:?})"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Engine A (289), nav pack, and LIVE=1"]
+fn nav_shantay_walk_from_x3303_starts() {
+    run_shantay_walk_from(
+        WorldTile {
+            x: 3304,
+            z: 3115,
+            level: 0,
+        },
+        "nav_shantay_walk_from_3304_3115",
+    );
+    run_shantay_walk_from(
+        WorldTile {
+            x: 3304,
+            z: 3112,
+            level: 0,
+        },
+        "nav_shantay_walk_from_3304_3112",
+    );
 }

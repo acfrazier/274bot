@@ -162,6 +162,10 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 
 ### Navigation
 
+- Walking out of the desert through the Shantay Pass gate on a members world
+  no longer stalls for about 36 seconds and then fails when the walk must end
+  on an exact tile (for example from Irena to the Shantay bank chest).
+
 - Script and map walks start moving about half a second sooner: the first
   step no longer waits for the next game tick after the route is ready.
 - Walks between Lumbridge and Al Kharid now pay the 10-coin toll at the border
