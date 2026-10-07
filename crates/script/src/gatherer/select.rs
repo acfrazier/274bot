@@ -232,15 +232,15 @@ impl SelectedTarget {
         } else if self.plan.npc_index >= 0 {
             false
         } else {
-            !snapshot.here().is_some_and(|here| match loc_id {
+            !snapshot.local_player().is_some_and(|player| match loc_id {
                 Some(id) => snapshot.walk_loc_arrived(
-                    here.value,
+                    player.value.player.network,
                     self.plan.tile,
                     i32::from(RESOURCE_APPROACH_RADIUS),
                     id,
                 ),
                 None => snapshot.walk_arrived(
-                    here.value,
+                    player.value.player.network,
                     self.plan.tile,
                     i32::from(RESOURCE_APPROACH_RADIUS),
                 ),
@@ -1237,7 +1237,7 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn selected_loc_approach_uses_server_position_while_rendering_trails() {
+    fn loc_arrival_consumers_use_server_position_while_rendering_trails() {
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
         use api::snapshot::{GameSnapshot, SnapshotView};
@@ -1289,6 +1289,13 @@ mod tests {
             selected.approach(view, stamp).is_none(),
             "the observed server arrival must not launch a redundant approach"
         );
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(
+                crate::quester::families::reach::loc_arrived(&tick.cx, &loc(1, tile)),
+                "quest loc arrival must use the same server position as native Walk"
+            );
+        });
     }
 
     fn target(entity: EntityId, class: TargetClass) -> GatherTarget {
