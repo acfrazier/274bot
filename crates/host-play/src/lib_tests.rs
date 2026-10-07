@@ -13829,7 +13829,10 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         if received < 7 {
             assert_eq!(client.out.pos, 0, "an incomplete withdrawal still waits");
         } else {
-            assert!(client.out.pos > 0, "the landed withdrawal closes in this pump");
+            assert!(
+                client.out.pos > 0,
+                "the landed withdrawal closes in this pump"
+            );
         }
         let expected = if received == 7 {
             BankStep::Close

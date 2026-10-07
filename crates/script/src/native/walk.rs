@@ -41,12 +41,14 @@ impl Observation for Frame<'_> {
     }
 
     fn arrived(&self, key: WalkKey) -> bool {
-        let Some(here) = self.snapshot.here() else {
+        let Some(player) = self.snapshot.local_player() else {
             return false;
         };
+        // Arrival is a server-coordinate fact, not render interpolation.
+        let here = player.value.player.network;
         match (self.arrival, self.loc_id) {
             (ArrivalKind::Area, None) => {
-                nav::arrival::arrived_in_area(here.value, key.tile, key.radius, |tile| {
+                nav::arrival::arrived_in_area(here, key.tile, key.radius, |tile| {
                     self.snapshot
                         .reach()
                         .is_some_and(|reach| reach.value.walkable(tile))
@@ -55,10 +57,8 @@ impl Observation for Frame<'_> {
             (ArrivalKind::Area, Some(_)) => false,
             (ArrivalKind::Reach, Some(id)) => self
                 .snapshot
-                .walk_loc_arrived(here.value, key.tile, key.radius, id),
-            (ArrivalKind::Reach, None) => {
-                self.snapshot.walk_arrived(here.value, key.tile, key.radius)
-            }
+                .walk_loc_arrived(here, key.tile, key.radius, id),
+            (ArrivalKind::Reach, None) => self.snapshot.walk_arrived(here, key.tile, key.radius),
         }
     }
     fn moving(&self) -> Option<bool> {
@@ -182,10 +182,13 @@ mod tests {
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
 
-
     #[test]
     fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {
-        let logical = WorldTile { x: 3200, z: 3200, level: 0 };
+        let logical = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
         let rendered = WorldTile { x: 3201, ..logical };
         let target = WorldTile { x: 3202, ..logical };
         let mut player = local_player(rendered);
@@ -196,7 +199,11 @@ mod tests {
         snapshot.seed_local_player(player);
         snapshot.seed_tile(logical);
         let stamp = EvidenceStamp {
-            run: RunKey { slot: 1, run: 1, session: 1 },
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             tick: 1,
             sequence: 1,
         };
@@ -212,16 +219,36 @@ mod tests {
         reach.reachable_adj = vec![7];
         reach.exact_rank = vec![0, 1, 2];
         reach.adjacent_rank = vec![0, 0, 1];
-        let key = WalkKey { tile: target, radius: 2, allow_teleports: Some(false) };
+        let key = WalkKey {
+            tile: target,
+            radius: 2,
+            allow_teleports: Some(false),
+        };
         let arrived = |snapshot: &GameSnapshot, reach: &api::query::ReachQueryView, key| {
             let view = SnapshotView::new(Some(snapshot), stamp).with_reach(Some(reach));
             assert_eq!(view.here().map(|here| here.value), Some(rendered));
-            Frame { snapshot: view, outcome: HostOutcome::empty(), loc_id: None, arrival: ArrivalKind::Reach }.arrived(key)
+            Frame {
+                snapshot: view,
+                outcome: HostOutcome::empty(),
+                loc_id: None,
+                arrival: ArrivalKind::Reach,
+            }
+            .arrived(key)
         };
         assert!(arrived(&snapshot, &reach, key));
-        assert!(!arrived(&snapshot, &reach, WalkKey { tile: WorldTile { level: 1, ..target }, ..key }));
+        assert!(!arrived(
+            &snapshot,
+            &reach,
+            WalkKey {
+                tile: WorldTile { level: 1, ..target },
+                ..key
+            }
+        ));
         reach.exact_rank[0] = 1;
-        assert!(!arrived(&snapshot, &reach, key), "another flood origin cannot prove arrival");
+        assert!(
+            !arrived(&snapshot, &reach, key),
+            "another flood origin cannot prove arrival"
+        );
         reach.exact_rank[0] = 0;
         reach.available = false;
         assert!(!arrived(&snapshot, &reach, key));

@@ -1119,17 +1119,18 @@ fn held_count(cx: &ActionContext<'_>, id: i32) -> Option<i32> {
     )
 }
 
-/// The same live stand predicate used by native walks, including footprint
-/// approach masks and straight-wall operations that do not have a footprint.
+/// The same server-position stand predicate used by native walks, including
+/// footprint approach masks and straight-wall operations without a footprint.
 pub fn loc_arrived(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> bool {
     let snapshot = cx.snapshot();
-    snapshot.here().is_some_and(|here| {
+    snapshot.local_player().is_some_and(|player| {
+        let here = player.value.player.network;
         if loc_walk_id(loc).is_some() {
-            snapshot.walk_loc_arrived(here.value, loc.tile, 1, loc.id)
+            snapshot.walk_loc_arrived(here, loc.tile, 1, loc.id)
         } else {
             (loc.layer == api::snapshot::LocLayer::Wall
-                && door_wall_reachable(here.value, loc, snapshot.reach().map(|reach| reach.value)))
-                || snapshot.walk_arrived(here.value, loc.tile, 1)
+                && door_wall_reachable(here, loc, snapshot.reach().map(|reach| reach.value)))
+                || snapshot.walk_arrived(here, loc.tile, 1)
         }
     })
 }

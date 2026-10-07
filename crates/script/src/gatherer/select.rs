@@ -216,6 +216,7 @@ pub struct SelectedTarget {
 impl SelectedTarget {
     /// One approach policy for Gatherer and finite quest gathering.
     /// Live NPC ops own client-side approach; locs settle at their footprint.
+    /// Arrival uses the observed server position, never the rendered actor pose.
     pub(crate) fn approach(
         &self,
         snapshot: api::snapshot::SnapshotView<'_>,
@@ -1242,7 +1243,11 @@ mod tests {
         use api::selected::RunKey;
         use api::snapshot::{GameSnapshot, SnapshotView};
 
-        let tile = WorldTile { x: 3200, z: 3200, level: 0 };
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
         let rendered = WorldTile { x: 3195, ..tile };
         let mut client = client::client::Client::new(client::client::ClientConfig {
             host: "127.0.0.1".into(),
@@ -1279,7 +1284,11 @@ mod tests {
             },
         };
         let stamp = EvidenceStamp {
-            run: RunKey { slot: 1, run: 1, session: 1 },
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             tick: 1,
             sequence: 1,
         };
