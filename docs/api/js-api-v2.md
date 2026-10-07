@@ -857,15 +857,18 @@ row's own selected decode: a row whose `trail_coord` decodes inside the cap box
 (`2802–2878, 3329–3393`, level 0 — the proof row `3579`,
 `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)`) is stripped
 before the walk that row would otherwise make, and a casket never arms it. The
-posted worn rows whose display name the frozen `ENTRANA_RESTRICTED_GEAR_RE`
-matcher folds are unequipped with the landed `unequip` verb — the worn row's
-own `Remove`, because `wear` resolves inventory rows alone — and the two
-hard-trail dagger ids `1231`/`1215` are unequipped but never listed. Every
-posted pack row the matcher folds is then deposited at the posted booth
+posted worn rows whose selected item category is restricted under the monk's
+rule (`monk_of_entrana.rs2:26-50`, mirrored by `restricted_item`: the 23
+armour/weapon categories on worn and pack, `cannon_parts` on pack alone) are
+unequipped in posted order with the landed `unequip` verb — the worn row's own
+`Remove`, because `wear` resolves inventory rows alone — and listed by display
+name for reclaim, with no dagger-ID exception (`1231`/`1215` are `weapon_stab`
+and are listed like the helm and restored with it). Every posted pack row with
+a positive count whose selected category is restricted (pack-side rule, so
+carried `cannon_parts` counts) is then deposited at the posted booth
 (`walk-nearest-bank`, the posted `nearest_booth`'s own `open-booth`, `deposit`,
-`close`, and no ordinary loot): the names the unequip put in the pack, the
-dagger ids that were never listed, and a restricted item the player was carrying
-rather than wearing. The list is the machine's own `strippedGear`: it outlives
+`close`, and no ordinary loot): the names the unequip put in the pack and a
+restricted item the player was carrying rather than wearing. The list is the machine's own `strippedGear`: it outlives
 the step and a dead token — a connection-boundary reset drops the step alone —
 and only the restore or a fresh task instance (Stop/Start) empties it.
 
@@ -955,7 +958,7 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
 | `unequip` | the Entrana strip's unequip pass: take the worn row named `name` off, `{ name }`. It is the host's worn-row `Remove` op, resolved by display name — `wear` resolves inventory rows alone and cannot take a worn row off, so the strip never rides it. Not a `V2_OPS` author verb: `api.request({ op: 'unequip' })` stays `not impl` |
 | `wear` | the Entrana restore's wear pass: equip the pack row named `name`, `{ name }`. The landed equip-from-pack verb, one listed name per call, and never the strip's unequip. Not a `V2_OPS` author verb either: `api.request({ op: 'wear' })` stays `not impl` |
-| `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the frozen `depositAllMatching` cut to the rows the `ENTRANA_RESTRICTED_GEAR_RE` matcher folds, whether or not the strip listed them. The restore's make-room deposit rides the same kind |
+| `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the first posted pack row with a positive count whose selected category is restricted under the monk's rule, whether or not the strip listed it. The restore's make-room deposit rides the same kind |
 | `withdraw` | the Entrana restore's claim: withdraw one listed name with the machine's own posted action label, `{ name, action: 'Withdraw-1' }`. One claim in flight at a time |
 | `walk-nearest-bank` | the Entrana strip's and the restore's bank trip: walk to the nearest stand the host picks from the packed world. No tile rides it, because the machine never invents one |
 | `open-booth` | the bank trip's `open-booth`: the posted `nearest_booth`'s own identity, `{ x, z, level, id, name?, action? }`, exactly as the landed bank helpers queue it |

@@ -185,6 +185,27 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
 }
 
 #[test]
+fn generated_item_categories_preserve_content_assignments() {
+    let data = for_revision(ClientRevision::R289).expect("revision 289 data");
+    // `Silver sickle` is `weapon_slash` (content/scripts/skill_crafting/configs/jewellery/silver.obj:29-44);
+    // unstrung `Longbow` is `unstrung_bow` (content/scripts/skill_fletching/configs/stringing/bows.obj:1-15).
+    assert_eq!(
+        data.item_by_alias("silver_sickle")
+            .expect("silver sickle")
+            .category
+            .as_deref(),
+        Some("weapon_slash")
+    );
+    assert_eq!(
+        data.item_by_alias("unstrung_longbow")
+            .expect("unstrung longbow")
+            .category
+            .as_deref(),
+        Some("unstrung_bow")
+    );
+}
+
+#[test]
 fn thieving_requirements_are_selected_by_exact_npc_id() {
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
 

@@ -1819,9 +1819,13 @@
                 ],
                 "source": "C maps/m51_47.jm2:5030 (desertminingcaptain 830); same tile and radius as taunt-captain's anchor and leash",
                 "radius": 6,
-                "allow_danger_zones": true
+                "cross": [
+                  "ugthanki@3268,3052,0",
+                  "ugthanki@3281,3056,0",
+                  "ugthanki@3305,3089,0"
+                ]
               },
-              "comment": "Irena (3302,3114) to the captain crosses the Kharidian strip, Ugthanki / Desert Wolf habitat with no danger-free route; the talk's own approach walk inherits the danger forbid and is refused (DIAG-QUESTER-CI7 §2). This walk grants danger zones for this crossing only (AIOQuester walks the same tile, touristtrap.ts:163), and taunt-captain then starts inside its leash and issues no walk.",
+              "comment": "Content maps/m51_47.jm2:5027,5034 and maps/m51_48.jm2:4425 place the three Ugthanki whose zones this Irena-to-captain route crosses. scripts/areas/area_desert/configs/desert.npc:44-66 gives size 2, wander 5, hunt 2 and cowardly hunting; scripts/_unpack/225/all.hunt:37-45 acquires players with opplayer2. Engine src/engine/entity/Npc.ts:1014-1016 exempts outside-Wilderness players only above twice the NPC level (Ugthanki 84, Desert Wolf 54). Grant only these named spawns: the packed collision route reaches the captain without entering any Desert Wolf zone, and removing any grant leaves no route at combat 40. Higher combat may avoid active danger entirely. The destination stays inside taunt-captain's radius-6 leash.",
               "skip_if": {
                 "Any": [
                   {
