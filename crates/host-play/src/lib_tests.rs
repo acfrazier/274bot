@@ -19530,7 +19530,8 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
     );
     let frames = Arc::new(Mutex::new(Vec::new()));
     rig.slot().lock().unwrap().stop();
-    rig.slot()
+    rig.scripts.lock().unwrap().clear();
+    script_slot_or_insert(&rig.scripts, "alice")
         .lock()
         .unwrap()
         .start_test_script(
