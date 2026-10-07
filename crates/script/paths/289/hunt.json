@@ -33,7 +33,8 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
-              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "white_apron" } } } }] }
             ]
           },
           "settle": { "All": [] }
@@ -345,7 +346,8 @@
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
-              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "karamja_rum" } } } }] }
             ]
           },
           "settle": { "All": [] }
@@ -929,7 +931,12 @@
             "items": [{ "obj": "chest_key", "qty": 1 }],
             "partial_ok": true
           },
-          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "chest_key" } } } }] }
+            ]
+          },
           "settle": { "All": [] }
         },
         {
@@ -962,7 +969,12 @@
             "items": [{ "obj": "spade", "qty": 1 }],
             "partial_ok": true
           },
-          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "spade" } } } }] }
+            ]
+          },
           "settle": { "All": [] }
         },
         {

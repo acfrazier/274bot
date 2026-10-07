@@ -1878,6 +1878,50 @@
                     "obj": "bucket_empty"
                   }
                 }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Any": [
+                        {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "bucket_empty"
+                            }
+                          }
+                        },
+                        {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "bucket_murkywater"
+                            }
+                          }
+                        },
+                        {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "bucket_blessedwater"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           },
@@ -2162,13 +2206,39 @@
             "partial_ok": true
           },
           "skip_if": {
-            "Fact": {
-              "kind": "has_item",
-              "version": 1,
-              "args": {
-                "obj": "blankrune"
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blankrune"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "blankrune"
+                        }
+                      }
+                    }
+                  }
+                ]
               }
-            }
+            ]
           },
           "settle": {
             "Any": [
