@@ -612,6 +612,13 @@ fn render_native_v2(out: &mut String) {
     out.push_str("    /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */\n");
     out.push_str("    stop(): HelperResult<null>;\n");
     out.push_str("  };\n");
+    out.push_str("  /** Native combat: one fight of the shared Combat machine (the one Quester and Sherlock use), driven by this script. One session per slot, and `busy` while a gather session, progress read or Hunt run is live. While a session is live the host owns the slot's foreground: this script's game ops are dropped, not deferred. */\n");
+    out.push_str("  combat: {\n");
+    out.push_str("    /** One awaited fight. Settles once, at its terminal (`value.end`). Refused `busy` until the previous session's promise has settled. */\n");
+    out.push_str("    fight(request: CombatRequest): Promise<CombatOutcome>;\n");
+    out.push_str("    /** Ends the live session; its `fight` resolves `stopped` and the host clears only the prayers the bot raised. Idempotent. Refused `no-session`. */\n");
+    out.push_str("    stop(): HelperResult<null>;\n");
+    out.push_str("  };\n");
     out.push_str(
         "  /** Sync read of the release Path index. Not a Promise and not a request op. */\n",
     );
@@ -798,6 +805,8 @@ fn render_native_v2(out: &mut String) {
     out.push('\n');
     render_gather_session(out);
     out.push('\n');
+    render_combat_session(out);
+    out.push('\n');
     render_quest_progress(out);
 }
 
@@ -956,6 +965,111 @@ fn render_gather_session(out: &mut String) {
     out.push_str("  | { end: 'failed'; token: number; reason: string; counts: GatherCounts };\n\n");
     out.push_str("export type GatherOutcome =\n");
     out.push_str("  | { kind: 'done'; value: GatherEnd }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
+}
+
+/// `CombatTarget`, `CombatRequest`, `CombatStatus`, `CombatSession`,
+/// `CombatReport`, `CombatEnd` and `CombatOutcome`: one `api.combat`
+/// session over the native Combat machine (`api_combat.rs`).
+fn render_combat_session(out: &mut String) {
+    out.push_str("/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. */\n");
+    out.push_str("export type CombatTarget =\n");
+    out.push_str("  | { npc: string | string[] }\n");
+    out.push_str("  | { npcId: number | number[] }\n");
+    out.push_str("  | { attackers: 'npcs' | 'players' | 'any' };\n\n");
+    out.push_str("/** One `api.combat.fight` request, mapped onto the native Combat request. Every key but `target` is optional. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>`. */\n");
+    out.push_str("export interface CombatRequest {\n");
+    out.push_str("  target: CombatTarget;\n");
+    out.push_str("  /** npc targets only; default 'nearest' */\n");
+    out.push_str("  pick?: 'nearest' | 'random' | 'lowestHealth';\n");
+    out.push_str(
+        "  /** npc targets only: skip npcs already fighting another player; default true */\n",
+    );
+    out.push_str("  notTargetingOthers?: boolean;\n");
+    out.push_str(
+        "  /** search boxes (1..16) a target must stand in; omitted searches around the bot */\n",
+    );
+    out.push_str("  area?: SceneRegionInput | SceneRegionInput[];\n");
+    out.push_str("  /** engage radius in tiles, 1..255; default 12 */\n");
+    out.push_str("  radius?: number;\n");
+    out.push_str("  /** tiles before an engaged target counts as lost, 1..255; default 20 */\n");
+    out.push_str("  lostRadius?: number;\n");
+    out.push_str("  /** default 'melee' */\n");
+    out.push_str("  style?: 'melee' | 'ranged' | 'magic';\n");
+    out.push_str(
+        "  /** melee only: the attack style to fight in; omitted keeps the current one */\n",
+    );
+    out.push_str("  meleeMode?: 'accurate' | 'aggressive' | 'defensive' | 'controlled';\n");
+    out.push_str("  /** ranged only; default 'rapid' */\n");
+    out.push_str("  rangedMode?: 'accurate' | 'rapid' | 'longRange';\n");
+    out.push_str("  /** magic only: selected spell aliases cast manually in this order; omitted casts the strongest castable spell */\n");
+    out.push_str("  spells?: string[];\n");
+    out.push_str("  /** magic only: after the order is exhausted, fall back to the strongest castable spell; default false */\n");
+    out.push_str("  fallbackSpells?: boolean;\n");
+    out.push_str("  /** let the bot raise protection (by the attackers' style), offensive prayers and prayer potions; default true. The bot turns off only prayers it raised. The game allows one protection prayer at a time, so raising one switches off a different protection prayer the user had on; the bot does not turn it back on. */\n");
+    out.push_str("  prayer?: boolean;\n");
+    out.push_str("  /** eat carried food by the shared HP policy; default true */\n");
+    out.push_str("  food?: boolean;\n");
+    out.push_str("  /** drink carried boost, prayer and antifire potions; default true */\n");
+    out.push_str("  potions?: boolean;\n");
+    out.push_str(
+        "  /** the game's auto-retaliate setting the bot keeps during the fight; default true */\n",
+    );
+    out.push_str("  retaliate?: boolean;\n");
+    out.push_str(
+        "  /** fight budget in game ticks, 1..65535; default 1500 (settles `budget`) */\n",
+    );
+    out.push_str("  budgetTicks?: number;\n");
+    out.push_str("}\n\n");
+    out.push_str(
+        "/** The live combat card's status. `engaged_index` is -1 when nothing is engaged. */\n",
+    );
+    out.push_str("export interface CombatStatus {\n");
+    out.push_str("  stage: 'starting' | 'fighting' | 'clearing-prayers';\n");
+    out.push_str("  engaged_kind: 'npc' | 'player' | 'none';\n");
+    out.push_str("  engaged_index: number;\n");
+    out.push_str("}\n\n");
+    out.push_str(
+        "/** The slot's live combat session; `null` when none. Host-owned, read only. */\n",
+    );
+    out.push_str("export interface CombatSession {\n");
+    out.push_str("  token: number;\n");
+    out.push_str("  /** 'preparing' while the host resolves the request off-pump; 'running' once installed */\n");
+    out.push_str("  phase: 'preparing' | 'running';\n");
+    out.push_str("  /** `null` until the card publishes its first status */\n");
+    out.push_str("  status: CombatStatus | null;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'unresponsive'. */\n");
+    out.push_str("export interface CombatReport {\n");
+    out.push_str(
+        "  end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';\n",
+    );
+    out.push_str("  reason: string | null;\n");
+    out.push_str("  /** the engaged npc type, -1 when none */\n");
+    out.push_str("  npcType: number;\n");
+    out.push_str("  ticks: number;\n");
+    out.push_str("  swings: number;\n");
+    out.push_str("  casts: number;\n");
+    out.push_str("  damageTaken: number;\n");
+    out.push_str("  food: number;\n");
+    out.push_str("  prayerDoses: number;\n");
+    out.push_str("  boostDoses: number;\n");
+    out.push_str("  antifireDoses: number;\n");
+    out.push_str("  protectSwitches: number;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: the fight ended before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. */\n");
+    out.push_str("export type CombatEnd =\n");
+    out.push_str("  | { end: 'fought'; token: number; report: CombatReport }\n");
+    out.push_str("  | { end: 'stopped'; token: number }\n");
+    out.push_str("  | { end: 'interrupted'; token: number; cause: 'pause' | 'user-input' | 'died' | 'reconnect' }\n");
+    out.push_str("  | { end: 'refused'; token: number; reason: string }\n");
+    out.push_str("  | { end: 'failed'; token: number; reason: string };\n\n");
+    out.push_str("/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. */\n");
+    out.push_str("export type CombatOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: CombatEnd }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
     out.push_str(
         "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
@@ -3020,6 +3134,12 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         ty: "GatherSession | null",
         optional: false,
         doc: Some("Live API gather session; null when none."),
+    },
+    TsField {
+        name: "combat",
+        ty: "CombatSession | null",
+        optional: false,
+        doc: Some("Live API combat session; null when none."),
     },
 ];
 

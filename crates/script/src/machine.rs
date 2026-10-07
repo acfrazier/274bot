@@ -559,6 +559,8 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::duel::Close>(),
     entry::<crate::api_session::GatherSession>(),
     entry::<crate::api_session::GatherStop>(),
+    entry::<crate::api_session::CombatSession>(),
+    entry::<crate::api_session::CombatStop>(),
     entry::<crate::api_session::ProgressQuery>(),
     entry::<crate::quest_journal::QuestJournal>(),
     entry::<crate::reach_entity::EntityOp>(),

@@ -1424,6 +1424,14 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_combat = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_page.as_deref());
+        native.api_combat_outcome = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_terminal.as_ref());
         native.api_progress = self
             .api
             .as_ref()
@@ -1449,6 +1457,14 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_combat = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_page.as_deref());
+        native.api_combat_outcome = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.combat_terminal.as_ref());
         native.api_progress = self
             .api
             .as_ref()
@@ -1530,6 +1546,16 @@ impl SlotScript {
         false
     }
 
+    /// Live work a manual movement takes over: a walking operation, or a
+    /// Gather or Combat API session with or without a walk in flight.
+    pub fn manual_input_owner(&self) -> bool {
+        #[cfg(feature = "load")]
+        if self.api_session_takes_manual_input() {
+            return true;
+        }
+        self.live_walking_operation()
+    }
+
     pub fn note_manual_walk_takeover(&mut self, intent_seq: u64, tick: u64) {
         // A deliberate takeover is gameplay progress, even if the human
         // clicked an unwalkable tile and no player-info movement follows.
@@ -1538,6 +1564,8 @@ impl SlotScript {
         if let Some(isolate) = &self.load {
             isolate.note_manual_walk_takeover(intent_seq);
         }
+        #[cfg(feature = "load")]
+        self.api_user_input();
         #[cfg(not(feature = "load"))]
         let _ = intent_seq;
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
@@ -1731,6 +1759,8 @@ impl SlotScript {
             }
             crate::shim::InteractReq::GatherRun { .. }
             | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatFight { .. }
+            | crate::shim::InteractReq::CombatStop { .. }
             | crate::shim::InteractReq::ProgressRead { .. } => {
                 self.consume_api_control(&queued.req);
                 owned |= self.api_owns_foreground();

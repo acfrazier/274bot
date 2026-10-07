@@ -414,6 +414,10 @@ impl<K: Kind> Family for Hunt<K> {
     type Output = Value;
 
     fn begin(args: HuntArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        // One API foreground per slot: a live `api.combat` session owns it.
+        if crate::api_session::combat_live() {
+            return Begin::Refuse("busy".into());
+        }
         if K::SESSION {
             let Some(token) = args.token else {
                 return Begin::Refuse("missing token".into());
