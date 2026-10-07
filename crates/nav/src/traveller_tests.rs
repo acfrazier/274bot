@@ -3760,6 +3760,16 @@ const SHANTAY_NORTH_TO: WorldTile = WorldTile {
     z: 3115,
     level: 0,
 };
+const SHANTAY_SOUTH_AT: WorldTile = WorldTile {
+    x: 3302,
+    z: 3115,
+    level: 0,
+};
+const SHANTAY_SOUTH_TO: WorldTile = WorldTile {
+    x: 3302,
+    z: 3118,
+    level: 0,
+};
 
 fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
     (tile.x - base.0, tile.z - base.1)
@@ -3824,6 +3834,20 @@ fn shantay_north_short_edge() -> TransportEdge {
         members_req: false,
         wildy_cap: None,
         quest_gates: None,
+    }
+}
+fn shantay_south_free_edge() -> TransportEdge {
+    let at = SHANTAY_SOUTH_AT;
+    TransportEdge {
+        at,
+        to: WorldTile {
+            x: at.x,
+            z: at.z + 3,
+            level: at.level,
+        },
+        ticks: 2,
+        consumed_req: vec![],
+        ..shantay_north_short_edge()
     }
 }
 
@@ -4478,6 +4502,80 @@ fn follow_shantay_north_dir_none_does_not_complete_from_origin() {
     match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => assert_eq!(at, SHANTAY_NORTH_TO),
         other => panic!("expected Arrived at north landing, got {other:?}"),
+    }
+}
+
+/// WalkTo uses `close_enough = 0`; a Shantay free-exit hop must therefore
+/// arrive at the exact landing that the content computes from the stand.
+#[test]
+fn follow_shantay_free_exit_arrives_at_the_player_relative_landing() {
+    let mut c = scene_client();
+    c.map_build_base_x = SHANTAY_NORTH_SCENE_BASE.0;
+    c.map_build_base_z = SHANTAY_NORTH_SCENE_BASE.1;
+    let placement = scene_of(SHANTAY_NORTH_SCENE_BASE, SHANTAY_NORTH_AT);
+    plant_loc(
+        &mut c,
+        SHANTAY_HENGE_LOC_ID,
+        "Shantay pass henge doorway",
+        "Go-through",
+        placement.0,
+        placement.1,
+    );
+
+    let edge = shantay_south_free_edge();
+    let script_landing = WorldTile {
+        x: edge.at.x,
+        z: edge.at.z + 3,
+        level: edge.at.level,
+    };
+    assert_eq!(edge.to, script_landing);
+    assert_eq!(script_landing, SHANTAY_SOUTH_TO);
+
+    let at = scene_of(SHANTAY_NORTH_SCENE_BASE, edge.at);
+    let mut snap = snap_at(&mut c, at.0, at.1);
+    let mut rec = FollowRec {
+        route: Some(at),
+        build_base: Some(SHANTAY_NORTH_SCENE_BASE),
+        ..FollowRec::default()
+    };
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: SHANTAY_SOUTH_TO,
+        ticks: 2.0,
+    };
+    let mut t = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+
+    follow_still_pending(
+        &mut t,
+        &mut rec,
+        &snap,
+        &route,
+        &mut options,
+        "send free exit",
+    );
+    assert_eq!(rec.loc_ops, 1, "the henge oploc1 interaction was sent");
+    bump_rebuild(&mut c, &mut snap);
+    follow_still_pending(
+        &mut t,
+        &mut rec,
+        &snap,
+        &route,
+        &mut options,
+        "before the telejump",
+    );
+
+    let landing = scene_of(SHANTAY_NORTH_SCENE_BASE, script_landing);
+    plant_player(&mut c, landing.0, landing.1);
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Arrived { at }) => assert_eq!(at, SHANTAY_SOUTH_TO),
+        other => panic!("expected exact Shantay free-exit arrival, got {other:?}"),
     }
 }
 

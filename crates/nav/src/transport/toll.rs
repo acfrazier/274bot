@@ -17,18 +17,9 @@ pub(super) const SHANTAY_NORTH_TO: WorldTile = WorldTile {
 /// `p_telejump` tick (both `p_delay(0)` in the queue block).
 pub(super) const SHANTAY_NORTH_TICKS: i32 = 3;
 
-/// The Shantay henge free desert exit's `to`: the desert branch
-/// (`coordz(coord) <= coordz(loc_coord)`) telejumps the player
-/// `movecoord(coord,0,0,3)` — north of the loc — from wherever they
-/// stand. From the desert-side stand directly south-east of the henge
-/// ((3303,3115)) that landing is (3303,3118), an open tile north of the
-/// gate; the hop's close-enough-2 arrive arm also covers the adjacent
-/// desert-side approaches' landings ((3303,3117), (3302,3118)).
-pub(super) const SHANTAY_SOUTH_TO: WorldTile = WorldTile {
-    x: 3303,
-    z: 3118,
-    level: 0,
-};
+/// The Shantay henge free desert exit telejumps `movecoord(coord,0,0,3)`
+/// from the player's current tile. Its `to` is derived from the packed
+/// stand by that same +3z operation, so it cannot drift from the content.
 /// The free desert exit ticks: OP_BASE 1 + the `p_telejump` tick (the
 /// branch's own `p_delay(0)`).
 pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
@@ -52,13 +43,12 @@ pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
 /// (3302,3116), `to` [`SHANTAY_NORTH_TO`], one Shantay pass consumed,
 /// from the pass/Al Kharid side `coordz(coord) > coordz(loc_coord)`, the
 /// `inv_del(inv, shantay_pass, 1)` + `[queue,shantay_pass_enter]`
-/// teleport) and the free desert exit (`at` one tile south of the
+/// teleport) and the free desert exit (`at` the stand one tile south of the
 /// placement, on the desert side `coordz(coord) <= coordz(loc_coord)`,
-/// `to` [`SHANTAY_SOUTH_TO`], with no inventory requirement — the same
-/// block's `p_telejump(movecoord(coord,0,0,3))`). These edges are **not**
-/// plain walks: both interact with the loc, and only the pass-side hop
-/// enters the desert (the free edge starts on the desert side and never
-/// fires the pass branch).
+/// with `to` derived from that stand by +3z, no inventory requirement —
+/// the same block's `p_telejump(movecoord(coord,0,0,3))`).
+/// These edges are not plain walks: both interact with the loc, and only
+/// the pass-side hop enters the desert.
 pub(super) fn toll_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -213,9 +203,9 @@ pub(super) fn toll_shantay_henge_edges(
     // The Shantay henge: two edges, one per `[oploc1,shantay_pass_
     // henge_doorway]` branch — the gated hop `at` the loc's placement
     // tile (shape 10, unlike the wall doors), and the free desert exit
-    // `at` one tile south of it (the desert side `coordz(coord) <=
-    // coordz(loc_coord)`; the interaction from any tile on that side of
-    // the gate always fires the free branch).
+    // `at` the stand one tile south of it (the desert-side tile selected
+    // for the edge, so the script's +3z landing derives from the player's
+    // actual tile).
     let Some(&henge_id) = ids.get("shantay_pass_henge_doorway") else {
         return;
     };
@@ -232,6 +222,16 @@ pub(super) fn toll_shantay_henge_edges(
             x: p.x,
             z: p.z,
             level: p.level,
+        };
+        let desert_at = WorldTile {
+            x: p.x,
+            z: p.z - 1,
+            level: p.level,
+        };
+        let desert_to = WorldTile {
+            x: desert_at.x,
+            z: desert_at.z + 3,
+            level: desert_at.level,
         };
         graph.edges.push(TransportEdge {
             takeoff: None,
@@ -261,12 +261,8 @@ pub(super) fn toll_shantay_henge_edges(
             worn_all_req: Vec::new(),
             kind: TransportKind::Door,
             player_delta: None,
-            at: WorldTile {
-                x: p.x,
-                z: p.z - 1,
-                level: p.level,
-            },
-            to: SHANTAY_SOUTH_TO,
+            at: desert_at,
+            to: desert_to,
             loc_id: henge_id,
             option: 1, // Go-through (oploc1)
             ticks: SHANTAY_SOUTH_TICKS,
