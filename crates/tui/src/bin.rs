@@ -1069,6 +1069,7 @@ impl TuiSession {
         self.live_stop_wait_started = None;
         let world = play.world();
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+        runner.set_tick_speed_endpoint(&self.options.host, self.options.port);
         runner.set_map_members(play.map_members());
         let budget = scenario::budget_s_from_env();
         if let Some(budget) = budget {

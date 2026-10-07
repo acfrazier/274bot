@@ -4,9 +4,9 @@
 //! sequence of run steps (each an action send plus the evidence it must
 //! produce within a tick budget), and a proof predicate over the terminal
 //! `GameSnapshot` — the same observable state scripts and the host read.
-//! The headed runner (`panel-play --live script_<name>`) and the headless
-//! runner (`crates/e2e` under `LIVE=1`) drive the same
-//! [`ScenarioRunner`], so both pass/fail identically. The PASS/FAIL
+//! The headed runners (`panel-play` and `tui-play --live script_<name>`) and
+//! the headless runner (`crates/e2e` under `LIVE=1`) drive the same
+//! [`ScenarioRunner`] and share pass/fail behavior. The PASS/FAIL
 //! contract replaces the old "5 Running polls" `LiveScript` stub: a
 //! scenario proves real game state, not that a poll loop ran.
 //!
@@ -20,6 +20,7 @@ mod catalog;
 pub mod evidence;
 pub mod fixture;
 pub mod proof;
+mod quest_fast;
 pub mod quester;
 mod render_betty_views;
 mod runner;

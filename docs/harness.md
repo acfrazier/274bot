@@ -59,15 +59,17 @@ otherwise starts from a clean account at the Path's authored anchor.
 
 ### Fast quest runs (Engine Q only)
 
-`QUESTER_TICK_MS=300` opts the generic `quester_path` cell and the panel's
-`--live script_quester_path` entry into a 300 ms world tick. The harness sends
-`::speed 300` after login and fails unless a fresh exact system-chat confirmation
-arrives. This command is world-wide: the harness accepts it only at
-`127.0.0.1:44694` (Engine Q), refusing Engine A (`44594`) and the builder
-(`45594`) before the run starts. Use `local-289q` only in the disposable run
-HOME's `~/.274bot/servers.json`, with game/asset ports `44694`/`1180` and the
-Q engine directory as `login_key.engine_dir`; leave `members` unset so the
-guarded Q `world.json` supplies world membership. Do not add it to product defaults.
+`QUESTER_TICK_MS=300` opts the generic `quester_path` cell and the panel or
+TUI `--live script_quester_path` entry into a 300 ms world tick. All three
+entry points use one shared `ScenarioRunner` lifecycle: send `::speed <ms>`,
+wait for a fresh exact system-chat confirmation, then restore `::speed 600`
+during terminal teardown. `::speed` is world-wide, so use `QUESTER_TICK_MS`
+only on isolated Engine Q, never on shared Engine A or the builder. The runner
+logs the target endpoint once when the command fires. Use `local-289q` only in
+the disposable run HOME's `~/.274bot/servers.json`, with game/asset ports
+`44694`/`1180` and the Q engine directory as `login_key.engine_dir`; leave
+`members` unset so the Q `world.json` supplies world membership. Do not add it
+to product defaults.
 
 `QUESTER_SUSTAIN_RUN=1` enables the existing per-account `Sustain` behavior.
 When tick speed is set, sustain defaults on unless explicitly disabled with

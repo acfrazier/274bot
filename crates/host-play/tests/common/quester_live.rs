@@ -41,9 +41,11 @@
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
 //! `QUESTER_TICK_MS` is supported only by the single-account generic Path
-//! smoke and is guarded to Engine Q at `127.0.0.1:44694`; Engine A and the
-//! builder are rejected. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy`
-//! sustain, defaulting on when `QUESTER_TICK_MS` is set.
+//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
+//! Engine Q, never on shared Engine A or the builder. The shared runner waits
+//! for a fresh exact system-chat confirmation and restores `::speed 600` on
+//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
+//! defaulting on when `QUESTER_TICK_MS` is set.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -951,7 +953,7 @@ pub fn run(cell: Cell) -> Result<Value, String> {
     run_inner(cell, None, None, false)
 }
 
-/// Run the generic Path live cell with its explicit Engine Q-only fast controls.
+/// Run the generic Path live cell with shared world-wide tick-speed controls.
 pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
     run_inner(cell, None, None, true)
 }
@@ -1107,17 +1109,6 @@ fn run_cells(
     let deadline = Instant::now() + scenario_deadline + DEADLINE_GRACE;
     let temp = TempRoot::new(&run_label)?;
     let (profile, template) = selected_profile(&temp.0)?;
-    if let (true, Some(tick_ms)) = (quester_path, fast_settings.tick_ms) {
-        host_play::quest_fast::validate_tick_speed_target(
-            profile.client().game_host(),
-            profile.client().game_port(),
-        )?;
-        println!(
-            "QUESTER_TICK_MS={tick_ms} guarded to Engine Q at {}:{}",
-            profile.client().game_host(),
-            profile.client().game_port()
-        );
-    }
     // A persistence cell (`QUESTER_LIVE_ACCOUNT` + `QUESTER_LIVE_PASSWORD`)
     // logs one fixed account in across processes so what the host saved
     // for it under `HOME` — the bank hint — is found again; everything else
@@ -1177,6 +1168,7 @@ fn run_cells(
     let mut actors = Vec::with_capacity(cells.len());
     for (index, cell) in cells.into_iter().enumerate() {
         let mut runner = ScenarioRunner::with_world(cell.scenario, template.world());
+        runner.set_tick_speed_endpoint(profile.client().game_host(), profile.client().game_port());
         runner.set_map_members(profile.map_members());
         runner.set_live_names(&[names[index].clone()]);
         runner.set_shot_sink(Box::new(|_, _| {}));
