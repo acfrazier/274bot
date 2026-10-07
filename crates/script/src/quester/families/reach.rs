@@ -1,7 +1,9 @@
 //! Native reach/door loop extracted from isolate `reach_entity` / `reach`.
 //! Closed barriers open once; already-open passages use the shared native walk.
 
-use crate::native::{walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest};
+use crate::native::{
+    defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest,
+};
 use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
@@ -69,6 +71,7 @@ enum Phase {
     Seek,
     Click,
     WaitDoor,
+    OpenDoor { id: i32, tile: WorldTile },
     WaitWalk { door: Option<(i32, WorldTile)> },
 }
 
@@ -130,7 +133,7 @@ impl NativeMachine for Reach {
         }
         match self.phase {
             Phase::Seek => {
-                if self.click(cx)? {
+                if std::task::ready!(defer_budget(self.click(cx)))? {
                     return Poll::Pending;
                 }
                 if self.args.wait_if_missing || !matches!(self.args.kind, ReachKind::Ground { .. })
@@ -160,15 +163,19 @@ impl NativeMachine for Reach {
                         self.avoid.add(key, cx.evidence().tick);
                         let choice = self.choice(cx, self.args.reachable_only, false)?;
                         if matches!(choice, Choice::Click(..)) {
-                            self.act(choice, cx)?;
+                            let result = self.act(choice, cx);
+                            if matches!(result, Err(ActionError::BudgetExhausted)) {
+                                self.avoid = previous;
+                            }
+                            std::task::ready!(defer_budget(result))?;
                             return Poll::Pending;
                         }
                         self.avoid = previous;
                     }
-                    if self.clear_door(cx).is_ok() {
-                        return Poll::Pending;
-                    }
-                    return Poll::Ready(Ok(false));
+                    return match std::task::ready!(defer_budget(self.clear_door(cx))) {
+                        Ok(()) => Poll::Pending,
+                        Err(_) => Poll::Ready(Ok(false)),
+                    };
                 }
                 if !matches!(self.args.kind, ReachKind::Ground { .. }) {
                     match cx.interaction_receipt(self.request_id) {
@@ -188,8 +195,14 @@ impl NativeMachine for Reach {
             }
             Phase::WaitDoor => {
                 if cx.active_now().as_millis() as u64 >= self.deadline_ms
-                    && self.walk_to_target(cx).is_err()
+                    && std::task::ready!(defer_budget(self.walk_to_target(cx))).is_err()
                 {
+                    return Poll::Ready(Ok(false));
+                }
+                Poll::Pending
+            }
+            Phase::OpenDoor { id, tile } => {
+                if std::task::ready!(defer_budget(self.open_door(id, tile, cx))).is_err() {
                     return Poll::Ready(Ok(false));
                 }
                 Poll::Pending
@@ -203,14 +216,11 @@ impl NativeMachine for Reach {
                         if let Err(error) = arrival {
                             return Poll::Ready(Err(error));
                         }
-                        if let Some((id, tile)) = door {
-                            if self.open_door(id, tile, cx).is_err() {
-                                return Poll::Ready(Ok(false));
-                            }
-                        } else {
-                            self.click(cx)?;
-                        }
-                        Poll::Pending
+                        self.phase = match door {
+                            Some((id, tile)) => Phase::OpenDoor { id, tile },
+                            None => Phase::Seek,
+                        };
+                        self.poll(cx)
                     }
                     Poll::Ready(Err(error)) => {
                         self.walk = None;
@@ -392,11 +402,11 @@ impl Reach {
         let (request, key, before, in_range) = match choice {
             Choice::Click(request, key, before, in_range) => (request, key, before, in_range),
             Choice::Approach(tile) => {
-                // Each approach is a bounded attempt, like a click.
+                self.walk_to(tile, None, None, cx)?;
+                // Count admitted approaches, not same-tick budget deferrals.
                 self.attempts += 1;
                 self.clicked_loc = None;
                 self.clicked = None;
-                self.walk_to(tile, None, None, cx)?;
                 return Ok(true);
             }
             Choice::Missing => {

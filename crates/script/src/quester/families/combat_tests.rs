@@ -2593,6 +2593,86 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
 }
 
 #[test]
+fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let first = selected.item_by_alias("white_bead").unwrap();
+    let second = selected.item_by_alias("bones").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let loot: Vec<_> = [first, second]
+        .into_iter()
+        .map(|item| LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        })
+        .collect();
+    let mut run = combat_test_run(imp_target(&selected), Some(stand), None, loot);
+    run.phase = Phase::Loot;
+    let snapshot = || {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_ground_items(
+            [first, second]
+                .into_iter()
+                .map(|item| api::snapshot::GroundItemView {
+                    def: super::super::tests::def(item.id, item.name.as_deref().unwrap()),
+                    count: 1,
+                    actions: vec![Some("Take".into())],
+                    tile: stand,
+                    distance: 0,
+                })
+                .collect(),
+        );
+        snapshot
+    };
+    let initial = snapshot();
+    let mut later = snapshot();
+    later.seed_inventory(
+        vec![inventory_item(first.id, first.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    let mut ledger = None;
+    super::super::tests::with_tick_snapshots(&initial, &later, &mut ledger, 1, |native, later| {
+        let quests = QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = native.cx.evidence();
+        let mut cx = StepContext {
+            tick: native,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        };
+        assert!(run.poll(&mut cx).is_pending());
+        assert_eq!(run.loot_index, 1);
+        assert_eq!(cx.tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+        cx.tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(later), required_after);
+        for _ in 0..3 {
+            assert!(run.poll(&mut cx).is_pending());
+            assert_eq!(
+                run.loot_index, 1,
+                "denied loot admission must retain the second item"
+            );
+        }
+        assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+    });
+    assert!(with_step_context(&later, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.loot_index, 2);
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj { name: Some(name), .. })
+            if name == second.name.as_deref().unwrap()
+    ));
+}
+
+#[test]
 fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let bones = data.item_by_alias("bones").unwrap();

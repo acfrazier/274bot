@@ -141,10 +141,9 @@ impl NativeMachine for Thieve {
                 // immediately rather than polling it while a modal is pending.
                 self.discard_reach();
             }
-            self.modal = match OneOp::begin(args, cx) {
-                Ok(modal) => Some(modal),
-                Err(error) => return Poll::Ready(Err(error)),
-            };
+            self.modal = Some(std::task::ready!(super::defer_budget(OneOp::begin(
+                args, cx
+            )))?);
             return Poll::Pending;
         }
 
@@ -223,10 +222,12 @@ impl NativeMachine for Thieve {
             })
         {
             let center = self.area_anchor.expect("approach anchor was checked");
-            return match self.begin_walk(center, u16::from(self.args.radius), cx) {
-                Ok(()) => Poll::Pending,
-                Err(error) => Poll::Ready(Err(error)),
-            };
+            std::task::ready!(super::defer_budget(self.begin_walk(
+                center,
+                u16::from(self.args.radius),
+                cx,
+            )))?;
+            return Poll::Pending;
         }
 
         match decision {
@@ -278,7 +279,7 @@ impl NativeMachine for Thieve {
                     return Poll::Pending;
                 };
                 let action = action_name(&op);
-                let reach = match Reach::begin(
+                let reach = std::task::ready!(super::defer_budget(Reach::begin(
                     ReachArgs {
                         kind: ReachKind::Npc {
                             id: target_id,
@@ -292,10 +293,7 @@ impl NativeMachine for Thieve {
                         reachable_only: false,
                     },
                     cx,
-                ) {
-                    Ok(reach) => reach,
-                    Err(error) => return Poll::Ready(Err(error)),
-                };
+                )))?;
                 self.reach_target = Some((target_id, action));
                 self.reach_request_id = None;
                 let request_id = reach.interaction_request_id();
@@ -777,6 +775,100 @@ mod tests {
                 )
             })
             .count()
+    }
+
+    #[test]
+    fn same_tick_thieve_level_up_defers_modal_and_next_dispatch() {
+        use crate::quester::families::tests::with_tick_snapshots;
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut later = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        later.seed_chat_modal(100, vec!["Congratulations, you advanced Thieving.".into()]);
+        later.seed_chat_options(Vec::new(), 99);
+        let mut ledger = None;
+        let run = with_tick_snapshots(&snapshot, &later, &mut ledger, 1, |tick, later| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            tick.cx.snapshot = SnapshotView::new(Some(later), tick.cx.evidence());
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
+            run
+        });
+        assert_eq!(npc_click_count(&ledger), 1);
+        assert_eq!(continue_dialog_count(&ledger), 0);
+        assert!(with_tick(&later, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(continue_dialog_count(&ledger), 1);
+        drop(run);
+
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
+            run
+        });
+        assert_eq!(npc_click_count(&ledger), 0);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_click_count(&ledger), 1);
+    }
+
+    #[test]
+    fn same_tick_thieve_anchor_walk_retries_after_spent_event() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![npc(19, 1, 1)],
+            vec![],
+        );
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
+                .unwrap();
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+                assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+            }
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Walk(request)
+                if request.target == anchor && request.radius == 2
+        ));
     }
 
     #[test]
