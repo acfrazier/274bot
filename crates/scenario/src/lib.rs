@@ -94,6 +94,9 @@ pub struct ScenarioSettings {
     pub nav: ScenarioNav,
     pub deadline: Duration,
     pub terminal_shot: Option<&'static str>,
+    /// A world-wide engine speed restored after this scenario reaches a
+    /// terminal state. Live quest-fast cells set this only on Engine Q.
+    pub teardown_world_speed_ms: Option<u32>,
     pub require_mainland_base: bool,
     /// Background cheats the runner fires while the scenario is running
     /// (377 sustain: energy, HP, stats). Empty for most scenarios.
@@ -368,6 +371,7 @@ impl Default for ScenarioSettings {
             nav: ScenarioNav::default(),
             deadline: DEFAULT_DEADLINE,
             terminal_shot: None,
+            teardown_world_speed_ms: None,
             require_mainland_base: false,
             sustains: Vec::new(),
             start_script: None,

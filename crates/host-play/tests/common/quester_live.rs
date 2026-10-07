@@ -40,6 +40,10 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
+//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
+//! smoke and is guarded to Engine Q at `127.0.0.1:44694`; Engine A and the
+//! builder are rejected. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy`
+//! sustain, defaulting on when `QUESTER_TICK_MS` is set.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -340,7 +344,7 @@ fn selected_profile(
     let cache_dir = temp.join("cache");
     copy_dir(&source_cache, &cache_dir)?;
     let options = ProfileOptions {
-        profile: Some("local-289".into()),
+        profile: Some(std::env::var("BOT_SERVER_PROFILE").unwrap_or_else(|_| "local-289".into())),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
@@ -943,20 +947,25 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
     Ok(line["status"].clone())
 }
 
-/// Run one live cell. Returns the final receipt on PASS.
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None)
+    run_inner(cell, None, None, false)
+}
+
+/// Run the generic Path live cell with its explicit Engine Q-only fast controls.
+pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
+    run_inner(cell, None, None, true)
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe))
+    run_inner(cell, Some(start), Some(observe), false)
 }
 
 fn run_inner(
     cell: Cell,
     start_family: Option<StartFamily>,
     observe_family: Option<ObserveFamily>,
+    quester_path: bool,
 ) -> Result<Value, String> {
     let Cell {
         quest,
@@ -979,6 +988,7 @@ fn run_inner(
         RunPlan::Single(mode),
         start_family,
         observe_family,
+        quester_path,
     )
 }
 
@@ -1009,7 +1019,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None)
+    run_cells(cells, RunPlan::Pair(mode), None, None, false)
 }
 
 fn run_cells(
@@ -1017,6 +1027,7 @@ fn run_cells(
     mode: RunPlan,
     mut start_family: Option<StartFamily>,
     mut observe_family: Option<ObserveFamily>,
+    quester_path: bool,
 ) -> Result<Value, String> {
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
         return Err("Quester live run has the wrong number of roles".into());
@@ -1038,6 +1049,17 @@ fn run_cells(
                 cell.label
             ));
         }
+    }
+    let fast_settings = if quester_path {
+        scenario::quester::QuesterFastSettings::from_env()?
+    } else {
+        scenario::quester::QuesterFastSettings {
+            tick_ms: None,
+            sustain_run: false,
+        }
+    };
+    if quester_path && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
     }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
@@ -1074,6 +1096,9 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
+    if quester_path {
+        scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
+    }
     let scenario_deadline = cells
         .iter()
         .map(|cell| cell.scenario.settings.deadline)
@@ -1082,6 +1107,17 @@ fn run_cells(
     let deadline = Instant::now() + scenario_deadline + DEADLINE_GRACE;
     let temp = TempRoot::new(&run_label)?;
     let (profile, template) = selected_profile(&temp.0)?;
+    if let (true, Some(tick_ms)) = (quester_path, fast_settings.tick_ms) {
+        host_play::quest_fast::validate_tick_speed_target(
+            profile.client().game_host(),
+            profile.client().game_port(),
+        )?;
+        println!(
+            "QUESTER_TICK_MS={tick_ms} guarded to Engine Q at {}:{}",
+            profile.client().game_host(),
+            profile.client().game_port()
+        );
+    }
     // A persistence cell (`QUESTER_LIVE_ACCOUNT` + `QUESTER_LIVE_PASSWORD`)
     // logs one fixed account in across processes so what the host saved
     // for it under `HOME` — the bank hint — is found again; everything else

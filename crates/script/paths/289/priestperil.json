@@ -2651,11 +2651,11 @@
             3432,
             9886,
             3445,
-            9897,
+            9898,
             0
           ]
         ],
-        "source": "C maps/m53_154.jm2:4379,4437,6139 east side of second gate"
+        "source": "C maps/m53_154.jm2:4379,4437,6139 east side of second gate; includes the run-enabled Drezel exit tile [3441,9898]"
       }
     },
     "tools": [

@@ -57,6 +57,48 @@ script_quester_path` and optional `HEADED_RECORD=1` video, as below. The
 headless cell needs `QUESTER_SEEDS`; the headed scenario accepts seeds and
 otherwise starts from a clean account at the Path's authored anchor.
 
+### Fast quest runs (Engine Q only)
+
+`QUESTER_TICK_MS=300` opts the generic `quester_path` cell and the panel's
+`--live script_quester_path` entry into a 300 ms world tick. The harness sends
+`::speed 300` after login and fails unless a fresh exact system-chat confirmation
+arrives. This command is world-wide: the harness accepts it only at
+`127.0.0.1:44694` (Engine Q), refusing Engine A (`44594`) and the builder
+(`45594`) before the run starts. Use `local-289q` only in the disposable run
+HOME's `~/.274bot/servers.json`, with game/asset ports `44694`/`1180` and the
+Q engine directory as `login_key.engine_dir`; leave `members` unset so the
+guarded Q `world.json` supplies world membership. Do not add it to product defaults.
+
+`QUESTER_SUSTAIN_RUN=1` enables the existing per-account `Sustain` behavior.
+When tick speed is set, sustain defaults on unless explicitly disabled with
+`QUESTER_SUSTAIN_RUN=0`. It sends the content debugproc cheat `~energy` at each
+navigation leg and whenever run energy is at or below 25. Engine Q is configured
+`maxConnected: 1`, so a successful cell is its only connected account; terminal
+PASS/FAIL cleanup restores `::speed 600`. A process interrupted before terminal
+cleanup can leave Q at the fast rate, so keep Q quest-only.
+
+```sh
+ISOHOME_DIR=/path/to/throwaway-home BOT_SERVER_PROFILE=local-289q \
+QUESTER_LIVE_KEEP_HOME=1 LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+BOT_LIVE_NAME_PREFIX=qh WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 \
+WORLD_ENGINE_DIR=/path/to/lostcity-289-q/engine \
+WORLD_NAV_PACK=/path/to/274bot.navpack RS2B0T=/path/to/rs2b0t \
+BOT_CACHE_DIR=/path/to/owned-client-cache LIVE_EVIDENCE_DIR=/path/to/evidence \
+QUESTER_PATH=priestperil QUESTER_TICK_MS=300 QUESTER_SUSTAIN_RUN=1 \
+QUESTER_SEEDS=/path/to/seeds/priestperil.json \
+/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome cargo test -p host-play --features "live-harness test-support" \
+  --test quester_path_live live_quester_path_smoke -- --ignored --nocapture --test-threads=1
+```
+
+Interaction timing uses wall-clock limits: the `InteractPlan` defaults are a
+20,000 ms inactivity window and an 8,000 ms settle deadline (authored
+`settle_ms` overrides them); repeated action rounds are bounded by
+`ACTION_ROUND_MS=8,000`, door waits by `DOOR_WAIT_MS=5,000`, and the host's
+`EXIT_SAVE_TIMEOUT` is 5 s. A 300 ms world supplies more game ticks within
+these bounds, so fast runs are throughput/progress checks, not release timing
+qualification. Release qualification must still run at 600 ms. The same Q-only
+guard and cleanup apply to the headed `--live script_quester_path` entry.
+
 ## Evidence paths and throwaway HOME
 
 | Variable | What it holds |

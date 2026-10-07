@@ -37,7 +37,20 @@ enum Phase {
     Seeding,
     Running,
     Proving,
+    Cleaning,
     Done,
+}
+
+enum TerminalOutcome {
+    Pass,
+    Fail(String),
+}
+
+struct TerminalCleanup {
+    speed_ms: u32,
+    baseline: Option<i32>,
+    started: Instant,
+    outcome: TerminalOutcome,
 }
 
 /// Facts retained only while one [`StepKind::ObserveLampRedemption`] is
@@ -394,6 +407,7 @@ pub struct ScenarioRunner {
     relog_left_session: bool,
     engine_speed_ms: Option<u32>,
     engine_speed_sent: bool,
+    speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
     /// Cumulative skill XP baselines: captured at StartScript for its later
     /// watches, otherwise when the first XP watch for that skill begins.
@@ -433,6 +447,7 @@ pub struct ScenarioRunner {
     /// the default no-op.
     #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
+    terminal_cleanup: Option<TerminalCleanup>,
 }
 
 impl ScenarioRunner {
@@ -499,6 +514,7 @@ impl ScenarioRunner {
             relog_session: None,
             relog_left_session: false,
             engine_speed_ms,
+            speed_chat_baseline: None,
             engine_speed_sent: false,
             evidence: None,
             xp_baselines: Vec::new(),
@@ -513,6 +529,7 @@ impl ScenarioRunner {
             script_running: false,
             script_idle: false,
             shot_sink: None,
+            terminal_cleanup: None,
         }
     }
 
@@ -544,9 +561,9 @@ impl ScenarioRunner {
     }
 
     /// Recording sidecar position: `(step_index, total_steps, step_name)`.
-    /// Pre-start reads `seeding`, the proof tail reads `proving`, and a
-    /// finished run reads `done`, so every video timestamp lines up with
-    /// the step trace even outside the run steps.
+    /// Pre-start reads `seeding`, the proof tail reads `proving`, terminal
+    /// speed restoration reads `cleaning`, and a finished run reads `done`.
+    /// Every video timestamp lines up with the step trace even outside run steps.
     pub fn record_step(&self) -> (usize, usize, &'static str) {
         let total = self.scenario.steps.len();
         match self.phase {
@@ -556,6 +573,7 @@ impl ScenarioRunner {
                 |step| (self.step, total, step.name),
             ),
             Phase::Proving => (total, total, "proving"),
+            Phase::Cleaning => (total, total, "cleaning"),
             Phase::Done => (total, total, "done"),
         }
     }
@@ -773,7 +791,6 @@ impl ScenarioRunner {
         self.evidence.as_ref()
     }
 
-    /// The runner's pollable status.
     pub fn status(&self) -> RunnerStatus {
         match self.phase {
             Phase::Done => match self.evidence.as_ref().map(|e| e.outcome) {
@@ -790,7 +807,7 @@ impl ScenarioRunner {
                 step: self.step,
                 total: self.scenario.steps.len(),
             },
-            Phase::Proving => RunnerStatus::Running {
+            Phase::Proving | Phase::Cleaning => RunnerStatus::Running {
                 step: self.scenario.steps.len(),
                 total: self.scenario.steps.len(),
             },
@@ -822,6 +839,10 @@ impl ScenarioRunner {
             return;
         }
         let dirty = self.snapshot.rebuild(client);
+        if matches!(self.phase, Phase::Cleaning) {
+            self.tick_terminal_cleanup(client);
+            return;
+        }
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
             self.lamp_episode = None;
@@ -876,6 +897,7 @@ impl ScenarioRunner {
             }
             if !self.engine_speed_sent {
                 if let Some(ms) = self.engine_speed_ms {
+                    self.speed_chat_baseline = Some(self.latest_chat_sequence());
                     cheat(client, &format!("speed {ms}"));
                 }
                 self.engine_speed_sent = true;
@@ -1007,7 +1029,9 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Proving) && self.holds(self.scenario.proof) {
             self.finish_pass();
         }
-        if !matches!(self.phase, Phase::Done) && self.started.elapsed() > self.deadline {
+        if !matches!(self.phase, Phase::Done | Phase::Cleaning)
+            && self.started.elapsed() > self.deadline
+        {
             self.finish_fail(&format!(
                 "{}: deadline {:?} exceeded",
                 self.scenario.name, self.deadline
@@ -1135,6 +1159,10 @@ impl ScenarioRunner {
                 .protect_window
                 .as_ref()
                 .is_some_and(|window| window.ready(&self.snapshot, self.obj_names.as_deref())),
+            Proof::WorldSpeedChanged { ms } => self.speed_chat_baseline.is_some_and(|baseline| {
+                crate::proof::world_speed_confirmation_after(&self.snapshot, baseline)
+                    .is_some_and(|(actual, _)| actual == ms)
+            }),
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
@@ -1655,6 +1683,91 @@ impl ScenarioRunner {
     }
 
     fn finish_pass(&mut self) {
+        if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
+            self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Pass);
+            return;
+        }
+        self.record_pass();
+    }
+
+    fn finish_fail(&mut self, msg: &str) {
+        if matches!(self.phase, Phase::Cleaning) {
+            return;
+        }
+        if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
+            self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Fail(msg.to_owned()));
+            return;
+        }
+        self.record_fail(msg);
+    }
+
+    fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
+        self.phase = Phase::Cleaning;
+        self.terminal_cleanup = Some(TerminalCleanup {
+            speed_ms,
+            baseline: None,
+            started: Instant::now(),
+            outcome,
+        });
+    }
+
+    fn tick_terminal_cleanup(&mut self, client: &mut Client) {
+        const RESET_TIMEOUT: Duration = Duration::from_secs(12);
+        let Some(cleanup) = self.terminal_cleanup.as_ref() else {
+            self.record_fail("world speed cleanup lost its terminal state");
+            return;
+        };
+        if cleanup.baseline.is_none() {
+            let baseline = self.latest_chat_sequence();
+            let sent = cheat(client, &format!("speed {}", cleanup.speed_ms)).is_sent();
+            if let Some(cleanup) = self.terminal_cleanup.as_mut() {
+                cleanup.baseline = Some(baseline);
+            }
+            if !sent {
+                self.fail_terminal_cleanup("speed command was refused");
+            }
+            return;
+        }
+        let cleanup = self.terminal_cleanup.as_ref().unwrap();
+        let baseline = cleanup.baseline.unwrap();
+        if crate::proof::world_speed_confirmation_after(&self.snapshot, baseline)
+            .is_some_and(|(actual, _)| actual == cleanup.speed_ms)
+        {
+            let outcome = self.terminal_cleanup.take().unwrap().outcome;
+            self.complete_terminal(outcome);
+        } else if cleanup.started.elapsed() >= RESET_TIMEOUT {
+            self.fail_terminal_cleanup("speed confirmation timed out");
+        }
+    }
+
+    fn fail_terminal_cleanup(&mut self, reason: &str) {
+        let message = match self.terminal_cleanup.take().map(|cleanup| cleanup.outcome) {
+            Some(TerminalOutcome::Pass) => {
+                format!("could not restore Engine Q world speed to 600ms: {reason}")
+            }
+            Some(TerminalOutcome::Fail(original)) => format!(
+                "{original}; additionally could not restore Engine Q world speed to 600ms: {reason}"
+            ),
+            None => format!("could not restore Engine Q world speed to 600ms: {reason}"),
+        };
+        self.record_fail(&message);
+    }
+
+    fn complete_terminal(&mut self, outcome: TerminalOutcome) {
+        match outcome {
+            TerminalOutcome::Pass => self.record_pass(),
+            TerminalOutcome::Fail(message) => self.record_fail(&message),
+        }
+    }
+
+    fn latest_chat_sequence(&self) -> i32 {
+        self.snapshot
+            .chat_lines()
+            .first()
+            .map_or(0, |line| line.sequence)
+    }
+
+    fn record_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
@@ -1675,7 +1788,7 @@ impl ScenarioRunner {
         self.evidence = Some(evidence);
     }
 
-    fn finish_fail(&mut self, msg: &str) {
+    fn record_fail(&mut self, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(

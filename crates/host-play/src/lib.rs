@@ -22,6 +22,7 @@ pub mod passphrase;
 pub mod profile;
 pub mod progress;
 pub mod public_worlds;
+pub mod quest_fast;
 pub mod quest_pair;
 pub mod servers;
 pub mod walk_map;
