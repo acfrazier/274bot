@@ -306,12 +306,16 @@
             "until": { "obj": "redberries", "qty": 3 },
             "settle_ms": 300000
           },
-          "comment": "Batch three for burnt-pie retries (Gobdip's source: three static spawns on the default 100-tick timer, m51_52.jm2:6256,6257,6260; not Wydin's one-stock shop, port_sarim.inv:118, which failed at once with 'shop lacks requested item'). Redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256 success), so one set per pass sends every burn back to Varrock SE. Three covers at least one success in three cooks about 88% of the time, and held spares skip the patch walk via has_item; 0.488^9 is about 0.16%, so first pass + 8 restarts still parks only the truly starved tail.",
+          "comment": "Batch three for burnt-pie retries (Gobdip's source: three static spawns on the default 100-tick timer, m51_52.jm2:6256,6257,6260; not Wydin's one-stock shop, port_sarim.inv:118, which failed at once with 'shop lacks requested item'). Redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212 successchance 98,452; the cooking.rs2:150 roll lands 131/256 success), so one set per pass sends every burn back to Varrock SE. Three covers at least one success in three cooks about 88% of the time, and held spares skip the patch walk via has_item; 0.488^9 is about 0.16%, so first pass + 8 restarts still parks only the truly starved tail. Spares held away from the patch skip this take too and the retry runs locally; a partial batch still within take range tops up instead of walking away from the spawns.",
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+                { "Not": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 12 } } } }
+              ] }
             ]
           },
           "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
