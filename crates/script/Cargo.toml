@@ -9,8 +9,9 @@ publish = false
 # snapshot inflight). Isolate hooks compile only with this feature.
 memory-profile = []
 # Integration-only isolate seams. Enabled through the self dev-dependency,
-# never by normal consumers.
-test-hooks = []
+# never by normal consumers. Carries `api/test-hooks` so offline Quester
+# tests can seed a `BankMemory` (design-bank-snapshot §1.5).
+test-hooks = ["api/test-hooks"]
 # rustyscript pulls V8 into the build; `load` gates the JS isolate so
 # crates that only need compiled scripts stay V8-free. On for script tests
 # (they exercise Load) and for panel/host-play; nothing else depends on
@@ -48,11 +49,12 @@ libc = "0.2"
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
+# The ctx unit test builds an `ObjType` table; the compiled crate itself
+# never touches `client` (the bank hint's login identity comes through
+# `api::bank_memory::login_identity`).
+client = { workspace = true }
 # Integration tests use isolate seams without exposing them in normal builds.
 script = { path = ".", features = ["test-hooks", "path-schema"] }
-# The ctx unit test builds an `ObjType` table; the compiled crate itself
-# never touches `client`.
-client = { workspace = true }
 [[test]]
 name = "load_isolate"
 required-features = ["load"]

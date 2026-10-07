@@ -4,9 +4,11 @@
 
 #![recursion_limit = "256"]
 
+pub mod admission;
 pub mod audio;
 pub mod cache;
 pub mod catalog_core;
+pub mod evidence_writer;
 pub mod external_loader;
 pub mod live_gate;
 pub mod live_start;
@@ -78,6 +80,7 @@ mod scatter;
 mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
+mod slot_bank_memory;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
@@ -92,10 +95,11 @@ pub use map_cache::{
 };
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
-    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, step_walk_arm_bank_fetch,
-    step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
+    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, observe_walk_arm_admission,
+    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath,
+    WalkArm, WalkArms, WalkRoute,
 };
-pub use walk_permissions::WalkGlobals;
+pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
@@ -274,6 +278,14 @@ pub struct Play {
     /// player-info tick. One struct per bot on the pump — no per-bot nav
     /// thread.
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    /// One last-seen bank per account (design-bank-snapshot §1.2), keyed
+    /// by the account's login identity ([`slot_bank_memory::memory_key`]),
+    /// not the typed username the arms are keyed by: every spelling the
+    /// client logs in as one account shares one memory, as it shares one
+    /// hint file. The slot thread is the only writer; the map outlives a
+    /// slot so a stop and respawn keeps the memory. The panel/TUI read it
+    /// through [`Play::bank_rows`].
+    bank_memories: HashMap<String, slot_bank_memory::SharedBankMemory>,
     /// Shared user preference; slot threads read it at the takeover fence.
     pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
     /// One coherent global permission snapshot, shared by every slot admission.
@@ -307,7 +319,7 @@ impl Play {
     pub fn walk_globals(&self) -> WalkGlobals {
         self.walk_globals_store.as_ref().map_or_else(
             || *self.walk_globals.lock().unwrap(),
-            |path| WalkGlobals::read_at(path).unwrap_or_default(),
+            |path| WalkGlobals::read_at(path).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         )
     }
 
@@ -330,6 +342,19 @@ impl Play {
     /// The immutable process profile, absent only for the legacy 274 entry.
     pub fn server_profile(&self) -> Option<&Arc<ServerProfile>> {
         self.connection.profile()
+    }
+
+    /// The account's last-seen bank (design-bank-snapshot §1.2): one copy
+    /// of the memory's rows with their origin, for an operator walk arm.
+    /// `name` is the typed username, looked up by the login identity it
+    /// decodes to ([`slot_bank_memory::memory_key`]). `Unknown` with no
+    /// rows for a never-observed or unknown account.
+    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+        slot_bank_memory::planner_rows(
+            self.bank_memories
+                .get(slot_bank_memory::memory_key(name).as_ref())
+                .map(|memory| &**memory),
+        )
     }
 
     /// WORLD membership bound to this process profile. Unknown is false.
@@ -517,7 +542,13 @@ mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;
 #[cfg(test)]
+mod bank_fetch_closed_live;
+#[cfg(test)]
+mod bank_memory_live;
+#[cfg(test)]
 mod bank_npc_live;
+#[cfg(test)]
+mod gather_bait_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;

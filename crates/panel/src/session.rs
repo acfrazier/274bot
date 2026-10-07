@@ -1294,7 +1294,9 @@ fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::Wal
     nav.allow_wilderness = view.globals.allow_wilderness;
     nav.allow_bank_fetch = view.globals.allow_bank_fetch;
     nav.allow_danger_zones = view.globals.allow_danger_zones;
+    nav.survivable_routing = view.globals.survivable_routing;
     nav.script_scope_notice_ack = view.script_scope_notice_ack;
+    nav.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2865,7 +2867,7 @@ impl Session {
             let walk = match travellers.lock().unwrap().get(name).cloned() {
                 Some(arm) => {
                     let arm = arm.lock().unwrap();
-                    (arm.route.clone(), arm.traveller.current_aim())
+                    (arm.route.as_deref().cloned(), arm.traveller.current_aim())
                 }
                 None => (None, None),
             };
@@ -3092,21 +3094,9 @@ impl Session {
                 z: c.map_build_base_z + rz,
                 level: c.minusedlevel,
             };
-            // Guardian hold freezes WalkArm follow; the armed route
-            // stays latched and resumes when hold lifts.
-            if !WalkArm::may_follow(hold) {
-                return;
-            }
             let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
                 return;
             };
-            {
-                let mut latch = tick_latch.lock().unwrap();
-                if latch.get(name) == Some(&(c.gens.player, here)) {
-                    return;
-                }
-                latch.insert(name.to_string(), (c.gens.player, here));
-            }
             let finished = {
                 let states = nav_states.lock().unwrap();
                 let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
@@ -3114,6 +3104,33 @@ impl Session {
                 };
                 let mut arm = arm.lock().unwrap();
                 let world = crate::picker::pack();
+                let refused = world.as_deref().is_some_and(|world| {
+                    host_play::observe_walk_arm_admission(
+                        snapshot,
+                        &mut arm,
+                        world,
+                        map_members,
+                        Some(name),
+                    )
+                });
+                if refused
+                    || !frontend_core::walk_permissions::manual_walk_may_follow(
+                        hold,
+                        frame.host_move_owned,
+                    )
+                {
+                    if refused {
+                        walk_clear.store(true, Ordering::Relaxed);
+                    }
+                    return;
+                }
+                {
+                    let mut latch = tick_latch.lock().unwrap();
+                    if latch.get(name) == Some(&(c.gens.player, here)) {
+                        return;
+                    }
+                    latch.insert(name.to_string(), (c.gens.player, here));
+                }
                 host_play::step_walk_arm_follow(
                     c,
                     snapshot,
@@ -4327,22 +4344,33 @@ impl Session {
         .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
-    /// Open bank rows (obj id, count) from the focused slot's last
-    /// published snapshot — empty when the bank is closed or no slot is
-    /// focused (BankBudget has no closed-bank inventory).
-    fn focused_walk_bank(&self) -> Vec<(i32, i32)> {
-        self.walk_bank(self.focused_name().as_deref())
-    }
-
-    fn walk_bank(&self, name: Option<&str>) -> Vec<(i32, i32)> {
+    fn walk_risk_input(&self, name: Option<&str>) -> host_play::admission::RiskInput {
         name.and_then(|name| {
             self.nav_states
                 .lock()
                 .unwrap()
                 .get(name)
-                .map(|(snap, _)| snap.bank().iter().map(|it| (it.def.id, it.count)).collect())
+                .map(|(snapshot, _)| {
+                    host_play::admission::capture(
+                        snapshot,
+                        self.map_members(),
+                        Default::default(),
+                        false,
+                    )
+                })
         })
-        .unwrap_or_default()
+        .unwrap_or_else(|| host_play::admission::unavailable(self.map_members()))
+    }
+
+    /// The named slot's bank memory rows with their origin
+    /// ([`host_play::Play::bank_rows`]): what a WalkTo's BankBudget session
+    /// is planned over, open bank or not. `Unknown` with no rows when no
+    /// slot is named or no host runs.
+    fn walk_bank(&self, name: Option<&str>) -> nav::bank_fetch::BankRows {
+        match (self.core.play(), name) {
+            (Some(play), Some(name)) => play.bank_rows(name),
+            _ => nav::bank_fetch::BankRows::default(),
+        }
     }
 
     pub fn sync_walk_map(&mut self, world: Option<Arc<NavWorld>>) {
@@ -4650,8 +4678,9 @@ impl Session {
             let play = self.core.play().ok_or(ActionError::NoFocus)?;
             self.walk_dest = Some(command.destination());
             let state = self.focused_walk_state();
-            let bank = self.focused_walk_bank();
-            play.map_walk(command, &context, &state, &bank, &self.travellers)
+            let bank = self.walk_bank(name.as_deref());
+            let input = self.walk_risk_input(name.as_deref());
+            play.map_walk(command, &context, &state, &bank, input, &self.travellers)
         });
         match result {
             Ok(_) => {
@@ -4805,6 +4834,7 @@ impl Session {
             |name| WalkInputs {
                 state: self.walk_state(Some(name)),
                 bank: self.walk_bank(Some(name)),
+                risk_input: self.walk_risk_input(Some(name)),
             },
         );
         let walking = report.done_count();

@@ -210,6 +210,9 @@ impl CookDialogueFixture {
                 }
                 HostEffect::BankPick(_) => panic!("held Cook items must not require a bank pick"),
                 HostEffect::Walk(_) => panic!("held Cook hand-in must not require a walk"),
+                HostEffect::AssessWalk(_) => {
+                    panic!("held Cook hand-in must not require a walk assessment")
+                }
             }
         }
         flow

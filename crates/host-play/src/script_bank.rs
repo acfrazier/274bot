@@ -563,14 +563,15 @@ pub(super) fn queue_native_bank_pick(
         world,
         state,
         from,
-        super::walk_permissions::native_options(
+        super::walk_permissions::native_admission(
             navs,
             name,
             script::native::WalkOptions {
                 allow_teleports: script::native::WalkBit::Forbid,
                 ..request.options
             },
-        ),
+        )
+        .0,
         request_id,
         preferences,
         None,

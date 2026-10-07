@@ -28,7 +28,9 @@ const DONE: &str = "walking";
 /// per-bot world snapshot.
 pub struct WalkInputs {
     pub state: WorldState,
-    pub bank: Vec<(i32, i32)>,
+    /// The bot's bank memory rows ([`host_play::Play::bank_rows`]).
+    pub bank: nav::bank_fetch::BankRows,
+    pub risk_input: host_play::admission::RiskInput,
 }
 
 /// The consumed destination plus the routing options that produced it.
@@ -111,6 +113,7 @@ pub fn walk_marked<Io>(
             name,
             state: &bot.state,
             bank: &bot.bank,
+            risk_input: bot.risk_input,
         })
         .collect();
     let report = play.map_walk_group(plan, &context, &requests, walk.arms);
@@ -127,6 +130,9 @@ pub fn walk_marked<Io>(
                     WalkSlotOutcomeKind::Excluded(_) => (BulkOutcome::skipped(reason), None),
                     WalkSlotOutcomeKind::Failed(ActionError::BlockedByZones { detail }) => {
                         (BulkOutcome::failed(reason), detail)
+                    }
+                    WalkSlotOutcomeKind::Failed(ActionError::RiskRefused { detail, .. }) => {
+                        (BulkOutcome::failed(reason), Some(detail))
                     }
                     WalkSlotOutcomeKind::Failed(_) => (BulkOutcome::failed(reason), None),
                 };

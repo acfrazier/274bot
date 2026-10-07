@@ -207,11 +207,22 @@ impl SettledStart for SlotScript {
     }
 }
 
-/// the per-observe inventory view (the observe re-checks the gate inside).
-pub(super) fn script_running(scripts: &ScriptWall, name: &str) -> bool {
-    script_slot(scripts, name)
-        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
-        .is_some_and(|state| state == script::RunState::Running)
+/// Capture one script-state projection for the frame's ownership and inventory
+/// gates. Script observation re-checks the state under its own dispatch fence.
+pub(super) fn script_frame_state(scripts: &ScriptWall, name: &str) -> Option<script::RunState> {
+    script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+}
+
+pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {
+    matches!(
+        state,
+        Some(
+            script::RunState::Starting
+                | script::RunState::Running
+                | script::RunState::Paused
+                | script::RunState::Stopping
+        )
+    )
 }
 
 /// A script is running or paused on the slot (frozen `scriptActive()`,

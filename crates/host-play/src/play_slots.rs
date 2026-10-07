@@ -39,8 +39,8 @@ use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
     deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
-    reset_script_nav, script_active, script_observe_cached_with_channels, script_paint_of,
-    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
+    reset_script_nav, script_active, script_frame_state, script_observe_cached_with_channels,
+    script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
@@ -53,6 +53,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SlotFrameInput {
     pub hold: bool,
+    /// Native/script or escape ownership freezes ordinary frontend movement.
+    pub host_move_owned: bool,
     pub manual_move_intent: Option<host::ManualMoveIntent>,
     pub manual_steps: usize,
 }
@@ -62,6 +64,14 @@ impl SlotFrameInput {
     pub fn manual_move_count(self) -> usize {
         usize::from(self.manual_move_intent.is_some()) + self.manual_steps
     }
+}
+/// Project script and native-navigation ownership into the frame value read
+/// by the panel and TUI follow gates.
+pub(super) fn project_slot_frame_host_move_owned(
+    script_state: Option<script::RunState>,
+    nav_owned: bool,
+) -> bool {
+    crate::script_runtime::script_movement_owned(script_state) || nav_owned
 }
 
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
@@ -80,6 +90,7 @@ pub(super) fn take_slot_frame_input(
         .unwrap_or_default();
     let frame = SlotFrameInput {
         hold,
+        host_move_owned: false,
         manual_move_intent: input.take_manual_move_intent(),
         manual_steps: wires
             .iter()
@@ -419,6 +430,10 @@ impl Play {
         slot_script
             .lock()
             .unwrap()
+            .bind_world_members(self.connection.world_members());
+        slot_script
+            .lock()
+            .unwrap()
             .bind_quest_pairs(self.quest_pairs.seat(
                 &username,
                 self.connection.game_host(),
@@ -440,6 +455,35 @@ impl Play {
             bot.walk_globals = Some(Arc::clone(&self.walk_globals));
             bot.walk_globals_store = self.walk_globals_store.clone();
         }
+        // The account's bank memory, keyed by the login identity every
+        // spelling of the name shares (its hint path's identity), and its
+        // hint file, both resolved here on the spawning thread
+        // (design-bank-snapshot §1.2, §1.4): the slot thread never resolves
+        // `HOME`, so a test's thread-local `IsolatedEnv` pin covers every
+        // save.
+        let bank_memory = Arc::clone(
+            self.bank_memories
+                .entry(super::slot_bank_memory::memory_key(&username).into_owned())
+                .or_default(),
+        );
+        let bank_hint = match self.connection.profile() {
+            Some(profile) => {
+                match script::bank_hints::HintFile::for_account(profile.name(), &username) {
+                    Ok(hint) => Some(hint),
+                    Err(error) => {
+                        host_log!(
+                            Category::BankOp,
+                            Level::Warn,
+                            slot = &username,
+                            "bank hints: {error}; the memory lives for this process only"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let slot_bank = super::slot_bank_memory::SlotBankMemory::new(bank_memory, bank_hint);
         let world = world_round.as_ref().and_then(|round| {
             self.connection
                 .profile()
@@ -473,6 +517,7 @@ impl Play {
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
             Arc::clone(&self.navs),
+            slot_bank,
             Arc::clone(&self.pause_script_on_manual_walk_abort),
             self.world.clone(),
             Arc::clone(&self.obj_names),
@@ -740,6 +785,7 @@ fn spawn_slot_thread(
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    slot_bank: super::slot_bank_memory::SlotBankMemory,
     slot_manual_abort_pause: Arc<std::sync::atomic::AtomicBool>,
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
@@ -779,6 +825,9 @@ fn spawn_slot_thread(
             };
             #[cfg(feature = "memory-profile")]
             let _duel_retirement = memory::DuelReportRetirement { name: &username };
+            // Pending bank observations are saved however the worker leaves
+            // (design-bank-snapshot §1.4: slot exit is a save point).
+            let _bank_exit_save = super::slot_bank_memory::ExitSave(&slot_bank);
             #[cfg(test)]
             if let Some(published) = startup_entries_published {
                 published.send(()).unwrap();
@@ -1173,6 +1222,9 @@ fn spawn_slot_thread(
                         let slot_manual_abort_pause = Arc::clone(&slot_manual_abort_pause);
                         let slot_world = slot_world.clone();
                         let observe_channels = slot_channels.clone();
+                        // Borrowed, not cloned: the slot thread's one handle
+                        // on the account's bank memory and hint file.
+                        let slot_bank = &slot_bank;
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
                         let map_members = connection
                             .profile()
@@ -1250,6 +1302,9 @@ fn spawn_slot_thread(
                                         &slot_navs,
                                         &observe_channels,
                                     );
+                                    // Before the first script tick of the
+                                    // session (design-bank-snapshot §1.4).
+                                    slot_bank.session_started();
                                 } else {
                                     end_slot_session(
                                         name,
@@ -1260,10 +1315,14 @@ fn spawn_slot_thread(
                                         &slot_navs,
                                         &observe_channels,
                                     );
+                                    slot_bank.session_ended();
                                 }
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            // The open bank's rows reach the account memory
+                            // here (design-bank-snapshot §1.3); a close saves.
+                            slot_bank.observe_frame(&nav_snapshot);
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -1405,7 +1464,7 @@ fn spawn_slot_thread(
                             // Collect intent before either follow pump or script
                             // dispatch; this is the shared takeover ordering seam.
                             // Keep these commands for their normal late send/hold gate.
-                            let (frame_input, wires) =
+                            let (mut frame_input, wires) =
                                 take_slot_frame_input(&slot_input, name, &slot_wires, hold);
                             take_manual_walk_ownership(
                                 &slot_scripts,
@@ -1416,6 +1475,14 @@ fn spawn_slot_thread(
                                 *script_tick,
                                 slot_manual_abort_pause.load(Ordering::Relaxed),
                             );
+                            let script_state = script_frame_state(&slot_scripts, name);
+                            let running = script_state == Some(script::RunState::Running);
+                            let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
+                                bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
+                                bot.route.is_some() || bot.bank_fetch.is_some(),
+                            ));
+                            frame_input.host_move_owned =
+                                project_slot_frame_host_move_owned(script_state, nav_owned);
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             slot_frame(c, name, frame_input);
@@ -1485,11 +1552,7 @@ fn spawn_slot_thread(
                             } else {
                                 super::script_channels::BrokerWorld::Local
                             };
-                            let running = script_running(&slot_scripts, name);
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
-                            let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                b.route.is_some() || b.bank_fetch.is_some()
-                            });
                             let nav_state = nav_world_state_for_observe(
                                 here,
                                 &nav_snapshot,
@@ -1503,6 +1566,9 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
+                            // The observer borrows the account's bank memory
+                            // for the compiled tick alone; the slot's own
+                            // write for the frame already happened above.
                             let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
@@ -1518,6 +1584,7 @@ fn spawn_slot_thread(
                                 inv,
                                 nav_state,
                                 Some(&nav_snapshot),
+                                Some(slot_bank.memory()),
                                 npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
@@ -1601,6 +1668,7 @@ fn spawn_slot_thread(
                                     slot_world.as_ref(),
                                     hold,
                                     map_members,
+                                    Some(slot_bank.memory()),
                                     || {
                                         slot_arrival_reach(
                                             &slot_scripts,
@@ -1650,6 +1718,7 @@ fn spawn_slot_thread(
                         &slot_navs,
                         &slot_channels,
                     );
+                    slot_bank.session_ended();
                 }
                 if arm.stop.load(Ordering::Relaxed) {
                     return;

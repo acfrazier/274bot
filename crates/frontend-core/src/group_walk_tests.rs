@@ -9,6 +9,7 @@ use api::snapshot::WorldTile;
 use host_play as map_host;
 use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
+use nav::bank_fetch::BankRows;
 use nav::collision::WorldCollision;
 use nav::map::identity::Digest;
 use nav::router::{AvoidRect, FindOptions};
@@ -161,7 +162,21 @@ impl Fixture {
     fn walk_to(&mut self, selection: &MarkedSelection, dest: Tile) -> BulkReport {
         let world = self.core.play().unwrap().world().unwrap();
         assert_eq!(self.model.select_tile(&world, dest), Some(dest));
-        let options = FindOptions::default();
+        // These pre-admission fixtures exercise geometry, not incomplete risk
+        // snapshots. Only their zone-less walks opt in explicitly.
+        let options = FindOptions {
+            zones: if world
+                .graph
+                .zones
+                .as_ref()
+                .is_none_or(|zones| zones.zones().is_empty())
+            {
+                nav::zones::ZoneExempt::all()
+            } else {
+                nav::zones::ZoneExempt::default()
+            },
+            ..FindOptions::default()
+        };
         let walk = MarkedWalk {
             prepared: self
                 .model
@@ -192,7 +207,8 @@ fn marks(uids: &[i32]) -> MarkedSelection {
 fn empty_inputs(_: &str) -> WalkInputs {
     WalkInputs {
         state: WorldState::empty(),
-        bank: Vec::new(),
+        bank: BankRows::default(),
+        risk_input: Default::default(),
     }
 }
 
@@ -241,7 +257,7 @@ fn group_walk_reports_blocking_zone_names_for_each_failed_marked_bot() {
         .filter(|row| {
             matches!(
                 &row.outcome,
-                BulkOutcome::Failed(reason) if reason.as_str() == "blocked by danger zones"
+                BulkOutcome::Failed(reason) if reason.as_str() == "walk risk refused"
             )
         })
         .collect();

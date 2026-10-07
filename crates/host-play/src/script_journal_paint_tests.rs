@@ -110,6 +110,7 @@ impl PaintRig {
             Some(&self.snapshot),
             None,
             None,
+            None,
             &self.scripts,
             &self.cheats,
             &self.navs,

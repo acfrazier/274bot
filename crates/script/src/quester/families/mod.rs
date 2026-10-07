@@ -154,6 +154,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             compile_modal_open
         ),
         super::compile::fact!(
+            "members_world",
+            1,
+            super::compile::ProgressRead::None,
+            NoArgs,
+            compile_members_world
+        ),
+        super::compile::fact!(
             "item_count_at_least",
             1,
             super::compile::ProgressRead::None,
@@ -266,6 +273,13 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             s2::compile_equipment_only
         ),
         super::compile::fact!(
+            "pack_only",
+            1,
+            super::compile::ProgressRead::None,
+            s2::PackOnlyArgs,
+            s2::compile_pack_only
+        ),
+        super::compile::fact!(
             "partner_item_count_at_least",
             1,
             super::compile::ProgressRead::None,
@@ -323,11 +337,6 @@ impl PredicatePlan for AllPlan {
     fn requires_bank(&self) -> bool {
         self.items.iter().any(|item| item.requires_bank())
     }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        for item in &self.items {
-            item.bank_item_ids(out);
-        }
-    }
 }
 struct AnyPlan {
     items: Vec<Arc<dyn PredicatePlan>>,
@@ -339,11 +348,6 @@ impl PredicatePlan for AnyPlan {
     fn requires_bank(&self) -> bool {
         self.items.iter().any(|item| item.requires_bank())
     }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        for item in &self.items {
-            item.bank_item_ids(out);
-        }
-    }
 }
 struct NotPlan {
     inner: Arc<dyn PredicatePlan>,
@@ -354,9 +358,6 @@ impl PredicatePlan for NotPlan {
     }
     fn requires_bank(&self) -> bool {
         self.inner.requires_bank()
-    }
-    fn bank_item_ids(&self, out: &mut Vec<i32>) {
-        self.inner.bank_item_ids(out);
     }
 }
 
@@ -779,6 +780,22 @@ impl PredicatePlan for ModalOpen {
     }
 }
 
+fn compile_members_world(
+    _args: NoArgs,
+    _cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    Ok(Arc::new(MembersWorld))
+}
+/// True on a members world, False on a free-to-play world, Unknown with no
+/// bound server profile. Reads the host-attached profile fact; the account's
+/// own membership flag does not decide it.
+struct MembersWorld;
+impl PredicatePlan for MembersWorld {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        cx.cx.snapshot().world_members()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -1059,9 +1076,11 @@ struct WalkArgs {
     /// Source citation for this authored destination.
     #[serde(default)]
     source: String,
-    /// Navigation radius in tiles; 0 means 1.
+    /// Navigation radius in tiles; omitted means 1. An explicit 0 requires
+    /// the exact tile: the walk settles only on it, and a blocked or
+    /// unstandable tile is refused by the route instead of approached.
     #[serde(default)]
-    radius: u16,
+    radius: Option<u16>,
     /// Named danger zones this movement may cross.
     #[serde(default)]
     cross: Vec<String>,
@@ -1120,7 +1139,7 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
             z: arg.tile[1],
             level: arg.tile[2],
         },
-        radius: arg.radius.max(1),
+        radius: arg.radius.unwrap_or(1),
         options,
         cross,
         protect,
@@ -1812,6 +1831,8 @@ struct InteractRun {
     dialogue_completed: bool,
     accepted_tick: Option<u64>,
     scene_activity_observed: bool,
+    /// The accepted click's target was within interaction range when the
+    /// click was chosen or when its receipt was read.
     scene_in_range_at_acceptance: bool,
     until: Option<(i32, i32)>,
     /// Authored exact loc tile; `None` makes the target fungible.
@@ -2127,19 +2148,20 @@ impl StepRun for InteractRun {
                 let chosen = pick.select(self.reachable_only).map(|loc| {
                     (
                         loc.tile,
-                        reach::loc_walk_id(loc),
+                        reach::loc_walk_request(
+                            loc,
+                            cx.tick.cx.snapshot().here().map(|here| here.value),
+                            cx.required_after,
+                        ),
                         reach::loc_arrived(&cx.tick.cx, loc),
                     )
                 });
-                if let Some((tile, walk_id, arrived)) = chosen {
+                if let Some((tile, request, arrived)) = chosen {
                     if self.target_tile.is_none() {
                         self.round_pick = Some(tile);
                     }
                     if !arrived {
-                        self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, 1, walk_id, cx.required_after),
-                            &mut cx.tick.cx,
-                        )?);
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
                         return Poll::Pending;
                     }
                 }
@@ -2229,6 +2251,12 @@ impl StepRun for InteractRun {
             return Poll::Pending;
         }
         if let Some(handle) = &self.reach {
+            // An adjacent instant op can transform the target or teleport the
+            // player before the receipt is read, so range is also proven on
+            // the snapshot that chose the click.
+            let in_range_at_click = handle
+                .inspect(reach::Reach::in_range_at_click)
+                .unwrap_or(false);
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(false)) => Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -2238,14 +2266,15 @@ impl StepRun for InteractRun {
                     self.reach = None;
                     self.round_accepted = true;
                     self.accepted_tick = Some(cx.tick.cx.evidence().tick);
-                    self.scene_in_range_at_acceptance = scene_target_within_interaction_range(
-                        &cx.tick.cx,
-                        &self.kind,
-                        Some(&self.op),
-                        self.radius,
-                        self.pinned_tile(),
-                        self.strict(),
-                    );
+                    self.scene_in_range_at_acceptance = in_range_at_click
+                        || scene_target_within_interaction_range(
+                            &cx.tick.cx,
+                            &self.kind,
+                            Some(&self.op),
+                            self.radius,
+                            self.pinned_tile(),
+                            self.strict(),
+                        );
                     if self.until.is_some() {
                         self.round_deadline =
                             Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
@@ -3042,10 +3071,9 @@ impl StepRun for UseOnRun {
                                     self.deadline = None;
                                 }
                                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(
-                                        loc.tile,
-                                        1,
-                                        reach::loc_walk_id(loc),
+                                    reach::loc_walk_request(
+                                        loc,
+                                        cx.tick.cx.snapshot().here().map(|here| here.value),
                                         cx.required_after,
                                     ),
                                     &mut cx.tick.cx,
@@ -3240,7 +3268,6 @@ impl StepRun for UseOnRun {
                 required_after: cx.required_after,
                 chat_since: self.chat_since,
                 outcome: None,
-                bank: cx.bank,
             };
             if self
                 .no_product
@@ -3499,7 +3526,6 @@ impl StepRun for AcquireRun {
                 required_after: cx.required_after,
                 chat_since: self.chat_since,
                 outcome: self.child_outcome.as_ref(),
-                bank: cx.bank,
             });
             if truth != Truth::True {
                 if cx.tick.cx.active_now() >= self.settle_deadline {
@@ -3523,7 +3549,6 @@ impl StepRun for AcquireRun {
                     required_after: cx.required_after,
                     chat_since: reach::last_chat_seq(&cx.tick.cx),
                     outcome: None,
-                    bank: cx.bank,
                 });
                 if skip == Truth::Unknown {
                     let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
@@ -3705,7 +3730,6 @@ impl StepRun for WaitRun {
             required_after: cx.required_after,
             chat_since: self.chat_since,
             outcome: None,
-            bank: cx.bank,
         };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;

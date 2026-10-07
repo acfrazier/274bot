@@ -417,7 +417,7 @@ fn main() -> Result<(), String> {
                 FindOptions::default(),
                 &rich,
             );
-            let route = search.route(0).expect("rich-state mountain detour");
+            let route = search.route(0).expect("rich-state back-ridge route");
             let tiles: usize = route
                 .legs
                 .iter()
@@ -426,7 +426,10 @@ fn main() -> Result<(), String> {
                     nav::router::Leg::Transport { .. } => 1,
                 })
                 .sum();
-            assert_eq!((route.ticks, tiles), (341.0, 683));
+            // Combat 126: nav-wwm-route's collision-flood hunter zones open the
+            // back of White Wolf Mountain above combat 50 (356 tiles, 177.5
+            // ticks, NAV-WWM-ROUTE report §Routes), replacing the 683-tile detour.
+            assert_eq!((route.ticks, tiles), (177.5, 356));
             Observation {
                 outcome: format!("{:?}", search.results()[0]),
                 settled: search.settled(),

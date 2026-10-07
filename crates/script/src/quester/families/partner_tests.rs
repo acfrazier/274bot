@@ -231,7 +231,6 @@ fn with_step<R>(
     with_tick(snapshot, ledger, tick, |native| {
         let quests = api::quest_facts::QuestCatalog::empty();
         let required_after = native.cx.evidence();
-        let bank = crate::quester::bank_memo::BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let choices = crate::quester::choices::QuestChoices::default();
         f(&mut StepContext {
@@ -239,7 +238,6 @@ fn with_step<R>(
             quests: &quests,
             progress: &[],
             required_after,
-            bank: &bank,
             banks: &banks,
             choices: &choices,
         })
@@ -754,7 +752,6 @@ fn recovery_item_fact_compiles_only_bounded_arrav_items_and_an_authored_pair_rol
         recipes: &recipes,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         loadouts: &loadouts,
     };

@@ -299,7 +299,6 @@ mod tests {
             let mut ledger: Option<Box<ledger::Ledger>> = None;
             with_tick(&snapshot, &mut ledger, 1, |tick| {
                 let quests = api::quest_facts::QuestCatalog::empty();
-                let bank = crate::quester::bank_memo::BankMemo::default();
                 let context = PredicateContext {
                     cx: &tick.cx,
                     pairs: tick.pairs,
@@ -308,7 +307,6 @@ mod tests {
                     required_after: tick.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
-                    bank: &bank,
                 };
                 assert_eq!(
                     SettingPredicate { retaliate: false }.evaluate(&context),

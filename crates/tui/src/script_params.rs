@@ -1021,6 +1021,7 @@ mod tests {
                     allow_wilderness: false,
                     allow_bank_fetch: false,
                     allow_danger_zones: false,
+                    survivable_routing: false,
                 },
                 ..Default::default()
             },
@@ -1081,6 +1082,7 @@ mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 allow_danger_zones: false,
+                survivable_routing: false,
             },
             ..Default::default()
         };

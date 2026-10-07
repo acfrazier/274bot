@@ -1902,6 +1902,10 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     .unwrap();
     let selected = options.resolve_with_env(None, &env).unwrap();
     assert!(selected.map_members());
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::True
+    );
     assert!(matches!(
         selected.world_members(),
         host_play::WorldMembersFact::Known {
@@ -1913,6 +1917,10 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     write_world_json(&engine, 274, 43594, "false");
     let selected = options.resolve_with_env(None, &env).unwrap();
     assert!(!selected.map_members());
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::False
+    );
     assert!(matches!(
         selected.world_members(),
         host_play::WorldMembersFact::Known { members: false, .. }
@@ -1924,6 +1932,11 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     assert_eq!(
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
+    );
+    // A bound profile that declares nothing is free-to-play for scripts.
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::False
     );
 
     // Engine ports are independent from forwarded connect ports.
@@ -2042,13 +2055,18 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
     ));
 }
 
+/// White Wolf Mountain's pack wolves and sentries are vislevel 25 with
+/// `check_nottoostrong=outside_wilderness`: they never hunt a player above
+/// combat 50, but they do walk the back ridge. A known combat-51 account
+/// therefore has a safe land route around the back; an unknown or low combat
+/// state is honestly refused at the mountain.
 #[test]
 #[ignore = "requires NAV_TEST_PACK pointing to the shipped revision-289 nav pack"]
 fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
     use host_play::walk_map::{ActionError, WalkRequest};
     use nav::{
-        router::{find_with, FindOptions},
+        router::{find_blocking_zones, FindOptions},
         world::NavWorld,
         world_state::WorldState,
     };
@@ -2066,19 +2084,23 @@ fn public_profile_routes_lumbridge_to_ardougne() {
     let fixture = Fixture::new();
     let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     let world = NavWorld::load_pack(Path::new(&std::env::var("NAV_TEST_PACK").unwrap())).unwrap();
-    let from = WorldTile {
-        x: 3220,
-        z: 3211,
-        level: 0,
-    };
-    let to = WorldTile {
-        x: 2661,
-        z: 3301,
-        level: 0,
-    };
-    for (override_members, reachable) in [(None, true), (Some(false), false)] {
+    let zones = world.graph.zones.as_ref().expect("baked zones");
+    let tile = |x, z| WorldTile { x, z, level: 0 };
+    let lumbridge_ardougne = (tile(3220, 3211), tile(2661, 3301));
+    let taverley_catherby = (tile(2895, 3450), tile(2809, 3440));
+    let cases = [
+        (None, Some(51), lumbridge_ardougne, true),
+        (None, Some(51), taverley_catherby, true),
+        (None, None, lumbridge_ardougne, false),
+        (None, Some(50), lumbridge_ardougne, false),
+        (None, Some(3), taverley_catherby, false),
+        (Some(false), Some(51), lumbridge_ardougne, false),
+    ];
+    for (override_members, combat, (from, to), reachable) in cases {
         options.world_members = override_members;
         let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let mut state = WorldState::empty().with_map_members(selected.map_members());
+        state.combat_level = combat;
         let result = WalkRequest {
             slot: Some("members-route-regression"),
             origin: Some(nav::tile::Tile {
@@ -2096,31 +2118,88 @@ fn public_profile_routes_lumbridge_to_ardougne() {
             members: selected.world_members(),
         }
         .run(|| {
-            find_with(
+            let admission = host_play::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                0,
+                host_play::WalkGlobals::default(),
+            );
+            host_play::arm_walk_on(
+                &world,
+                nav::tile::Tile {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                },
+                nav::tile::Tile {
+                    x: to.x,
+                    z: to.z,
+                    level: to.level,
+                },
+                FindOptions::default(),
+                &state,
+                &nav::bank_fetch::BankRows::default(),
+                admission,
+                &host_play::WalkArms::default(),
+                None,
+            )
+            .map_err(|_| ActionError::NoPath)
+        });
+        let label = format!("{override_members:?} combat={combat:?} {from:?}->{to:?}");
+        assert_eq!(result.is_ok(), reachable, "{label}: {result:?}");
+        if let Ok(route) = &result {
+            let walked: Vec<_> = route
+                .route
+                .legs
+                .iter()
+                .flat_map(|leg| match leg {
+                    nav::router::Leg::Walk { tiles } => tiles.clone(),
+                    nav::router::Leg::Transport { edge } => vec![edge.at, edge.to],
+                })
+                .collect();
+            assert!(
+                walked
+                    .iter()
+                    .any(|t| t.x <= 2800 && t.z >= 3480 && t.z <= 3530)
+                    && walked
+                        .iter()
+                        .any(|t| (2817..=2860).contains(&t.x) && t.z >= 3520),
+                "{label}: the land route goes around the back of White Wolf Mountain"
+            );
+        } else if override_members.is_none() {
+            let names: Vec<_> = find_blocking_zones(
                 &world.collision,
                 &world.graph,
                 from,
                 to,
                 FindOptions::default(),
-                &WorldState::empty().with_map_members(selected.map_members()),
+                &state,
+                &[],
             )
-            .map_err(|_| ActionError::NoPath)
-        });
-        assert_eq!(
-            result.is_ok(),
-            reachable,
-            "{override_members:?}: {result:?}"
-        );
+            .expect("a zone-attributed refusal")
+            .into_iter()
+            .map(|key| zones.name(key))
+            .collect();
+            assert!(
+                names.iter().any(|name| name == "white-wolf-mountain"),
+                "{label}: {names:?}"
+            );
+        }
     }
     let logs = LOG.0.lock();
-    assert_eq!(logs.len(), 3, "one request line plus one failed terminal");
+    assert_eq!(
+        logs.len(),
+        2 + 4 * 2,
+        "one request line each plus one failed terminal per refusal"
+    );
     assert!(logs[0].contains("map_members=true"));
     assert!(logs[0].contains("members_source=rs2b2t "));
-    assert!(logs[1].contains("map_members=false"));
-    assert!(logs[1].contains("members_source=explicit "));
-    assert!(logs[1].contains("refused=NoPath"));
-    assert!(logs[2].contains("WalkTo outcome=aborted"));
-    assert!(logs[2].contains("reason=NoPath"));
+    let members_off = logs.len() - 2;
+    assert!(logs[members_off].contains("map_members=false"));
+    assert!(logs[members_off].contains("members_source=explicit "));
+    assert!(logs[members_off].contains("refused=NoPath"));
+    assert!(logs[members_off + 1].contains("WalkTo outcome=aborted"));
+    assert!(logs[members_off + 1].contains("reason=NoPath"));
     for line in logs.iter() {
         println!("{line}");
     }
@@ -2359,6 +2438,10 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
             members: true,
             source: host_play::WorldMembersSource::Rs2b2tWorlds,
         }
+    );
+    assert_eq!(
+        selected.world_members().world_truth(),
+        api::selected::Truth::True
     );
 }
 

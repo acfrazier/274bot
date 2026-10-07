@@ -2349,6 +2349,32 @@ fn straight_wall_reach_matches_engine_sides_and_step_gates() {
     ));
 }
 
+#[test]
+fn straight_wall_facing_is_the_reachable_side_across_the_wall() {
+    let destination = tile(6, 5);
+    for (angle, facing) in [
+        (0, tile(5, 5)),
+        (1, tile(6, 6)),
+        (2, tile(7, 5)),
+        (3, tile(6, 4)),
+    ] {
+        assert_eq!(
+            straight_wall_facing(destination, 0, angle),
+            Some(facing),
+            "angle {angle}"
+        );
+        assert!(straight_wall_reachable(
+            facing,
+            destination,
+            0,
+            angle,
+            |_, _| false
+        ));
+    }
+    assert_eq!(straight_wall_facing(destination, 9, 0), None);
+    assert_eq!(straight_wall_facing(destination, 0, 4), None);
+}
+
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),

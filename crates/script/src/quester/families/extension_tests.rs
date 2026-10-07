@@ -778,7 +778,6 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
                         required_after: cx.required_after,
                         chat_since: 0,
                         outcome: None,
-                        bank: cx.bank,
                     })
                 })
             })
@@ -2281,6 +2280,134 @@ fn distant_instant_interact_still_requires_activity_then_fresh_idle() {
         Poll::Ready(Ok(_))
     ));
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+}
+
+fn instant_loc_plan(id: i32, op: &str) -> InteractPlan {
+    InteractPlan {
+        kind: reach::ReachKind::Loc {
+            id: Some(id),
+            name: None,
+        },
+        op: Arc::from(op),
+        ..loc_interact_plan(20_000, None)
+    }
+}
+
+fn trapdoor(id: i32, ops: &[&str], at: WorldTile, distance: i32) -> LocView {
+    let mut trapdoor = loc(id, "Trapdoor", ops[0]);
+    trapdoor.actions = ops.iter().map(|op| Some((*op).into())).collect();
+    trapdoor.tile = at;
+    trapdoor.distance = distance;
+    trapdoor
+}
+
+/// Clicks `plan` on tick 2, applies `server` before the receipt is read on
+/// tick 3, then polls idle ticks 4..=8. Returns the first ready tick.
+fn instant_loc_completion_tick(
+    mut snapshot: GameSnapshot,
+    plan: &InteractPlan,
+    server: impl FnOnce(&mut GameSnapshot),
+) -> Option<u64> {
+    let reach_view = super::wall_door_reach_view();
+    let mut ledger = None;
+    let mut run = with_tick_reach(&snapshot, &reach_view, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending()
+    );
+    assert!(matches!(emitted(&ledger), InteractReq::Loc { .. }));
+    server(&mut snapshot);
+    accept_last(&mut ledger, 3, true);
+    assert!(
+        with_tick_reach(&snapshot, &reach_view, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending(),
+        "the acceptance tick itself is not a fresh idle tick"
+    );
+    let ready = (4..=8).find(|&tick| {
+        match with_tick_reach(&snapshot, &reach_view, &mut ledger, tick, |cx| {
+            with_step(cx, |cx| run.poll(cx))
+        }) {
+            Poll::Pending => false,
+            Poll::Ready(result) => {
+                assert!(result.is_ok(), "tick {tick}: {:?}", result.err());
+                true
+            }
+        }
+    });
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1, "no re-click");
+    ready
+}
+
+#[test]
+fn adjacent_loc_transformed_on_acceptance_completes_on_next_fresh_idle() {
+    // Trapdoor Open: by the time the receipt is read the server has already
+    // replaced `1568 [Open]` with `1570 [Climb-down/Close]`.
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    snapshot.seed_locs(vec![trapdoor(1568, &["Open"], tile(5, 6), 1)]);
+    let ready_tick =
+        instant_loc_completion_tick(snapshot, &instant_loc_plan(1568, "Open"), |snapshot| {
+            snapshot.seed_locs(vec![trapdoor(
+                1570,
+                &["Climb-down", "Close"],
+                tile(5, 6),
+                1,
+            )]);
+        });
+    assert_eq!(ready_tick, Some(4));
+}
+
+#[test]
+fn adjacent_teleport_before_acceptance_completes_on_next_fresh_idle() {
+    // Climb-down: the receipt is read after the scene rebuild, in the crypt,
+    // where the clicked trapdoor no longer exists.
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    snapshot.seed_locs(vec![trapdoor(
+        1570,
+        &["Climb-down", "Close"],
+        tile(5, 6),
+        1,
+    )]);
+    let ready_tick = instant_loc_completion_tick(
+        snapshot,
+        &instant_loc_plan(1570, "Climb-down"),
+        |snapshot| {
+            snapshot.seed_local_player(local_player(tile(5, 6405)));
+            snapshot.seed_locs(vec![]);
+        },
+    );
+    assert_eq!(ready_tick, Some(4));
+}
+
+#[test]
+fn distant_click_never_completes_on_unrelated_toggle_or_teleport() {
+    // A click on a target out of range when chosen still needs post-acceptance
+    // movement or animation, even if the loc changes or the player teleports.
+    for teleport in [false, true] {
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_locs(vec![trapdoor(1568, &["Open"], tile(13, 5), 8)]);
+        let ready_tick =
+            instant_loc_completion_tick(snapshot, &instant_loc_plan(1568, "Open"), |snapshot| {
+                snapshot.seed_locs(vec![trapdoor(
+                    1570,
+                    &["Climb-down", "Close"],
+                    tile(13, 5),
+                    if teleport { 6400 } else { 8 },
+                )]);
+                if teleport {
+                    snapshot.seed_local_player(local_player(tile(13, 6405)));
+                }
+            });
+        assert_eq!(ready_tick, None, "teleport={teleport}");
+    }
 }
 
 #[test]

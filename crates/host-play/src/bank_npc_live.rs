@@ -47,6 +47,9 @@ use nav::WorldState;
 use parking_lot::Mutex;
 use vault::{Profile, ProfileSettings};
 
+use super::evidence_writer::{
+    write_failure_sidecar, EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
+};
 use super::{
     run_with_template, step_nav_bot, step_walk_arm_follow, tele_args, NavBot, PendingBankFetch,
     ProfileOptions, SharedClientTemplate, SlotStatus, WalkArm,
@@ -498,11 +501,11 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
                 steps: fetch.steps.clone().into(),
                 dest: from,
                 opts: FindOptions::default(),
-                final_route: Route {
+                final_route: Arc::new(Route {
                     legs: vec![Leg::Walk { tiles: vec![from] }],
                     dest: from,
                     ticks: 1.0,
-                },
+                }),
                 avoid: Vec::new(),
                 progress: Default::default(),
             };
@@ -585,6 +588,7 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
                     Some(&world),
                     false,
                     true,
+                    None,
                     || unreachable!("the harness never arms a radius walk"),
                 );
             }
@@ -913,10 +917,14 @@ struct TellerLive {
     capture_started: bool,
     capture_written: bool,
     capture_error: Option<String>,
+    /// Shared background evidence writer; the hook submits the rendered
+    /// frame and marks the capture written only once the files are durable.
+    writer: Arc<EvidenceWriter>,
+    capture_job: Option<EvidenceJob>,
 }
 
 impl TellerLive {
-    fn new(evidence_dir: PathBuf) -> Self {
+    fn new(evidence_dir: PathBuf, writer: Arc<EvidenceWriter>) -> Self {
         Self {
             phase: TellerPrep::WaitLogin,
             last_action: Instant::now() - Duration::from_secs(1),
@@ -928,6 +936,8 @@ impl TellerLive {
             capture_started: false,
             capture_written: false,
             capture_error: None,
+            writer,
+            capture_job: None,
         }
     }
 
@@ -1481,7 +1491,17 @@ fn teller_evidence_dir(account: &str) -> PathBuf {
     root.join(format!("gatherer_mage_teller_{account}_utc-{epoch}Z"))
 }
 
-pub(super) fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
+/// The slot-thread half of a teller capture: render (needs the client) into
+/// native pixmap words. Encode and file writes happen on the shared
+/// background evidence writer, so this hook keeps only the render hitch.
+pub(super) struct TellerFrame {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) pixels: Vec<i32>,
+}
+
+pub(super) fn render_teller_frame(client: &mut Client) -> Result<TellerFrame, String> {
+    let render_start = Instant::now();
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);
@@ -1490,27 +1510,16 @@ pub(super) fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), S
     let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
         return Err("real Client render did not return a CPU PixMap".into());
     };
-    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
-    for pixel in &pixels.pixels {
-        let pixel = *pixel;
-        rgba.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-            u8::MAX,
-        ]);
-    }
-    let file = std::fs::File::create(path)
-        .map_err(|error| format!("create {}: {error}", path.display()))?;
-    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|error| format!("write {} header: {error}", path.display()))?;
-    writer
-        .write_image_data(&rgba)
-        .map_err(|error| format!("write {} pixels: {error}", path.display()))
+    let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "capture-render site=teller {}x{} render_ms={:.1}",
+        pixels.width, pixels.height, render_ms,
+    );
+    Ok(TellerFrame {
+        width: pixels.width as u32,
+        height: pixels.height as u32,
+        pixels: pixels.pixels,
+    })
 }
 
 fn save_teller_evidence(
@@ -1518,7 +1527,8 @@ fn save_teller_evidence(
     directory: &Path,
     account: &str,
     trace: &TellerTrace,
-) -> Result<(), String> {
+    writer: &EvidenceWriter,
+) -> Result<EvidenceJob, String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     let epoch = SystemTime::now()
@@ -1532,7 +1542,6 @@ fn save_teller_evidence(
     };
     let png_path = directory.join(format!("{epoch}Z_{step}.png"));
     let json_path = directory.join(format!("{epoch}Z_{step}.json"));
-    let png_result = write_teller_png(client, &png_path);
     let outcome = match trace.outcome.as_ref() {
         Some(TellerOutcome::Passed) => "passed",
         Some(TellerOutcome::Failed(_)) => "failed",
@@ -1587,14 +1596,29 @@ fn save_teller_evidence(
             "format": "PNG",
             "path": png_path,
             "renderer": "real Client CpuPix3D framebuffer",
-            "error": png_result.as_ref().err(),
+            "error": serde_json::Value::Null,
         },
     });
-    let bytes = serde_json::to_vec_pretty(&receipt)
-        .map_err(|error| format!("encode {}: {error}", json_path.display()))?;
-    std::fs::write(&json_path, bytes)
-        .map_err(|error| format!("write {}: {error}", json_path.display()))?;
-    png_result
+    let sidecar = EvidenceSidecar {
+        path: json_path,
+        receipt,
+        patch_error: Some(Box::new(|receipt, error| {
+            receipt["image"]["error"] = serde_json::Value::String(error.to_owned());
+        })),
+    };
+    match render_teller_frame(client) {
+        Ok(frame) => Ok(writer.submit(EvidenceRequest {
+            png_path,
+            width: frame.width,
+            height: frame.height,
+            pixels: frame.pixels,
+            color: PngColor::Rgba,
+            sidecar: Some(sidecar),
+        })),
+        // Render needs the client, so its failure is reported inline; the
+        // sidecar still lands with the error recorded, as before.
+        Err(error) => Err(write_failure_sidecar(sidecar, &error)),
+    }
 }
 fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) {
     let mut snapshot = GameSnapshot::new();
@@ -1745,12 +1769,35 @@ fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) 
         }
     };
     if let Some((directory, trace)) = capture {
-        let result = save_teller_evidence(client, &directory, account, &trace);
+        let writer = shared.lock().writer.clone();
+        match save_teller_evidence(client, &directory, account, &trace, &writer) {
+            Ok(job) => {
+                shared.lock().capture_job = Some(job);
+            }
+            Err(error) => {
+                let mut live = shared.lock();
+                live.capture_written = true;
+                live.capture_error = Some(error);
+            }
+        }
+    }
+    // The driver loop already polls `capture_written` under the cell
+    // deadline; this marks it only once the background writer has the PNG
+    // and sidecar durable, which is the bounded cell-end flush.
+    let completed = {
+        let live = shared.lock();
+        if live.capture_written {
+            None
+        } else {
+            live.capture_job
+                .clone()
+                .and_then(|job| live.writer.poll(&job))
+        }
+    };
+    if let Some(outcome) = completed {
         let mut live = shared.lock();
         live.capture_written = true;
-        if let Err(error) = result {
-            live.capture_error = Some(error);
-        }
+        live.capture_error = outcome.error;
     }
 }
 
@@ -1769,7 +1816,13 @@ fn live_mage_teller_native_real_play_receipt() {
         .expect("mint one disposable Mage Arena teller account");
     let evidence_dir = teller_evidence_dir(&account);
     std::fs::create_dir_all(&evidence_dir).expect("create Mage Arena evidence directory");
-    let state = Arc::new(Mutex::new(TellerLive::new(evidence_dir.clone())));
+    let writer = Arc::new(EvidenceWriter::new(
+        super::evidence_writer::DEFAULT_QUEUE_BOUND,
+    ));
+    let state = Arc::new(Mutex::new(TellerLive::new(
+        evidence_dir.clone(),
+        Arc::clone(&writer),
+    )));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
     let play = run_with_template(

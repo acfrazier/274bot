@@ -33,7 +33,8 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
-              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } }
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "white_apron" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "white_apron" } } } }] }
             ]
           },
           "settle": { "All": [] }
@@ -244,7 +245,37 @@
             "prefer": ["Can I journey on this ship?", "Search away, I have nothing to hide.", "Ok."],
             "strict": true
           },
-          "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+          "comment": "Leaves Karamja only once the rum is shipped or stashed in the crate. A rum-less arrival (a restart after the sail) stays on the island and buys from Zambo; going home would spend the 60-coin round trip that rum-mainland-cash cannot refill.",
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } } },
+              {
+                "All": [
+                  { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } } },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "message_state",
+                        "version": 1,
+                        "args": {
+                          "set": [
+                            "there is some rum in here, although with no bananas to cover it",
+                            "there is also some rum stashed in here too",
+                            "you stash the rum in the crate"
+                          ],
+                          "clear": [
+                            "the crate is completely empty",
+                            "the crate has",
+                            "the crate is full of bananas"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "port-ship" } } }
         },
         {
@@ -293,7 +324,12 @@
             "at": "nearest",
             "keep": ["coins", "white_apron", "karamja_rum"]
           },
-          "skip_if": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+            ]
+          },
           "settle": { "All": [] }
         },
         {
@@ -309,7 +345,9 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "karamja_rum" } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "karamja_rum" } } } }] }
             ]
           },
           "settle": { "All": [] }
@@ -332,7 +370,7 @@
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
-              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } }
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
             ]
           },
           "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja-ship" } } }
@@ -893,7 +931,12 @@
             "items": [{ "obj": "chest_key", "qty": 1 }],
             "partial_ok": true
           },
-          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "chest_key" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "chest_key" } } } }] }
+            ]
+          },
           "settle": { "All": [] }
         },
         {
@@ -926,7 +969,12 @@
             "items": [{ "obj": "spade", "qty": 1 }],
             "partial_ok": true
           },
-          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+              { "All": [{ "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "spade" } } } }] }
+            ]
+          },
           "settle": { "All": [] }
         },
         {

@@ -29,6 +29,7 @@ fn bot_script(dir: &Path, name: &str) -> PathBuf {
 }
 
 /// A `js-scripts.json` written the way the app writes it (owner-only).
+#[cfg(unix)] // its only callers are the unix-only tests below
 fn write_store(dir: &Path, entries: &[(&str, &str)]) -> PathBuf {
     let rows: Vec<_> = entries
         .iter()
@@ -39,10 +40,12 @@ fn write_store(dir: &Path, entries: &[(&str, &str)]) -> PathBuf {
     store
 }
 
+#[cfg(unix)]
 fn card_names(library: &JsLibrary) -> Vec<String> {
     library.cards().iter().map(|c| c.name.clone()).collect()
 }
 
+#[cfg(unix)]
 fn failure_names(library: &JsLibrary) -> Vec<String> {
     library
         .load_failures()

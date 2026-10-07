@@ -48,6 +48,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult};
 use api::snapshot::{ActorKind, GameSnapshot, WorldTile};
 use host::Pump;
+use host_play::evidence_writer::{
+    EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
+};
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 #[cfg(feature = "live-harness")]
 use scenario::{RunnerStatus, ScenarioRunner};
@@ -4674,17 +4677,28 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required for Gatherer live qualification"))
 }
 
-fn save_live_capture(
+/// A capture handed to the background writer, awaiting its outcome.
+struct PendingGathererCapture {
+    job: EvidenceJob,
+}
+
+/// The slot-thread half of the terminal gatherer capture: render (needs the
+/// client) into native pixmap words and hand them plus the JSON receipt to
+/// the shared background evidence writer for encode and write. The hook
+/// polls the job and reports completion only once the files are durable.
+fn submit_live_capture(
     client: &mut client::client::Client,
+    writer: &EvidenceWriter,
     directory: &Path,
     receipt: &Value,
-) -> Result<(), String> {
+) -> Result<PendingGathererCapture, String> {
     std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_secs();
     let stem = format!("{epoch}Z_01-final");
+    let render_start = Instant::now();
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);
@@ -4693,36 +4707,31 @@ fn save_live_capture(
     let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
         return Err("live capture did not return a CPU PixMap".into());
     };
-    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
-    for pixel in &pixels.pixels {
-        rgba.extend_from_slice(&[
-            ((pixel >> 16) & 0xff) as u8,
-            ((pixel >> 8) & 0xff) as u8,
-            (pixel & 0xff) as u8,
-            u8::MAX,
-        ]);
-    }
-    let file = std::fs::File::create(directory.join(format!("{stem}.png")))
-        .map_err(|error| error.to_string())?;
-    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .map_err(|error| error.to_string())?
-        .write_image_data(&rgba)
-        .map_err(|error| error.to_string())?;
+    println!(
+        "capture-render site=gatherer {stem} {}x{} render_ms={:.1}",
+        pixels.width,
+        pixels.height,
+        render_start.elapsed().as_secs_f64() * 1000.0,
+    );
     let mut receipt = receipt.clone();
     receipt["frame"] = json!({
         "ingame": client.ingame,
         "scene_state": client.scene_state,
         "renderer": "real Client CpuPix3D framebuffer",
     });
-    std::fs::write(
-        directory.join(format!("{stem}.json")),
-        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    let job = writer.submit(EvidenceRequest {
+        png_path: directory.join(format!("{stem}.png")),
+        width: pixels.width as u32,
+        height: pixels.height as u32,
+        pixels: pixels.pixels,
+        color: PngColor::Rgba,
+        sidecar: Some(EvidenceSidecar {
+            path: directory.join(format!("{stem}.json")),
+            receipt,
+            patch_error: None,
+        }),
+    });
+    Ok(PendingGathererCapture { job })
 }
 
 fn parse_tile(name: &str, raw: &str) -> Result<WorldTile, String> {
@@ -5242,6 +5251,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let capture_result = Arc::new(Mutex::new(None::<Result<(), String>>));
     let frame_capture_request = Arc::clone(&capture_request);
     let frame_capture_result = Arc::clone(&capture_result);
+    let evidence = Arc::new(EvidenceWriter::new(
+        host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
+    ));
+    let frame_evidence = Arc::clone(&evidence);
+    let frame_capture_job = Arc::new(Mutex::new(None::<PendingGathererCapture>));
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
         true,
@@ -5429,7 +5443,29 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 .ok()
                 .and_then(|mut request| request.take());
             if let Some((directory, receipt)) = capture {
-                let result = save_live_capture(client, &directory, &receipt);
+                let result = submit_live_capture(client, &frame_evidence, &directory, &receipt);
+                match result {
+                    Ok(pending) => {
+                        if let Ok(mut job) = frame_capture_job.lock() {
+                            *job = Some(pending);
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut completion) = frame_capture_result.lock() {
+                            *completion = Some(Err(error));
+                        }
+                    }
+                }
+            }
+            // Completions land here; the driver loop already waits for the
+            // result under a 20 s deadline, which is the bounded flush.
+            let completed = frame_capture_job.lock().ok().and_then(|mut job| {
+                let outcome = frame_evidence.poll(&job.as_ref()?.job)?;
+                let result = outcome.error.map_or(Ok(()), Err);
+                job.take();
+                Some(result)
+            });
+            if let Some(result) = completed {
                 if let Ok(mut completion) = frame_capture_result.lock() {
                     *completion = Some(result);
                 }

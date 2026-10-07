@@ -453,7 +453,53 @@ fn hunter_tether_defaults_to_wander_plus_two_and_never_below_wander() {
         );
         let mut hunter = npc(1, "Hunter", &["Attack"]);
         hunter.vislevel = 54;
-        let inputs = collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new()).unwrap();
+        let inputs =
+            collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new(), &HashSet::new()).unwrap();
         assert_eq!(inputs.definitions[0].maxrange, expected);
+    }
+}
+
+#[test]
+fn hunter_move_restriction_follows_the_engine_names_and_fails_closed() {
+    use crate::map::services::MoveRestrict;
+    for (setting, expected) in [
+        ("", Some(MoveRestrict::Normal)),
+        (
+            "moverestrict=blocked+normal\n",
+            Some(MoveRestrict::BlockedNormal),
+        ),
+        ("moverestrict=blocked\n", Some(MoveRestrict::Blocked)),
+        ("moverestrict=indoors\n", Some(MoveRestrict::Indoors)),
+        ("moverestrict=outdoors\n", Some(MoveRestrict::Outdoors)),
+        ("moverestrict=passthru\n", Some(MoveRestrict::Passthru)),
+        ("moverestrict=nomove\n", Some(MoveRestrict::Nomove)),
+        ("moverestrict=swim\n", None),
+    ] {
+        let fix = Fixture::new();
+        fix.write("pack/npc.pack", "1=hunter\n");
+        fix.write(
+            "scripts/configs/hunter.hunt",
+            "[aggressive]\ntype=player\ncheck_nottoostrong=off\nfind_newmode=opplayer2\n",
+        );
+        fix.write(
+            "scripts/configs/hunter.npc",
+            &format!("[hunter]\nhuntmode=aggressive\nhuntrange=5\n{setting}"),
+        );
+        let mut hunter = npc(1, "Hunter", &["Attack"]);
+        hunter.vislevel = 54;
+        let inputs = collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new(), &HashSet::new());
+        match expected {
+            Some(restrict) => {
+                let definition = &inputs.unwrap().definitions[0];
+                assert_eq!(definition.move_restrict, restrict, "{setting:?}");
+                assert_eq!(definition.stationary(), restrict == MoveRestrict::Nomove);
+            }
+            None => assert!(
+                inputs
+                    .unwrap_err()
+                    .contains("unsupported moverestrict=swim"),
+                "an unknown strategy must not bake as NORMAL"
+            ),
+        }
     }
 }

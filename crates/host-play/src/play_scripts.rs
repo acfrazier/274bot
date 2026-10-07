@@ -41,7 +41,7 @@ impl ScriptNavPaint {
     /// Armed route and current hop aim for `name`, if any.
     pub fn of(&self, name: &str) -> (Option<Route>, Option<WorldTile>) {
         match self.navs.lock().unwrap().get(name) {
-            Some(b) => (b.route.clone(), b.traveller.current_aim()),
+            Some(b) => (b.route.as_deref().cloned(), b.traveller.current_aim()),
             None => (None, None),
         }
     }
@@ -482,6 +482,20 @@ impl Play {
     pub fn script_native_status(&self, name: &str) -> Option<Arc<script::native::ScriptStatus>> {
         script_slot(&self.scripts, name)
             .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_status()))
+    }
+
+    /// Current or last native/v2 walk assessment, retained after a refusal.
+    /// rs2b0t-compatible scripts receive assessment text only in the host log.
+    pub fn script_walk_risk(&self, name: &str) -> Option<Arc<str>> {
+        let navs = self.navs.lock().ok()?;
+        let bot = navs.get(name)?;
+        if bot.compat_v1 {
+            return None;
+        }
+        bot.assessment
+            .as_ref()
+            .or(bot.last_assessment.as_ref())
+            .map(|assessment| Arc::clone(&assessment.reason))
     }
 
     pub fn script_native_settings_revision(&self, name: &str) -> Option<u64> {

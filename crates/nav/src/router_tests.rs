@@ -19,10 +19,10 @@ use crate::quest_gates::tests::{
 };
 use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_with, find_first_with_fallback,
-    find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
-    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid,
-    find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
+    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs_with_avoid,
+    find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
+    find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
+    find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
     find_with_model, local_step_component, missing_item_reqs, step_ok, AvoidRect, CostModel,
     FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
@@ -1405,6 +1405,53 @@ fn worn_gated_room_is_proven_strictly_and_reached_only_with_the_obj_fetchable() 
     assert_eq!(search.route().err(), Some(RouteError::NoPath));
     assert_eq!(search.proof(), ReverseProof::Unreachable);
     assert!(search.settled() < 64, "{}", search.settled());
+}
+
+/// The goal-set BankBudget diagnosis is the relaxed first-goal search's:
+/// it names the chosen goal's missing facts, falls back to the fallback set
+/// when no preferred goal routes relaxed, and is `None` when no goal routes
+/// even with the carry/wear gates ignored.
+#[test]
+fn first_goal_diagnosis_names_the_chosen_goals_missing_facts() {
+    let from = tile(20, 20, 0);
+    let stands = [tile(202, 201, 0), tile(201, 202, 0)];
+    let opts = FindOptions {
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+    let diagnose = |wc: &WorldCollision,
+                    graph: &TransportGraph,
+                    targets: &[WorldTile],
+                    fallback: &[WorldTile]| {
+        find_first_missing_item_reqs_with_avoid(
+            wc,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            &state,
+            &[],
+        )
+    };
+    let worn = Some(vec![MissingReq::WearAny { ids: vec![2] }]);
+
+    let (wc, graph) = sealed_room(true);
+    assert_eq!(diagnose(&wc, &graph, &stands, &[]), worn);
+    // A preferred goal on the blocked ring never routes: the stands are the
+    // fallback set and their diagnosis is the answer.
+    let ring = [tile(201, 203, 0)];
+    assert_eq!(diagnose(&wc, &graph, &ring, &stands), worn);
+    // A goal reachable with nothing fetched wins over the gated room.
+    assert_eq!(
+        diagnose(&wc, &graph, &[tile(30, 30, 0), stands[0]], &[]),
+        Some(Vec::new())
+    );
+
+    let (wc, graph) = sealed_room(false);
+    assert_eq!(diagnose(&wc, &graph, &stands, &[]), None);
+    assert_eq!(diagnose(&wc, &graph, &ring, &stands), None);
 }
 
 /// Neither side decides: the start's corridor and the stand's backward
@@ -5377,8 +5424,12 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
             stats: (0..21).map(|skill| (skill, 1)).collect(),
             ..WorldState::empty()
         };
+        // Draynor to Lumbridge's (3224,3200) now routes: the brown bear's
+        // rectangle no longer blocks it, and the giant rat tiles it crosses
+        // are ones the engine's rat flood cannot reach. The rat pocket at
+        // (3212,3179) south of it is still refused by two rats.
         let from = tile(3123, 3245, 0);
-        let to = tile(3224, 3200, 0);
+        let to = tile(3212, 3179, 0);
         assert!(matches!(
             find_with(&world.collision, &world.graph, from, to, opts, &fresh),
             Err(RouteError::NoPath)
@@ -5393,16 +5444,16 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
             &[],
         )
         .unwrap();
-        let bear = table.resolve("brownbear@3176,3223,0").unwrap();
-        let rat = table.resolve("giantrat1@3211,3195,0").unwrap();
-        assert_eq!(keys, vec![rat, bear], "{keys:?}");
+        let north_rat = table.resolve("giantrat1@3211,3195,0").unwrap();
+        let south_rat = table.resolve("giantrat1@3211,3187,0").unwrap();
+        assert_eq!(keys, vec![south_rat, north_rat], "{keys:?}");
         let route = find_with(
             &world.collision,
             &world.graph,
             from,
             to,
             FindOptions {
-                zones: ZoneExempt::named(&[bear, rat]).unwrap(),
+                zones: ZoneExempt::named(&[north_rat, south_rat]).unwrap(),
                 ..opts
             },
             &fresh,
@@ -5410,7 +5461,7 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
         .unwrap();
         assert_eq!(
             (route.ticks, zone_route_cell_count(&route), route.legs.len()),
-            (53.5, 108, 3)
+            (62.0, 125, 3)
         );
     }
 }
@@ -5654,6 +5705,36 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
     )
     .expect("active zone witness");
     assert!(blocked.contains(&mage), "{blocked:?}");
+}
+
+#[test]
+fn blocked_normal_ghast_membership_follows_its_engine_wander_over_the_bog() {
+    // REVIEW-NAV-WWM-ROUTE R1: `ghast_invis` (size 2, `moverestrict=
+    // blocked+normal`, which the engine steps under LINE_OF_SIGHT) wanders
+    // from (3478,3328) over Mort Myre bog to (3477,3325), cardinal-adjacent to
+    // (3476,3325). A NORMAL flood carved that tile.
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let table = world.graph.zones.as_ref().expect("v12 zones");
+    let ghast = table.resolve("ghast_invis@3478,3328,0").unwrap();
+    let ZoneKey::Zone(index) = ghast else {
+        panic!("the ghast is ungrouped");
+    };
+    let zone = table.zones()[usize::from(index)];
+    let member = |x: i32, z: i32| table.at(tile(x, z, 0)).any(|hit| hit == index);
+    assert!(
+        member(3476, 3325),
+        "the wander witness's player tile stays dangerous"
+    );
+    let members = (zone.min_z..=zone.max_z)
+        .flat_map(|z| (zone.min_x..=zone.max_x).map(move |x| (x, z)))
+        .filter(|&(x, z)| member(x, z))
+        .count();
+    // The engine's own StepValidator/LineValidator flood over the same raw
+    // flags (NAV-WWM-ROUTE-R2 `oracle/engine-audit.ts`) acquires from exactly
+    // 187 of the 289 rectangle tiles.
+    assert_eq!(members, 187);
 }
 
 #[path = "router/consumption_tests.rs"]

@@ -223,7 +223,6 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
         gathering: None,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         areas: &areas,
         loadouts: &loadouts,
@@ -532,7 +531,6 @@ fn fixture_compile_context<'a>(
         gathering: None,
         bank: None,
         bank_required: false,
-        bank_items: &[],
         keep_ids: &[],
         areas,
         loadouts,
@@ -639,7 +637,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         assert_eq!(predicate.evaluate(&context), Truth::True);
@@ -660,7 +657,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&other),
         };
         assert_eq!(predicate.evaluate(&context), Truth::False);
@@ -671,7 +667,6 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: None,
         };
         assert_eq!(predicate.evaluate(&context), Truth::False);
@@ -712,11 +707,10 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
                 progress: &[],
                 required_after: tick.cx.evidence(),
                 chat_since: 0,
-                bank: &crate::quester::bank_memo::BankMemo::default(),
                 outcome: None,
             };
             let crate::quester::select::SelectionDecision::Selected(selected) =
-                crate::quester::select::select(&path, 0, &context)
+                crate::quester::select::select(&path, 0, 0, &context)
             else {
                 panic!("the observed safe/arrived tile must select its next real family");
             };
@@ -767,11 +761,10 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
-            crate::quester::select::select(&path, 0, &context)
+            crate::quester::select::select(&path, 0, 0, &context)
         else {
             panic!("Aborted(Unattackable) must select the Path walk-out step");
         };
@@ -829,11 +822,10 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         let crate::quester::select::SelectionDecision::Selected(selected) =
-            crate::quester::select::select(&path, 0, &context)
+            crate::quester::select::select(&path, 0, 0, &context)
         else {
             panic!("leaving the tree after Unattackable must keep the caller walk-out selected");
         };
@@ -879,12 +871,11 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
             progress: &[],
             required_after: tick.cx.evidence(),
             chat_since: 0,
-            bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: Some(&outcome),
         };
         assert!(
             matches!(
-                crate::quester::select::select(&path, 0, &context),
+                crate::quester::select::select(&path, 0, 0, &context),
                 crate::quester::select::SelectionDecision::Exhausted
             ),
             "arrived walk-out after Unattackable must not loop the walk step"
@@ -1132,14 +1123,12 @@ fn with_step_context_at_walk_seq<R>(
         native.cx.observed_walk_outcome_seq = walk_outcome_seq;
         let quests = QuestCatalog::empty();
         let required_after = native.cx.evidence();
-        let bank = crate::quester::bank_memo::BankMemo::default();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         f(&mut StepContext {
             tick: native,
             quests: &quests,
             progress: &[],
             required_after,
-            bank: &bank,
             banks: &banks,
             choices: &crate::quester::choices::QuestChoices::default(),
         })
@@ -1245,6 +1234,9 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
                     end,
                     blocked: None,
                     detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 cx,
             )
@@ -1805,6 +1797,9 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         end: WalkEnd::Failed,
         blocked: None,
         detail: Some(Arc::from("route fixture failure")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
 
@@ -1973,6 +1968,9 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         end: WalkEnd::Failed,
         blocked: None,
         detail: Some(Arc::from("route fixture failure")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
     assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
@@ -2010,6 +2008,9 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         end: WalkEnd::Arrived,
         blocked: None,
         detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(matches!(
         with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)),
@@ -2087,6 +2088,9 @@ fn engaged_abort_hold_after_failed_walk(
         end: WalkEnd::Failed,
         blocked: None,
         detail: Some(Arc::from("route fixture failure")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
     assert!(with_step_context(snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
     seed_abort_scene(snapshot, here, 1, after_walk, None, None);
@@ -2222,6 +2226,9 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
                 end: WalkEnd::Arrived,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -2339,6 +2346,9 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
                 end: WalkEnd::RouteEnded,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -2371,6 +2381,9 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
                 end: WalkEnd::NeedsEvidence(Arc::clone(&gates)),
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             };
             if abort {
                 run.on_abort_walk(receipt, cx)
@@ -2417,6 +2430,9 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
                 end: WalkEnd::UserInput,
                 blocked: None,
                 detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
             },
             cx,
         )
@@ -2476,6 +2492,9 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
                     end: WalkEnd::Arrived,
                     blocked: None,
                     detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
                 },
                 cx,
             )
@@ -2776,6 +2795,9 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
         end: WalkEnd::Failed,
         blocked: None,
         detail: Some(Arc::from("door recovery route unreachable")),
+        refusal: None,
+        assessment: None,
+        escape: None,
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());

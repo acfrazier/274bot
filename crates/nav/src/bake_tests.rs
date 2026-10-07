@@ -224,6 +224,16 @@ struct SyntheticHunterContent {
 
 impl SyntheticHunterContent {
     fn new(wanderrange: i32, stationary: bool, has_door: bool) -> Self {
+        let movement = if stationary {
+            "moverestrict=nomove\n"
+        } else {
+            "defaultmode=normal\n"
+        };
+        Self::with_thrower_movement(wanderrange, movement, has_door)
+    }
+
+    /// The thrower row takes `movement` verbatim (e.g. a `moverestrict=` line).
+    fn with_thrower_movement(wanderrange: i32, movement: &str, has_door: bool) -> Self {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "274bot-hunter-zones-{}-{}",
@@ -235,15 +245,10 @@ impl SyntheticHunterContent {
             "pack/npc.pack",
             "96=white_wolf\n917=draynor_guard\n1101=thrower\n",
         );
-        let stationary_setting = if stationary {
-            "moverestrict=nomove\n"
-        } else {
-            "defaultmode=normal\n"
-        };
         fixture.write(
             "scripts/configs/hunters.npc",
             &format!(
-                "[thrower]\nhuntmode=aggressive_ranged\nhuntrange=8\nwanderrange={wanderrange}\nmaxrange=20\nattackrange=8\n{stationary_setting}\
+                "[thrower]\nhuntmode=aggressive_ranged\nhuntrange=8\nwanderrange={wanderrange}\nmaxrange=20\nattackrange=8\n{movement}\
                  [white_wolf]\nhuntmode=support\nhuntrange=1\nwanderrange=0\nmaxrange=1\n\
                  [draynor_guard]\nhuntmode=support\nhuntrange=1\nwanderrange=0\nmaxrange=1\n"
             ),
@@ -313,22 +318,32 @@ fn derive_synthetic_hunter_zones(
     content: &SyntheticHunterContent,
     collision: &WorldCollision,
 ) -> DerivedZones {
-    let npc_types = [
-        synthetic_hunter_npc(96),
-        synthetic_hunter_npc(917),
-        synthetic_hunter_npc(1101),
-    ];
     let door_ids = if content.has_door {
         HashSet::from([200])
     } else {
         HashSet::new()
     };
+    derive_synthetic_hunter_zones_with(content, collision, &door_ids, &HashSet::new())
+}
+
+fn derive_synthetic_hunter_zones_with(
+    content: &SyntheticHunterContent,
+    collision: &WorldCollision,
+    door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
+) -> DerivedZones {
+    let npc_types = [
+        synthetic_hunter_npc(96),
+        synthetic_hunter_npc(917),
+        synthetic_hunter_npc(1101),
+    ];
     derive_zone_table(
         &content.root,
         collision,
         &crate::transport::TransportGraph::default(),
         &npc_types,
-        &door_ids,
+        door_ids,
+        opened_door_ids,
     )
     .unwrap()
 }
@@ -360,7 +375,7 @@ fn derive_zone_table_keeps_full_rectangle_for_wandering_los_hunter() {
             .carves()
             .iter()
             .all(|(index, _)| usize::from(*index) != zone_index),
-        "positive-wander LOS hunter must not be carved"
+        "a wandering LOS hunter walks past a sight-only ridge, so nothing is carved"
     );
     assert_eq!(
         derived
@@ -372,7 +387,7 @@ fn derive_zone_table_keeps_full_rectangle_for_wandering_los_hunter() {
             })
             .count(),
         1,
-        "the opaque ridge does not remove any tile from the wandering hunter zone"
+        "the sight-only ridge does not remove any tile from the wandering hunter zone"
     );
 }
 
@@ -496,4 +511,364 @@ fn fixed_ranged_hunter_carves_occluded_tiles_but_retains_visible_range() {
     assert_eq!(table.at(WorldTile { x: 21, ..spawn }).count(), 0);
     collision.drop_flags();
     assert!(append_ranged_visibility_carves(&collision, &zone, 0, &mut Vec::new()).is_err());
+}
+
+/// A walk- and sight-blocking scenery ridge along x=2847, covering the whole
+/// grid so a hunter cannot walk around either end of it.
+fn collision_with_scenery_ridge() -> WorldCollision {
+    let mut collision = collision_with_flags(128, 128, &[]);
+    collision.origin = WorldTile {
+        x: 2800,
+        z: 3550,
+        level: 0,
+    };
+    let ridge_x = usize::try_from(2847 - collision.origin.x).unwrap();
+    let mut flags = vec![0u32; 4 * 128 * 128];
+    for z in 0..128 {
+        flags[z * 128 + ridge_x] =
+            CollisionFlag::WALK_SCENERY as u32 | CollisionFlag::VIS_SCENERY as u32;
+    }
+    collision.attach_flags(flags);
+    collision
+}
+
+fn thrower_tile_count(table: &ZoneTable, x: i32) -> usize {
+    table
+        .at(WorldTile {
+            x,
+            z: 3598,
+            level: 0,
+        })
+        .count()
+}
+
+#[test]
+fn derive_zone_table_carves_mobile_hunter_tiles_it_cannot_reach_or_see() {
+    let content = SyntheticHunterContent::new(4, false, false);
+    let collision = collision_with_scenery_ridge();
+    let derived = derive_synthetic_hunter_zones(&content, &collision);
+    let zone_index = synthetic_thrower_zone_index(&derived.table);
+    let zone = &derived.table.zones()[zone_index];
+    assert_eq!(
+        (zone.min_x, zone.min_z, zone.max_x, zone.max_z),
+        (2839, 3586, 2863, 3610),
+        "the range-derived rectangle is unchanged; only membership narrows"
+    );
+    assert!(derived
+        .table
+        .carves()
+        .iter()
+        .any(|(index, _)| usize::from(*index) == zone_index));
+    for x in 2839..=2847 {
+        assert_eq!(
+            thrower_tile_count(&derived.table, x),
+            0,
+            "x={x} lies behind a ridge the hunter can neither cross nor see through"
+        );
+    }
+    for x in 2848..=2863 {
+        assert_eq!(thrower_tile_count(&derived.table, x), 1, "x={x}");
+    }
+}
+
+#[test]
+fn derive_zone_table_keeps_mobile_rectangle_near_any_door_state() {
+    let collision = collision_with_scenery_ridge();
+    let closed = SyntheticHunterContent::new(4, false, true);
+    let opened = SyntheticHunterContent::new(4, false, true);
+    for derived in [
+        derive_synthetic_hunter_zones_with(
+            &closed,
+            &collision,
+            &HashSet::from([200]),
+            &HashSet::new(),
+        ),
+        derive_synthetic_hunter_zones_with(
+            &opened,
+            &collision,
+            &HashSet::new(),
+            &HashSet::from([200]),
+        ),
+    ] {
+        let zone_index = synthetic_thrower_zone_index(&derived.table);
+        assert!(
+            derived
+                .table
+                .carves()
+                .iter()
+                .all(|(index, _)| usize::from(*index) != zone_index),
+            "a door a player can open or close keeps the whole rectangle"
+        );
+        assert_eq!(thrower_tile_count(&derived.table, 2846), 1);
+    }
+}
+
+#[test]
+fn npc_steps_follow_engine_take_step_for_large_npcs() {
+    // A scenery column at x=6 with a one-tile gap at z=5.
+    let mut flags = vec![0u32; 4 * 12 * 12];
+    for z in (0..12).filter(|z| *z != 5) {
+        flags[z * 12 + 6] = CollisionFlag::WALK_SCENERY as u32;
+    }
+    let flag = |x: i32, z: i32| {
+        if (0..12).contains(&x) && (0..12).contains(&z) {
+            flags[(z * 12 + x) as usize]
+        } else {
+            0
+        }
+    };
+    let step = |x, z, dir, size| npc_step_ok(&flag, x, z, dir, size, StepStrategy::Normal);
+    assert!(step(5, 5, (1, 0), 1), "a size-1 NPC fits the gap");
+    for z in 3..=6 {
+        assert!(
+            !step(4, z, (1, 0), 2),
+            "a size-2 NPC never fits a one-tile gap (south-west z={z})"
+        );
+    }
+    assert!(step(1, 1, (1, 1), 1));
+    assert!(
+        !step(1, 1, (1, 1), 2),
+        "takeStep moves only width-1 NPCs diagonally"
+    );
+    assert!(step(1, 1, (1, 0), 2) && step(1, 1, (0, 1), 2));
+}
+
+/// Raw 289 level-0 flags around `ghast_invis@3478,3328,0` in the Mort Myre
+/// bog, `[z - 3321][x - 3473]`: `0x200000` is blocked ground, `0x20100`
+/// scenery that also blocks projectiles.
+const BOG_FLAGS: [[u32; 11]; 11] = [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x200000],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0x20100, 0, 0, 0, 0, 0, 0, 0, 0x20100, 0, 0x200000],
+    [0, 0, 0, 0, 0, 0, 0, 0x200000, 0x200000, 0x200000, 0x200000],
+    [
+        0x20100, 0x20100, 0, 0, 0, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0, 0x200000, 0x200000, 0x220100, 0x200000, 0x220100,
+        0x200000,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000,
+        0x200000, 0x200000,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000,
+        0x200000, 0x200000,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000,
+        0x200000, 0x220100,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0x200000, 0x200000, 0x200000, 0x220100, 0x200000,
+        0x200000, 0x200000,
+    ],
+    [
+        0x20100, 0x20100, 0x20100, 0x20100, 0x200000, 0x200000, 0x200000, 0x200000, 0x200000,
+        0x200000, 0x200000,
+    ],
+];
+
+fn bog_flag(x: i32, z: i32) -> u32 {
+    BOG_FLAGS[usize::try_from(z - 3321).unwrap()][usize::try_from(x - 3473).unwrap()]
+}
+
+#[test]
+fn npc_steps_match_engine_can_travel_per_strategy() {
+    // The engine's own `StepValidator.canTravel(flags, 0, x, z, dx, dz, size,
+    // 0, strategy)` over `BOG_FLAGS`, for every south-west tile x 3474..=3481,
+    // z 3322..=3329 (bit `(z - 3322) * 8 + (x - 3474)`), one word per
+    // direction in `DIRS` order; diagonals are zero for size 2 because
+    // `takeStep` never tries them. Generated by
+    // `274bot-evidence/NAV-WWM-ROUTE-R2/oracle/step-oracle.ts`.
+    const DIRS: [(i32, i32); 8] = [
+        (0, -1),
+        (0, 1),
+        (-1, 0),
+        (1, 0),
+        (-1, -1),
+        (-1, 1),
+        (1, -1),
+        (1, 1),
+    ];
+    const ORACLE: [(i32, StepStrategy, [u64; 8]); 6] = [
+        (
+            1,
+            StepStrategy::Normal,
+            [
+                0x0000_080e_3f7f_ffff,
+                0x0000_0000_080e_3f7f,
+                0x0000_0010_1c7f_feff,
+                0x0000_0004_071f_bfff,
+                0x0000_0000_1c7e_feff,
+                0x0000_0000_000c_3e7e,
+                0x0000_0004_071f_bfff,
+                0x0000_0000_0006_1f3f,
+            ],
+        ),
+        (
+            1,
+            StepStrategy::Blocked,
+            [
+                0xf8f8_b0f0_c000_0000,
+                0xb8f8_f8f8_b0f0_c000,
+                0xf0f0_f060_e080_0000,
+                0xfcfc_fc58_f8e0_0000,
+                0xf0f0_2060_8000_0000,
+                0x30f0_f060_2080_0000,
+                0xf8f8_1050_c000_0000,
+                0x98f8_f858_10e0_0000,
+            ],
+        ),
+        (
+            1,
+            StepStrategy::LineOfSight,
+            [
+                0xf8f8_b8fe_ff7f_ffff,
+                0xb8f8_f8f8_b8fe_ff7f,
+                0xf0f0_f070_fcff_feff,
+                0xfcfc_fc5c_ffff_bfff,
+                0xf0f0_3070_fc7e_feff,
+                0x30f0_f070_30fc_fe7e,
+                0xf8f8_185c_ff3f_bfff,
+                0x98f8_f858_18fe_bf3f,
+            ],
+        ),
+        (
+            2,
+            StepStrategy::Normal,
+            [
+                0x0000_0006_1f3f_ffff,
+                0x0000_0000_0000_061f,
+                0x0000_0000_101c_7efe,
+                0x0000_0000_0203_0f5f,
+                0,
+                0,
+                0,
+                0,
+            ],
+        ),
+        (
+            2,
+            StepStrategy::Blocked,
+            [
+                0xf8f8_10f0_c000_0000,
+                0xf898_f8f8_f810_f0c0,
+                0x70f0_f060_6080_0000,
+                0x6e7e_feac_acf0_8000,
+                0,
+                0,
+                0,
+                0,
+            ],
+        ),
+        (
+            2,
+            StepStrategy::LineOfSight,
+            [
+                0xf8f8_18fe_ff3f_ffff,
+                0xf898_f8f8_f818_feff,
+                0x70f0_f070_70fc_fefe,
+                0x6e7e_feae_aeff_dfdf,
+                0,
+                0,
+                0,
+                0,
+            ],
+        ),
+    ];
+    for (size, strategy, words) in ORACLE {
+        for (dir, word) in DIRS.into_iter().zip(words) {
+            for bit in 0..64 {
+                let (x, z) = (3474 + bit % 8, 3322 + bit / 8);
+                assert_eq!(
+                    npc_step_ok(&bog_flag, x, z, dir, size, strategy),
+                    word >> bit & 1 == 1,
+                    "size {size} {strategy:?} from ({x},{z}) by {dir:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn blocked_normal_ghast_walks_the_bog_its_wander_witness_crosses() {
+    use crate::map::services::MoveRestrict;
+    // REVIEW-NAV-WWM-ROUTE R1: `ghast_invis` (size 2, `moverestrict=
+    // blocked+normal`) wanders from its spawn (3478,3328) to (3477,3325),
+    // cardinal-adjacent to the player tile (3476,3325). The engine steps it
+    // under LINE_OF_SIGHT; NORMAL refuses the three bog steps.
+    assert_eq!(
+        StepStrategy::of(MoveRestrict::BlockedNormal),
+        Some(StepStrategy::LineOfSight)
+    );
+    let walk = [
+        (3478, 3328),
+        (3478, 3327),
+        (3478, 3326),
+        (3478, 3325),
+        (3477, 3325),
+    ];
+    for (index, pair) in walk.windows(2).enumerate() {
+        let [(x, z), (to_x, to_z)] = [pair[0], pair[1]];
+        let dir = (to_x - x, to_z - z);
+        assert!(
+            npc_step_ok(&bog_flag, x, z, dir, 2, StepStrategy::LineOfSight),
+            "the ghast steps ({x},{z}) -> ({to_x},{to_z})"
+        );
+        assert_eq!(
+            npc_step_ok(&bog_flag, x, z, dir, 2, StepStrategy::Normal),
+            index == 3,
+            "NORMAL at ({x},{z}) -> ({to_x},{to_z})"
+        );
+    }
+}
+
+/// Blocked ground (`WR_GRND`, no wall or scenery) along x=2847 across the
+/// whole grid: NORMAL walkers stop there, sight and LINE_OF_SIGHT walkers
+/// don't.
+fn collision_with_ground_strip() -> WorldCollision {
+    let mut collision = collision_with_flags(128, 128, &[]);
+    collision.origin = WorldTile {
+        x: 2800,
+        z: 3550,
+        level: 0,
+    };
+    let strip_x = usize::try_from(2847 - collision.origin.x).unwrap();
+    let mut flags = vec![0u32; 4 * 128 * 128];
+    for z in 0..128 {
+        flags[z * 128 + strip_x] = CollisionFlag::WR_GRND as u32;
+    }
+    collision.attach_flags(flags);
+    collision
+}
+
+#[test]
+fn derive_zone_table_floods_each_hunter_under_its_move_restriction() {
+    let collision = collision_with_ground_strip();
+    let members = |movement: &str| {
+        let content = SyntheticHunterContent::with_thrower_movement(4, movement, false);
+        let derived = derive_synthetic_hunter_zones(&content, &collision);
+        (2839..=2863)
+            .filter(|&x| thrower_tile_count(&derived.table, x) == 1)
+            .collect::<Vec<_>>()
+    };
+    // NORMAL stops at the strip, so x=2839 lies beyond huntrange 8 of every
+    // tile it reaches (x >= 2848).
+    assert_eq!(
+        members("defaultmode=normal\n"),
+        (2840..=2863).collect::<Vec<_>>()
+    );
+    // `blocked+normal` walks over blocked ground and keeps the whole row.
+    assert_eq!(
+        members("moverestrict=blocked+normal\n"),
+        (2839..=2863).collect::<Vec<_>>()
+    );
+    // `blocked` steps only onto blocked ground; none surrounds this spawn, so
+    // it hunts from its spawn tile alone.
+    assert_eq!(
+        members("moverestrict=blocked\n"),
+        (2843..=2859).collect::<Vec<_>>()
+    );
 }

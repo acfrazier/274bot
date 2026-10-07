@@ -1,5 +1,5 @@
 use super::owner::Owner;
-use super::{ActionError, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
+use super::{ActionError, AssessReceipt, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use crate::shim::InteractReq;
 use api::selected::RunKey;
@@ -36,6 +36,7 @@ pub enum HostEffect {
     Interaction(InteractReq),
     Walk(WalkRequest),
     BankPick(BankPickRequest),
+    AssessWalk(WalkRequest),
 }
 
 /// A host continuation retains this fence after consuming the request payload.
@@ -83,7 +84,7 @@ pub struct QuietReadOwner {
 impl HostAction {
     pub fn live(&self) -> bool {
         match &self.effect {
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
                 self.owner.interaction_live(self.request_id)
             }
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
@@ -116,6 +117,9 @@ pub(crate) struct Ledger {
     pub interaction_request: Option<NonZeroU64>,
     pub bank_pick: Option<BankPickReceipt>,
     pub bank_pick_request: Option<NonZeroU64>,
+    pub assess_owner: Option<Arc<Owner>>,
+    pub assess_receipt: Option<AssessReceipt>,
+    pub assess_request: Option<NonZeroU64>,
     pub batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
@@ -126,13 +130,16 @@ impl Default for Ledger {
         Self {
             owner: None,
             next_id: 1,
-            outbox: Vec::with_capacity(5),
+            outbox: Vec::with_capacity(6),
             walk: None,
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
             bank_pick: None,
             bank_pick_request: None,
+            assess_owner: None,
+            assess_receipt: None,
+            assess_request: None,
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
@@ -184,11 +191,12 @@ impl Ledger {
         })
     }
 
-    pub fn revoke(&mut self) {
+    pub fn revoke_foreground(&mut self) {
         if let Some(owner) = self.owner.take() {
             owner.revoke();
         }
-        self.outbox.clear();
+        self.outbox
+            .retain(|action| matches!(action.effect, HostEffect::AssessWalk(_)));
         self.walk = None;
         self.walk_events.clear();
         self.interaction = None;
@@ -198,6 +206,32 @@ impl Ledger {
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
         self.quiet_since = None;
+    }
+
+    pub fn revoke(&mut self) {
+        self.revoke_foreground();
+        if let Some(owner) = self.assess_owner.take() {
+            owner.revoke();
+        }
+        self.outbox.clear();
+        self.assess_receipt = None;
+        self.assess_request = None;
+    }
+
+    pub fn complete_assess_walk(&mut self, authority: &HostAuthority, receipt: AssessReceipt) {
+        let request = authority.request_id();
+        if !authority.live()
+            || request.get() != receipt.request_id
+            || authority.run() != receipt.evidence.run
+            || self.assess_request != Some(request)
+            || self.assess_receipt.is_some()
+            || !self.assess_owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return;
+        }
+        self.assess_receipt = Some(receipt);
     }
 
     pub fn complete_interaction(&mut self, authority: &HostAuthority, receipt: InteractionReceipt) {

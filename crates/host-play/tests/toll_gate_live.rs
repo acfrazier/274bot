@@ -24,6 +24,7 @@ use host::Pump;
 use host_play::{
     arm_walk_on, step_walk_arm_follow, ProfileOptions, SharedClientTemplate, WalkArms,
 };
+use nav::bank_fetch::BankRows;
 use nav::router::{FindOptions, Leg, Route};
 use nav::tile::Tile;
 use nav::transport::{DoorDir, TransportKind};
@@ -68,18 +69,29 @@ fn save_receipt(label: &str, receipt: &serde_json::Value) {
     fs::write(path, bytes).expect("write receipt");
 }
 
+fn env_port(name: &str, default: u16) -> u16 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
     let nav_pack = PathBuf::from(
         std::env::var("WORLD_NAV_PACK")
             .expect("WORLD_NAV_PACK must point at the local R289 navigation pack"),
     );
+    // The shared-engine convention: WORLD_GAME_PORT/WORLD_HTTP_PORT select
+    // another local engine; the defaults are this fixture's original ones.
+    let port = env_port("WORLD_GAME_PORT", 45594);
+    let http_port = env_port("WORLD_HTTP_PORT", 2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(45594),
+        port: Some(port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(2080),
+        http_port: Some(http_port),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("WORLD_ENGINE_DIR")
@@ -95,8 +107,8 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         .expect("R289 local profile bind");
     assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(profile.client().game_host(), "127.0.0.1");
-    assert_eq!(profile.client().game_port(), 45594);
-    assert_eq!(profile.client().asset_port(), 2080);
+    assert_eq!(profile.client().game_port(), port);
+    assert_eq!(profile.client().asset_port(), http_port);
     let template = SharedClientTemplate::load(Arc::clone(&profile))
         .expect("selected R289 template and nav pack load");
     assert!(template.world().is_some(), "selected nav pack must load");
@@ -225,6 +237,12 @@ fn walk_arm_to(
     );
     let state = WorldState::from_snapshot(snapshot).with_map_members(true);
     let arms = WalkArms::default();
+    let admission = host_play::admission::Admission::manual(
+        FindOptions::default(),
+        host_play::admission::capture(snapshot, state.map_members, Default::default(), false),
+        0,
+        host_play::WalkGlobals::default(),
+    );
     let route = arm_walk_on(
         world,
         Tile {
@@ -239,11 +257,13 @@ fn walk_arm_to(
         },
         FindOptions::default(),
         &state,
-        &[],
+        &BankRows::default(),
+        admission,
         &arms,
         Some(name),
     )
-    .unwrap_or_else(|_| panic!("{label}: NoPath {from:?}->{dest:?}"));
+    .unwrap_or_else(|_| panic!("{label}: NoPath {from:?}->{dest:?}"))
+    .route;
     assert!(
         route_uses_toll(&route),
         "{label}: route must take a toll-gate Door hop, got {route:?}"
@@ -381,7 +401,8 @@ fn toll_gate_live_refuses_without_coins() {
             edge.kind == TransportKind::Door
                 && (edge.loc_id == TOLL_LEFT || edge.loc_id == TOLL_RIGHT)
                 && edge.dir == Some(DoorDir::E)
-                && edge.item_req.iter().any(|(id, n)| *id == COINS && *n >= 10)
+                // NAV-FARES bakes the 10-coin fare as consumed, not held.
+                && edge.consumed_req.iter().any(|(id, n)| *id == COINS && *n >= 10)
         })
         .cloned()
         .expect("paid eastbound Al Kharid toll Door edge");
@@ -444,7 +465,9 @@ fn toll_gate_live_refuses_without_coins() {
     };
     drop(options);
     match &outcome {
-        TravelOutcome::Blocked { detail, .. } if detail.contains("coins") => {}
+        // The traveller's fare recheck names the consumed item and the fare.
+        TravelOutcome::Blocked { detail, .. }
+            if detail.contains(&format!("needs 10 of item {COINS} to pay the fare")) => {}
         other => panic!(
             "expected Blocked(coins) without paying, got {other:?}; tile={:?} options={:?}",
             snapshot.tile(),

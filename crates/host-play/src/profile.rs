@@ -427,6 +427,11 @@ impl ServerProfile {
     pub fn map_members(&self) -> bool {
         self.world_members.map_members()
     }
+    /// The bound profile's world type for scripts; see
+    /// [`WorldMembersFact::world_truth`].
+    pub fn world_members_truth(&self) -> api::selected::Truth {
+        self.world_members.world_truth()
+    }
     pub fn label(&self) -> String {
         format!(
             "{} · {}:{} · revision {}",

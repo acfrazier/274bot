@@ -49,14 +49,17 @@ use script::bank::{Close, Open, OpenArgs, Select, SelectArgs, Withdraw, Withdraw
 use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
 use vault::{Profile, ProfileSettings};
 
-use super::bank_npc_live::write_teller_png;
+use super::bank_npc_live::render_teller_frame;
+use super::evidence_writer::{
+    write_failure_sidecar, EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
+};
 use super::{run_with_template, tele_args, ProfileOptions, SharedClientTemplate};
 
 const COINS: i32 = 995;
 const SEEDED: i32 = 50;
 const TARGET: i32 = 7;
 /// Draynor bank floor, inside the booth row.
-const DRAYNOR: WorldTile = WorldTile {
+pub(super) const DRAYNOR: WorldTile = WorldTile {
     x: 3092,
     z: 3243,
     level: 0,
@@ -64,16 +67,16 @@ const DRAYNOR: WorldTile = WorldTile {
 const CELL_BOUND: Duration = Duration::from_secs(60);
 // Keep the login prerequisite separate from every cell's deadline, with room
 // for the server's 60-second already-logged-in retry message.
-const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
-const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
-const CAPTURE_GRACE: Duration = Duration::from_secs(10);
+pub(super) const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
+pub(super) const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
+pub(super) const CAPTURE_GRACE: Duration = Duration::from_secs(10);
 const FEATHER: i32 = 314;
 const LOGS: i32 = 1511;
 const BONES: i32 = 526;
 const TINDERBOX: i32 = 590;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Prep {
+pub(super) enum Prep {
     Session,
     Teleport,
     WaitArrive,
@@ -86,7 +89,7 @@ enum Prep {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
-struct Trace {
+pub(super) struct Trace {
     bank: Option<String>,
     access_kind: Option<String>,
     access_tile: Option<[i32; 3]>,
@@ -102,8 +105,8 @@ struct Trace {
     cell_ms: Option<u128>,
     live_held: Option<i32>,
     live_bank_open: Option<bool>,
-    failure: Option<String>,
-    passed: bool,
+    pub(super) failure: Option<String>,
+    pub(super) passed: bool,
 }
 
 /// The posted facts a cell decides from, refreshed every in-game frame.
@@ -141,13 +144,13 @@ impl Facts {
     }
 }
 
-struct Cell {
-    phase: Prep,
+pub(super) struct Cell {
+    pub(super) phase: Prep,
     bound: Duration,
     /// Set only once the final seed is posted in an in-game scene-2 frame.
-    started: Option<Instant>,
-    preparation_started: Instant,
-    last_action: Instant,
+    pub(super) started: Option<Instant>,
+    pub(super) preparation_started: Instant,
+    pub(super) last_action: Instant,
     session_runner: scenario::ScenarioRunner,
     preparation_failure: Option<String>,
     /// Seed cheats sent in order once the pack is cleared.
@@ -157,26 +160,30 @@ struct Cell {
     seed_ready: fn(&GameSnapshot) -> bool,
     watch: &'static [i32],
     facts: Facts,
-    script_started: Option<Instant>,
-    trace: Trace,
+    pub(super) script_started: Option<Instant>,
+    pub(super) trace: Trace,
     /// The compat script's own answer.
-    result: Option<serde_json::Value>,
+    pub(super) result: Option<serde_json::Value>,
     /// The receipt's fixed part: scenario, seed and request.
     scenario: serde_json::Value,
     /// Whether the posted frame matches a passing verdict before capture.
     capture_ready: fn(&Cell) -> bool,
-    terminal: bool,
+    pub(super) terminal: bool,
     evidence_dir: PathBuf,
     capture_started: bool,
-    capture_written: bool,
-    capture_error: Option<String>,
+    pub(super) capture_written: bool,
+    pub(super) capture_error: Option<String>,
+    /// Shared background evidence writer; the hook submits the rendered
+    /// frame and marks the capture written only once the files are durable.
+    writer: Arc<EvidenceWriter>,
+    capture_job: Option<EvidenceJob>,
     /// The frame snapshot, rebuilt in place as the host keeps its own: the
     /// bank session generation is tracked across frames.
     snapshot: Option<GameSnapshot>,
 }
 
 impl Cell {
-    fn new(
+    pub(super) fn new(
         bound: Duration,
         seed: &'static [&'static str],
         seed_ready: fn(&GameSnapshot) -> bool,
@@ -209,11 +216,15 @@ impl Cell {
             capture_started: false,
             capture_written: false,
             capture_error: None,
+            writer: Arc::new(EvidenceWriter::new(
+                super::evidence_writer::DEFAULT_QUEUE_BOUND,
+            )),
+            capture_job: None,
             snapshot: None,
         }
     }
 
-    fn fail(&mut self, message: String) {
+    pub(super) fn fail(&mut self, message: String) {
         if !self.terminal {
             self.trace.failure = Some(message);
             self.terminal = true;
@@ -277,7 +288,7 @@ fn session_fixture_runner() -> scenario::ScenarioRunner {
     scenario::ScenarioRunner::with_world(scenario, None)
 }
 
-fn count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
+pub(super) fn count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
     script::bank::ops::count_id(items, id)
 }
 
@@ -505,21 +516,35 @@ fn save_evidence(
     directory: &Path,
     passed: bool,
     mut receipt: serde_json::Value,
-) -> Result<(), String> {
+    writer: &EvidenceWriter,
+) -> Result<EvidenceJob, String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     let step = if passed { "01-final" } else { "FAIL-final" };
     let png = directory.join(format!("{step}.png"));
-    let png_result = write_teller_png(client, &png);
-    receipt["png"] = serde_json::json!(png.file_name().and_then(|name| name.to_str()));
-    receipt["png_error"] = serde_json::json!(png_result.as_ref().err());
     let json = directory.join(format!("{step}.json"));
-    std::fs::write(
-        &json,
-        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| format!("write {}: {error}", json.display()))?;
-    png_result
+    receipt["png"] = serde_json::json!(png.file_name().and_then(|name| name.to_str()));
+    receipt["png_error"] = serde_json::Value::Null;
+    let sidecar = EvidenceSidecar {
+        path: json,
+        receipt,
+        patch_error: Some(Box::new(|receipt, error| {
+            receipt["png_error"] = serde_json::Value::String(error.to_owned());
+        })),
+    };
+    match render_teller_frame(client) {
+        Ok(frame) => Ok(writer.submit(EvidenceRequest {
+            png_path: png,
+            width: frame.width,
+            height: frame.height,
+            pixels: frame.pixels,
+            color: PngColor::Rgba,
+            sidecar: Some(sidecar),
+        })),
+        // Render needs the client, so its failure is reported inline; the
+        // sidecar still lands with the error recorded, as before.
+        Err(error) => Err(write_failure_sidecar(sidecar, &error)),
+    }
 }
 
 fn read_facts(snapshot: &GameSnapshot, watch: &[i32], last: &Facts) -> Facts {
@@ -554,7 +579,7 @@ fn read_facts(snapshot: &GameSnapshot, watch: &[i32], last: &Facts) -> Facts {
     }
 }
 
-fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
+pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     let mut snapshot = shared.lock().snapshot.take().unwrap_or_default();
     snapshot.rebuild(client);
     let now = Instant::now();
@@ -645,15 +670,40 @@ fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
         }
     };
     if let Some((directory, passed, receipt)) = capture {
-        let result = save_evidence(client, &directory, passed, receipt);
+        let writer = shared.lock().writer.clone();
+        match save_evidence(client, &directory, passed, receipt, &writer) {
+            Ok(job) => {
+                shared.lock().capture_job = Some(job);
+            }
+            Err(error) => {
+                let mut cell = shared.lock();
+                cell.capture_written = true;
+                cell.capture_error = Some(error);
+            }
+        }
+    }
+    // The driver loop already polls `capture_written` under the cell
+    // deadline; this marks it only once the background writer has the PNG
+    // and sidecar durable, which is the bounded cell-end flush.
+    let completed = {
+        let cell = shared.lock();
+        if cell.capture_written {
+            None
+        } else {
+            cell.capture_job
+                .clone()
+                .and_then(|job| cell.writer.poll(&job))
+        }
+    };
+    if let Some(outcome) = completed {
         let mut cell = shared.lock();
         cell.capture_written = true;
-        cell.capture_error = result.err();
+        cell.capture_error = outcome.error;
     }
     shared.lock().snapshot = Some(snapshot);
 }
 
-fn check_prerequisites(
+pub(super) fn check_prerequisites(
     play: &super::Play,
     account: &str,
     preparation_started: Instant,
@@ -695,7 +745,7 @@ fn check_prerequisites(
     }
 }
 
-fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
+pub(super) fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
     let path = |key: &str| {
         std::env::var_os(key)
             .map(PathBuf::from)

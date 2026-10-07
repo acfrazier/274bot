@@ -28,6 +28,20 @@ const TEMP_NAME_PREFIX_MAX: usize = 100;
 /// Fresh names tried before giving up when every candidate already exists.
 const TEMP_NAME_ATTEMPTS: usize = 16;
 
+/// Whether `value` is one safe path component under the state directory:
+/// non-empty, not `.` or `..`, and only ASCII letters, digits, `.`, `_` and
+/// `-`. Server-profile names and vault components meet this rule when the
+/// profile list loads, and a state file keyed by such a name (the bank hint's
+/// `<profile>` directory) checks the same rule rather than its own.
+pub fn valid_component(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// Writes `data` to `path`, replacing any file there, atomically: a reader (or
 /// a crash) sees the old bytes or the new bytes, never a mix.
 ///
@@ -570,6 +584,16 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn valid_component_accepts_profile_names_and_refuses_traversal() {
+        for accepted in ["local-289", "a.b_c-d", "x", &"a".repeat(65)] {
+            assert!(valid_component(accepted), "{accepted:?}");
+        }
+        for refused in ["", ".", "..", "a/b", "a\\b", "a b", "a\0b", "../x", "é"] {
+            assert!(!valid_component(refused), "{refused:?}");
+        }
     }
 
     #[test]
