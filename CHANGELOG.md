@@ -179,6 +179,9 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Ranged fights that cannot confirm the weapon's combat tab or requested style
   now stop with a clear preparation-readiness reason after eight observed
   ticks, rather than waiting out the full fight budget.
+- Native ranged swings now follow the local player's selected attack-animation
+  onsets, including same-sequence restarts, so stacked players cannot hide
+  local shots or lend foreign projectiles as swings.
 
 ### Clues
 
