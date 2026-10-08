@@ -3027,6 +3027,10 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
             text.contains("[Restart y]"),
             "{width}x{height}: missing restart action: {text}"
         );
+        assert!(
+            text.contains("[Later n]"),
+            "{width}x{height}: missing Later action: {text}"
+        );
     }
     session.scripts.dismiss_restart_prompt();
 }

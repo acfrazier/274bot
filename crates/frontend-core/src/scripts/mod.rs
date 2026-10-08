@@ -141,11 +141,12 @@ impl Notice {
 }
 
 /// Which operator action a pending Start came from: it decides where a
-/// setup failure is reported once it is observed.
+/// setup failure is reported and whether the saved assignment may change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartKind {
     Start,
     Reload,
+    RestartSettings,
 }
 
 /// A Start whose worker has not settled. Assignment changes only on Ready.
@@ -362,15 +363,99 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
-        let (profiles, selection) = {
-            let prompt = self
-                .sync
-                .take_restart_prompt()
-                .ok_or_else(|| "no restart prompt".to_string())?;
-            (prompt.profiles().to_vec(), prompt.selection().clone())
-        };
-        crate::marked::assign_and_restart_profiles(&profiles, core, self, &selection, catalog_root);
+        let prompt = self
+            .sync
+            .take_restart_prompt()
+            .ok_or_else(|| "no restart prompt".to_string())?;
+        let mut stopping = Vec::new();
+        let mut skipped = Vec::new();
+        for target in prompt.targets() {
+            if let Some(reason) = self.restart_target_skip(core, target) {
+                self.sync.clear_restart_badge(&target.profile);
+                skipped.push((target.profile.clone(), reason.to_string()));
+                continue;
+            }
+            match self.queue_pending_restart_settings(
+                core,
+                &target.profile,
+                target.selection.clone(),
+            ) {
+                Ok(()) => stopping.push(target.profile.clone()),
+                Err(reason) => skipped.push((target.profile.clone(), reason)),
+            }
+        }
+        if !stopping.is_empty() {
+            core.stop_scripts(&stopping);
+        }
+        self.admit_starts(core, catalog_root);
+        if !skipped.is_empty() {
+            self.show(
+                skipped
+                    .iter()
+                    .map(|(profile, reason)| format!("Skipped {profile}: {reason}"))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            );
+        }
         Ok(())
+    }
+
+    fn restart_target_skip<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        target: &sync::RestartTarget,
+    ) -> Option<&'static str> {
+        let profile = &target.profile;
+        if !wall_member(core, profile) {
+            return Some("not loaded");
+        }
+        let Some(play) = core.play() else {
+            return Some("not running");
+        };
+        if !matches!(
+            play.script_state(profile),
+            script::RunState::Running | script::RunState::Paused
+        ) {
+            return Some("not running");
+        }
+        let (has_arm, logged_out) = arm_flags(core, profile);
+        if !has_arm || logged_out {
+            return Some("logged out");
+        }
+        let Some(assignment) = Self::assignment(core, profile) else {
+            return Some("reassigned");
+        };
+        if sel_from_assignment(&assignment).as_ref() != Some(&target.selection) {
+            return Some("reassigned");
+        }
+        let identity = vault::assignment_key(&assignment.source_kind, &assignment.identity);
+        if play.script_source_identity(profile).as_deref() != Some(identity.as_str()) {
+            return Some("different script");
+        }
+        let status = play.script_native_status(profile);
+        if let Some(status) = status.as_deref() {
+            if play.script_native_run(profile) != Some(status.run)
+                || !matches!(target.selection, script::ScriptSel::Compiled(id) if id == status.card)
+            {
+                return Some("different script");
+            }
+            if status
+                .pending_settings
+                .is_none_or(|pending| pending <= status.active_settings)
+            {
+                return Some("settings no longer pending");
+            }
+        }
+        if !self.sync.restart_target_is_current(
+            profile,
+            &target.selection,
+            target.generation,
+            status.as_deref().map(|status| status.active_settings),
+            status.as_deref().and_then(|status| status.pending_settings),
+        ) {
+            return Some("settings no longer pending");
+        }
+        None
     }
 
     fn show(&mut self, text: impl Into<String>) {
@@ -1146,6 +1231,7 @@ impl Scripts {
             assigned,
             latched,
             had_arm,
+            kind: StartKind::Start,
         });
         self.tally_record(profile, Outcome::Queued, LogTo::None);
         Ok(())
@@ -1222,7 +1308,6 @@ impl Scripts {
         self.settle_starts(core);
         for write in core.take_settings_writes() {
             let is_sync_write = self.sync.tracks_write(write.op);
-            let sync_outcome = self.sync.record(&write);
             if matches!(
                 &write.result,
                 SettingsResult::Saved(LiveDelivery::RestartRequired)
@@ -1251,6 +1336,7 @@ impl Scripts {
             } else {
                 self.settings_cards.remove(&write.op);
             }
+            let sync_outcome = self.sync.record(&write);
             if let Some((op, outcome)) = sync_outcome {
                 core.set_outcome(op, &write.profile, outcome);
             }
@@ -1275,6 +1361,8 @@ impl Scripts {
                 self.sync.clear_restart_badge(&name);
             }
             match outcome {
+                Some(script::StartOutcome::Ready) if pending.kind == StartKind::RestartSettings => {
+                }
                 Some(script::StartOutcome::Ready) => match pending.card {
                     PendingCard::Compiled(id) => {
                         let key = script::compiled_identity_key(id);
@@ -1419,28 +1507,37 @@ impl Scripts {
             return false;
         }
         let catalog = self.admit_catalog.clone();
+        let tallied = entry.kind != StartKind::RestartSettings;
         match self.start_sel(
             core,
             &entry.profile,
             &entry.sel,
             catalog.as_deref(),
-            StartKind::Start,
-            true,
+            entry.kind,
+            tallied,
         ) {
-            Ok(()) => self.credit_started(&entry.profile),
+            Ok(()) if tallied => self.credit_started(&entry.profile),
+            Ok(()) => {}
             Err(script::StartLoadError::Waiting(reason)) => {
-                self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
+                if tallied {
+                    self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
+                    self.publish_bulk();
+                }
                 self.admit.return_head(entry);
-                self.publish_bulk();
                 return true;
             }
-            Err(error) => self.credit_failed(&entry.profile, &error.to_string()),
+            Err(error) if tallied => self.credit_failed(&entry.profile, &error.to_string()),
+            Err(error) => self.show(format!("Restart failed for {}: {error}", entry.profile)),
         }
         true
     }
 
     fn drop_queued(&mut self, entry: &QueuedStart, reason: &str) {
-        self.credit_skipped(&entry.profile, reason);
+        if entry.kind == StartKind::RestartSettings {
+            self.show(format!("Skipped {}: {reason}", entry.profile));
+        } else {
+            self.credit_skipped(&entry.profile, reason);
+        }
     }
 
     /// Credit a Start that left the queue through [`Self::start_sel`].

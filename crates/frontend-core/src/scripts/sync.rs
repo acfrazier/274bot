@@ -10,7 +10,7 @@
 //! and live delivery are reported separately. An assignment is persisted
 //! only with an accepted settings copy, never on its own.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,9 +30,15 @@ const UNAVAILABLE: &str = "profile unavailable";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestartPrompt {
     op: OperationId,
-    selection: script::ScriptSel,
+    targets: Vec<RestartTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RestartTarget {
+    pub(super) profile: String,
+    pub(super) selection: script::ScriptSel,
     card_name: String,
-    profiles: Vec<String>,
+    pub(super) generation: u64,
 }
 
 impl RestartPrompt {
@@ -40,24 +46,36 @@ impl RestartPrompt {
         self.op
     }
 
-    pub fn selection(&self) -> &script::ScriptSel {
-        &self.selection
+    pub fn profiles(&self) -> impl ExactSizeIterator<Item = &String> {
+        self.targets.iter().map(|target| &target.profile)
     }
 
-    pub fn card_name(&self) -> &str {
-        &self.card_name
-    }
-
-    pub fn profiles(&self) -> &[String] {
-        &self.profiles
+    pub(super) fn targets(&self) -> &[RestartTarget] {
+        &self.targets
     }
 
     pub fn summary(&self) -> String {
-        format!(
-            "Restart {} on {} to apply the new settings?",
-            self.card_name,
-            self.profiles.join(", ")
-        )
+        let mut groups: Vec<(&script::ScriptSel, &str, Vec<&str>)> = Vec::new();
+        for target in &self.targets {
+            let group = groups.iter().position(|(selection, card_name, _)| {
+                *selection == &target.selection && *card_name == target.card_name.as_str()
+            });
+            if let Some(index) = group {
+                groups[index].2.push(&target.profile);
+            } else {
+                groups.push((
+                    &target.selection,
+                    target.card_name.as_str(),
+                    vec![target.profile.as_str()],
+                ));
+            }
+        }
+        let restarts = groups
+            .iter()
+            .map(|(_, card_name, profiles)| format!("{card_name} on {}", profiles.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; restart ");
+        format!("Restart {restarts} to apply the new settings?")
     }
 
     fn new(
@@ -68,12 +86,29 @@ impl RestartPrompt {
     ) -> Option<Self> {
         profiles.sort();
         profiles.dedup();
-        (!profiles.is_empty()).then_some(Self {
-            op,
-            selection,
-            card_name,
-            profiles,
-        })
+        let targets = profiles
+            .into_iter()
+            .map(|profile| RestartTarget {
+                profile,
+                selection: selection.clone(),
+                card_name: card_name.clone(),
+                generation: 0,
+            })
+            .collect::<Vec<_>>();
+        (!targets.is_empty()).then_some(Self { op, targets })
+    }
+
+    fn merge(&mut self, newer: Self) {
+        self.op = newer.op;
+        for target in newer.targets {
+            match self
+                .targets
+                .binary_search_by(|current| current.profile.cmp(&target.profile))
+            {
+                Ok(index) => self.targets[index] = target,
+                Err(index) => self.targets.insert(index, target),
+            }
+        }
     }
 }
 
@@ -83,6 +118,8 @@ struct RestartBadge {
     baseline_active: Option<u64>,
     pending_revision: Option<u64>,
     observed_pending: bool,
+    generation: u64,
+    dismissed_generation: Option<u64>,
 }
 
 impl RestartBadge {
@@ -92,6 +129,8 @@ impl RestartBadge {
             baseline_active,
             pending_revision: None,
             observed_pending: false,
+            generation: 1,
+            dismissed_generation: None,
         }
     }
 }
@@ -397,7 +436,7 @@ pub(super) struct SyncState {
     earlier: Vec<SyncReport>,
     /// The last report settled and its final summary is not shown yet.
     announce: bool,
-    restart_prompts: VecDeque<RestartPrompt>,
+    restart_prompt: Option<RestartPrompt>,
     restart_badges: HashMap<String, RestartBadge>,
     restart_generation: u64,
 }
@@ -447,7 +486,7 @@ impl SyncState {
                 self.earlier.swap_remove(slot);
             }
             if let Some(prompt) = prompt {
-                self.restart_prompts.push_back(prompt);
+                self.queue_restart_prompt(prompt);
             }
             return Some(settled);
         }
@@ -469,7 +508,7 @@ impl SyncState {
             self.announce = true;
         }
         if let Some(prompt) = prompt {
-            self.restart_prompts.push_back(prompt);
+            self.queue_restart_prompt(prompt);
         }
         Some(settled)
     }
@@ -498,15 +537,22 @@ impl SyncState {
     }
 
     pub(super) fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
-        self.restart_prompts.front()
+        self.restart_prompt.as_ref()
     }
 
     pub(super) fn take_restart_prompt(&mut self) -> Option<RestartPrompt> {
-        self.restart_prompts.pop_front()
+        self.restart_prompt.take()
     }
 
     pub(super) fn dismiss_restart_prompt(&mut self) {
-        self.restart_prompts.pop_front();
+        let Some(prompt) = self.restart_prompt.take() else {
+            return;
+        };
+        for target in prompt.targets {
+            if let Some(badge) = self.restart_badges.get_mut(&target.profile) {
+                badge.dismissed_generation = Some(badge.generation);
+            }
+        }
     }
 
     pub(super) fn queue_single_restart_prompt(
@@ -518,8 +564,62 @@ impl SyncState {
         if let Some(prompt) =
             RestartPrompt::new(op, card.selection, card.name, vec![profile.to_string()])
         {
-            self.restart_prompts.push_back(prompt);
+            self.queue_restart_prompt(prompt);
         }
+    }
+
+    fn queue_restart_prompt(&mut self, mut prompt: RestartPrompt) {
+        prompt.targets.retain_mut(|target| {
+            let Some(badge) = self.restart_badges.get(&target.profile) else {
+                return false;
+            };
+            if badge.dismissed_generation == Some(badge.generation) {
+                return false;
+            }
+            target.selection.clone_from(&badge.selection);
+            target.generation = badge.generation;
+            true
+        });
+        if prompt.targets.is_empty() {
+            return;
+        }
+        if let Some(open) = self.restart_prompt.as_mut() {
+            open.merge(prompt);
+        } else {
+            self.restart_prompt = Some(prompt);
+        }
+    }
+
+    pub(super) fn restart_target_is_current(
+        &self,
+        profile: &str,
+        selection: &script::ScriptSel,
+        generation: u64,
+        active_revision: Option<u64>,
+        pending_revision: Option<u64>,
+    ) -> bool {
+        let Some(badge) = self.restart_badges.get(profile) else {
+            return false;
+        };
+        let settings_current = match (active_revision, pending_revision) {
+            (None, None) => badge.pending_revision.is_none(),
+            (Some(active), Some(pending)) => {
+                pending > active
+                    && badge
+                        .pending_revision
+                        .is_none_or(|observed| observed == pending)
+            }
+            _ => false,
+        };
+        badge.selection == *selection
+            && badge.generation == generation
+            && badge.dismissed_generation != Some(badge.generation)
+            && settings_current
+            && active_revision.is_none_or(|active| {
+                !badge
+                    .baseline_active
+                    .is_some_and(|baseline| active > baseline)
+            })
     }
 
     pub(super) fn restart_card(&self, profile: &str) -> Option<&script::ScriptSel> {
@@ -542,37 +642,75 @@ impl SyncState {
         selection: &script::ScriptSel,
         active_revision: Option<u64>,
     ) {
-        let is_new = !self.restart_badges.contains_key(profile);
-        self.restart_badges.insert(
-            profile.to_string(),
-            RestartBadge::new(selection.clone(), active_revision),
-        );
-        if is_new {
-            self.restart_generation = self.restart_generation.wrapping_add(1);
+        match self.restart_badges.get_mut(profile) {
+            Some(badge) if badge.selection == *selection => {
+                badge.baseline_active = active_revision;
+                badge.pending_revision = None;
+                badge.observed_pending = false;
+                badge.generation = badge.generation.wrapping_add(1);
+            }
+            _ => {
+                self.restart_badges.insert(
+                    profile.to_string(),
+                    RestartBadge::new(selection.clone(), active_revision),
+                );
+                self.restart_generation = self.restart_generation.wrapping_add(1);
+            }
         }
     }
+
     pub(super) fn clear_restart_badge(&mut self, profile: &str) {
         if self.restart_badges.remove(profile).is_none() {
             return;
         }
         self.restart_generation = self.restart_generation.wrapping_add(1);
-        for prompt in &mut self.restart_prompts {
-            prompt.profiles.retain(|name| name != profile);
+        let empty = if let Some(prompt) = self.restart_prompt.as_mut() {
+            prompt.targets.retain(|target| target.profile != profile);
+            prompt.targets.is_empty()
+        } else {
+            false
+        };
+        if empty {
+            self.restart_prompt = None;
         }
-        self.restart_prompts
-            .retain(|prompt| !prompt.profiles.is_empty());
     }
 
     pub(super) fn observe_restart_activation<Io>(&mut self, core: &OperatorSession<Io>) {
         let Some(play) = core.play() else {
+            let cleared: Vec<_> = self.restart_badges.keys().cloned().collect();
+            for profile in cleared {
+                self.clear_restart_badge(&profile);
+            }
             return;
         };
         let mut cleared = Vec::new();
         for (profile, badge) in &mut self.restart_badges {
+            let selection = super::Scripts::assignment(core, profile)
+                .and_then(|assignment| super::sel_from_assignment(&assignment));
+            if selection.as_ref() != Some(&badge.selection) {
+                cleared.push(profile.clone());
+                continue;
+            }
+            let (has_arm, logged_out) = super::arm_flags(core, profile);
+            if !has_arm || logged_out {
+                cleared.push(profile.clone());
+                continue;
+            }
+            match play.script_state(profile) {
+                script::RunState::Starting | script::RunState::Stopping => continue,
+                script::RunState::Running | script::RunState::Paused => {}
+                script::RunState::Idle | script::RunState::Error => {
+                    cleared.push(profile.clone());
+                    continue;
+                }
+            }
             let Some(status) = play.script_native_status(profile) else {
                 continue;
             };
-            if !matches!(badge.selection, script::ScriptSel::Compiled(id) if id == status.card) {
+            if play.script_native_run(profile) != Some(status.run)
+                || !matches!(badge.selection, script::ScriptSel::Compiled(id) if id == status.card)
+            {
+                cleared.push(profile.clone());
                 continue;
             }
             if let Some(revision) = status.pending_settings {

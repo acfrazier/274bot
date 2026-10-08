@@ -46,9 +46,9 @@ pub use map_bake::{
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use marked::{
-    assign_and_restart_marked, assign_and_restart_profiles, assign_marked, login_marked,
-    logout_marked, prepare_apply_settings_marked, restart_scope, run_marked_command,
-    MarkedCommandReport, RestartScope,
+    assign_and_restart_marked, assign_marked, login_marked, logout_marked,
+    prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
+    RestartScope,
 };
 pub use nav_prefs::{nav_preference_at, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
