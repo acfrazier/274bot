@@ -6040,6 +6040,10 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
 
     assert!(play.script_stop_if_identity_generation("alice", "card:a", generation));
     wait_script_state(&play, "alice", script::RunState::Idle);
+    let idle_generation = play.script_runtime_generation("alice").unwrap();
+    play.script_attach_identity("alice", "card:a");
+    assert!(!play.script_stop_if_identity_generation("alice", "card:a", idle_generation));
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
 }
 
 #[test]

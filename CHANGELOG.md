@@ -8,11 +8,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 ### Scripts
 
 - Saved settings that need a restart show a badge (`[restart]` in the panel,
-  `!` in the TUI) and offer Restart or Later. Restart acts only on listed
-  bots still running the same assigned script with the pending settings;
-  stopped, logged-out, reassigned or different-script bots are skipped and
-  named in the status line. Later leaves runs active and suppresses the
-  prompt until settings change again.
+  `!` in the TUI) and offer Restart or Later. Restart stops only listed bots
+  still running the same assigned script with pending settings. Bots that
+  stop before Restart reaches them or are logged out, reassigned or running
+  a different script are skipped and named in the status line. Later leaves
+  runs active and suppresses the prompt until settings change again.
 
 ### Panel
 

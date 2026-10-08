@@ -2542,6 +2542,40 @@ fn restart_prompt_skips_stopped_profile_at_click() {
 }
 
 #[test]
+fn restart_prompt_skips_run_that_ends_after_click_check() {
+    let mut f = single_gatherer_restart_prompt("restart-click-run-ended");
+    let starts_before = start_accepted(&f, "alice");
+
+    f.scripts
+        .restart_pending_settings_with_after_check(&mut f.core, None, |core, target| {
+            if target.profile != "alice" {
+                return;
+            }
+            core.play().unwrap().script_stop("alice");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while core.play().unwrap().script_state("alice") != script::RunState::Idle
+                && Instant::now() < deadline
+            {
+                core.poll();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                core.play().unwrap().script_state("alice"),
+                script::RunState::Idle
+            );
+        })
+        .unwrap();
+    f.settle();
+
+    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(start_accepted(&f, "alice"), starts_before);
+    assert!(matches!(
+        f.scripts.take_notice(),
+        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+    ));
+}
+
+#[test]
 fn restart_prompt_skips_logout_latch_at_click() {
     let mut f = single_gatherer_restart_prompt("restart-click-logout");
     let starts_before = start_accepted(&f, "alice");
