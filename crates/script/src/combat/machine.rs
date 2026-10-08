@@ -91,7 +91,8 @@ enum StyleState {
 
 struct RangedState {
     ammo_pick: i32,
-    launch_cycle: i32,
+    anim_id: i32,
+    anim_frame: i32,
     pickup_baseline: i32,
     sweep_attempts: u8,
     sweep_done: bool,
@@ -273,7 +274,8 @@ impl NativeMachine for Combat {
         let style_state = match request.style {
             Style::Ranged => StyleState::Ranged(Box::new(RangedState {
                 ammo_pick: -1,
-                launch_cycle: -1,
+                anim_id: -1,
+                anim_frame: -1,
                 pickup_baseline: 0,
                 sweep_attempts: 0,
                 sweep_done: false,
@@ -1509,9 +1511,13 @@ impl Combat {
             }
         }
         let onset = match &mut self.style_state {
-            StyleState::Ranged(state) => {
-                ranged::onset(frame, self.engaged, &mut state.launch_cycle)
-            }
+            StyleState::Ranged(state) => super::style::ranged::onset(
+                &frame.local.player.actor,
+                self.engaged,
+                &self.tables,
+                &mut state.anim_id,
+                &mut state.anim_frame,
+            ),
             StyleState::Melee(state) => super::style::melee::onset(
                 &frame.local.player.actor,
                 self.engaged,
@@ -1527,29 +1533,6 @@ impl Combat {
         {
             self.counters.swings = self.counters.swings.saturating_add(1);
             self.schedule.observe_swing(tick, self.rate(frame));
-        }
-        if self.request.style == Style::Ranged
-            && ranged::ambiguous_shooter(frame)
-            && self.schedule.swing_valid
-            && self.schedule.cycle.known
-            && self.schedule.interaction == Interaction::Installed
-            && self.engaged.is_some_and(|actor| {
-                frame
-                    .in_combat
-                    .target
-                    .is_some_and(|target| actor.matches(target))
-            })
-            && reached(tick, self.schedule.cycle.deadline)
-        {
-            // Preserve the last confirmed launch and its counter. While stacked,
-            // only advance the inferred weapon clock, never claim launch evidence.
-            let rate = u16::from(self.rate(frame).max(1));
-            let late = elapsed(tick, self.schedule.cycle.deadline);
-            self.schedule.cycle.deadline = self
-                .schedule
-                .cycle
-                .deadline
-                .wrapping_add((late / rate + 1).wrapping_mul(rate));
         }
         for slot in 0..self.pending.len() {
             let pending = self.pending[slot];
