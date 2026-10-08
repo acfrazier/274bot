@@ -977,7 +977,10 @@ mod defer_budget_tests {
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];
         for error in errors {
-            assert_eq!(defer_budget::<()>(Err(error.clone())), Poll::Ready(Err(error)));
+            assert_eq!(
+                defer_budget::<()>(Err(error.clone())),
+                Poll::Ready(Err(error))
+            );
         }
     }
 }

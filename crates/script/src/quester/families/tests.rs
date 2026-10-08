@@ -807,6 +807,81 @@ fn same_tick_cant_reach_retarget_preserves_avoid_and_attempt_budget() {
 }
 
 #[test]
+fn reach_cant_reach_retarget_waits_for_scene_entry_tick() {
+    let mut initial = ready();
+    initial.seed_local_player(local_player(tile(3227, 3300)));
+    initial.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3280,
+        ..Default::default()
+    });
+    let first = ground();
+    let mut second = first.clone();
+    second.tile = tile(3228, 3302);
+    second.distance = first.distance + 1;
+    initial.seed_ground_items(vec![first.clone(), second.clone()]);
+
+    let mut entered = ready();
+    entered.seed_local_player(local_player(tile(3227, 3300)));
+    entered.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3208,
+        map_base_z: 3280,
+        ..Default::default()
+    });
+    entered.seed_ground_items(vec![first, second]);
+    entered.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+
+    let mut ledger = None;
+    let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<reach::Reach>(egg(true), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Obj {
+            x: 3229,
+            z: 3302,
+            ..
+        }
+    ));
+
+    with_tick_snapshots(&initial, &entered, &mut ledger, 2, |tick, entered| {
+        tick.cx.budget.observe_frame(2, Some(&initial));
+        tick.cx.budget.observe_frame(2, Some(entered));
+        assert!(tick.cx.entered_scene());
+        tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
+        for _ in 0..12 {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        }
+        assert_eq!(
+            tick.cx.ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "same-tick wakes must not retry from the scene-entry frame"
+        );
+    });
+
+    assert!(with_tick(&entered, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Obj {
+            x: 3228,
+            z: 3302,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn same_tick_cant_reach_door_open_waits_for_next_tick() {
     let mut initial = ready();
     initial.seed_local_player(local_player(tile(5, 5)));

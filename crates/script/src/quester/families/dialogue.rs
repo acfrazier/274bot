@@ -372,9 +372,9 @@ impl NativeMachine for Dialogue {
             Phase::Approach => {
                 if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
                     if target.distance <= 2 && talk_reachable(cx, target.tile) {
+                        std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
                         cx.cancel_request(self.walk_request_id);
                         self.walk_request_id = 0;
-                        std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
                         return Poll::Pending;
                     }
                 }

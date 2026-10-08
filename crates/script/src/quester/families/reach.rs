@@ -162,6 +162,10 @@ impl NativeMachine for Reach {
         }
         match self.phase {
             Phase::Seek => {
+                // The entry frame can still carry the prior scene's locs.
+                if cx.entered_scene() {
+                    return Poll::Pending;
+                }
                 if std::task::ready!(defer_budget(self.click(cx)))? {
                     return Poll::Pending;
                 }
@@ -183,6 +187,11 @@ impl NativeMachine for Reach {
                     };
                 }
                 if saw_cant_reach(cx, self.chat_mark) {
+                    // Preserve the response until locs from the entered scene
+                    // are observed before choosing a retry or door transition.
+                    if cx.entered_scene() {
+                        return Poll::Pending;
+                    }
                     // A fungible target that answered "I can't reach that!" is
                     // a failed attempt: click another reachable match at once
                     // and avoid the bumped one briefly. With no alternative,
@@ -223,6 +232,10 @@ impl NativeMachine for Reach {
                 Poll::Ready(Ok(true))
             }
             Phase::WaitDoor { door } => {
+                // Do not infer that a door changed from prior-scene locs.
+                if cx.entered_scene() {
+                    return Poll::Pending;
+                }
                 // The engine's `open_door` deletes the shut door and adds the
                 // open leaf (moving its collision) in the op's own execution
                 // (`content/scripts/doors/scripts/doors.rs2:6-20`): once the
@@ -236,6 +249,9 @@ impl NativeMachine for Reach {
                 Poll::Pending
             }
             Phase::OpenDoor { id, tile } => {
+                if cx.entered_scene() {
+                    return Poll::Pending;
+                }
                 if std::task::ready!(defer_budget(self.open_door(id, tile, cx))).is_err() {
                     return Poll::Ready(Ok(false));
                 }

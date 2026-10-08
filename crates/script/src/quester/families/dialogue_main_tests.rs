@@ -1,6 +1,4 @@
-use super::dialogue::{
-    Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, CONTINUE_TICKS, PAGE_SETTLE_TICKS,
-};
+use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, PAGE_SETTLE_TICKS};
 use super::tests::{with_tick, with_tick_snapshots};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
@@ -1061,6 +1059,14 @@ fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
         level: 0,
     }));
     after.seed_npcs(vec![dialogue_npc(1)]);
+    let mut wandered = snapshot();
+    wandered.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    wandered.seed_npcs(vec![dialogue_npc(5)]);
+
     let mut ledger = None;
     let (handle, same_tick) =
         with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
@@ -1079,13 +1085,80 @@ fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
             HostEffect::Interaction(InteractReq::Npc { .. })
         )
     }));
+    let walk = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .expect("the refused Talk-to must leave its approach walk queued");
+    assert!(walk.live(), "the retained approach walk remains owned");
 
-    assert!(with_tick(&after, &mut ledger, 2, |tick| {
+    assert!(with_tick(&wandered, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    let walk = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .expect("the NPC wandering away must not cancel the live approach");
+    assert!(
+        walk.live(),
+        "the continued walk remains owned until its receipt"
+    );
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Npc { .. })
+        )
+    }));
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
     assert!(matches!(
-        last_interaction(&ledger),
+        with_tick(&wandered, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+
+    let mut successful_open_ledger = None;
+    let (successful_open, same_tick) = with_tick_snapshots(
+        &before,
+        &after,
+        &mut successful_open_ledger,
+        1,
+        |tick, after| {
+            let handle = tick
+                .actions
+                .begin::<Dialogue>(npc_args(), &mut tick.cx)
+                .unwrap();
+            tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(after), tick.cx.evidence());
+            let same_tick = tick.actions.poll(&handle, &mut tick.cx);
+            (handle, same_tick)
+        },
+    );
+    assert!(same_tick.is_pending());
+    assert!(successful_open_ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()));
+    assert!(with_tick(&after, &mut successful_open_ledger, 2, |tick| {
+        tick.actions.poll(&successful_open, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(!successful_open_ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| matches!(&entry.effect, HostEffect::Walk(_))));
+    assert!(matches!(
+        last_interaction(&successful_open_ledger),
         InteractReq::Npc { index: Some(7), .. }
     ));
 }
@@ -1131,6 +1204,8 @@ fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {
 #[test]
 fn dialogue_gap_rearms_share_one_per_tick_marker_across_evidence_and_animation() {
     let mut snapshot = snapshot();
+    let mut args = continuation_args();
+    args.options.gap_ticks = Some(2);
     snapshot.seed_chat_modal(100, vec!["Still working.".into()]);
     snapshot.seed_chat_options(vec![], -1);
     let player_at = |x, z, animation| {
@@ -1141,9 +1216,7 @@ fn dialogue_gap_rearms_share_one_per_tick_marker_across_evidence_and_animation()
     snapshot.seed_local_player(player_at(5, 5, -1));
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
-        tick.actions
-            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
-            .unwrap()
+        tick.actions.begin::<Dialogue>(args, &mut tick.cx).unwrap()
     });
     assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
