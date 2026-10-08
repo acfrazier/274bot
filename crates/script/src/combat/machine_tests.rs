@@ -3890,6 +3890,11 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
         value: i32::from(rapid.slot),
     });
     let id = darts.def.id;
+    let sequence = scene.ranged_seq();
+    let rate = crate::combat::style::ranged::rate(
+        scene.tables.weapon_style(id).unwrap().attackrate,
+        RangedMode::Rapid,
+    );
     scene.equipment = vec![darts];
     scene.refresh();
     scene.combat_tab(root);
@@ -3906,6 +3911,9 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     scene.combat_tab(root);
     assert!(harness.pending(&scene, 2).is_none());
     for tick in 3..203 {
+        scene.local.player.actor.animation = sequence;
+        scene.local.player.actor.animation_frame = ((tick - 3) % u64::from(rate)) as i32;
+        scene.snapshot.seed_local_player(scene.local.clone());
         let cycle = i32::try_from(tick).unwrap() * 30;
         scene.snapshot.seed_hitmarks(HitmarksView {
             marks: [HitmarkView {
@@ -4180,8 +4188,7 @@ fn ranged_swing_replay(
     };
     let sequence = scene.ranged_seq();
     let evidence = harness.runtime.evidence.unwrap();
-    let initial_frame =
-        Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    let initial_frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
     let rate = harness.machine.rate(&initial_frame);
 
     // Recorded from DIAG-RANGED-SWINGS. Repeated projectiles remain visible
@@ -4252,8 +4259,7 @@ fn ranged_swing_replay(
             }; 4],
             loop_cycle,
         });
-        let frame =
-            Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+        let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
         harness.machine.settle(&frame, tick);
     }
 
@@ -4272,9 +4278,11 @@ fn ranged_swing_replay(
 
 #[test]
 fn ranged_swings_follow_local_animation_onsets_only() {
-    let (stacked, stacked_last, stacked_deadline, rate) =
-        ranged_swing_replay(true, false, false);
-    assert_eq!(stacked, 3, "same-tile idle witness must not suppress local shots");
+    let (stacked, stacked_last, stacked_deadline, rate) = ranged_swing_replay(true, false, false);
+    assert_eq!(
+        stacked, 3,
+        "same-tile idle witness must not suppress local shots"
+    );
     assert_eq!(stacked_last, 16);
     assert_eq!(stacked_deadline, Some(16 + u16::from(rate)));
 
@@ -4286,12 +4294,18 @@ fn ranged_swings_follow_local_animation_onsets_only() {
     assert_eq!(unstacked_rate, rate);
 
     let (idle_local, idle_last, idle_deadline, _) = ranged_swing_replay(true, true, false);
-    assert_eq!(idle_local, 0, "projectiles cannot substitute for local animation");
+    assert_eq!(
+        idle_local, 0,
+        "projectiles cannot substitute for local animation"
+    );
     assert_eq!(idle_last, 0);
     assert_eq!(idle_deadline, None);
 
     let (wrong_target, wrong_last, wrong_deadline, _) = ranged_swing_replay(false, false, true);
-    assert_eq!(wrong_target, 0, "another target's animation is not this fight's swing");
+    assert_eq!(
+        wrong_target, 0,
+        "another target's animation is not this fight's swing"
+    );
     assert_eq!(wrong_last, 0);
     assert_eq!(wrong_deadline, None);
 }
