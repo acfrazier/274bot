@@ -127,8 +127,10 @@ pub(super) fn npc_backed(edge: &TransportEdge) -> bool {
     )
 }
 
-/// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
-/// open 1531 sits a tile off the derived `at`).
+/// The edge's closed loc or packed open leaf within chebyshev 3 of
+/// `edge.at` (live Catherby open 1531 sits a tile off the derived `at`).
+/// With no `open_loc_id`, only the closed `loc_id` belongs to this family;
+/// a displaced temporary leaf is never mistaken for an open loc.
 pub(super) fn find_door_loc<'s>(
     snapshot: &'s GameSnapshot,
     edge: &TransportEdge,
@@ -156,9 +158,9 @@ pub(super) fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
 /// ids are resolved by [`find_door_loc`] within chebyshev 3 of `at` (the
 /// Catherby open leaf at (2816,3439) while `at` is (2816,3438)). When
 /// that misses, an unpacked swing door with no `open_loc_id` may still
-/// read open if the closed id is gone and a loc **on `edge.at`** offers
-/// Close — not a nearby unrelated Close loc (sealed `dir=None` stand
-/// hops such as ranging 2514 sit a tile off the door loc).
+/// read open if a loc **on `edge.at`** offers Close — never a nearby
+/// displaced or unrelated Close loc (sealed `dir=None` stand hops such as
+/// ranging 2514 sit a tile off the door loc).
 pub(super) fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bool {
     if let Some(loc) = find_door_loc(snapshot, edge) {
         return loc.id != edge.loc_id;
@@ -348,9 +350,9 @@ impl FollowRun {
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), recover an
     /// NPC reach failure within its attempt/leg bounds, retry a web only on
-    /// its content failure message, or lapse the budget. Door-kind edges with
-    /// a packed open leaf (swing doors, gates, held-item and scripted doors)
-    /// recover while the hop still has time to observe and retry the crossing.
+    /// its content failure message, or lapse the budget. Door-kind edges with a
+    /// packed open leaf or cardinal crossing direction recover within that
+    /// original budget; dialogue doors and slashable webs keep their own proof.
     pub(super) fn poll_transport<D: Driver>(
         &mut self,
         d: &mut D,
@@ -412,13 +414,13 @@ impl FollowRun {
         }
         if hop.approach.is_none() {
             if let Leg::Transport { edge } = &hop.leg {
-                // A leaf can close after an already-open walk armed, or
-                // before our Open takes effect. Recover now, not after the
-                // entire crossing budget has already been spent. Scripted
-                // doors without a packed open leaf, dialogue and webs keep
-                // their own settle/proof behavior.
+                // Recover within the original hop budget. A packed open leaf
+                // identifies swing doors; a cardinal direction also proves
+                // the crossing side for scripted self-closing doors without
+                // a leaf. Dialogue doors and webs keep their own settle/proof
+                // behavior.
                 hop.troll |= edge.kind == TransportKind::Door
-                    && edge.open_loc_id.is_some()
+                    && (edge.open_loc_id.is_some() || edge.dir.is_some())
                     && !edge.is_slashable_web()
                     && !drives_hop_dialogs(edge);
             }
@@ -1302,9 +1304,10 @@ impl FollowRun {
             return None;
         }
         let Some(loc) = leaf else {
-            // The door's loc is not in the loaded scene yet (the loc
-            // family is stale, or the door is out of view): keep waiting,
-            // bounded by the hop budget.
+            // The exact loc family is not in the loaded scene yet (stale,
+            // out of view, or a scripted self-closing swap). For a door with
+            // no open leaf, wait for `edge.loc_id` to return; its displaced
+            // inactive leaf is not a walk-through target.
             self.loc_wait += 1;
             if self.loc_wait > self.budget {
                 fire_leg(options, &hop.leg, LegPhase::Failed);

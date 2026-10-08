@@ -51,6 +51,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   The Quest Paths rows sit under a "Quester: Quest Paths (all bots)"
   heading.
 
+### Navigation
+
+- Fleet walks no longer leave eligible group members stuck at doors that
+  close after each crossing, such as the Fishing Guild door; anyone held
+  back retries automatically once the door is available again.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
