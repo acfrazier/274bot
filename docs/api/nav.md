@@ -903,30 +903,38 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   explanatory terminal `Blocked` receipt; attempt exhaustion names its
   actual attempt count. Duplicate snapshot polls do not spend this budget.
 
-- **Door legs with a packed open leaf:** every Door-kind edge whose closed
-  loc packs an open leaf takes state-aware recovery from the first poll:
-  swing doors, gates (1551→1552, 1553→1556), held-item doors (brass key) and
-  scripted `open_and_close_door` doors with a `next_loc_stage`. Open a closed
-  leaf promptly and walk through an open one. Re-read the packed closed/open
-  loc family within three tiles of the door's anchor, including shifted
-  double-door leaves; never click an open leaf's Close operation, also when
-  the leaf opens while the approach walk is finishing. If another player
-  closes the door before crossing, re-Open at once when the leaf was seen
-  open since the last Open; a leaf that never opened is re-Opened only after
-  it has read closed for 2 ticks, a window that doubles per unanswered Open
-  (Opens at ticks 0, 2, 6, 14 and 30 of the default 60-tick budget). All of
-  this stays inside the original hop budget: retries and open-state walks do
-  not reset it, and the terminal receipt counts actual interaction attempts.
+- **Door legs with a packed open leaf or cardinal crossing direction:**
+  directional Door-kind edges use state-aware recovery from the first poll,
+  except dialogue doors and slashable webs. This covers swing doors, gates
+  (1551→1552, 1553→1556), held-item doors (brass key), scripted
+  `open_and_close_door` doors with a `next_loc_stage`, and cardinal scripted
+  doors whose content does not leave an open leaf. Open the matching closed
+  loc promptly and walk through a packed open leaf when it reads open. Re-read
+  the matching loc family within three tiles of the door's anchor, including
+  shifted double-door leaves; never click an open leaf's Close operation,
+  also when it opens while the approach walk is finishing. A self-closing
+  scripted door's temporary displaced leaf is not an open passage: wait for
+  the exact closed loc to return, then retry against that loc. If another
+  player closes a swing door before crossing, re-Open at once when the leaf
+  was seen open since the last Open; a leaf that never opened is re-Opened
+  only after it has read closed for 2 ticks, a window that doubles per
+  unanswered Open. With a three-tick self-closing swap, the default 60-tick
+  budget accommodates the initial Open and up to four retries (at ticks
+  0, 4, 8, 16 and 32 when each accepted operation causes the swap); three
+  concurrent travellers need only two retries after the first crossing. All
+  retries and open-state walks stay inside the original hop budget, which is
+  never reset, and the terminal receipt counts actual interaction attempts.
   A post-Open step from the door tile goes out only once the leaf reads open
   or the wall step is clear; earlier, it would cancel the queued Open. Once
   the player has crossed, a closer behind them cannot draw them back to the
   door.
-- **Other door legs:** scripted doors without a packed open leaf retain the
-  one-interaction settle and wall-clear post-Open step; dialogue doors retain
-  their dialogue proof, and slashable webs retry only on an observed cut
-  failure. An exhausted crossing or approach ends without a last hopeless
-  Open or a second full wait budget. Losing the connection reports `Dropped`
-  only if the attempt made no tile progress; otherwise the hop is `Expired`.
+- **Other door legs:** directionless scripted doors without a packed open
+  leaf retain the one-interaction settle and wall-clear post-Open step;
+  dialogue doors retain their dialogue proof, and slashable webs retry only
+  on an observed cut failure. An exhausted crossing or approach ends without
+  a last hopeless Open or a second full wait budget. Losing the connection
+  reports `Dropped` only if the attempt made no tile progress; otherwise the
+  hop is `Expired`.
 
 ## Route inspect (preview)
 

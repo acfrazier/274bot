@@ -3,6 +3,14 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0.1
+
+### Navigation
+
+- Fleet walks no longer leave eligible group members stuck at doors that
+  close after each crossing; anyone held back retries automatically once the
+  door is available again.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
