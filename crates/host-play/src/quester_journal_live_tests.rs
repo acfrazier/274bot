@@ -2400,7 +2400,11 @@ fn live_quester_cook_reaches_complete() {
     wait_relogged(&play, &setup);
 
     let handle = play.script_start_handle();
-    play.script_start(&name, script::CompiledId("Quester"), serde_json::Map::new())
+    // An empty quest list runs every released guide in order, so the card
+    // would go on past Cook; pick Cook alone to prove its completion.
+    let mut settings = serde_json::Map::new();
+    settings.insert("quests".into(), serde_json::json!(["cook"]));
+    play.script_start(&name, script::CompiledId("Quester"), settings)
         .expect("start released Cook Quester card");
     wait_test_start(&handle, &name);
     wait_until("fresh Cook's Assistant completion", COOK_TIMEOUT, || {
