@@ -318,7 +318,13 @@ impl CookFixture {
                                 held.actions.clear();
                                 held.slot = (0..28)
                                     .find(|slot| !inventory.iter().any(|row| row.slot == *slot))
-                                    .expect("withdrawal needs a real free slot");
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "{}: withdrawal id={bank_item_id} qty={count} stackable={} needs a real free slot",
+                                            self.script.path.provisioning.path.0,
+                                            row.def.stackable
+                                        )
+                                    });
                                 inventory.push(held);
                             }
                             self.snapshot.seed_inventory(inventory, 28);
@@ -1163,6 +1169,12 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
                     component_id: 7,
                 });
             }
+        }
+        // Model the engine's stacked Coins bank row, as the carry fixtures
+        // do; the selected alias declaration is not a runtime bank definition.
+        let coin_id = fixture.script.selected.item_by_alias("coins").unwrap().id;
+        if let Some(coins) = fixture.stock.iter_mut().find(|row| row.def.id == coin_id) {
+            coins.def.stackable = true;
         }
         fixture.until_root_begin();
         assert!(
