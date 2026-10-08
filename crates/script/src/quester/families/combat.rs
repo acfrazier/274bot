@@ -677,12 +677,17 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
         let id = resolve_loadout_item(cx, item)?.0;
         worn.push((slot, id));
     }
-    let mut carry = Vec::with_capacity(row.carry.len());
-    for entry in &row.carry {
-        if entry.qty == 0 {
-            return Err(CompileError::code("invalid-combat-loadout-quantity"));
-        }
-        carry.push((resolve_loadout_item(cx, &entry.item)?.0, entry.qty));
+    // Carry ids come from the compiled loadout rows the native consumers use:
+    // shared display names can collide (e.g. `Coins` is both 617 and 995),
+    // while the compiled rows retain the authored alias identity.
+    let compiled_carry = super::s2::compile_loadout_carry(&qualified, row, cx)?;
+    let mut carry = Vec::with_capacity(compiled_carry.len());
+    for entry in compiled_carry.iter() {
+        let qty = u32::try_from(entry.qty)
+            .ok()
+            .filter(|qty| *qty > 0)
+            .ok_or_else(|| CompileError::code("invalid-combat-loadout-quantity"))?;
+        carry.push((entry.item.id, qty));
     }
     Ok(Arc::new(CompiledKit {
         worn: Arc::from(worn),
