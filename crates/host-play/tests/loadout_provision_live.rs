@@ -260,6 +260,8 @@ enum Prep {
     TutSkip,
     WaitTutorial,
     Relog,
+    ReseedTutorial,
+    WaitReseedConfirm,
     Seed,
     WaitSeed,
     DrainDialogs,
@@ -285,6 +287,7 @@ struct LiveState {
     started: bool,
     last_action: Instant,
     last_hold: bool,
+    tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
 impl LiveState {
@@ -432,14 +435,13 @@ impl LiveState {
                 }
             }
             Prep::TutSkip => {
-                interact::cheat(client, "setvar tutorial 1000");
-                interact::cheat(client, "getvar tutorial");
+                interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
                 self.last_action = now;
                 self.prep = Prep::WaitTutorial;
             }
             Prep::WaitTutorial => {
-                if self.chat_has("get tutorial: 1000") {
-                    self.relog_session_before = Some(client.gens.session);
+                if self.chat_has(scenario::tutorial::TUTORIAL_CHAT_NEEDLE) {
                     self.relog_offline_seen = false;
                     println!(
                         "{}",
@@ -488,12 +490,37 @@ impl LiveState {
                                 "hold": hold,
                             })
                         );
-                        self.prep = Prep::Seed;
+                        self.prep = Prep::ReseedTutorial;
                     }
                     RunnerStatus::Failed(error) => {
                         return Err(format!("tutorial relog failed: {error}"));
                     }
                     RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                }
+            }
+            Prep::ReseedTutorial => {
+                // Fresh-account post-relog reseed: the kit-close queue has
+                // already run in the new session. The cell equips a rune
+                // scimitar below, which needs `tutorial > 400`.
+                let baseline = scenario::tutorial::chat_baseline(&self.snapshot);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_SETVAR);
+                interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR);
+                self.tutorial_reseed = Some(scenario::tutorial::PostRelogTutorial::new(baseline));
+                self.last_action = now;
+                self.prep = Prep::WaitReseedConfirm;
+            }
+            Prep::WaitReseedConfirm => {
+                let reseed = self
+                    .tutorial_reseed
+                    .as_ref()
+                    .expect("tutorial reseed armed");
+                match reseed.check(&self.snapshot) {
+                    Ok(true) => {
+                        println!("{}", scenario::tutorial::confirmation_log());
+                        self.prep = Prep::Seed;
+                    }
+                    Ok(false) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Prep::Seed => {
@@ -739,6 +766,7 @@ fn run_cell() -> Result<(), String> {
         started: false,
         last_action: Instant::now(),
         last_hold: false,
+        tutorial_reseed: None,
     }));
     let frame_state = Arc::clone(&state);
     let mut play = host_play::run_with_template(

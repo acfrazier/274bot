@@ -785,6 +785,8 @@ enum PairPrepStage {
     TutSkip,
     Relog,
     WaitRelog,
+    ReseedTutorial,
+    WaitReseedConfirm,
     Seed,
     WaitSeed,
     AckBank,
@@ -811,6 +813,7 @@ struct PairCompanionSlot {
     clue_witness: Option<Arc<Mutex<ClueFleetWitness>>>,
     kq_witness: Option<Arc<Mutex<KqFleetWitness>>>,
     prep_barrier: Option<PairPrepBarrier>,
+    tutorial_reseed: Option<crate::tutorial::PostRelogTutorial>,
 }
 
 impl PairCompanionSlot {
@@ -830,6 +833,7 @@ impl PairCompanionSlot {
             clue_witness: None,
             kq_witness: None,
             prep_barrier: None,
+            tutorial_reseed: None,
         }
     }
 }
@@ -852,8 +856,8 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             if !send_ok(slot, now) {
                 return;
             }
-            cheat(c, "setvar tutorial 1000");
-            cheat(c, "getvar tutorial");
+            cheat(c, crate::tutorial::TUTORIAL_SETVAR);
+            cheat(c, crate::tutorial::TUTORIAL_GETVAR);
             slot.last_action = now;
             slot.stage = PairPrepStage::Relog;
         }
@@ -890,7 +894,48 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                 }
             }
             if slot.saw_logout && snap.ingame() && snap.scene_state() == 2 && inv_tab {
+                if matches!(slot.kind, PairCompanionKind::DuelPeer) {
+                    slot.stage = PairPrepStage::ReseedTutorial;
+                } else {
+                    slot.stage = PairPrepStage::Seed;
+                }
+            }
+        }
+        PairPrepStage::ReseedTutorial => {
+            if !send_ok(slot, now) {
+                return;
+            }
+            // Fresh-account post-relog reseed: the kit-close queue has
+            // already run in the new session. The DuelPeer wields a bronze
+            // scimitar below, which needs `tutorial > 400` for the tab.
+            let baseline = crate::tutorial::chat_baseline(&snap);
+            cheat(c, crate::tutorial::TUTORIAL_SETVAR);
+            cheat(c, crate::tutorial::TUTORIAL_GETVAR);
+            slot.tutorial_reseed = Some(crate::tutorial::PostRelogTutorial::new(baseline));
+            slot.last_action = now;
+            slot.stage = PairPrepStage::WaitReseedConfirm;
+        }
+        PairPrepStage::WaitReseedConfirm => {
+            let confirmed = match slot.tutorial_reseed.as_ref() {
+                Some(reseed) => match reseed.check(&snap) {
+                    Ok(confirmed) => confirmed,
+                    Err(error) => {
+                        // No fresh reply within the helper's bound: re-arm
+                        // with a new baseline rather than wedging. The
+                        // driven slot's own fresh seed still gates Start.
+                        println!("{error}");
+                        slot.stage = PairPrepStage::ReseedTutorial;
+                        return;
+                    }
+                },
+                None => false,
+            };
+            if confirmed {
+                println!("{}", crate::tutorial::confirmation_log());
                 slot.stage = PairPrepStage::Seed;
+            } else if send_ok(slot, now) {
+                cheat(c, crate::tutorial::TUTORIAL_GETVAR);
+                slot.last_action = now;
             }
         }
         PairPrepStage::Seed => {

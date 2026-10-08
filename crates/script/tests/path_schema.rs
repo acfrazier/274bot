@@ -1479,3 +1479,786 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
     assert_eq!(chosen(3413, 3488), step("douse-vampire-coffin"));
     assert_eq!(chosen(3414, 3487), step("douse-vampire-coffin"));
 }
+
+/// PORT-S6-DRAFTS-FIX F1: the Varrock stand spawns are `giantrat1` (id 87),
+/// not `giantrat` (id 86), so the rat hunt must target both configs.
+/// Fails on `45aec8ec3` where the target is the single `"giantrat"`.
+#[test]
+fn druid_rat_hunt_targets_both_giantrat_configs() {
+    let _home = script::IsolatedEnv::enter("path-schema-druid-rats");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("druid.json"));
+    let step = find_step_mut(&mut value, "hunt-rat-for-meat").expect("hunt step");
+    let npc = step
+        .pointer("/args/target/npc")
+        .expect("hunt target npc")
+        .clone();
+    let names: Vec<String> = match npc {
+        Value::String(one) => vec![one],
+        Value::Array(many) => many
+            .iter()
+            .map(|name| name.as_str().expect("npc name").to_string())
+            .collect(),
+        other => panic!("unexpected npc arg shape: {other}"),
+    };
+    assert!(
+        names.contains(&"giantrat".to_string()),
+        "keeps the base giantrat config: {names:?}"
+    );
+    assert!(
+        names.contains(&"giantrat1".to_string()),
+        "covers the stand spawns (id 87): {names:?}"
+    );
+    compile_value(value, &selected, &quests).expect("druid compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F3: `pick-snake` must not advance the journal: with only
+/// the unidentified herb held the content journal prints no matching line, so
+/// an `advances: true` read parks the run. Fails on `45aec8ec3` (`true`).
+#[test]
+fn junglepotion_pick_snake_does_not_advance() {
+    let _home = script::IsolatedEnv::enter("path-schema-jungle-snake");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("junglepotion.json"));
+    let step = find_step_mut(&mut value, "pick-snake").expect("pick-snake");
+    assert_eq!(
+        step.get("advances"),
+        Some(&serde_json::json!(false)),
+        "pick-snake must settle without a journal re-read"
+    );
+    compile_value(value, &selected, &quests).expect("junglepotion compiles");
+}
+
+/// PORT-S6-DRAFTS-FIX F6: handing Fluffs to Gertrude advances the quest varp,
+/// so the step must re-read the journal instead of replaying stage 4.
+/// Fails on `45aec8ec3` (`false`).
+#[test]
+fn fluffs_kitten_handoff_advances() {
+    let _home = script::IsolatedEnv::enter("path-schema-fluffs-kitten");
+    let (selected, quests) = selected_and_quests();
+    let mut value = read_path(&paths_dir().join("fluffs.json"));
+    let step = find_step_mut(&mut value, "give-fluffs-her-kitten").expect("kitten handoff");
+    assert_eq!(
+        step.get("advances"),
+        Some(&serde_json::json!(true)),
+        "give-fluffs-her-kitten changes progress and must advance"
+    );
+    compile_value(value, &selected, &quests).expect("fluffs compiles");
+}
+
+/// PORT-S6-DRAFTS-R4 T1: a fresh run from the mainland bank pays three 30-coin
+/// boat crossings, not the two the F5 round trip assumed: mainland bank ->
+/// Kangai (`start`), Kangai -> crate (`take-label`), and mansion ->
+/// Kangai (`return-totem`). The coin float is a one-shot latch
+/// (`provision.rs:342-381`, never redrawn once held; native walks never use
+/// BankBudget per `walk_permissions.rs:185-186`), so it must cover all three
+/// up front. The crossing count is derived from the Path's own ordered
+/// anchors rather than a constant: consecutive waypoints on opposite sides of
+/// the sea each cost one 30-coin fare in content (`customs_officer.rs2:80-82`
+/// out, `captain_barnaby.rs2:2` via `karamja_sailor_dialogue` back).
+/// Fails on `e41903c64` (`coin_float` 60 for two crossings).
+#[test]
+fn totem_coin_float_covers_the_round_trip_fare() {
+    let _home = script::IsolatedEnv::enter("path-schema-totem-fare");
+    let (selected, quests) = selected_and_quests();
+    let value = read_path(&paths_dir().join("totem.json"));
+    /// Brimhaven/Karamja anchors sit near x 2790; every mainland anchor sits
+    /// near x 2640-2680, so the sea falls between them.
+    fn karamja_side(tile: &[i64]) -> bool {
+        tile[0] >= 2750
+    }
+    fn anchor_of(step: &Value) -> Option<Vec<i64>> {
+        step.pointer("/args/anchor/tile")?.as_array().map(|tile| {
+            tile.iter()
+                .map(|coord| coord.as_i64().expect("anchor coord"))
+                .collect()
+        })
+    }
+    fn step_id(step: &Value) -> String {
+        step.pointer("/id")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    }
+    // Quest execution order: the mainland bank first, then every anchored
+    // stage step in order, then the `return-totem` prelude that fires once
+    // the totem is held. (The other prelude steps are intra-mainland
+    // recoveries, and the new descent steps are intra-mansion, so neither
+    // can add a sea crossing.)
+    let mut waypoints: Vec<(String, Vec<i64>)> = Vec::new();
+    let bank = value.pointer("/quest/bank/tile").expect("quest bank tile");
+    waypoints.push((
+        "bank".to_string(),
+        bank.as_array()
+            .expect("bank tile array")
+            .iter()
+            .map(|coord| coord.as_i64().expect("bank coord"))
+            .collect(),
+    ));
+    let role = value.pointer("/roles/0").expect("role 0");
+    for sequence in role
+        .pointer("/sequences")
+        .expect("sequences")
+        .as_array()
+        .expect("sequences array")
+    {
+        for step in sequence
+            .pointer("/steps")
+            .expect("steps")
+            .as_array()
+            .expect("steps array")
+        {
+            if let Some(tile) = anchor_of(step) {
+                waypoints.push((step_id(step), tile));
+            }
+        }
+    }
+    let prelude = role
+        .pointer("/prelude")
+        .expect("prelude")
+        .as_array()
+        .expect("prelude array");
+    let home = prelude
+        .iter()
+        .find(|step| step.pointer("/id").and_then(Value::as_str) == Some("return-totem"))
+        .expect("return-totem");
+    waypoints.push((
+        "return-totem".to_string(),
+        anchor_of(home).expect("return anchor"),
+    ));
+    let mut crossings: Vec<String> = Vec::new();
+    for pair in waypoints.windows(2) {
+        if karamja_side(&pair[1].1) != karamja_side(&pair[0].1) {
+            crossings.push(format!(
+                "{} {:?} -> {} {:?}",
+                pair[0].0, pair[0].1, pair[1].0, pair[1].1
+            ));
+        }
+    }
+    assert_eq!(
+        crossings.len(),
+        3,
+        "bank -> Kangai, Kangai -> crate and mansion -> Kangai must each cross the sea, found: {crossings:?}"
+    );
+    let float = value
+        .pointer("/quest/coin_float")
+        .and_then(serde_json::Value::as_i64)
+        .expect("quest.coin_float");
+    let need = crossings.len() as i64 * 30;
+    assert!(
+        float >= need,
+        "totem coin_float {float} must cover every boat crossing ({need} for {crossings:?})"
+    );
+    compile_value(value, &selected, &quests).expect("totem compiles");
+}
+
+/// PORT-S6-DRAFTS-R4 T2 (real pack): after `search-chest` the bot holds the
+/// totem on mansion level 1, from which `return-totem` cannot route. The
+/// prelude must step down the level-1 stairs and open the combination door
+/// from the stair-room side before `return-totem`. Content: the down stairs
+/// are `stairstop` 1723 at [2631,3322,1] (`C:maps/m41_51.jm2:8639`,
+/// `C:pack/loc.pack:1724`) landing at [2631,3325,0] via
+/// `C:scripts/ladders+stairs/scripts/stairs.rs2:54` (`case 1_41_51_7_58`
+/// lands `0_41_51_7_61`); the stair room sits west of `combodoor` 2705 at
+/// [2634,3323,0] (`C:maps/m41_51.jm2:6748`, `C:pack/loc.pack:2706`), which
+/// `C:scripts/quests/quest_totem/scripts/quest_totem.rs2:90`
+/// (`[oploc1,combodoor]`) opens once the combination flag is set.
+/// PORT-S6-DRAFTS-R5 D1: both door steps are side-aware on the named
+/// `mansion_stair_room` area (the R4 skip held in the hall too and
+/// oscillated), and the ascent gets a hall-side mirror step, since
+/// `solve-combination` anchors east of the door while `disarm-trap`
+/// anchors west of it with no nav edge between.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn totem_mansion_descent_reaches_the_return_boat() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions, Leg};
+    use nav::transport::TransportKind;
+    use nav::world::NavWorld;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-totem-descent-pack");
+    let (selected, quests) = selected_and_quests();
+    let value = read_path(&paths_dir().join("totem.json"));
+
+    // The step sequence reaches the landing: climb-down, then the stair-room
+    // door, then return-totem, in that prelude order.
+    let prelude = value
+        .pointer("/roles/0/prelude")
+        .expect("prelude")
+        .as_array()
+        .expect("prelude array")
+        .clone();
+    let pos = |id: &str| {
+        prelude
+            .iter()
+            .position(|step| step.pointer("/id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("prelude step {id}"))
+    };
+    let (down_at, door_at, home_at) = (
+        pos("climb-down-stairs"),
+        pos("open-combo-door-from-stair-room"),
+        pos("return-totem"),
+    );
+    assert!(
+        down_at < door_at && door_at < home_at,
+        "descent must run before return-totem: climb-down at {down_at}, combo door at {door_at}, return-totem at {home_at}"
+    );
+    let down = &prelude[down_at];
+    assert_eq!(
+        down.pointer("/args/target/loc").expect("down target"),
+        &json!("stairstop"),
+    );
+    assert_eq!(
+        down.pointer("/args/op").expect("down op"),
+        &json!("Climb-down"),
+    );
+    assert_eq!(
+        down.pointer("/args/anchor/tile").expect("down anchor"),
+        &json!([2631, 3322, 1]),
+    );
+    let down_skip = down.pointer("/skip_if").expect("down skip").to_string();
+    for needle in ["on_level", "mansion", "tribal_totem"] {
+        assert!(
+            down_skip.contains(needle),
+            "climb-down skips off level 1, outside the mansion and without the totem: {down_skip}"
+        );
+    }
+    assert_eq!(
+        down.pointer("/settle/Fact/args/level")
+            .expect("down settle"),
+        &json!(0),
+    );
+    let door = &prelude[door_at];
+    assert_eq!(
+        door.pointer("/args/target/loc").expect("door target"),
+        &json!("combodoor"),
+    );
+    assert_eq!(door.pointer("/args/op").expect("door op"), &json!("Open"),);
+    assert_eq!(
+        door.pointer("/args/anchor/tile").expect("door anchor"),
+        &json!([2631, 3325, 0]),
+        "the door step starts where climb-down lands"
+    );
+    let door_skip = door.pointer("/skip_if").expect("door skip").to_string();
+    for needle in ["on_level", "mansion_stair_room", "tribal_totem"] {
+        assert!(
+            door_skip.contains(needle),
+            "combo door skips off the ground floor, outside the stair room and without the totem: {door_skip}"
+        );
+    }
+    // PORT-S6-DRAFTS-R5 D1: the R4 step skipped on the mansion-wide area,
+    // which also holds in the hall, so the stateless prelude selector
+    // re-selected it after crossing and oscillated through the door. The
+    // skip must name the stair-room side and the settle must require
+    // leaving it, handing over to return-totem.
+    assert_eq!(
+        door.pointer("/settle").expect("door settle"),
+        &json!({"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mansion_stair_room"}}}}),
+        "the stair-room door step settles outside the stair room"
+    );
+    // The stair-room area covers the landing and the floor west of
+    // combodoor 2705 at [2634,3323,0], and stops at the door: the door
+    // tile and every hall tile stay outside so return-totem is selected
+    // there (see totem_combo_door_steps_are_side_aware in select.rs).
+    let stair_room = value
+        .pointer("/quest/areas/mansion_stair_room/boxes")
+        .expect("mansion_stair_room boxes")
+        .as_array()
+        .expect("stair-room boxes array");
+    fn box_contains(box5: &[Value], tile: [i64; 3]) -> bool {
+        let get = |i: usize| box5[i].as_i64().expect("box coord");
+        tile[2] == get(4)
+            && tile[0] >= get(0).min(get(2))
+            && tile[0] <= get(0).max(get(2))
+            && tile[1] >= get(1).min(get(3))
+            && tile[1] <= get(1).max(get(3))
+    }
+    let in_stair_room = |tile: [i64; 3]| {
+        stair_room
+            .iter()
+            .any(|box5| box_contains(box5.as_array().expect("box array"), tile))
+    };
+    for tile in [[2631, 3325, 0], [2633, 3323, 0], [2627, 3324, 0]] {
+        assert!(
+            in_stair_room(tile),
+            "stair-room floor {tile:?} must be inside mansion_stair_room"
+        );
+    }
+    for tile in [[2634, 3323, 0], [2635, 3323, 0], [2640, 3322, 0]] {
+        assert!(
+            !in_stair_room(tile),
+            "hall tile {tile:?} must be outside mansion_stair_room"
+        );
+    }
+    // Inbound mirror: after solve-combination the bot stands east of the
+    // door while disarm-trap anchors west of it, with no nav edge between.
+    // The hall-side open sits between the stair-room door and return-totem,
+    // waits for the combination flag so it never blocks solving, and
+    // settles once the bot reaches the stair room.
+    let hall_at = pos("open-combo-door-from-hall");
+    assert!(
+        door_at < hall_at && hall_at < home_at,
+        "hall-side door runs after the stair-room door and before return-totem: door at {door_at}, hall at {hall_at}, return at {home_at}"
+    );
+    let hall = &prelude[hall_at];
+    assert_eq!(
+        hall.pointer("/args/target/loc").expect("hall target"),
+        &json!("combodoor"),
+    );
+    assert_eq!(hall.pointer("/args/op").expect("hall op"), &json!("Open"),);
+    assert_eq!(
+        hall.pointer("/args/anchor/tile").expect("hall anchor"),
+        &json!([2635, 3323, 0]),
+        "the hall-side step starts east of the door"
+    );
+    let hall_skip = hall.pointer("/skip_if").expect("hall skip").to_string();
+    for needle in ["mansion_stair_room", "totem:4", "tribal_totem", "combo"] {
+        assert!(
+            hall_skip.contains(needle),
+            "hall-side door is stair-room-aware, stage-gated, totem-gated and combo-gated: {hall_skip}"
+        );
+    }
+    assert_eq!(
+        hall.pointer("/settle").expect("hall settle"),
+        &json!({"Fact": {"kind": "in_area", "version": 1, "args": {"area": "mansion_stair_room"}}}),
+        "the hall-side door step settles inside the stair room"
+    );
+    compile_value(value, &selected, &quests).expect("totem compiles");
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let tile = |x, z, level| WorldTile { x, z, level };
+    let coined = |coins: i32| {
+        let mut state = WorldState::empty().with_map_members(true);
+        state.combat_level = Some(30);
+        state.inv.insert(995, coins);
+        state
+    };
+    // From a level-1 mansion tile the walk reaches the stair landing,
+    // crossing the modelled down-stairs edge.
+    let down_route = find_with(
+        &world.collision,
+        &world.graph,
+        tile(2637, 3323, 1),
+        tile(2631, 3325, 0),
+        FindOptions::default(),
+        &coined(30),
+    )
+    .unwrap_or_else(|error| panic!("level-1 chest room must reach the stair landing: {error:?}"));
+    assert!(
+        down_route.legs.iter().any(|leg| matches!(
+            leg,
+            Leg::Transport { edge } if edge.kind == TransportKind::Stairs
+                && edge.at.x == 2631
+                && edge.at.z == 3322
+                && edge.at.level == 1
+                && edge.to.x == 2631
+                && edge.to.z == 3325
+                && edge.to.level == 0
+        )),
+        "the landing must be reached over the down-stairs edge: {:?}",
+        down_route.legs
+    );
+    // The landing itself cannot route to Kangai: nav has no edge through
+    // the combination door (stair-room tiles x 2629-2633 are cut off from
+    // the hall even with zones exempt). The `open-combo-door-from-stair-room`
+    // step bridges that live; if nav ever gains the edge, this tripwire
+    // flips and the test must be updated to require the through route.
+    for coins in [0, 30] {
+        assert!(
+            find_with(
+                &world.collision,
+                &world.graph,
+                tile(2631, 3325, 0),
+                tile(2792, 3182, 0),
+                FindOptions::default(),
+                &coined(coins),
+            )
+            .is_err(),
+            "landing has no nav route to Kangai at {coins} coins (combo-door gap)"
+        );
+    }
+    // Past the door, the ground-floor hall routes home over the 30-coin boat,
+    // and the fare gate holds: refused carrying 0, routed carrying 30.
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            tile(2640, 3322, 0),
+            tile(2792, 3182, 0),
+            FindOptions::default(),
+            &coined(0),
+        )
+        .is_err(),
+        "hall must not route to Kangai without the fare"
+    );
+    let home_route = find_with(
+        &world.collision,
+        &world.graph,
+        tile(2640, 3322, 0),
+        tile(2792, 3182, 0),
+        FindOptions::default(),
+        &coined(30),
+    )
+    .unwrap_or_else(|error| panic!("hall must route to Kangai with 30 coins: {error:?}"));
+    assert!(
+        home_route
+            .legs
+            .iter()
+            .any(|leg| matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::Boat)),
+        "the hall leg must cross on the boat: {:?}",
+        home_route.legs
+    );
+}
+
+/// PORT-S6-DRAFTS-FIX F2 (real pack): the yard is enclosed and nav does not
+/// model the broken fence as a transport, so the stage-2/3 approach walks
+/// must end outside it at (3305,3492); the old (3305,3496) target is NoPath
+/// from outside even with zones exempt.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn fluffs_yard_entry_walks_end_outside_the_fence() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions};
+    use nav::world::NavWorld;
+    use nav::zones::ZoneExempt;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-fluffs-fence-pack");
+    let mut value = read_path(&paths_dir().join("fluffs.json"));
+    for id in ["walk-to-yard-entry", "walk-to-yard-entry-for-sardine"] {
+        let step = find_step_mut(&mut value, id).expect("yard walk");
+        let tile = step.pointer("/args/tile").expect("walk tile").clone();
+        assert_eq!(
+            tile,
+            serde_json::json!([3305, 3492, 0]),
+            "{id} ends outside"
+        );
+    }
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let from = WorldTile {
+        x: 3255,
+        z: 3288,
+        level: 0,
+    };
+    let outside = WorldTile {
+        x: 3305,
+        z: 3492,
+        level: 0,
+    };
+    let inside = WorldTile {
+        x: 3305,
+        z: 3496,
+        level: 0,
+    };
+    let state = WorldState::empty().with_map_members(true);
+    let free_opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        outside,
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap_or_else(|error| panic!("cow -> outside fence must route: {error:?}"));
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            inside,
+            free_opts,
+            &state
+        )
+        .is_err(),
+        "the old yard-side target stays unreachable even exempt"
+    );
+}
+
+/// PORT-S6-DRAFTS-FIX F4 (real pack): the dungeon and herb legs cross named
+/// danger zones, so the grant-carrying walks must resolve and route at low
+/// combat where the strict search refuses.
+/// PORT-S6-DRAFTS-R3 N1/N2: the same holds for the return legs (snake-weed
+/// site back to Trufitus, cave back to the exit rocks) and the druid
+/// missing-meat recovery walk, which now carry the outbound grants.
+#[test]
+#[ignore = "requires the real 289 nav pack at /Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack"]
+fn danger_cross_grants_route_low_combat_legs() {
+    use api::WorldTile;
+    use nav::router::{find_with, FindOptions};
+    use nav::world::NavWorld;
+    use nav::zones::ZoneExempt;
+    use nav::WorldState;
+    use std::path::PathBuf;
+
+    let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
+    let mut druid = read_path(&paths_dir().join("druid.json"));
+    for id in [
+        "walk-to-prison-door",
+        "walk-to-dungeon-exit",
+        "exit-dungeon-walk-to-ladder-for-missing-meat",
+    ] {
+        let step = find_step_mut(&mut druid, id).expect("dungeon walk");
+        let cross = step
+            .pointer("/args/cross")
+            .expect("cross list")
+            .as_array()
+            .expect("cross array");
+        assert!(cross.len() <= 8, "{id} fits the 8-grant limit");
+        for zone in [
+            "skeleton_unarmed@2882,9826,0",
+            "skeleton_unarmed@2885,9819,0",
+            "skeleton_armed@2884,9836,0",
+        ] {
+            assert!(
+                cross.iter().any(|entry| entry.as_str() == Some(zone)),
+                "{id} grants {zone}"
+            );
+        }
+    }
+    let mut jungle = read_path(&paths_dir().join("junglepotion.json"));
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "walk-to-snake-weed",
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "jungle_spider@2780,3029,0",
+                "tribesman@2771,3014,0",
+            ],
+        ),
+        (
+            "walk-to-volencia-moss",
+            &["snake@2836,3043,0", "snake@2847,3042,0"],
+        ),
+        (
+            "walk-to-rogues-purse",
+            &["jogre@2826,9518,0", "jogre@2848,9483,0"],
+        ),
+    ];
+    for (id, zones) in expected {
+        let step = find_step_mut(&mut jungle, id).expect("herb walk");
+        let cross = step
+            .pointer("/args/cross")
+            .expect("cross list")
+            .as_array()
+            .expect("cross array");
+        for zone in *zones {
+            assert!(
+                cross.iter().any(|entry| entry.as_str() == Some(*zone)),
+                "{id} grants {zone}"
+            );
+        }
+    }
+    // PORT-S6-DRAFTS-R3 N1: each return walk carries the same named zones
+    // as its outbound walk, ends at the return destination, and settles
+    // (plus skips) on nearness the way the outbound walks do.
+    for (outbound, ret) in [
+        ("walk-to-snake-weed", "walk-back-to-trufitus"),
+        ("walk-to-snake-weed-found", "walk-back-to-trufitus-found"),
+        ("walk-to-rogues-purse", "walk-to-cave-exit"),
+        ("walk-to-rogues-purse-found", "walk-to-cave-exit-found"),
+    ] {
+        let outward = find_step_mut(&mut jungle, outbound)
+            .expect("outbound walk")
+            .pointer("/args/cross")
+            .expect("cross list")
+            .clone();
+        let back = find_step_mut(&mut jungle, ret)
+            .expect("return walk")
+            .pointer("/args/cross")
+            .expect("cross list")
+            .clone();
+        assert_eq!(
+            back, outward,
+            "{ret} carries the same named zones as {outbound}"
+        );
+    }
+    for (id, tile) in [
+        ("walk-back-to-trufitus", json!([2809, 3086, 0])),
+        ("walk-back-to-trufitus-found", json!([2809, 3086, 0])),
+        ("walk-to-cave-exit", json!([2830, 9521, 0])),
+        ("walk-to-cave-exit-found", json!([2830, 9521, 0])),
+    ] {
+        let step = find_step_mut(&mut jungle, id).expect("return walk");
+        assert_eq!(
+            step.pointer("/args/tile").expect("walk tile"),
+            &tile,
+            "{id} ends at the return destination"
+        );
+        assert_eq!(
+            step.pointer("/settle/Fact/args/tile").expect("settle tile"),
+            &tile,
+            "{id} settles near the destination"
+        );
+        let skip = step.pointer("/skip_if").expect("skip").to_string();
+        assert!(
+            skip.contains("\"near\""),
+            "{id} skips when already near the destination: {skip}"
+        );
+    }
+
+    let pack = PathBuf::from(
+        "/Volumes/dev-scratch/274bot-evidence/CORE-INTEGRATOR-7/nav/289/274bot.navpack",
+    );
+    let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
+    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+        &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
+    )
+    .expect("decode flags");
+    world.collision.attach_flags(flags);
+    let table = world.graph.zones.as_ref().expect("baked zones");
+    let tile = |x, z| WorldTile { x, z, level: 0 };
+    // (from, to, combat, cross-list): the strict search refuses each of the
+    // zone-gated legs at low combat; the named grants restore them.
+    let legs = &[
+        (
+            (2884, 9797),
+            (2888, 9831),
+            20,
+            &[
+                "skeleton_unarmed@2882,9826,0",
+                "skeleton_unarmed@2885,9819,0",
+                "skeleton_unarmed@2885,9823,0",
+                "skeleton_unarmed@2886,9812,0",
+                "skeleton_unarmed@2886,9816,0",
+                "skeleton_unarmed@2887,9821,0",
+                "skeleton_armed@2884,9836,0",
+                "poisonspider@2876,9806,0",
+            ] as &[&str],
+        ),
+        (
+            (2809, 3086),
+            (2761, 3015),
+            3,
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "hobgoblin_unarmed@2791,3013,0",
+                "hobgoblin_unarmed@2794,3013,0",
+                "jungle_spider@2780,3029,0",
+                "jungle_spider@2780,3031,0",
+                "tribesman@2771,3014,0",
+                "tribesman@2773,3017,0",
+                "tribesman@2777,3068,0",
+            ] as &[&str],
+        ),
+        (
+            (2830, 9521),
+            (2850, 9477),
+            3,
+            &[
+                "jogre@2826,9518,0",
+                "jogre@2834,9499,0",
+                "jogre@2834,9513,0",
+                "jogre@2836,9522,0",
+                "jogre@2838,9490,0",
+                "jogre@2848,9483,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N1: snake-weed site back to the Trufitus stand.
+        (
+            (2761, 3015),
+            (2809, 3086),
+            3,
+            &[
+                "hobgoblin_unarmed@2787,3013,0",
+                "hobgoblin_unarmed@2791,3013,0",
+                "hobgoblin_unarmed@2794,3013,0",
+                "jungle_spider@2780,3029,0",
+                "jungle_spider@2780,3031,0",
+                "tribesman@2771,3014,0",
+                "tribesman@2773,3017,0",
+                "tribesman@2777,3068,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N1: cave back to the exit rocks.
+        (
+            (2850, 9477),
+            (2830, 9521),
+            3,
+            &[
+                "jogre@2826,9518,0",
+                "jogre@2834,9499,0",
+                "jogre@2834,9513,0",
+                "jogre@2836,9522,0",
+                "jogre@2838,9490,0",
+                "jogre@2848,9483,0",
+            ] as &[&str],
+        ),
+        // PORT-S6-DRAFTS-R3 N2: cauldron room back toward the ladder for a
+        // missing meat. The ladder tile itself is not standable, so the
+        // walk's radius-1 goals are the standable neighbours; probe one.
+        (
+            (2892, 9831),
+            (2884, 9798),
+            20,
+            &[
+                "skeleton_unarmed@2882,9826,0",
+                "skeleton_unarmed@2885,9819,0",
+                "skeleton_unarmed@2885,9823,0",
+                "skeleton_unarmed@2886,9812,0",
+                "skeleton_unarmed@2886,9816,0",
+                "skeleton_unarmed@2887,9821,0",
+                "skeleton_armed@2884,9836,0",
+                "poisonspider@2876,9806,0",
+            ] as &[&str],
+        ),
+    ];
+    for ((fx, fz), (tx, tz), cl, cross) in legs {
+        let mut state = WorldState::empty().with_map_members(true);
+        state.combat_level = Some(*cl);
+        assert!(
+            find_with(
+                &world.collision,
+                &world.graph,
+                tile(*fx, *fz),
+                tile(*tx, *tz),
+                FindOptions::default(),
+                &state,
+            )
+            .is_err(),
+            "strict refuses ({fx},{fz}) -> ({tx},{tz}) at combat {cl}"
+        );
+        let keys: Vec<_> = cross
+            .iter()
+            .map(|name| table.resolve(name).expect("known zone"))
+            .collect();
+        let named_opts = FindOptions {
+            zones: ZoneExempt::named(&keys).expect("named grants"),
+            ..FindOptions::default()
+        };
+        find_with(
+            &world.collision,
+            &world.graph,
+            tile(*fx, *fz),
+            tile(*tx, *tz),
+            named_opts,
+            &state,
+        )
+        .unwrap_or_else(|error| {
+            panic!("named grants route ({fx},{fz}) -> ({tx},{tz}) at {cl}: {error:?}")
+        });
+    }
+}

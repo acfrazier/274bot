@@ -161,10 +161,15 @@ scripts end their live step at either boundary.
 ### Quester queue and provisioning
 
 Quester uses the ordered `crates/script/paths/289/index.json` release roster.
-`quests` selects quest IDs (an empty list selects all released Paths);
-`order_override` prioritizes selected IDs and `skip` excludes IDs. `partner_account`
-and `gang` are per-account settings, not bulk-copy settings. Partner selection uses
-configured vault identities, including saved accounts not currently loaded.
+`quests` selects quest IDs. An empty list queues every available Path except
+rows marked `"status": "draft"`. The off-by-default `include_draft_guides` setting
+(**Include draft guides when no quests are picked**) adds those bundled drafts
+in release-roster order. Explicit quest picks always run; with an empty quest
+selection, a draft listed in `order_override` is also an explicit pick.
+`order_override` prioritizes selected IDs and `skip` excludes
+IDs. `partner_account` and `gang` are per-account settings, not bulk-copy
+settings. Partner selection uses configured vault identities, including saved
+accounts not currently loaded.
 
 A roster row can be unavailable on this server: it carries `name` and an
 end-user `unavailable` reason instead of being released (it may keep its
@@ -180,15 +185,18 @@ begins, without specializing the shared compiled Path. Omitted saved values use
 
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
 For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
-The released IDs in roster order are `cook` (Cook's Assistant), `sheep` (Sheep
-Shearer), `runemysteries` (Rune Mysteries), `romeojuliet` (Romeo & Juliet),
-`imp` (Imp Catcher), `vampire` (Vampire Slayer), `doric` (Doric's Quest),
-`gobdip` (Goblin Diplomacy), `hetty` (Witch's Potion), `prince` (Prince Ali
-Rescue), `hunt` (Pirate's Treasure), `demon` (Demon Slayer), `squire` (The
+The bundled Path IDs in roster order are `cook` (Cook's Assistant), `sheep`
+(Sheep Shearer), `runemysteries` (Rune Mysteries), `romeojuliet` (Romeo &
+Juliet), `imp` (Imp Catcher), `vampire` (Vampire Slayer), `doric` (Doric's
+Quest), `gobdip` (Goblin Diplomacy), `hetty` (Witch's Potion), `prince` (Prince
+Ali Rescue), `hunt` (Pirate's Treasure), `demon` (Demon Slayer), `squire` (The
 Knight's Sword), `death` (Death Plateau), `desertrescue` (The Tourist Trap),
-`priestperil` (Priest in Peril), and `cog` (Clock Tower). The roster also
-carries one unavailable row, Haunted Mine, which pickers list as
-non-selectable with its reason.
+`priestperil` (Priest in Peril), `cog` (Clock Tower), `drunkmonk` (Monk's
+Friend), `hazeelcult` (Hazeel Cult), `elena` (Plague City), `druid` (Druidic
+Ritual, draft), `fluffs` (Gertrude's Cat, draft), `junglepotion` (Jungle Potion,
+draft), `seaslug` (Sea Slug Quest, draft), and `totem` (Tribal Totem, draft).
+The roster also carries one unavailable row, Haunted Mine, which pickers list
+as non-selectable with its reason.
 
 `max_deaths` defaults to **2**, using the Gatherer's `maxDeaths` limit policy:
 two deaths can recover, and the third stops Quester as blocked with a
@@ -396,9 +404,10 @@ name under `display`, queue states, requirement and provisioning details, and
 step/session counters. `required_vs_live` counts skill gates; `required_<skill>`
 and `live_<skill>` carry integer base levels (a missing live field means
 unobserved). `tested_stats_warning` reports absent qualification or levels below
-the recorded profile. `journal_lines` is sent only once after a fresh read;
-consumers retain the last received lines. These fields do not add a panel window
-or TUI pane.
+the recorded profile. An active draft Path adds the short status row
+`draft_status: Untested draft Path`. `journal_lines` is sent only once after a
+fresh read; consumers retain the last received lines. These fields add no
+panel window or TUI pane.
 
 ### Quester combat outcomes
 
