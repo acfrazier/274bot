@@ -20,6 +20,52 @@ const TREE_TILE: WorldTile = WorldTile {
     z: 3245,
     level: 0,
 };
+
+const WALK_START_TILE: WorldTile = WorldTile {
+    x: 2895,
+    z: 3450,
+    level: 0,
+};
+const CATHERBY: (i32, i32, i32, i32) = (2791, 3438, 2814, 3475);
+
+const WALK_OPTIONS_SOURCE: &str = r#"
+export const apiVersion = 2;
+let started = false;
+export function tick(api) {
+  if (!started) {
+    started = true;
+    const run = api.gather.run({
+      skill: 'Woodcutting',
+      woodcuttingResources: ['normal'],
+      disposition: 'Power',
+      location: 'Site',
+      site: 'woodcutting.catherby',
+      allowTeleports: false,
+      allowWilderness: false,
+      __DANGER_OPTION__
+    });
+    run.then(value => api.log('walk option outcome: ' + JSON.stringify(value)));
+  }
+}
+"#;
+
+fn walk_options_source(allow_danger_zones: bool) -> String {
+    WALK_OPTIONS_SOURCE.replace(
+        "__DANGER_OPTION__",
+        if allow_danger_zones {
+            "allowDangerZones: true"
+        } else {
+            ""
+        },
+    )
+}
+
+fn in_walk_target_site(tile: WorldTile) -> bool {
+    tile.level == 0
+        && (CATHERBY.0..=CATHERBY.2).contains(&tile.x)
+        && (CATHERBY.1..=CATHERBY.3).contains(&tile.z)
+}
+
 const AXE: i32 = 1351;
 const LOGS: i32 = 1511;
 const JOURNAL_ROOT: i32 = 8134;
@@ -61,6 +107,8 @@ struct Fixture {
     error: Option<String>,
     ready: bool,
     started: bool,
+    start_tile: Option<WorldTile>,
+    walk_arrival: Option<WorldTile>,
     advance: bool,
     advance_phase: u8,
     advance_ready: bool,
@@ -105,6 +153,14 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
     }
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
+    if state.start_tile.is_some() {
+        if let Some((x, z, level)) = snapshot.tile() {
+            let tile = WorldTile { x, z, level };
+            if in_walk_target_site(tile) {
+                state.walk_arrival = Some(tile);
+            }
+        }
+    }
     if state.started {
         let inventory = snapshot
             .inventory()
@@ -196,6 +252,14 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                     cheat(client, "setvar rjquest 30")?;
                 } else {
                     cheat(client, "setstat woodcutting 1")?;
+                    if state.start_tile.is_some() {
+                        // Keep combat below White Wolf Mountain's level-50
+                        // route cutoff while retaining high HP and defence.
+                        cheat(client, "setstat attack 1")?;
+                        cheat(client, "setstat strength 1")?;
+                        cheat(client, "setstat defence 98")?;
+                        cheat(client, "setstat hitpoints 99")?;
+                    }
                 }
                 state.phase = 5;
             }
@@ -233,10 +297,8 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 }
             }
             6 if !journal => {
-                cheat(
-                    client,
-                    &interact::tele_args(TREE_TILE.level, TREE_TILE.x, TREE_TILE.z),
-                )?;
+                let tile = state.start_tile.unwrap_or(TREE_TILE);
+                cheat(client, &interact::tele_args(tile.level, tile.x, tile.z))?;
                 state.phase = 7;
             }
             7 if !journal => {
@@ -255,6 +317,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 }
             }
             8 if !journal => {
+                let start_tile = state.start_tile.unwrap_or(TREE_TILE);
                 let wielded = snapshot
                     .equipment()
                     .iter()
@@ -264,7 +327,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                     .stats()
                     .iter()
                     .any(|stat| stat.name.eq_ignore_ascii_case("woodcutting") && stat.base == 1);
-                let here = snapshot.tile() == Some((TREE_TILE.x, TREE_TILE.z, TREE_TILE.level));
+                let here = snapshot.tile() == Some((start_tile.x, start_tile.z, start_tile.level));
                 let cook_red = snapshot.quest_statuses().iter().any(|row| {
                     row.name == "Cook's Assistant" && row.status() == QuestListStatus::NotStarted
                 });
@@ -278,7 +341,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 {
                     state.ready = true;
                     state.initial = Some(
-                        json!({"woodcutting":1, "bronze_axe_wielded":true, "inventory_empty":true, "tile": [TREE_TILE.x, TREE_TILE.z, TREE_TILE.level], "cook_colour":"notStarted"}),
+                        json!({"woodcutting":1, "bronze_axe_wielded":true, "inventory_empty":true, "tile": [start_tile.x, start_tile.z, start_tile.level], "cook_colour":"notStarted"}),
                     );
                 }
             }
@@ -295,6 +358,13 @@ fn evidence() -> PathBuf {
     PathBuf::from(std::env::var_os("BOT_EVIDENCE_DIR").expect("BOT_EVIDENCE_DIR"))
 }
 fn start_fixture(journal: bool) -> (Play, String, Arc<Mutex<Fixture>>) {
+    start_fixture_at(journal, None)
+}
+
+fn start_fixture_at(
+    journal: bool,
+    start_tile: Option<WorldTile>,
+) -> (Play, String, Arc<Mutex<Fixture>>) {
     api::hostlog::set_debug(true);
     assert!(api::hostlog::install_sink(&ADMISSION));
     let home = PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));
@@ -302,13 +372,21 @@ fn start_fixture(journal: bool) -> (Play, String, Arc<Mutex<Fixture>>) {
         home.starts_with(evidence()),
         "HOME must be under BOT_EVIDENCE_DIR"
     );
+    let port = std::env::var("BOT_GAME_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(45594);
+    let http_port = std::env::var("BOT_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(45594),
-        http_port: Some(2080),
+        port: Some(port),
+        http_port: Some(http_port),
         cache_dir: Some(PathBuf::from(
             std::env::var_os("BOT_CACHE_DIR").expect("copied BOT_CACHE_DIR"),
         )),
@@ -329,7 +407,10 @@ fn start_fixture(journal: bool) -> (Play, String, Arc<Mutex<Fixture>>) {
         .expect("cached client template");
     let entries = mint_live_entries(&mint_live_names(1));
     let account = entries[0].0.clone();
-    let state = Arc::new(Mutex::new(Fixture::default()));
+    let state = Arc::new(Mutex::new(Fixture {
+        start_tile,
+        ..Fixture::default()
+    }));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
     let mut play = run_with_template(
@@ -727,6 +808,9 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         );
         assert!(drops >= 54 && !drop_batches.is_empty());
         receipt["driver"] = json!({"trace":trace,"accepted_requests":requests,"drop_packets":drops,"drop_batches":drop_batches,"max_packets_on_drop_tick":packets.values().filter(|rows| rows.contains(&drop_opcode)).map(Vec::len).max()});
+    } else if cell == "script_api_gather_walk_options" {
+        receipt["driver"] =
+            json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
     } else {
         let button =
             client::io::map_client_prot(revision, client::io::ClientProt::IF_BUTTON).id as u8;
@@ -782,5 +866,103 @@ fn script_api_progress_journal() {
         "script_api_progress_journal",
         "script-api-progress-journal-receipt.json",
         journal_cell,
+    );
+}
+
+fn gather_walk_variant(
+    play: &Play,
+    account: &str,
+    fixture: &Arc<Mutex<Fixture>>,
+    allow_danger_zones: bool,
+) -> Value {
+    play.script_start_load(
+        account,
+        walk_options_source(allow_danger_zones),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .expect("start Load Gather walk-options proof");
+
+    let mut logs = Vec::new();
+    if allow_danger_zones {
+        wait_for(play, account, fixture, Duration::from_secs(300), |_| {
+            fixture.lock().unwrap().walk_arrival.is_some()
+        });
+        let arrival = fixture
+            .lock()
+            .unwrap()
+            .walk_arrival
+            .expect("Gatherer arrived in the real Catherby woodcutting site");
+        let page = play.script_api_live_probe(account);
+        assert_eq!(page["gather"]["phase"], "running");
+        play.script_stop(account);
+        wait_for(play, account, fixture, Duration::from_secs(30), |play| {
+            play.script_state(account) == script::RunState::Idle
+        });
+        no_drops(account);
+        json!({
+            "account": account,
+            "allowDangerZones": true,
+            "allowWilderness": false,
+            "arrival": [arrival.x, arrival.z, arrival.level],
+            "page": page,
+        })
+    } else {
+        wait_for(play, account, fixture, Duration::from_secs(180), |play| {
+            take_logs(play, account, &mut logs);
+            logs.iter()
+                .any(|line| line.starts_with("walk option outcome: "))
+        });
+        let outcome = logged(&logs, "walk option outcome: ");
+        assert_eq!(outcome["kind"], "done");
+        assert_ne!(outcome["value"]["end"], "stopped");
+        assert!(
+            outcome.to_string().to_ascii_lowercase().contains("danger"),
+            "default danger-zone permission must refuse the route: {outcome}"
+        );
+        assert!(
+            fixture.lock().unwrap().walk_arrival.is_none(),
+            "the default session must not enter the Catherby site"
+        );
+        play.script_stop(account);
+        wait_for(play, account, fixture, Duration::from_secs(30), |play| {
+            play.script_state(account) == script::RunState::Idle
+        });
+        no_drops(account);
+        json!({
+            "account": account,
+            "allowDangerZones": "omitted",
+            "allowWilderness": false,
+            "outcome": outcome,
+            "arrival": null,
+        })
+    }
+}
+
+fn gather_walk_options_cell() {
+    let (play, account, fixture) = start_fixture_at(false, Some(WALK_START_TILE));
+    fixture.lock().unwrap().started = true;
+    let refused = gather_walk_variant(&play, &account, &fixture, false);
+    let allowed = gather_walk_variant(&play, &account, &fixture, true);
+    let account = account.to_owned();
+    let receipt = json!({
+        "account": account,
+        "cell": "script_api_gather_walk_options",
+        "site": "woodcutting.catherby",
+        "start": [WALK_START_TILE.x, WALK_START_TILE.z, WALK_START_TILE.level],
+        "refused": refused,
+        "allowed": allowed,
+    });
+    save("script-api-gather-walk-options-receipt.json", &receipt);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache, Engine A and the real R289 nav pack"]
+fn script_api_gather_walk_options() {
+    run_captured(
+        "script_api_gather_walk_options",
+        "script-api-gather-walk-options-receipt.json",
+        gather_walk_options_cell,
     );
 }

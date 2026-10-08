@@ -301,6 +301,7 @@ fn run_marshals_every_settings_kind_and_snapshot_materializes_every_status_membe
         "disposition": "Power",
         "allowTeleports": true,
         "allowWilderness": true,
+        "allowDangerZones": true,
         "deathPolicy": "Stop",
         "maxDeaths": 4
     });

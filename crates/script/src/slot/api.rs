@@ -230,6 +230,15 @@ impl SlotScript {
         }
     }
 
+    /// Permissions from a running Load API Gather card's committed config.
+    pub(super) fn api_gather_walk_permissions(&self) -> Option<crate::native::WalkPermissions> {
+        let seat = self.api.as_ref()?;
+        match &seat.gather {
+            GatherSeat::Running { run, .. } => Some(run.config.walk_permissions()),
+            GatherSeat::Idle | GatherSeat::Preparing { .. } => None,
+        }
+    }
+
     pub(super) fn consume_api_control(&mut self, request: &crate::shim::InteractReq) {
         match request {
             crate::shim::InteractReq::GatherRun {
