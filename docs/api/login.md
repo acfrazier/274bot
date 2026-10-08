@@ -153,7 +153,7 @@ The panel arms logins through `SlotArm` flags (host-play), not
   handshake. Once the grant lands the one-shot disarms. A running or paused
   script still relogs after an unexpected disconnect; a slot without a script
   then follows its saved auto-login setting.
-- **Auto-login** (General config → **slot**, **auto-login on title**, backed
+- **Auto-login** (the Profiles edit form's **Log in automatically**, backed
   by `ProfileSettings.auto_login`, default **off**) records the intent's
   provenance. Turning it on arms an unlatched parked slot only when no
   explicit intent is already active; turning it off withdraws only

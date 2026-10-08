@@ -7,12 +7,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
-    chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
-    edit_parameters_enabled, finish_panel_run, game_window_flags, hold_script_terminal_shot,
-    live_exit_code, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
-    loading_text, logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
+    game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
+    live_smoke_tick, live_stress_tick, loading_text, logout_enabled, manual_shot_label, parse_args,
+    parse_live_args, progress_channel, request_clean_stop_capture, request_native_failure_capture,
+    runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
@@ -885,35 +884,6 @@ fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     assert_eq!(session.ui.last_focus.as_deref(), Some("alice"));
     assert!(!session.ui.collapsed["alice"]["status"]);
     assert!(!session.ui.capture);
-}
-
-#[test]
-fn chooser_should_open_popup_table() {
-    // First open: rising edge opens the popup and latches prev.
-    assert_eq!(chooser_should_open_popup(true, false), (true, true));
-    // Already open: no re-open while want stays true.
-    assert_eq!(chooser_should_open_popup(true, true), (false, true));
-    // Esc closed it: want drops to false and prev must fall so a later
-    // `+ add bot` is a fresh rising edge.
-    assert_eq!(chooser_should_open_popup(false, true), (false, false));
-    assert_eq!(chooser_should_open_popup(false, false), (false, false));
-}
-
-#[test]
-fn chooser_reopens_after_a_close() {
-    let mut prev = false;
-    let (open, np) = chooser_should_open_popup(true, prev);
-    assert!(open, "first + add opens the chooser");
-    prev = np;
-    let (open, np) = chooser_should_open_popup(true, prev);
-    assert!(!open, "already open: no reopen");
-    prev = np;
-    let (open, np) = chooser_should_open_popup(false, prev);
-    assert!(!open);
-    prev = np;
-    assert!(!prev, "prev must track the close so + add can reopen");
-    let (open, _np) = chooser_should_open_popup(true, prev);
-    assert!(open, "the next + add bot reopens the chooser");
 }
 
 #[test]
