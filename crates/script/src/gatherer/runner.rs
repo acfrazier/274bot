@@ -21,6 +21,7 @@ use crate::native::{
     Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit, WalkEnd, WalkOptions,
     WalkReceipt, WalkRequest,
 };
+use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
@@ -904,6 +905,47 @@ impl Gatherer {
     }
 
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
+        let prepared = Arc::clone(&self.prepared);
+        let Some(method) = prepared
+            .catalog
+            .methods()
+            .get(usize::from(selected.plan.method_index))
+        else {
+            self.fail("gather-catalog", "selected target names no catalog method");
+            return;
+        };
+        match prepared.catalog.forbidden_states(method) {
+            Ok(states) if states.contains(&GatherForbiddenState::MonkeyForm) => {
+                let Some(equipment) = tick.cx.snapshot().equipment() else {
+                    // Worn items are unobserved: validation re-reads them before any walk starts.
+                    self.needs_validate = true;
+                    return;
+                };
+                // Content refuses this method while a greegree (`mm_greegree`) is worn.
+                let greegree_worn = equipment.value.iter().any(|worn| {
+                    prepared
+                        .selected
+                        .item_by_id(worn.def.id)
+                        .and_then(|item| item.category.as_deref())
+                        == Some("mm_greegree")
+                });
+                if greegree_worn {
+                    self.fail(
+                        "forbidden-state:monkey-form",
+                        format!(
+                            "{} refuses to start while a greegree is worn",
+                            selected.plan.alias
+                        ),
+                    );
+                    return;
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                self.fail("gather-catalog", format!("selected facts: {error:?}"));
+                return;
+            }
+        }
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
         if let Some(request) = selected.approach(tick.cx.snapshot(), tick.cx.evidence()) {

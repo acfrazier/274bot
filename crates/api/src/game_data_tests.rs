@@ -149,11 +149,26 @@ fn minimal_json(tail: &str) -> String {
     )
 }
 
+/// A label's name, without the bearing and distance a far site adds (`Far Place NE3110`) and without its counts after ` · `.
+fn site_name(label: &str) -> &str {
+    let head = label.split(" · ").next().unwrap_or(label);
+    match head.rsplit_once(' ') {
+        Some((name, token)) if is_bearing_distance(token) => name,
+        _ => head,
+    }
+}
+
+fn is_bearing_distance(token: &str) -> bool {
+    let letters = token.trim_end_matches(|c: char| c.is_ascii_digit());
+    let digits = &token[letters.len()..];
+    !digits.is_empty() && matches!(letters, "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW")
+}
+
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [243, 33, 32]),
-        (ClientRevision::R289, [246, 33, 32]),
+        (ClientRevision::R274, [276, 48, 36]),
+        (ClientRevision::R289, [292, 49, 38]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();
@@ -163,12 +178,19 @@ fn named_sites_are_selected_core_rows_with_skill_key_closure() {
             for row in data.gather_sites_for(skill) {
                 assert!(ids.insert(row.id.as_str()));
                 assert!(labels.insert((row.skill.as_str(), row.label.as_str())));
-                assert!(row.region.min_z < 6400);
-                assert!(!row
-                    .label
-                    .as_bytes()
-                    .windows(4)
-                    .any(|window| window.iter().all(u8::is_ascii_digit)));
+                assert!(
+                    !(row.region.min_z < 6400 && row.region.max_z >= 6400),
+                    "{} spans the surface and underground",
+                    row.id
+                );
+                assert!(
+                    !site_name(&row.label)
+                        .as_bytes()
+                        .windows(4)
+                        .any(|window| window.iter().all(u8::is_ascii_digit)),
+                    "{}",
+                    row.label
+                );
                 assert!(!row.keys.is_empty());
                 for key in &row.keys {
                     assert!(key.count > 0);

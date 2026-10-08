@@ -744,10 +744,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 246, direct: 0, dropped: 2537, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 16, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 9, outside_box: 0 } }
-        : { woodcutting: { sites: 243, direct: 0, dropped: 2287, outside_box: 0 }, mining: { sites: 33, direct: 0, dropped: 9, outside_box: 0 }, fishing: { sites: 32, direct: 20, dropped: 7, outside_box: 0 } };
+        ? { woodcutting: { sites: 292, direct: 0, dropped: 1205, outside_box: 0, extra: 46 }, mining: { sites: 49, direct: 0, dropped: 13, outside_box: 0, extra: 16 }, fishing: { sites: 38, direct: 20, dropped: 5, outside_box: 0, extra: 6 } }
+        : { woodcutting: { sites: 276, direct: 0, dropped: 1198, outside_box: 0, extra: 33 }, mining: { sites: 48, direct: 0, dropped: 13, outside_box: 0, extra: 15 }, fishing: { sites: 36, direct: 20, dropped: 5, outside_box: 0, extra: 4 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 311 : 308, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, revision === 289 ? 379 : 360, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -816,9 +816,9 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 308, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 360, 'gather_sites shared ids across revisions');
     const extra289 = pinnedSites289.filter((id) => !pinnedSites274.includes(id));
-    assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.troll_stronghold.nw']), 'gather_sites 289-only rows');
+    assertEqual(JSON.stringify(extra289.sort()), JSON.stringify(['fishing.kharazi_jungle.s', 'fishing.kharazi_jungle.sw', 'mining.rellekka.nw', 'woodcutting.castle_wars.sw', 'woodcutting.kharazi_jungle.s', 'woodcutting.kharazi_jungle.s.2', 'woodcutting.kharazi_jungle.s.3', 'woodcutting.kharazi_jungle.s.4', 'woodcutting.kharazi_jungle.sw', 'woodcutting.kharazi_jungle.sw.2', 'woodcutting.kharazi_jungle.sw.3', 'woodcutting.kharazi_jungle.sw.4', 'woodcutting.mort_ton.e', 'woodcutting.mort_ton.e.2', 'woodcutting.rellekka.n', 'woodcutting.rellekka.n.2', 'woodcutting.rellekka.nw', 'woodcutting.troll_stronghold.nw', 'woodcutting.troll_stronghold.nw.2']), 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');
 }
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results, refused, cross_pin: crossPin };
