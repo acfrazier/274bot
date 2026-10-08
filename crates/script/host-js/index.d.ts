@@ -1153,11 +1153,12 @@ export type CombatOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
 
-/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */
+/** One released quest path from the Quester release index; stages and journal availability come from its Path document, draft status from the release index. */
 export interface QuestPathRow {
   id: string;
   display: string;
   journal: boolean;
+  draft: boolean;
   stages: string[];
 }
 

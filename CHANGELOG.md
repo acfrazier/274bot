@@ -48,6 +48,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   close after each crossing, such as the Fishing Guild door; anyone held
   back retries automatically once the door is available again.
 
+### Scripts
+
+- Each `api.questPaths` row now has a `draft` field: `true` for a Quest Path
+  still marked as an untested draft, `false` for a released one, so a script
+  can tell the two apart before it relies on a Path.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
