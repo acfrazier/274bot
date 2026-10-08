@@ -53,7 +53,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
 - Load scripts using `api.gather.run` now honor the card's
   `allowTeleports`, `allowWilderness` and `allowDangerZones` options for
   Gatherer routes only; the Load script's own rows keep their options, and
-  session permissions remain off by default.
+  session permissions remain off by default. Active session permissions are
+  read at dispatch rather than copied into per-bot state.
 
 ## [0.2.0] — 2026-10-08 — Beta 1
 

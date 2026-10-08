@@ -1729,6 +1729,7 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
             tick: 1,
             sequence: 1,
         },
+        None,
     );
     let composed = navs.lock().unwrap()["test"]
         .bank_pick
