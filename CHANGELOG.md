@@ -48,6 +48,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.0` 
   close after each crossing, such as the Fishing Guild door; anyone held
   back retries automatically once the door is available again.
 
+### Combat
+
+- Ranged fights that can't confirm the weapon's combat tab or the requested
+  style now stop with a clear preparation-readiness reason after eight
+  observed ticks, instead of waiting out the full fight budget.
+
 ## [0.2.0] — 2026-10-08 — Beta 1
 
 ### Upgrading from 0.1.9.1
@@ -176,9 +182,6 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Loot that can't be reached is skipped instead of getting the bot stuck, and
   a target that turns out not to be attackable makes the bot walk out and say
   why.
-- Ranged fights that cannot confirm the weapon's combat tab or requested style
-  now stop with a clear preparation-readiness reason after eight observed
-  ticks, rather than waiting out the full fight budget.
 
 ### Clues
 
