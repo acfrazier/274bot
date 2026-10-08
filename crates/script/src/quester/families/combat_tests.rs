@@ -3327,3 +3327,99 @@ fn combat_finish_strict_menu_refusals_block_consistently() {
             .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 }
+
+#[test]
+fn combat_kit_carry_keeps_compiled_alias_ids() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let coins = data.item_by_alias("coins").unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    assert_eq!(
+        coins.id, 995,
+        "authored `coins` is the stackable coin object"
+    );
+    // The shared display names collide: resolving them by name picks another object.
+    assert_eq!(
+        data.resolve_item_name("Coins").unwrap().id,
+        617,
+        "display `Coins` collides with the unstackable object"
+    );
+    assert_ne!(
+        data.resolve_item_name("Bones").unwrap().id,
+        bones.id,
+        "display `Bones` collides with another bone object"
+    );
+    // The overlay row holds display names, as the compiled Path rows do; the
+    // carry map holds the alias-resolved identities native consumers use.
+    let row = crate::loadouts_store::Loadout::new("kitpath/cash")
+        .with_carry("Coins", 1000)
+        .with_carry("Bones", 5);
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
+    let carry: Arc<[crate::quester::compile::CompiledCarry]> = Arc::from(vec![
+        crate::quester::compile::CompiledCarry {
+            item: crate::native_bank::BankItem {
+                id: coins.id,
+                name: Arc::from(coins.name.as_deref().unwrap()),
+            },
+            qty: 1000,
+            stackable: coins.stackable,
+            latch_index: 0,
+        },
+        crate::quester::compile::CompiledCarry {
+            item: crate::native_bank::BankItem {
+                id: bones.id,
+                name: Arc::from(bones.name.as_deref().unwrap()),
+            },
+            qty: 5,
+            stackable: bones.stackable,
+            latch_index: 1,
+        },
+    ]);
+    let mut loadout_carry = HashMap::new();
+    loadout_carry.insert(Arc::from("kitpath/cash"), Arc::clone(&carry));
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:kitpath"),
+        role: None,
+        colour_not_started: FactKey::new("kitpath:0"),
+        colour_in_progress: FactKey::new("kitpath:1"),
+        colour_complete: FactKey::new("kitpath:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let recipes = HashMap::new();
+    let path = FactKey::new("kitpath");
+    let cx = CompileContext {
+        path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
+        progress: &progress,
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        bank: None,
+        bank_required: false,
+        keep_ids: &[],
+        areas: &areas,
+        loadouts: &loadouts,
+        loadout_carry: &loadout_carry,
+        recipes: &recipes,
+    };
+    let args = serde_json::json!({
+        "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+        "lost_radius": 16,
+        "kill_budget_ticks": 400,
+        "loadout": "cash",
+        "until": {"Any": []}
+    });
+    let plan = compile_plan(serde_json::from_value(args).unwrap(), &cx).unwrap();
+    let kit = plan.request.kit.as_ref().expect("kit compiles");
+    assert_eq!(
+        kit.carry.as_ref(),
+        &[(coins.id, 1000), (bones.id, 5)],
+        "kit carry keeps the compiled alias identities, not the display-name picks"
+    );
+}
