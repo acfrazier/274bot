@@ -467,13 +467,13 @@ Path combat supports `"tactic.style": "ranged"` and
 `tactic.ranged_style` defaults to `"rapid"`. `melee_mode` is only valid with
 melee combat and is rejected when the tactic style is ranged.
 
-Ranged launch attribution compares the projectile's source tile with the player's
-packet-time route head (`PlayerView.network`), not its interpolated rendered pose.
-The client does not publish a firing-player index. If another player's network
-tile shares the local network tile,
-matching launches are consumed without counting a confirmed swing; an installed
-fight advances on the weapon-rate clock from the last confirmed launch. Fresh
-launch evidence resumes when the tile is unshared. The post-kill sweep attempts
+A ranged swing is counted when the local player's own ranged attack animation
+starts (one of the RANGED sequences: bow, crossbow, thrown weapon), including a
+restart of the same animation for the next shot. The animation and the projectile
+are sent on the attack tick, so the weapon-rate clock runs from that tick.
+Projectiles are not used for counting, so another player standing on the same
+tile, idle or shooting, neither hides the bot's shots nor adds swings of its own.
+The post-kill sweep attempts
 at most four ammunition stacks, ignores only the confirmed corpse's residual
 threat row, and aborts for other live threats or a respawn in the same NPC slot.
 
