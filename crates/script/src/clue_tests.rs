@@ -493,7 +493,7 @@ fn spawned(data: &SelectedGameData) -> u64 {
         page.clone(),
         dig_scene(here(3100, 3300, 0), true),
     );
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     let dig = call(
         data,
         token,
@@ -995,17 +995,18 @@ fn a_search_row_walks_to_the_decoded_tile_and_then_picks_the_loc() {
             page.clone(),
             json!({ "here": here(3200, 3218, 1) }),
         );
-        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["kind"], "walk-near", "{walk}");
         assert_eq!(walk["x"], 3209, "{walk}");
         assert_eq!(walk["z"], 3218, "{walk}");
         assert_eq!(walk["level"], 1, "{walk}");
+        assert_eq!(walk["radius"], ARRIVE_RADIUS, "{walk}");
         assert_eq!(token_of(&walk), token, "{walk}");
     }
     // Another level is not arrival, even standing on the decoded tile,
     // and neither is two tiles away on one axis.
     for far in [here(3209, 3218, 0), here(3211, 3218, 1)] {
         let walk = call(&data, token, page.clone(), json!({ "here": far }));
-        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["kind"], "walk-near", "{walk}");
     }
 
     // Arrived. The nearest row wins over the better rank: the adjacent
@@ -1184,7 +1185,7 @@ fn freeze_and_yield_beat_the_search_walk() {
     }
     // The walk is still there once the interrupt clears.
     let walking = call(&data, token, page, scene);
-    assert_eq!(walking["kind"], "walk", "{walking}");
+    assert_eq!(walking["kind"], "walk-near", "{walking}");
 }
 
 #[test]
@@ -1359,7 +1360,7 @@ fn every_selected_casket_row_resolves_the_casket_display_name() {
 }
 
 #[test]
-fn the_search_row_emits_only_walk_and_loc_and_never_a_completion() {
+fn the_search_row_emits_only_walk_near_and_loc_and_never_a_completion() {
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -1400,9 +1401,9 @@ fn the_search_row_emits_only_walk_and_loc_and_never_a_completion() {
         assert!(
             matches!(
                 step["kind"].as_str().unwrap_or(""),
-                "walk" | "loc" | "wait" | "yield"
+                "walk-near" | "loc" | "wait" | "yield"
             ),
-            "the search row emits walk, loc, wait or yield only: {step}"
+            "the search row emits walk-near, loc, wait or yield only: {step}"
         );
     }
     assert_eq!(
@@ -1410,7 +1411,12 @@ fn the_search_row_emits_only_walk_and_loc_and_never_a_completion() {
             .iter()
             .map(|step| step["kind"].clone())
             .collect::<Vec<_>>(),
-        vec![json!("walk"), json!("loc"), json!("wait"), json!("yield"),],
+        vec![
+            json!("walk-near"),
+            json!("loc"),
+            json!("wait"),
+            json!("yield"),
+        ],
         "{steps:?}"
     );
 }
@@ -2266,7 +2272,7 @@ fn an_unguarded_dig_row_walks_to_the_decoded_tile_and_then_digs_the_spade() {
         here(3160, 3253, 0),
     ] {
         let walk = call(&data, token, page.clone(), dig_scene(far, false));
-        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["kind"], "walk-near", "{walk}");
         assert_eq!(walk["x"], 3160, "{walk}");
         assert_eq!(walk["z"], 3251, "{walk}");
         assert_eq!(walk["level"], 0, "{walk}");
@@ -2422,7 +2428,7 @@ fn a_coord_only_map_row_walks_to_its_decoded_tile_and_digs_the_spade() {
         page.clone(),
         json!({ "here": here(3100, 3300, 0) }),
     );
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     assert_eq!(walk["x"], 3177, "{walk}");
     assert_eq!(walk["z"], 3360, "{walk}");
     assert_eq!(walk["level"], 0, "{walk}");
@@ -2586,7 +2592,7 @@ fn the_dig_row_emits_only_walk_held_wait_supplies_needed_and_yield() {
         assert!(
             matches!(
                 step["kind"].as_str().unwrap_or(""),
-                "walk" | "held" | "wait" | "yield" | "supplies-needed"
+                "walk-near" | "held" | "wait" | "yield" | "supplies-needed"
             ),
             "{step}"
         );
@@ -2597,7 +2603,7 @@ fn the_dig_row_emits_only_walk_held_wait_supplies_needed_and_yield() {
             .map(|step| step["kind"].clone())
             .collect::<Vec<_>>(),
         vec![
-            json!("walk"),
+            json!("walk-near"),
             json!("supplies-needed"),
             json!("held"),
             json!("yield")
@@ -2783,7 +2789,7 @@ fn a_guarded_row_walks_then_digs_the_spade_and_that_dig_is_the_spawn() {
         here(3060, 3884, 0),
     ] {
         let walk = call(&data, token, page.clone(), dig_scene(far, true));
-        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["kind"], "walk-near", "{walk}");
         assert_eq!(walk["x"], 3058, "{walk}");
         assert_eq!(walk["z"], 3884, "{walk}");
         assert_eq!(walk["level"], 0, "{walk}");
@@ -3628,7 +3634,7 @@ fn freeze_and_yield_beat_the_guarded_encounter() {
     }
     // Nothing burned: the thawed call is still the walk.
     let walk = call(&data, token, page.clone(), spawn_scene);
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     let dig = call(
         &data,
         token,
@@ -3825,7 +3831,7 @@ fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
         assert!(
             matches!(
                 step["kind"].as_str().unwrap_or(""),
-                "walk" | "held" | "combat" | "wait" | "yield"
+                "walk-near" | "held" | "combat" | "wait" | "yield"
             ),
             "{step}"
         );
@@ -3853,7 +3859,7 @@ fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
             .map(|step| step["kind"].clone())
             .collect::<Vec<_>>(),
         vec![
-            json!("walk"),
+            json!("walk-near"),
             json!("held"),
             json!("combat"),
             json!("wait"),
@@ -3892,7 +3898,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
         page.clone(),
         json!({ "here": here(3160, 3251, 0) }),
     );
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     assert_eq!(walk["x"], professor.x, "{walk}");
     assert_eq!(walk["z"], professor.z, "{walk}");
     assert_eq!(walk["level"], professor.level, "{walk}");
@@ -3952,7 +3958,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
             "npcs": posted,
         }),
     );
-    assert_eq!(closed["kind"], "walk", "{closed}");
+    assert_eq!(closed["kind"], "walk-near", "{closed}");
     assert_eq!(closed["x"], murphy.x, "{closed}");
     assert_eq!(closed["z"], murphy.z, "{closed}");
 
@@ -4007,7 +4013,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
             "inv": [inv(SEXTANT_ITEM, SEXTANT_NAME, 1)],
         }),
     );
-    assert_eq!(watched["kind"], "walk", "{watched}");
+    assert_eq!(watched["kind"], "walk-near", "{watched}");
     assert_eq!(watched["x"], kojo.x, "{watched}");
     let foreign = call(
         &data,
@@ -4042,7 +4048,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
             ],
         }),
     );
-    assert_eq!(charted["kind"], "walk", "{charted}");
+    assert_eq!(charted["kind"], "walk-near", "{charted}");
     assert_eq!(charted["x"], professor.x, "{charted}");
     let walked = call(
         &data,
@@ -4050,7 +4056,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
         page.clone(),
         dig_scene(here(3100, 3300, 0), true),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
     assert_eq!(walked["x"], 3160, "{walked}");
     assert_eq!(walked["z"], 3251, "{walked}");
     let dig = call(&data, token, page, dig_scene(here(3160, 3251, 0), true));
@@ -4075,7 +4081,7 @@ fn the_trio_intercept_is_in_front_of_the_guarded_dig_too() {
         page.clone(),
         json!({ "here": here(3100, 3300, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
     );
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     assert_eq!(walk["x"], professor.x, "{walk}");
     assert_eq!(walk["z"], professor.z, "{walk}");
     // Held trio and Spade: the encounter's own walk-then-Dig, unchanged.
@@ -4086,7 +4092,7 @@ fn the_trio_intercept_is_in_front_of_the_guarded_dig_too() {
         page.clone(),
         dig_scene(here(3100, 3300, 0), true),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
     assert_eq!(walked["x"], tile.x, "{walked}");
     let dig = call(
         &data,
@@ -4376,7 +4382,7 @@ fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
         json!([[SEARCH, 1]]),
         json!({ "here": here(3100, 3300, 0) }),
     );
-    assert_eq!(walk["kind"], "walk", "{walk}");
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
     assert_eq!(walk["x"], 3209, "{walk}");
     assert_eq!(walk["z"], 3218, "{walk}");
     // The talk step: its own published spawn, not the professor's tile.
@@ -4395,7 +4401,7 @@ fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
         json!([[TALK, 1]]),
         json!({ "here": here(3100, 3300, 0), "npcs": [] }),
     );
-    assert_eq!(talked["kind"], "walk", "{talked}");
+    assert_eq!(talked["kind"], "walk-near", "{talked}");
     assert_eq!(talked["x"], spawn.x, "{talked}");
     assert_eq!(talked["z"], spawn.z, "{talked}");
     // The key-keeper riddle: the sibling hunt's own published spawn, never
@@ -4415,7 +4421,7 @@ fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
         json!([[RIDDLE, 1]]),
         json!({ "here": here(3100, 3300, 0), "npcs": [], "combat_driver": true }),
     );
-    assert_eq!(hunted["kind"], "walk", "{hunted}");
+    assert_eq!(hunted["kind"], "walk-near", "{hunted}");
     assert_eq!(hunted["x"], spawn.x, "{hunted}");
     assert_eq!(hunted["z"], spawn.z, "{hunted}");
 }
@@ -4797,7 +4803,7 @@ fn rows_without_their_own_held_box_keep_their_own_arm() {
         json!([[SEARCH, 1], [PUZZLE_BOX, 1]]),
         json!({ "here": here(3100, 3300, 1) }),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
 }
 
 /// `trail_clue_hard_riddle019`: the second puzzle riddle whose own selected
@@ -4871,7 +4877,7 @@ fn a_latched_puzzle_riddle_re_talks_over_the_landed_talk_step() {
         held_box(),
         talk_scene(here(tile.x - 30, tile.z, tile.level), json!([]), json!({})),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
     assert_eq!(
         (
             walked["x"].as_i64(),
@@ -5062,7 +5068,7 @@ fn a_latched_identity_only_puzzle_riddle_waits_without_its_own_npc() {
             json!({}),
         ),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
     assert_eq!(
         (walked["x"].as_i64(), walked["z"].as_i64()),
         (
@@ -5245,7 +5251,7 @@ fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
         page.clone(),
         talk_scene(here(3200, 3233, 0), json!([]), json!({})),
     );
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
     assert_eq!(walked["x"], spawn.x, "{walked}");
     assert_eq!(walked["z"], spawn.z, "{walked}");
     assert_eq!(walked["level"], spawn.plane, "{walked}");
@@ -5419,7 +5425,7 @@ fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
         page.clone(),
         talk_scene(here(3207, 3233, 1), on_tile, json!({})),
     );
-    assert_eq!(off_level["kind"], "walk", "{off_level}");
+    assert_eq!(off_level["kind"], "walk-near", "{off_level}");
     assert_eq!(off_level["level"], 0, "{off_level}");
 
     // The published plane is the walk's level on the plane-1 sibling too.
@@ -5433,7 +5439,7 @@ fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
         talk_page(TALK_PLANE),
         talk_scene(here(2485, 3488, 1), json!([]), json!({})),
     );
-    assert_eq!(upstairs["kind"], "walk", "{upstairs}");
+    assert_eq!(upstairs["kind"], "walk-near", "{upstairs}");
     assert_eq!(upstairs["level"], 1, "{upstairs}");
     assert_eq!(upstairs["x"], spawn.x, "{upstairs}");
     assert_eq!(upstairs["z"], spawn.z, "{upstairs}");
@@ -5506,7 +5512,7 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
         page.clone(),
         talk_scene(here(3200, 3200, 0), json!([far, near]), json!({})),
     );
-    assert_eq!(pick["kind"], "walk", "{pick}");
+    assert_eq!(pick["kind"], "walk-near", "{pick}");
     assert_eq!(pick["x"], 3200, "{pick}");
     assert_eq!(pick["z"], 3205, "{pick}");
     assert_eq!(pick["level"], 0, "{pick}");
@@ -6201,7 +6207,7 @@ fn the_talk_arm_emits_only_walk_npc_answer_count_wait_and_yield() {
     }
     assert_eq!(
         kinds,
-        vec!["wait", "walk", "npc", "wait", "answer-count"],
+        vec!["wait", "walk-near", "npc", "wait", "answer-count"],
         "{kinds:?}"
     );
     // The same step driven through the collect's `'clue solved'` is not
@@ -6452,7 +6458,7 @@ fn a_keeper_row_without_a_combat_driver_abandons_without_walking() {
         }),
     );
     assert_eq!(abandoned["kind"], "abandon", "{abandoned}");
-    assert_ne!(abandoned["kind"], "walk", "{abandoned}");
+    assert_ne!(abandoned["kind"], "walk-near", "{abandoned}");
     assert!(abandoned.get("action").is_none(), "{abandoned}");
 }
 
@@ -6497,7 +6503,7 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
             page.clone(),
             key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({})),
         );
-        assert_eq!(walked["kind"], "walk", "{id} {walked}");
+        assert_eq!(walked["kind"], "walk-near", "{id} {walked}");
         assert_eq!(walked["x"], spawn.x, "{id} {walked}");
         assert_eq!(walked["z"], spawn.z, "{id} {walked}");
         assert_eq!(walked["level"], spawn.level, "{id} {walked}");
@@ -6621,7 +6627,7 @@ fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
             combat_report_page(combat_id, "killed"),
         ),
     );
-    assert_eq!(gone["kind"], "walk", "{gone}");
+    assert_eq!(gone["kind"], "walk-near", "{gone}");
     assert_eq!(gone["x"], spawn.x, "{gone}");
     assert_eq!(gone["z"], spawn.z, "{gone}");
     assert_eq!(gone["level"], spawn.level, "{gone}");
@@ -6949,13 +6955,13 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
     }
     assert_eq!(
         kinds,
-        vec!["walk", "combat", "wait", "wait", "wait"],
+        vec!["walk-near", "combat", "wait", "wait", "wait"],
         "{kinds:?}"
     );
     assert_eq!(
         kinds
             .iter()
-            .filter(|kind| !["walk", "combat", "obj", "wait"].contains(&kind.as_str()))
+            .filter(|kind| !["walk-near", "combat", "obj", "wait"].contains(&kind.as_str()))
             .count(),
         0,
         "{kinds:?}"
@@ -6998,7 +7004,7 @@ fn freeze_yield_and_death_beat_the_key_hunt() {
     }
     // Thawed and unheld, the walk is still there.
     let walked = call(&data, token, page.clone(), danger.clone());
-    assert_eq!(walked["kind"], "walk", "{walked}");
+    assert_eq!(walked["kind"], "walk-near", "{walked}");
 
     post_clue_chat(vec![clue_death_line(1)]);
     // The new death chat is terminal before the walk, Attack or Take, even
@@ -7126,7 +7132,7 @@ fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(original["kind"], "walk", "{original}");
+    assert_eq!(original["kind"], "walk-near", "{original}");
     assert_eq!(
         (&original["x"], &original["z"], &original["level"]),
         (&json!(3209), &json!(3218), &json!(1)),
@@ -7139,7 +7145,7 @@ fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(to_shop["kind"], "walk", "{to_shop}");
+    assert_eq!(to_shop["kind"], "walk-near", "{to_shop}");
     assert_eq!(
         (&to_shop["x"], &to_shop["z"], &to_shop["level"]),
         (&json!(SHANTAY_X), &json!(SHANTAY_Z), &json!(SHANTAY_LEVEL)),
@@ -7211,7 +7217,7 @@ fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
             "walk_missing_carry": short,
         }),
     );
-    assert_eq!(resumed["kind"], "walk", "{resumed}");
+    assert_eq!(resumed["kind"], "walk-near", "{resumed}");
     assert_eq!(
         (&resumed["x"], &resumed["z"], &resumed["level"]),
         (&json!(3209), &json!(3218), &json!(1)),
@@ -7226,7 +7232,7 @@ fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
         page,
         json!({ "here": spawn, "walk_missing_carry": short }),
     );
-    assert_eq!(latched["kind"], "walk", "{latched}");
+    assert_eq!(latched["kind"], "walk-near", "{latched}");
     assert_eq!(
         (&latched["x"], &latched["z"], &latched["level"]),
         (&json!(3209), &json!(3218), &json!(1)),
@@ -7262,14 +7268,14 @@ fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
             held.clone(),
             json!({ "here": away, "walk_missing_carry": short }),
         );
-        assert_eq!(first["kind"], "walk", "{case}: {first}");
+        assert_eq!(first["kind"], "walk-near", "{case}: {first}");
         let again = call(
             &data,
             token,
             held,
             json!({ "here": away, "walk_missing_carry": short }),
         );
-        assert_eq!(again["kind"], "walk", "{case}: {again}");
+        assert_eq!(again["kind"], "walk-near", "{case}: {again}");
         assert_eq!(
             (&again["x"], &again["z"], &again["level"]),
             (&json!(3209), &json!(3218), &json!(1)),
@@ -7297,7 +7303,7 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(first["kind"], "walk", "{first}");
+    assert_eq!(first["kind"], "walk-near", "{first}");
     let yielded = call(
         &data,
         yielded_token,
@@ -7315,7 +7321,7 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(thawed["kind"], "walk", "{thawed}");
+    assert_eq!(thawed["kind"], "walk-near", "{thawed}");
     assert_eq!(
         (&thawed["x"], &thawed["z"], &thawed["level"]),
         (&json!(SHANTAY_X), &json!(SHANTAY_Z), &json!(SHANTAY_LEVEL)),
@@ -7331,7 +7337,7 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(first["kind"], "walk", "{first}");
+    assert_eq!(first["kind"], "walk-near", "{first}");
     post_clue_chat(vec![clue_death_line(1)]);
     let dead = call(
         &data,
@@ -7368,14 +7374,14 @@ fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(first["kind"], "walk", "{first}");
+    assert_eq!(first["kind"], "walk-near", "{first}");
     let to_shop = call(
         &data,
         token,
         page.clone(),
         json!({ "here": away, "walk_missing_carry": short }),
     );
-    assert_eq!(to_shop["kind"], "walk", "{to_shop}");
+    assert_eq!(to_shop["kind"], "walk-near", "{to_shop}");
 
     let waiting = call(
         &data,
@@ -7400,7 +7406,7 @@ fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
         page.clone(),
         json!({ "here": spawn, "walk_missing_carry": short }),
     );
-    assert_eq!(resumed["kind"], "walk", "{resumed}");
+    assert_eq!(resumed["kind"], "walk-near", "{resumed}");
     assert_eq!(resumed["token"], token, "{resumed}");
     assert_eq!(
         (&resumed["x"], &resumed["z"], &resumed["level"]),
@@ -7413,7 +7419,7 @@ fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
         page,
         json!({ "here": spawn, "walk_missing_carry": short }),
     );
-    assert_eq!(latched["kind"], "walk", "{latched}");
+    assert_eq!(latched["kind"], "walk-near", "{latched}");
     assert_eq!(latched["x"], 3209, "{latched}");
     on_reset();
 }

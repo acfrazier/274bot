@@ -140,6 +140,10 @@ New in 0.2.0: woodcutting, mining and fishing as a native script.
 - Before an Entrana clue, the solver walks to a side of the bank booth it can
   actually use to bank the gear Entrana forbids, and stops with a clear error
   if the bank won't open. It no longer clicks an unreachable booth every tick.
+- Clue searches walk beside the target and approach a side that can be used,
+  including the Entrana drawers reached by boat, instead of trying to stand
+  inside blocked scenery. Clue walks are sent once while in flight and stop
+  with a clear error if arrival takes too long.
 
 ### Sessions
 
