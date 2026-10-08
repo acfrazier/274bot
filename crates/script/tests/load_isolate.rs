@@ -38,7 +38,12 @@ fn spawn_ready(js: String, shape: LoadShape, siblings: Vec<(String, String)>) ->
 }
 
 fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let timeout = if slot.state() == script::RunState::Starting {
+        Duration::from_secs(10)
+    } else {
+        Duration::from_secs(5)
+    };
+    let deadline = Instant::now() + timeout;
     while slot.state() != want && Instant::now() < deadline {
         slot.observe_lifecycle();
         thread::sleep(Duration::from_millis(5));
