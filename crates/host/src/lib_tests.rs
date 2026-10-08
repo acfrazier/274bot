@@ -1347,6 +1347,11 @@ fn backend_flip_rearms_share_light_without_dropping_overlay() {
 fn prefer_cpu_rebuilds_renderer_not_client() {
     let _env_lock = BOT_CPU_ENV_LOCK.lock().unwrap();
     force_cpu_backend();
+    // The per-slot toggle must not inherit a process-wide `BOT_CPU` (a
+    // `BOT_CPU=1` env would force CPU on the first paint, so the flip
+    // could never rebuild): clear it for the toggle, then restore.
+    let prev = std::env::var("BOT_CPU").ok();
+    std::env::remove_var("BOT_CPU");
     let mut c = prepare_client(
         cfg(),
         1,
@@ -1363,6 +1368,10 @@ fn prefer_cpu_rebuilds_renderer_not_client() {
     let uid = c.login_uid;
     inp.set_prefer_cpu(true);
     Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+    match prev {
+        Some(v) => std::env::set_var("BOT_CPU", v),
+        None => std::env::remove_var("BOT_CPU"),
+    }
     assert_eq!(c.login_uid, uid);
     assert!(slot.renderer.is_some());
     // Under `force_cpu_backend` both preferences land on
