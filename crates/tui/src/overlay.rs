@@ -84,6 +84,8 @@ pub enum ConfirmKind {
     /// Copy the focused bot's settings to the marked bots: the scope the
     /// core froze (its prompt names targets, skips and the unmarked count).
     ApplyMarked(String),
+    /// A settings write saved successfully but its running script needs a restart.
+    RestartSettings(frontend_core::scripts::RestartPrompt),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +153,7 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "Relog now",
             ConfirmKind::Bulk { command, .. } => command.label(app),
             ConfirmKind::ApplyMarked(_) => Command::ScriptApplyMarked.label(app),
+            ConfirmKind::RestartSettings(_) => "Restart script settings",
         }
     }
 
@@ -180,6 +183,10 @@ impl Confirm {
             ConfirmKind::ApplyMarked(prompt) => vec![
                 prompt.clone(),
                 "Nothing is written until you confirm.".into(),
+            ],
+            ConfirmKind::RestartSettings(prompt) => vec![
+                prompt.summary(),
+                "The current script keeps running if you choose Later.".into(),
             ],
             ConfirmKind::Bulk {
                 command,
@@ -264,6 +271,14 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "[Relog y]",
             ConfirmKind::Bulk { .. } => "[Run y]",
             ConfirmKind::ApplyMarked(_) => "[Apply y]",
+            ConfirmKind::RestartSettings(_) => "[Restart y]",
+        }
+    }
+
+    fn no(&self) -> &'static str {
+        match self.kind {
+            ConfirmKind::RestartSettings(_) => "[Later n]",
+            _ => "[Cancel n]",
         }
     }
 }
@@ -302,6 +317,7 @@ impl TuiApp {
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     let action = match confirm.kind {
                         ConfirmKind::ApplyMarked(_) => AppAction::ScriptSyncCancel,
+                        ConfirmKind::RestartSettings(_) => AppAction::ScriptRestartLater,
                         _ => AppAction::None,
                     };
                     (None, action)
@@ -409,6 +425,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::ApplyMarked(_) => (None, AppAction::ScriptSyncApply),
+            ConfirmKind::RestartSettings(_) => (None, AppAction::ScriptRestartSettings),
             ConfirmKind::Bulk {
                 command,
                 members,
@@ -535,7 +552,14 @@ impl TuiApp {
             },
             Modal::Confirm(confirm) => match item {
                 Some(0) => self.run_confirm(confirm),
-                Some(_) => (None, AppAction::None),
+                Some(_) => {
+                    let action = if matches!(&confirm.kind, ConfirmKind::RestartSettings(_)) {
+                        AppAction::ScriptRestartLater
+                    } else {
+                        AppAction::None
+                    };
+                    (None, action)
+                }
                 None => (Some(Modal::Confirm(confirm)), AppAction::None),
             },
             Modal::Help(state) if inside => (Some(Modal::Help(state)), AppAction::None),
@@ -623,7 +647,7 @@ impl TuiApp {
         }
         let y = inner.y + inner.height - 1;
         let yes = confirm.yes();
-        let no = "[Cancel n]";
+        let no = confirm.no();
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let (end, _) = buf.set_stringn(inner.x, y, yes, usize::from(inner.width), bold);
         self.regions

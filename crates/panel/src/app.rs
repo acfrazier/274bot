@@ -53,7 +53,7 @@ use crate::session::{
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
     panel_scale, panel_split_ratio, scale_px, scale_size, ui_scale, ACCENT, ACCENT_HOVER, BG,
-    DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
+    DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
@@ -1438,8 +1438,19 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             .profile_identity(&row.name)
             .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&row.name));
         let mut marked = state.session.fleet_selection.contains(identity);
-        let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, row, labels, is_focused, cw, preview, &mut marked);
+        let restart_required = state.session.scripts.has_restart_badge(name);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(
+            ui,
+            row,
+            labels,
+            CapDrawState {
+                is_focused,
+                width: cw,
+                preview,
+                restart_required,
+            },
+            &mut marked,
+        );
         state.session.fleet_selection.set(identity, marked);
         let mut body_clicked = false;
         if preview {
@@ -3433,6 +3444,12 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         return;
     };
     let profile = session.focused_name();
+    if profile
+        .as_deref()
+        .is_some_and(|profile| session.scripts.restart_required_for(profile, &selection))
+    {
+        ui.text_disabled("Restart required to apply saved settings.");
+    }
     let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
         script::ScriptSel::Loaded(source, name) => {
             let Some(card) = session.scripts.js.get(*source, name).cloned() else {
@@ -3715,6 +3732,32 @@ fn apply_to_all_section(ui: &Ui, session: &mut Session) {
     if let Some(report) = session.scripts.last_settings_sync() {
         ui.text_wrapped(report.summary());
     }
+}
+
+const RESTART_SETTINGS_POPUP: &str = "##script-restart-required";
+
+fn restart_settings_popup(ui: &Ui, session: &mut Session) {
+    if session.scripts.pending_restart_prompt().is_some()
+        && !ui.is_popup_open(RESTART_SETTINGS_POPUP)
+    {
+        ui.open_popup(RESTART_SETTINGS_POPUP);
+    }
+    ui.modal_popup(RESTART_SETTINGS_POPUP, || {
+        let Some(prompt) = session.scripts.pending_restart_prompt().cloned() else {
+            ui.close_current_popup();
+            return;
+        };
+        ui.text_wrapped(prompt.summary());
+        if ui.button("Restart##script-settings") {
+            session.restart_pending_settings();
+            ui.close_current_popup();
+        }
+        ui.same_line();
+        if ui.button("Later##script-settings") {
+            session.scripts.dismiss_restart_prompt();
+            ui.close_current_popup();
+        }
+    });
 }
 
 /// Script prefs window: typed parameter editors + optional rail preview toggle.
@@ -4697,8 +4740,19 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             .profile_identity(name)
             .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
         let mut marked = state.session.fleet_selection.contains(identity);
-        let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, row, labels, is_focused, avail, preview, &mut marked);
+        let restart_required = state.session.scripts.has_restart_badge(name);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(
+            ui,
+            row,
+            labels,
+            CapDrawState {
+                is_focused,
+                width: avail,
+                preview,
+                restart_required,
+            },
+            &mut marked,
+        );
         state.session.fleet_selection.set(identity, marked);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
@@ -4726,13 +4780,19 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 /// `stop_slot`, never `vault`). `width` is the strip the row must fit (rail
 /// avail or grid cell width). Every string is the row's cached label: a
 /// frame formats nothing.
+#[derive(Clone, Copy)]
+struct CapDrawState {
+    is_focused: bool,
+    width: f32,
+    preview: bool,
+    restart_required: bool,
+}
+
 fn rail_cap(
     ui: &Ui,
     row: &FleetRow,
     labels: &CapLabels,
-    is_focused: bool,
-    width: f32,
-    preview: bool,
+    draw: CapDrawState,
     marked: &mut bool,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
@@ -4748,6 +4808,11 @@ fn rail_cap(
     let dot_w = scale_px(ui, DOT_W);
     let mark_w = scale_px(ui, MARK_W);
     let gap = scale_px(ui, BUTTON_GAP);
+    let restart_w = if draw.restart_required {
+        scale_px(ui, 56.0) + gap
+    } else {
+        0.0
+    };
     let marker_x = ui.cursor_pos_x();
     if labels.world.is_empty() {
         draw_status_dot(ui, light, dot_w);
@@ -4763,20 +4828,30 @@ fn rail_cap(
     record_test_rail_item(ui);
     ui.set_item_tooltip("mark for Fleet and Debug actions");
     ui.same_line_with_pos(marker_x + dot_w + gap + mark_w + gap);
-    let name_w = (width - btn * 2.0 - dot_w - mark_w - gap * 4.0).max(scale_px(ui, 10.0));
+    let name_w =
+        (draw.width - btn * 2.0 - dot_w - mark_w - gap * 4.0 - restart_w).max(scale_px(ui, 10.0));
     let clicked = ui
         .selectable_config(&labels.title)
-        .selected(is_focused)
+        .selected(draw.is_focused)
         .size([name_w, 0.0])
         .build();
     #[cfg(test)]
     record_test_rail_item(ui);
+    if draw.restart_required {
+        ui.same_line_with_spacing(0.0, gap);
+        ui.text_colored(WARN, "[restart]");
+        ui.set_item_tooltip("saved settings need a restart to apply");
+    }
     gap_line(ui);
-    let fold_g = if preview { FOLD_GLYPH } else { UNFOLD_GLYPH };
+    let fold_g = if draw.preview {
+        FOLD_GLYPH
+    } else {
+        UNFOLD_GLYPH
+    };
     let folded = ui.button_with_size(fold_g, [btn, 0.0]);
     #[cfg(test)]
     record_test_rail_item(ui);
-    ui.set_item_tooltip(if preview {
+    ui.set_item_tooltip(if draw.preview {
         "fold preview"
     } else {
         "show preview"
@@ -4817,7 +4892,18 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
     let colour = light_rgb(row.light());
     TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
     let mut marked = false;
-    let _ = rail_cap(ui, &row, &labels, true, width, false, &mut marked);
+    let _ = rail_cap(
+        ui,
+        &row,
+        &labels,
+        CapDrawState {
+            is_focused: true,
+            width,
+            preview: false,
+            restart_required: false,
+        },
+        &mut marked,
+    );
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
 }
@@ -6170,6 +6256,7 @@ fn ui_frame(
     browse_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
+    restart_settings_popup(ui, &mut state.session);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);

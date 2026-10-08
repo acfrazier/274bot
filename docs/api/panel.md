@@ -406,6 +406,13 @@ cancel bots that are still waiting (Stop on marked rows reports them as
 cancelled); Stop all also stops running and paused wall members and live
 slots.
 
+Saved settings that need a restart show a `[restart]` badge and open a
+prompt. **Restart** applies only to listed bots still running the same
+assigned script with its pending settings. Bots that stopped, logged out,
+were reassigned or run a different script are skipped and named in the
+status line. **Later** leaves their current scripts running and suppresses
+the prompt until settings change again.
+
 The **Fleet** window (the button beside WalkTo) is the panel's view of the
 shared marked selection: one row per vault profile with a checkbox mark,
 filter and sort. Its action bar runs on the marked rows only and each action

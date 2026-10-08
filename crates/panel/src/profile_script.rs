@@ -301,6 +301,17 @@ impl Session {
     pub fn cancel_settings_sync(&mut self) {
         self.scripts.cancel_settings_sync();
     }
+
+    pub fn restart_pending_settings(&mut self) {
+        let root = self.start_catalog_root();
+        if let Err(error) = self
+            .scripts
+            .restart_pending_settings(&mut self.core, root.as_deref())
+        {
+            self.error = Some(error);
+        }
+        self.apply_script_notice();
+    }
 }
 
 #[cfg(test)]

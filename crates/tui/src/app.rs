@@ -9,6 +9,7 @@
 //! owned view data, so CI renders them with `TestBackend` and no real
 //! terminal.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -214,6 +215,10 @@ pub enum AppAction {
     ScriptSyncApply,
     /// Drop the prepared Apply to all.
     ScriptSyncCancel,
+    /// Restart only profiles whose saved settings need a new script run.
+    ScriptRestartSettings,
+    /// Leave the current runs active and defer these settings.
+    ScriptRestartLater,
     /// Open the first-run rs2b0t catalog folder browser.
     ScriptImportCatalog,
     /// Defer the rs2b0t catalog import (Not now).
@@ -338,6 +343,10 @@ pub struct TuiApp {
     /// `frontend-core` projection; the binary copies them when the core's
     /// rows move.
     pub fleet: Vec<FleetRow>,
+    /// Profile identities whose saved script settings still need a restart.
+    pub restart_badges: HashSet<frontend_core::ProfileIdentity>,
+    /// Core badge generation used to refresh this set only when state moves.
+    pub restart_badge_generation: u64,
     pub counts: FleetCounts,
     /// The selected slot's projected detail (the panel's status section
     /// shows the same).
@@ -509,6 +518,8 @@ impl TuiApp {
             focused: None,
             fleet: Vec::new(),
             counts: FleetCounts::default(),
+            restart_badges: HashSet::new(),
+            restart_badge_generation: 0,
             detail: None,
             chat_data: ChatData::default(),
             inv_items: Vec::new(),

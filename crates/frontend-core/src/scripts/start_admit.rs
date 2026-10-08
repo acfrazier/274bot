@@ -40,6 +40,7 @@ pub(super) struct QueuedStart {
     pub latched: bool,
     /// Whether the slot had an arm at enqueue. Losing it is a disconnect.
     pub had_arm: bool,
+    pub kind: super::StartKind,
 }
 
 #[derive(Debug, Default)]

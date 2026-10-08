@@ -669,9 +669,9 @@ impl Play {
         self.wake(name);
     }
 
-    /// Stop only the exact script lifetime inspected by a reload warning.
-    /// Identity, generation, and Stop are one slot-lock transaction; a newer
-    /// script can never be stopped by an older confirmation.
+    /// Stop only the exact active script lifetime inspected by a confirmation.
+    /// Identity, generation, state, and Stop are one slot-lock transaction, so
+    /// a completed run or a newer script can never be stopped by an old prompt.
     pub fn script_stop_if_identity_generation(
         &self,
         name: &str,
@@ -685,7 +685,15 @@ impl Play {
             let Ok(mut slot) = slot.lock() else {
                 return false;
             };
-            if slot.source_identity() != Some(identity) || slot.runtime_generation() != generation {
+            if slot.source_identity() != Some(identity)
+                || slot.runtime_generation() != generation
+                || !matches!(
+                    slot.state(),
+                    script::RunState::Starting
+                        | script::RunState::Running
+                        | script::RunState::Paused
+                )
+            {
                 return false;
             }
             slot.stop();

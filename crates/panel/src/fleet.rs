@@ -14,7 +14,7 @@ use frontend_core::{FleetRow, ProfileIdentity, Scripts};
 
 use crate::fleet_columns::{self, FleetColumn};
 use crate::session::Session;
-use crate::theme::{scale_px, scale_size};
+use crate::theme::{scale_px, scale_size, WARN};
 
 const RESTART_POPUP: &str = "##fleet-restart-confirm";
 
@@ -324,6 +324,11 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             }
             ui.table_next_column();
             ui.text(&row.name);
+            if session.scripts.has_restart_badge(&row.name) {
+                ui.same_line();
+                ui.text_colored(WARN, "[restart]");
+                ui.set_item_tooltip("saved settings need a restart to apply");
+            }
             let progress = if needs_progress {
                 session
                     .core
